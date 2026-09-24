@@ -1,0 +1,7 @@
+vetoes:
+  - id: bad-regex
+    tool: Bash
+    when:
+      - field: command
+        match: '(?<=x)y'
+    reason: lookbehind is not supported by RE2

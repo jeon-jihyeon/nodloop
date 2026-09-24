@@ -1,0 +1,13 @@
+{
+  "event_id": "tq-005",
+  "limit": 500,
+  "omitted": 0,
+  "rows": [
+    {"dims": {"source": "source-a", "topic": "shopping"}, "metric": "click_count", "time": "2026-09-21T12:00:00Z", "value": 3978},
+    {"dims": {"source": "source-b", "topic": "shopping"}, "metric": "click_count", "time": "2026-09-21T12:00:00Z", "value": 793},
+    {"dims": {"source": "source-c", "topic": "shopping"}, "metric": "click_count", "time": "2026-09-21T12:00:00Z", "value": 621},
+    {"dims": {"source": "source-a", "topic": "shopping"}, "metric": "click_count", "time": "2026-09-21T13:00:00Z", "value": 4109},
+    {"dims": {"source": "source-b", "topic": "shopping"}, "metric": "click_count", "time": "2026-09-21T13:00:00Z", "value": 809},
+    {"dims": {"source": "source-c", "topic": "shopping"}, "metric": "click_count", "time": "2026-09-21T13:00:00Z", "value": 594}
+  ]
+}

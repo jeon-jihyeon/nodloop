@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "command": "/Users/me/go/bin/nodloop guard",
+            "timeout": 5,
+            "type": "command"
+          }
+        ],
+        "matcher": "*"
+      }
+    ]
+  }
+}

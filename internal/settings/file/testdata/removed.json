@@ -1,0 +1,35 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "command": "gofmt-hook",
+            "type": "command"
+          }
+        ],
+        "matcher": "Edit|Write"
+      }
+    ],
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "command": "/usr/local/bin/other-hook",
+            "timeout": 10,
+            "type": "command"
+          }
+        ],
+        "matcher": "Bash"
+      }
+    ]
+  },
+  "permissions": {
+    "allow": [
+      "Bash(go test *)"
+    ]
+  },
+  "unknownFutureKey": {
+    "keep": true
+  }
+}

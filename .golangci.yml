@@ -1,0 +1,165 @@
+version: "2"
+linters:
+  enable:
+    - depguard
+    - dupl
+    - funlen
+    - gocritic
+    - gocyclo
+    - nakedret
+    - revive
+    - unparam
+  settings:
+    errcheck:
+      exclude-functions:
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
+    funlen:
+      lines: 70
+      statements: 50
+    dupl:
+      threshold: 120
+    gocyclo:
+      min-complexity: 15
+    revive:
+      rules:
+        - name: comment-spacings
+          disabled: true
+        - name: exported
+          disabled: true
+    # Packages import downward only: domain → application → infra → controllers
+    # cmd/nodloop is the composition root and imports everything
+    # Test files may reach the testkit harness and the file stores so $test is left out where that matters
+    depguard:
+      rules:
+        domain:
+          files:
+            - "**/internal/evidence/**"
+            - "**/internal/feedback/**"
+            - "**/internal/trace/**"
+            - "**/internal/llm/**"
+            - "**/internal/veto/**"
+            - "**/internal/settings/**"
+            - "**/internal/jsonl/**"
+          deny:
+            - pkg: github.com/jeon-jihyeon/nodloop/internal/analysis
+              desc: domain packages do not import analysis
+            - pkg: github.com/jeon-jihyeon/nodloop/internal/knowledge
+              desc: domain packages do not import knowledge
+            - pkg: github.com/jeon-jihyeon/nodloop/internal/diagnose
+              desc: domain packages do not import diagnose
+            - pkg: github.com/jeon-jihyeon/nodloop/internal/eval
+              desc: domain packages do not import eval
+            - pkg: github.com/jeon-jihyeon/nodloop/internal/guard
+              desc: domain packages do not import guard
+            - pkg: github.com/jeon-jihyeon/nodloop/internal/mcp
+              desc: domain packages do not import mcp
+            - pkg: github.com/jeon-jihyeon/nodloop/internal/testkit
+              desc: domain packages do not import the test harness
+            - pkg: github.com/jeon-jihyeon/nodloop/cmd
+              desc: nothing imports cmd
+        application:
+          files:
+            - "**/internal/analysis/**"
+            - "**/internal/knowledge/**"
+            - "**/internal/diagnose/**"
+            - "**/internal/eval/**"
+            - "!**/internal/knowledge/file/**"
+            - "!$test"
+          deny:
+            - pkg: github.com/jeon-jihyeon/nodloop/internal/evidence/file
+              desc: application code takes stores through its own interfaces and never a file store
+            - pkg: github.com/jeon-jihyeon/nodloop/internal/feedback/file
+              desc: application code takes stores through its own interfaces and never a file store
+            - pkg: github.com/jeon-jihyeon/nodloop/internal/trace/file
+              desc: application code takes stores through its own interfaces and never a file store
+            - pkg: github.com/jeon-jihyeon/nodloop/internal/knowledge/file
+              desc: application code takes stores through its own interfaces and never a file store
+            - pkg: github.com/jeon-jihyeon/nodloop/internal/veto/file
+              desc: application code never reads veto files
+            - pkg: github.com/jeon-jihyeon/nodloop/internal/settings/file
+              desc: application code never edits settings files
+            - pkg: github.com/jeon-jihyeon/nodloop/internal/jsonl
+              desc: application code never touches the jsonl format
+            - pkg: github.com/jeon-jihyeon/nodloop/internal/guard
+              desc: application packages do not import guard
+            - pkg: github.com/jeon-jihyeon/nodloop/internal/mcp
+              desc: application packages do not import mcp
+            - pkg: github.com/jeon-jihyeon/nodloop/internal/testkit
+              desc: only tests import the test harness
+            - pkg: github.com/jeon-jihyeon/nodloop/cmd
+              desc: nothing imports cmd
+        core:
+          files:
+            - "**/internal/analysis/**"
+            - "**/internal/knowledge/**"
+            - "**/internal/diagnose/**"
+          deny:
+            - pkg: github.com/jeon-jihyeon/nodloop/internal/eval
+              desc: core packages do not import eval
+        guard:
+          files:
+            - "**/internal/guard/**"
+          deny:
+            - pkg: github.com/jeon-jihyeon/nodloop/internal/analysis
+              desc: the hook needs vetoes only
+            - pkg: github.com/jeon-jihyeon/nodloop/internal/knowledge
+              desc: the hook needs vetoes only
+            - pkg: github.com/jeon-jihyeon/nodloop/internal/diagnose
+              desc: the hook needs vetoes only
+            - pkg: github.com/jeon-jihyeon/nodloop/internal/eval
+              desc: the hook needs vetoes only
+            - pkg: github.com/jeon-jihyeon/nodloop/internal/mcp
+              desc: guard does not import mcp
+            - pkg: github.com/jeon-jihyeon/nodloop/internal/testkit
+              desc: guard tests do not need the review harness
+            - pkg: github.com/jeon-jihyeon/nodloop/cmd
+              desc: nothing imports cmd
+        mcp:
+          files:
+            - "**/internal/mcp/**"
+            - "!$test"
+          deny:
+            - pkg: github.com/jeon-jihyeon/nodloop/internal/evidence/file
+              desc: mcp gets its stores from the composition root
+            - pkg: github.com/jeon-jihyeon/nodloop/internal/feedback/file
+              desc: mcp gets its stores from the composition root
+            - pkg: github.com/jeon-jihyeon/nodloop/internal/trace/file
+              desc: mcp gets its stores from the composition root
+            - pkg: github.com/jeon-jihyeon/nodloop/internal/knowledge/file
+              desc: mcp gets its stores from the composition root
+            - pkg: github.com/jeon-jihyeon/nodloop/internal/eval
+              desc: mcp does not run eval
+            - pkg: github.com/jeon-jihyeon/nodloop/internal/guard
+              desc: mcp does not import guard
+            - pkg: github.com/jeon-jihyeon/nodloop/internal/testkit
+              desc: only tests import the test harness
+            - pkg: github.com/jeon-jihyeon/nodloop/cmd
+              desc: nothing imports cmd
+        testkit:
+          files:
+            - "**/internal/testkit/**"
+          deny:
+            - pkg: github.com/jeon-jihyeon/nodloop/internal/diagnose
+              desc: the harness opens stores and never a module under test
+            - pkg: github.com/jeon-jihyeon/nodloop/internal/eval
+              desc: the harness opens stores and never a module under test
+            - pkg: github.com/jeon-jihyeon/nodloop/internal/mcp
+              desc: the harness opens stores and never a module under test
+            - pkg: github.com/jeon-jihyeon/nodloop/internal/guard
+              desc: the harness opens stores and never a module under test
+            - pkg: github.com/jeon-jihyeon/nodloop/cmd
+              desc: nothing imports cmd
+  exclusions:
+    rules:
+      # Tests, contract suites and the demo generator are scenarios, not units
+      - path: (_test\.go|test/contract\.go|internal/demo/)
+        linters:
+          - dupl
+          - funlen
+          - gocyclo
+          - unparam
+      - path: internal/diagnose/gen/
+        linters:
+          - funlen
