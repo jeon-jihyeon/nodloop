@@ -1,0 +1,23 @@
+{
+  "status": "ready_for_review",
+  "observations": ["clicks up"],
+  "causes": [
+    {
+      "summary": "low quality traffic",
+      "paragraph_ids": ["metric-anomaly-investigation#Metric anomaly investigation/Check the segment#1"]
+    }
+  ],
+  "checks": [
+    {
+      "step": "confirm the signal",
+      "purpose": "signal",
+      "paragraph_ids": ["metric-anomaly-investigation#Metric anomaly investigation/Confirm the signal#1"]
+    },
+    {
+      "step": "check the segment",
+      "purpose": "segment",
+      "paragraph_ids": ["metric-anomaly-investigation#Metric anomaly investigation/Check the segment#1"]
+    }
+  ],
+  "open_questions": []
+}

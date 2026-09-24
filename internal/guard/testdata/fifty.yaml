@@ -1,0 +1,307 @@
+vetoes:
+  - id: bench-00
+    tool: Bash
+    when:
+      - field: command
+        match: '(^|[;&|]\s*)tool00\s+--danger-0'
+    reason: benchmark veto 0
+  - id: bench-01
+    tool: Bash
+    when:
+      - field: command
+        match: '(^|[;&|]\s*)tool01\s+--danger-1'
+    reason: benchmark veto 1
+  - id: bench-02
+    tool: Bash
+    when:
+      - field: command
+        match: '(^|[;&|]\s*)tool02\s+--danger-2'
+    reason: benchmark veto 2
+  - id: bench-03
+    tool: Bash
+    when:
+      - field: command
+        match: '(^|[;&|]\s*)tool03\s+--danger-3'
+    reason: benchmark veto 3
+  - id: bench-04
+    tool: Bash
+    when:
+      - field: command
+        match: '(^|[;&|]\s*)tool04\s+--danger-4'
+    reason: benchmark veto 4
+  - id: bench-05
+    tool: Bash
+    when:
+      - field: command
+        match: '(^|[;&|]\s*)tool05\s+--danger-5'
+    reason: benchmark veto 5
+  - id: bench-06
+    tool: Bash
+    when:
+      - field: command
+        match: '(^|[;&|]\s*)tool06\s+--danger-6'
+    reason: benchmark veto 6
+  - id: bench-07
+    tool: Bash
+    when:
+      - field: command
+        match: '(^|[;&|]\s*)tool07\s+--danger-7'
+    reason: benchmark veto 7
+  - id: bench-08
+    tool: Bash
+    when:
+      - field: command
+        match: '(^|[;&|]\s*)tool08\s+--danger-8'
+    reason: benchmark veto 8
+  - id: bench-09
+    tool: Bash
+    when:
+      - field: command
+        match: '(^|[;&|]\s*)tool09\s+--danger-9'
+    reason: benchmark veto 9
+  - id: bench-10
+    tool: Bash
+    when:
+      - field: command
+        match: '(^|[;&|]\s*)tool10\s+--danger-10'
+    reason: benchmark veto 10
+  - id: bench-11
+    tool: Bash
+    when:
+      - field: command
+        match: '(^|[;&|]\s*)tool11\s+--danger-11'
+    reason: benchmark veto 11
+  - id: bench-12
+    tool: Bash
+    when:
+      - field: command
+        match: '(^|[;&|]\s*)tool12\s+--danger-12'
+    reason: benchmark veto 12
+  - id: bench-13
+    tool: Bash
+    when:
+      - field: command
+        match: '(^|[;&|]\s*)tool13\s+--danger-13'
+    reason: benchmark veto 13
+  - id: bench-14
+    tool: Bash
+    when:
+      - field: command
+        match: '(^|[;&|]\s*)tool14\s+--danger-14'
+    reason: benchmark veto 14
+  - id: bench-15
+    tool: Bash
+    when:
+      - field: command
+        match: '(^|[;&|]\s*)tool15\s+--danger-15'
+    reason: benchmark veto 15
+  - id: bench-16
+    tool: Bash
+    when:
+      - field: command
+        match: '(^|[;&|]\s*)tool16\s+--danger-16'
+    reason: benchmark veto 16
+  - id: bench-17
+    tool: Bash
+    when:
+      - field: command
+        match: '(^|[;&|]\s*)tool17\s+--danger-17'
+    reason: benchmark veto 17
+  - id: bench-18
+    tool: Bash
+    when:
+      - field: command
+        match: '(^|[;&|]\s*)tool18\s+--danger-18'
+    reason: benchmark veto 18
+  - id: bench-19
+    tool: Bash
+    when:
+      - field: command
+        match: '(^|[;&|]\s*)tool19\s+--danger-19'
+    reason: benchmark veto 19
+  - id: bench-20
+    tool: Bash
+    when:
+      - field: command
+        match: '(^|[;&|]\s*)tool20\s+--danger-20'
+    reason: benchmark veto 20
+  - id: bench-21
+    tool: Bash
+    when:
+      - field: command
+        match: '(^|[;&|]\s*)tool21\s+--danger-21'
+    reason: benchmark veto 21
+  - id: bench-22
+    tool: Bash
+    when:
+      - field: command
+        match: '(^|[;&|]\s*)tool22\s+--danger-22'
+    reason: benchmark veto 22
+  - id: bench-23
+    tool: Bash
+    when:
+      - field: command
+        match: '(^|[;&|]\s*)tool23\s+--danger-23'
+    reason: benchmark veto 23
+  - id: bench-24
+    tool: Bash
+    when:
+      - field: command
+        match: '(^|[;&|]\s*)tool24\s+--danger-24'
+    reason: benchmark veto 24
+  - id: bench-25
+    tool: Bash
+    when:
+      - field: command
+        match: '(^|[;&|]\s*)tool25\s+--danger-25'
+    reason: benchmark veto 25
+  - id: bench-26
+    tool: Bash
+    when:
+      - field: command
+        match: '(^|[;&|]\s*)tool26\s+--danger-26'
+    reason: benchmark veto 26
+  - id: bench-27
+    tool: Bash
+    when:
+      - field: command
+        match: '(^|[;&|]\s*)tool27\s+--danger-27'
+    reason: benchmark veto 27
+  - id: bench-28
+    tool: Bash
+    when:
+      - field: command
+        match: '(^|[;&|]\s*)tool28\s+--danger-28'
+    reason: benchmark veto 28
+  - id: bench-29
+    tool: Bash
+    when:
+      - field: command
+        match: '(^|[;&|]\s*)tool29\s+--danger-29'
+    reason: benchmark veto 29
+  - id: bench-30
+    tool: Bash
+    when:
+      - field: command
+        match: '(^|[;&|]\s*)tool30\s+--danger-30'
+    reason: benchmark veto 30
+  - id: bench-31
+    tool: Bash
+    when:
+      - field: command
+        match: '(^|[;&|]\s*)tool31\s+--danger-31'
+    reason: benchmark veto 31
+  - id: bench-32
+    tool: Bash
+    when:
+      - field: command
+        match: '(^|[;&|]\s*)tool32\s+--danger-32'
+    reason: benchmark veto 32
+  - id: bench-33
+    tool: Bash
+    when:
+      - field: command
+        match: '(^|[;&|]\s*)tool33\s+--danger-33'
+    reason: benchmark veto 33
+  - id: bench-34
+    tool: Bash
+    when:
+      - field: command
+        match: '(^|[;&|]\s*)tool34\s+--danger-34'
+    reason: benchmark veto 34
+  - id: bench-35
+    tool: Bash
+    when:
+      - field: command
+        match: '(^|[;&|]\s*)tool35\s+--danger-35'
+    reason: benchmark veto 35
+  - id: bench-36
+    tool: Bash
+    when:
+      - field: command
+        match: '(^|[;&|]\s*)tool36\s+--danger-36'
+    reason: benchmark veto 36
+  - id: bench-37
+    tool: Bash
+    when:
+      - field: command
+        match: '(^|[;&|]\s*)tool37\s+--danger-37'
+    reason: benchmark veto 37
+  - id: bench-38
+    tool: Bash
+    when:
+      - field: command
+        match: '(^|[;&|]\s*)tool38\s+--danger-38'
+    reason: benchmark veto 38
+  - id: bench-39
+    tool: Bash
+    when:
+      - field: command
+        match: '(^|[;&|]\s*)tool39\s+--danger-39'
+    reason: benchmark veto 39
+  - id: bench-40
+    tool: Bash
+    when:
+      - field: command
+        match: '(^|[;&|]\s*)tool40\s+--danger-40'
+    reason: benchmark veto 40
+  - id: bench-41
+    tool: Bash
+    when:
+      - field: command
+        match: '(^|[;&|]\s*)tool41\s+--danger-41'
+    reason: benchmark veto 41
+  - id: bench-42
+    tool: Bash
+    when:
+      - field: command
+        match: '(^|[;&|]\s*)tool42\s+--danger-42'
+    reason: benchmark veto 42
+  - id: bench-43
+    tool: Bash
+    when:
+      - field: command
+        match: '(^|[;&|]\s*)tool43\s+--danger-43'
+    reason: benchmark veto 43
+  - id: bench-44
+    tool: Bash
+    when:
+      - field: command
+        match: '(^|[;&|]\s*)tool44\s+--danger-44'
+    reason: benchmark veto 44
+  - id: bench-45
+    tool: Bash
+    when:
+      - field: command
+        match: '(^|[;&|]\s*)tool45\s+--danger-45'
+    reason: benchmark veto 45
+  - id: bench-46
+    tool: Bash
+    when:
+      - field: command
+        match: '(^|[;&|]\s*)tool46\s+--danger-46'
+    reason: benchmark veto 46
+  - id: bench-47
+    tool: Bash
+    when:
+      - field: command
+        match: '(^|[;&|]\s*)tool47\s+--danger-47'
+    reason: benchmark veto 47
+  - id: bench-48
+    tool: Bash
+    when:
+      - field: command
+        match: '(^|[;&|]\s*)tool48\s+--danger-48'
+    reason: benchmark veto 48
+  - id: bench-49
+    tool: Bash
+    when:
+      - field: command
+        match: '(^|[;&|]\s*)tool49\s+--danger-49'
+    reason: benchmark veto 49
+  - id: no-sed-inplace
+    tool: Bash
+    when:
+      - field: command
+        match: '(^|[;&|]\s*)(sed|perl)\s+(-[a-zA-Z]*i|--in-place)'
+    reason: sed -i and perl -i are forbidden. Use the Edit tool to modify files

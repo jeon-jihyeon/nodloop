@@ -1,0 +1,24 @@
+tq-001	normal_variation	seed=true	hold=false	anomalies=0	paragraphs=
+tq-002	normal_variation	seed=true	hold=false	anomalies=0	paragraphs=
+tq-003	normal_variation	seed=false	hold=false	anomalies=0	paragraphs=
+tq-004	normal_variation	seed=false	hold=false	anomalies=0	paragraphs=
+tq-005	click_spike	seed=true	hold=false	anomalies=1	paragraphs=metric-anomaly-investigation#Metric anomaly investigation/Check the segment#1,metric-anomaly-investigation#Metric anomaly investigation/Check downstream outcomes#1
+tq-006	click_spike	seed=true	hold=false	anomalies=1	paragraphs=metric-anomaly-investigation#Metric anomaly investigation/Check the segment#1,metric-anomaly-investigation#Metric anomaly investigation/Check downstream outcomes#1
+tq-007	click_spike	seed=false	hold=false	anomalies=1	paragraphs=metric-anomaly-investigation#Metric anomaly investigation/Check the segment#1,metric-anomaly-investigation#Metric anomaly investigation/Check downstream outcomes#1
+tq-008	click_spike	seed=false	hold=false	anomalies=1	paragraphs=metric-anomaly-investigation#Metric anomaly investigation/Check the segment#1,metric-anomaly-investigation#Metric anomaly investigation/Check downstream outcomes#1
+tq-009	conversion_rate_drop	seed=true	hold=false	anomalies=3	paragraphs=outcome-rate-degradation#Outcome rate degradation/Separate numerator from denominator#1,outcome-rate-degradation#Outcome rate degradation/Check tracking changes#1
+tq-010	conversion_rate_drop	seed=true	hold=false	anomalies=3	paragraphs=outcome-rate-degradation#Outcome rate degradation/Separate numerator from denominator#1,outcome-rate-degradation#Outcome rate degradation/Check tracking changes#1
+tq-011	conversion_rate_drop	seed=false	hold=false	anomalies=3	paragraphs=outcome-rate-degradation#Outcome rate degradation/Separate numerator from denominator#1,outcome-rate-degradation#Outcome rate degradation/Check tracking changes#1
+tq-012	conversion_rate_drop	seed=false	hold=false	anomalies=3	paragraphs=outcome-rate-degradation#Outcome rate degradation/Separate numerator from denominator#1,outcome-rate-degradation#Outcome rate degradation/Check tracking changes#1
+tq-013	source_concentration	seed=true	hold=false	anomalies=1	paragraphs=segment-concentration-review#Segment concentration review/Compare against total volume#1,segment-concentration-review#Segment concentration review/Check the concentrated segment#1
+tq-014	source_concentration	seed=true	hold=false	anomalies=1	paragraphs=segment-concentration-review#Segment concentration review/Compare against total volume#1,segment-concentration-review#Segment concentration review/Check the concentrated segment#1
+tq-015	source_concentration	seed=false	hold=false	anomalies=1	paragraphs=segment-concentration-review#Segment concentration review/Compare against total volume#1,segment-concentration-review#Segment concentration review/Check the concentrated segment#1
+tq-016	source_concentration	seed=false	hold=false	anomalies=1	paragraphs=segment-concentration-review#Segment concentration review/Compare against total volume#1,segment-concentration-review#Segment concentration review/Check the concentrated segment#1
+tq-017	hold	seed=true	hold=true	anomalies=0	paragraphs=
+tq-018	hold	seed=true	hold=true	anomalies=0	paragraphs=
+tq-019	hold	seed=false	hold=true	anomalies=0	paragraphs=
+tq-020	hold	seed=false	hold=true	anomalies=0	paragraphs=
+tq-021	attribution_lag	seed=true	hold=false	anomalies=3	paragraphs=
+tq-022	attribution_lag	seed=true	hold=false	anomalies=3	paragraphs=
+tq-023	attribution_lag	seed=false	hold=false	anomalies=3	paragraphs=
+tq-024	attribution_lag	seed=false	hold=false	anomalies=3	paragraphs=

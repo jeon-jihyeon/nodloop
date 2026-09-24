@@ -1,0 +1,48 @@
+# Seed vetoes distilled from a personal CLAUDE.md
+# Copy to ~/.claude/nodloop/vetoes.yaml for every project or to .claude/nodloop/vetoes.yaml for one project
+#
+# The Bash patterns share one command start prefix
+#   (^|[\n;&|(){}`])\s*                             start of input, a new line, a separator, a subshell, a group or a backtick
+#   ((builtin|command|env|exec|nohup|sudo|time|xargs)(\s+[^\s;&|]+)*?\s+)?   an optional wrapper with its own arguments
+#   (\S*/)?                                         an optional path such as /usr/bin/
+vetoes:
+  - id: no-sed-inplace
+    tool: Bash
+    when:
+      - field: command
+        match: '(^|[\n;&|(){}`])\s*((builtin|command|env|exec|nohup|sudo|time|xargs)(\s+[^\s;&|]+)*?\s+)?(\S*/)?(sed|perl)\s+([^;&|\n]*\s)?(-[a-zA-Z]*i|--in-place)'
+    reason: sed -i and perl -i are forbidden. Use the Edit tool to modify files
+    source: personal CLAUDE.md
+
+  - id: no-eval
+    tool: Bash
+    when:
+      - field: command
+        match: '(^|[\n;&|(){}`])\s*((builtin|command|env|exec|nohup|sudo|time|xargs)(\s+[^\s;&|]+)*?\s+)?(\S*/)?eval(\s|$)'
+    reason: eval is forbidden. Run the command directly or use python3 -c
+    source: personal CLAUDE.md
+
+  - id: no-shell-c
+    tool: Bash
+    when:
+      - field: command
+        match: '(^|[\n;&|(){}`])\s*((builtin|command|env|exec|nohup|sudo|time|xargs)(\s+[^\s;&|]+)*?\s+)?(\S*/)?(bash|sh|zsh)\s+([^;&|\n]*\s)?-[a-zA-Z]*c(\s|$)'
+    reason: bash -c and sh -c are forbidden. Run the command directly or use python3 -c
+    source: personal CLAUDE.md
+
+  - id: no-cd-then-git
+    tool: Bash
+    when:
+      - field: command
+        match: '(^|[\n;&|(){}`])\s*cd(\s[^;&|\n]*)?(&&|;|\n)\s*((command|env|exec)(\s+[^\s;&|]+)*?\s+)?(\S*/)?git(\s|$)'
+    reason: cd X && git is forbidden because allow rules apply per segment. Use git -C X instead
+    source: personal CLAUDE.md
+
+  - id: no-readme
+    tool: Write
+    when:
+      - field: file_path
+        match: '(?i)(^|/)README(\.[a-z]+)?$'
+        unless: 'node_modules/'
+    reason: Do not create README files
+    source: personal CLAUDE.md

@@ -1,0 +1,13 @@
+{
+  "name": "nodloop",
+  "owner": {
+    "name": "jeon-jihyeon"
+  },
+  "plugins": [
+    {
+      "name": "nodloop",
+      "source": "./plugin",
+      "description": "Runbook-grounded incident reviews inside Claude Code. Your corrections become approved knowledge and return in the next review"
+    }
+  ]
+}

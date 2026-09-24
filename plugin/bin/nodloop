@@ -1,0 +1,111 @@
+#!/bin/sh
+# Finds or fetches the nodloop binary of this plugin's version and runs it with the given arguments
+# 1. `~/.nodloop/bin/v<version>/nodloop` when a previous run fetched it
+# 2. the GitHub release of that version for this OS and architecture verified against its `checksums.txt`
+# 3. go install of the same version when Go is present and the release could not be fetched
+# 4. another nodloop on PATH with a warning because its version is unknown
+# The version is read from the plugin manifest so the plugin and the binary it runs never drift
+set -eu
+
+REPO="jeon-jihyeon/nodloop"
+ROOT=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
+MANIFEST="${ROOT}/.claude-plugin/plugin.json"
+
+version=$(sed -n 's/^[[:space:]]*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$MANIFEST" | head -n 1)
+if [ -z "$version" ]; then
+  echo "nodloop: no version in ${MANIFEST}" >&2
+  exit 1
+fi
+TAG="v${version}"
+BIN_DIR="${HOME}/.nodloop/bin/${TAG}"
+BIN="${BIN_DIR}/nodloop"
+# A stable path for the user. `~/.nodloop/bin/nodloop setup --data-dir <dir>` works after the first start
+STABLE="${HOME}/.nodloop/bin/nodloop"
+
+stable() {
+  ln -sfn "$BIN" "$STABLE" 2>/dev/null || true
+}
+
+if [ -x "$BIN" ]; then
+  stable
+  exec "$BIN" "$@"
+fi
+
+os=$(uname -s | tr '[:upper:]' '[:lower:]')
+arch=$(uname -m)
+case "$arch" in
+  x86_64) arch=amd64 ;;
+  aarch64 | arm64) arch=arm64 ;;
+esac
+ARCHIVE="nodloop_${os}_${arch}.tar.gz"
+BASE_URL="https://github.com/${REPO}/releases/download/${TAG}"
+
+sha256() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | cut -d ' ' -f 1
+    return
+  fi
+  if command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$1" | cut -d ' ' -f 1
+    return
+  fi
+  return 1
+}
+
+# Returns 1 when the release cannot be fetched so the next source is tried
+# 1. a checksum mismatch exits because the download cannot be trusted
+# 2. the binary is unpacked in a temp directory and renamed so the cached path never holds a partial file
+fetch() {
+  command -v curl >/dev/null 2>&1 || return 1
+  mkdir -p "$BIN_DIR" || return 1
+  tmp=$(mktemp -d "${BIN_DIR}/.fetch.XXXXXX") || return 1
+  if ! curl -fsSL "${BASE_URL}/${ARCHIVE}" -o "${tmp}/${ARCHIVE}" 2>/dev/null ||
+    ! curl -fsSL "${BASE_URL}/checksums.txt" -o "${tmp}/checksums.txt" 2>/dev/null; then
+    rm -rf "$tmp"
+    return 1
+  fi
+  if ! got=$(sha256 "${tmp}/${ARCHIVE}") || [ -z "$got" ]; then
+    echo "nodloop: cannot compute the sha256 of ${ARCHIVE} with sha256sum or shasum, so it is not trusted" >&2
+    rm -rf "$tmp"
+    return 1
+  fi
+  want=$(awk -v f="$ARCHIVE" '$2 == f { print $1 }' "${tmp}/checksums.txt")
+  if [ -z "$want" ] || [ "$want" != "$got" ]; then
+    echo "nodloop: checksum of ${BASE_URL}/${ARCHIVE} does not match checksums.txt, refusing to run it" >&2
+    rm -rf "$tmp"
+    exit 1
+  fi
+  if ! tar -xzf "${tmp}/${ARCHIVE}" -C "$tmp" nodloop || ! chmod +x "${tmp}/nodloop" || ! mv -f "${tmp}/nodloop" "$BIN"; then
+    rm -rf "$tmp"
+    return 1
+  fi
+  rm -rf "$tmp"
+  echo "nodloop: fetched ${BASE_URL}/${ARCHIVE} into ${BIN}" >&2
+}
+
+if fetch; then
+  stable
+  exec "$BIN" "$@"
+fi
+
+if command -v go >/dev/null 2>&1; then
+  echo "nodloop: could not fetch release ${TAG} for ${os}/${arch}, building with go install" >&2
+  if GOBIN="$BIN_DIR" go install "github.com/${REPO}/cmd/nodloop@${TAG}"; then
+    stable
+    exec "$BIN" "$@"
+  fi
+fi
+
+# command -v may name this launcher itself when the plugin bin directory is on PATH
+found=$(command -v nodloop 2>/dev/null || true)
+if [ -n "$found" ] && [ ! "$found" -ef "$0" ]; then
+  have=$("$found" version 2>/dev/null || echo unknown)
+  case "$have" in
+    "$version" | "v$version") ;;
+    *) echo "nodloop: running ${found} from PATH, version ${have} where the plugin expects ${version}" >&2 ;;
+  esac
+  exec "$found" "$@"
+fi
+
+echo "nodloop: could not fetch ${TAG} from ${BASE_URL} or build it with Go. Install Go from https://go.dev/dl and run again, or put a nodloop binary on PATH" >&2
+exit 1

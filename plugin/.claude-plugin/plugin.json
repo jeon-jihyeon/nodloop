@@ -1,0 +1,8 @@
+{
+  "name": "nodloop",
+  "version": "0.1.0",
+  "description": "Runbook-grounded incident reviews inside Claude Code. Your corrections become approved knowledge and return in the next review",
+  "author": {
+    "name": "jeon-jihyeon"
+  }
+}

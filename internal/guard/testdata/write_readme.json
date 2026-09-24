@@ -1,0 +1,11 @@
+{
+  "session_id": "24a71b10-e36a-4166-822c-5163a7e0d2fa",
+  "cwd": "/Users/me/repo",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Write",
+  "tool_input": {
+    "file_path": "/Users/me/repo/README.md",
+    "content": "# repo"
+  },
+  "tool_use_id": "toolu_01GHI"
+}

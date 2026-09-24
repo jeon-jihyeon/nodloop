@@ -1,0 +1,22 @@
+# build output
+/nodloop
+/demo
+*.test
+*.prof
+
+# local records, vetoes and settings
+/.nodloop/
+/.claude/nodloop/
+.claude/settings.local.json
+CLAUDE.local.md
+/tmp
+
+# environment
+.env*
+!.env.example
+
+# editors and the OS
+.vscode
+.idea
+*.swp
+.DS_Store

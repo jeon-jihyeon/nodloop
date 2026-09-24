@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="270" viewBox="0 0 760 270" role="img" aria-label="the nodloop review loop">
+<defs><marker id="a-dark" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8 z" fill="#6b6b68"/></marker><marker id="b-dark" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8 z" fill="#6aa9ee"/></marker></defs>
+<g font-family="-apple-system, 'Segoe UI', Inter, Helvetica, Arial, sans-serif">
+<text x="30" y="40" font-size="13" fill="#a3a39e">Claude Code calls nodloop</text>
+<text x="30" y="170" font-size="13" fill="#a3a39e">the human closes the loop</text>
+<rect x="30" y="56" width="110" height="34" rx="17" fill="#1f2a3a"/><text x="85.0" y="78" font-size="14" font-weight="500" text-anchor="middle" fill="#eaeae6">observe</text>
+<path d="M142 73.0 L168 73.0" fill="none" stroke="#6b6b68" stroke-width="1.6" marker-end="url(#a-dark)"/>
+<rect x="172" y="56" width="110" height="34" rx="17" fill="#1f2a3a"/><text x="227.0" y="78" font-size="14" font-weight="500" text-anchor="middle" fill="#eaeae6">context</text>
+<path d="M284 73.0 L310 73.0" fill="none" stroke="#6b6b68" stroke-width="1.6" marker-end="url(#a-dark)"/>
+<rect x="314" y="56" width="110" height="34" rx="17" fill="#1f2a3a"/><text x="369.0" y="78" font-size="14" font-weight="500" text-anchor="middle" fill="#eaeae6">select</text>
+<path d="M426 73.0 L452 73.0" fill="none" stroke="#6b6b68" stroke-width="1.6" marker-end="url(#a-dark)"/>
+<rect x="456" y="56" width="110" height="34" rx="17" fill="#1f2a3a"/><text x="511.0" y="78" font-size="14" font-weight="500" text-anchor="middle" fill="#eaeae6">record</text>
+<path d="M568 73.0 L594 73.0" fill="none" stroke="#6b6b68" stroke-width="1.6" marker-end="url(#a-dark)"/>
+<rect x="598" y="56" width="110" height="34" rx="17" fill="#27395a"/><text x="653.0" y="78" font-size="14" font-weight="500" text-anchor="middle" fill="#eaeae6">review</text>
+<path d="M653.0 94 L653.0 180" fill="none" stroke="#6aa9ee" stroke-width="1.6" marker-end="url(#b-dark)"/>
+<text x="643.0" y="133.0" font-size="12" text-anchor="end" fill="#a3a39e">cited causes and checks</text>
+<rect x="598" y="186" width="110" height="34" rx="17" fill="#2a2a28"/><text x="653.0" y="208" font-size="14" font-weight="500" text-anchor="middle" fill="#eaeae6">feedback</text>
+<rect x="456" y="186" width="110" height="34" rx="17" fill="#2a2a28"/><text x="511.0" y="208" font-size="14" font-weight="500" text-anchor="middle" fill="#eaeae6">propose</text>
+<rect x="314" y="186" width="110" height="34" rx="17" fill="#2a2a28"/><text x="369.0" y="208" font-size="14" font-weight="500" text-anchor="middle" fill="#eaeae6">approve</text>
+<path d="M596 203.0 L570 203.0" fill="none" stroke="#6b6b68" stroke-width="1.6" marker-end="url(#a-dark)"/>
+<path d="M454 203.0 L428 203.0" fill="none" stroke="#6b6b68" stroke-width="1.6" marker-end="url(#a-dark)"/>
+<path d="M312 203.0 L227.0 203.0 L227.0 96" fill="none" stroke="#6aa9ee" stroke-width="1.6" marker-end="url(#b-dark)"/>
+<text x="30" y="252" font-size="12" fill="#6aa9ee">next review: the correction returns as an example and the approved knowledge applies inside its scope</text>
+</g></svg>

@@ -1,0 +1,40 @@
+name: Bug report
+description: A command, tool or hook did something wrong
+labels: [bug]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Output of `nodloop version`, or the commit hash
+    validations:
+      required: true
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Surface
+      options:
+        - CLI command
+        - MCP tool inside Claude Code
+        - guard hook
+        - eval
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Commands or the conversation turn, with the data directory layout if it matters
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected and actual
+    validations:
+      required: true
+  - type: textarea
+    id: trace
+    attributes:
+      label: Trace or record
+      description: Output of `nodloop trace show <id>` when a review is involved. Remove anything private

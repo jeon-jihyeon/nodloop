@@ -1,0 +1,13 @@
+{
+  "session_id": "24a71b10-e36a-4166-822c-5163a7e0d2fa",
+  "transcript_path": "/Users/me/.claude/projects/-Users-me-repo/24a71b10.jsonl",
+  "cwd": "/Users/me/repo",
+  "permission_mode": "default",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "sed s/a/b/ f.txt",
+    "description": "Print substituted output"
+  },
+  "tool_use_id": "toolu_01ABC"
+}
