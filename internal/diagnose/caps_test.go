@@ -167,21 +167,20 @@ func TestCaps(t *testing.T) {
 			d := diagnose.New(
 				s.Source, analysis.DefaultPolicy(), tc.args.limits, nil, s.Traces, s.Feedback, s.Ledger, s.Clock.Now,
 			)
+			// Imported because approval refuses a folder over the cap and a cut then needs an import or a lowered cap
 			for i := range tc.args.items {
-				id := fmt.Sprintf("k-%02d", i)
-				_, _, err := s.Ledger.Propose(
-					ctx,
-					knowledge.Knowledge{
-						ID:       id,
-						Kind:     knowledge.KindMeaning,
-						Content:  strings.Repeat(tc.args.unit, tc.args.chars),
-						Evidence: knowledge.Evidence{ParagraphIDs: []string{"p-1"}},
-						Author:   "author",
-					},
-				)
-				require.NoError(t, err)
-				_, err = s.Ledger.Approve(ctx, id, 1, "author")
-				require.NoError(t, err)
+				require.NoError(t, s.Ledger.Import(ctx, []knowledge.Knowledge{{
+					ID:       fmt.Sprintf("k-%02d", i),
+					Version:  1,
+					Kind:     knowledge.KindMeaning,
+					Content:  strings.Repeat(tc.args.unit, tc.args.chars),
+					Evidence: knowledge.Evidence{ParagraphIDs: []string{"p-1"}},
+					Basis:    knowledge.BasisStated,
+					Status:   knowledge.StatusApproved,
+					Approver: "author",
+					Author:   "author",
+					Time:     s.Clock.Now(),
+				}}))
 			}
 
 			c, err := d.Prepare(ctx, "tq-005", diagnose.ModeInteractive, diagnose.Session{})

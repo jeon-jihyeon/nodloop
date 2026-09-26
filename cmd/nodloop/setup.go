@@ -36,6 +36,11 @@ func (h homeDir) recordDir() string {
 	return filepath.Join(h.dir(), "records")
 }
 
+// Claude Code `settings.json` that holds the guard hook
+func (h homeDir) settingsPath() string {
+	return filepath.Join(string(h), ".claude", "settings.json")
+}
+
 func (h homeDir) configPath() string {
 	return filepath.Join(h.dir(), configFile)
 }

@@ -25,6 +25,9 @@ type config struct {
 	// Traces and feedback and knowledge that nodloop only appends to
 	// Empty without a home and then only the commands that write records fail
 	recordDir string
+	// Where approved vetoes are exported
+	// Empty without a home
+	home homeDir
 }
 
 // For each value the flag wins over the variable and the variable over the setup config
@@ -35,7 +38,8 @@ type config struct {
 func resolveConfig(getenv func(string) string, src, dataDir, recordDir string) (config, error) {
 	var uc userConfig
 	var homeRecords string
-	if h := homeDir(getenv("HOME")); h != "" {
+	h := homeDir(getenv("HOME"))
+	if h != "" {
 		var err error
 		if uc, err = h.readConfig(); err != nil {
 			return config{}, err
@@ -45,6 +49,7 @@ func resolveConfig(getenv func(string) string, src, dataDir, recordDir string) (
 	cfg := config{
 		dataDir:   cmp.Or(dataDir, getenv(envFileDir), uc.DataDir),
 		recordDir: cmp.Or(recordDir, getenv(envRecordDir), uc.RecordDir, homeRecords),
+		home:      h,
 	}
 	if cfg.dataDir == "" {
 		return config{}, fmt.Errorf("%w: run nodloop setup or set the variable", errDataDirUnset)

@@ -40,36 +40,36 @@ func TestResolveConfig(t *testing.T) {
 		args args
 		want want
 	}{
-		{"env names both directories", args{env: env}, want{config{"/data", "/records"}, nil}},
+		{"env names both directories", args{env: env}, want{config{dataDir: "/data", recordDir: "/records"}, nil}},
 		{
 			"flags win over the env",
 			args{env, string(sourceFile), "/flag-data", "/flag-records"},
-			want{config{"/flag-data", "/flag-records"}, nil},
+			want{config{dataDir: "/flag-data", recordDir: "/flag-records"}, nil},
 		},
 		{
 			"setup config fills unset values",
 			args{env: map[string]string{"HOME": string(h)}},
-			want{config{demo, records}, nil},
+			want{config{dataDir: demo, recordDir: records, home: h}, nil},
 		},
 		{
 			"env wins over the setup config",
 			args{env: map[string]string{"HOME": string(h), envFileDir: "/elsewhere", envRecordDir: "/records"}},
-			want{config{"/elsewhere", "/records"}, nil},
+			want{config{dataDir: "/elsewhere", recordDir: "/records", home: h}, nil},
 		},
 		{
 			"setup config without a record dir defaults records under home",
 			args{env: map[string]string{"HOME": string(dataOnly)}},
-			want{config{demo, dataOnly.recordDir()}, nil},
+			want{config{dataDir: demo, recordDir: dataOnly.recordDir(), home: dataOnly}, nil},
 		},
 		{
 			"home without setup config defaults records under home",
 			args{env: map[string]string{"HOME": string(bare), envFileDir: "/data"}},
-			want{config{"/data", bare.recordDir()}, nil},
+			want{config{dataDir: "/data", recordDir: bare.recordDir(), home: bare}, nil},
 		},
 		{
 			"records without home or record dir stay unset",
 			args{env: map[string]string{envFileDir: "/data"}},
-			want{config{"/data", ""}, nil},
+			want{config{dataDir: "/data"}, nil},
 		},
 		{
 			"broken setup config fails",

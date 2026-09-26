@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeon-jihyeon/nodloop/internal/diagnose"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	"github.com/jeon-jihyeon/nodloop/internal/testkit"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
@@ -33,7 +35,6 @@ func TestRunKnowledge(t *testing.T) {
 	require.NoError(t, os.WriteFile(broken, []byte("nope\n"), 0o600))
 	regular := filepath.Join(files, "regular")
 	require.NoError(t, os.WriteFile(regular, nil, 0o600))
-	data := testkit.DemoDir(t)
 	agg := []string{"--kind", "meaning", "--scope-metric", "conversion_count", "--evidence-paragraph", "p#1"}
 	var (
 		proposeAgg    = append([]string{"propose", "--id", "k-agg", "--content", "time bases differ"}, agg...)
@@ -43,12 +44,39 @@ func TestRunKnowledge(t *testing.T) {
 		approveAggV2  = []string{"approve", "k-agg", "--version", "2", "--approver", "reviewer"}
 		secondVersion = [][]string{proposeAgg, approveAgg, proposeAggV2, approveAggV2}
 		checkTracking = []string{"propose", "--id", "k-t", "--kind", "judgment", "--content", "check tracking"}
+		proposeSed    = []string{
+			"propose", "--id", "k-sed", "--kind", "judgment", "--content", "never edit files with sed -i",
+			"--evidence-paragraph", "p#1", "--veto-tool", "Bash", "--veto-field", "command", "--veto-match", `sed\s+-i`,
+			"--veto-example", `{"command":"sed -i s/a/b/ f"}`,
+		}
+		proposeSedNotJSON = []string{
+			"propose", "--id", "k-sed", "--kind", "judgment", "--content", "never edit files with sed -i",
+			"--evidence-paragraph", "p#1", "--veto-tool", "Bash", "--veto-field", "command", "--veto-match", `sed\s+-i`,
+			"--veto-example", "sed -i",
+		}
+		proposeSedMissed = []string{
+			"propose", "--id", "k-sed", "--kind", "judgment", "--content", "never edit files with sed -i",
+			"--evidence-paragraph", "p#1", "--veto-tool", "Bash", "--veto-field", "command", "--veto-match", `sed\s+-i`,
+			"--veto-example", `{"command":"ls"}`,
+		}
+		approveSed = []string{"approve", "k-sed", "--version", "1", "--approver", "reviewer"}
+		retireSed  = []string{"retire", "k-sed", "--version", "1", "--approver", "reviewer"}
+		hooked     = `{"hooks":{"PreToolUse":[{"matcher":"*","hooks":[{"type":"command","command":"/bin/nodloop guard"}]}]}}`
+		vetoes     = "vetoes\t1 approved in .*/\\.claude/nodloop/vetoes\\.approved\\.[0-9a-f]+\\.yaml\t"
+		unhooked   = "guard hook not installed\\. Run nodloop guard install to enforce them\n"
 	)
 	type args struct {
 		// Commands that must succeed before the one under test
 		// The record dir holds the diagnose trace d1 and the context trace c1
 		setup [][]string
 		args  []string
+		// HOME for the run
+		// `{home}` is a temp dir and empty means no home
+		home string
+		// Files under the temp home keyed by relative path such as `.claude/settings.json`
+		files map[string]string
+		// Content of `policy.yaml` in the data dir
+		policy string
 	}
 	type want struct {
 		code int
@@ -64,166 +92,272 @@ func TestRunKnowledge(t *testing.T) {
 	}{
 		{
 			"propose without evidence fails",
-			args{nil, []string{"propose", "--id", "k-new", "--kind", "meaning", "--content", "time bases differ"}},
+			args{args: []string{"propose", "--id", "k-new", "--kind", "meaning", "--content", "time bases differ"}},
 			want{1, `^$`, `^nodloop knowledge: ` + knowledge.ErrEvidenceRequired.Error()},
 		},
-		{"propose adds a candidate", args{nil, proposeAgg}, want{0, "^k-agg\tv1\tcandidate\n$", `^$`}},
+		{
+			"propose adds a candidate",
+			args{args: proposeAgg},
+			want{0, "^k-agg\tv1\tcandidate\nfolder\t[0-9]+ of 4000 chars\tno other item\n$", `^$`},
+		},
 		{
 			"propose without an id generates one",
-			args{nil, []string{"propose", "--kind", "meaning", "--content", "time bases differ", "--evidence-paragraph", "p#1"}},
-			want{0, "^k-[0-9a-f]+\tv1\tcandidate\n$", `^$`},
+			args{
+				setup: nil,
+				args:  []string{"propose", "--kind", "meaning", "--content", "time bases differ", "--evidence-paragraph", "p#1"},
+			},
+			want{0, "^k-[0-9a-f]+\tv1\tcandidate\nfolder\t[0-9]+ of 4000 chars\tno other item\n$", `^$`},
 		},
 		{
 			"propose lists overlaps",
-			args{[][]string{proposeAgg}, proposeAgg2},
-			want{0, "^k-agg2\tv1\tcandidate\noverlaps\tk-agg\tv1\tcandidate\n$", `^$`},
+			args{setup: [][]string{proposeAgg}, args: proposeAgg2},
+			want{
+				0, "^k-agg2\tv1\tcandidate\noverlaps\tk-agg\tv1\tcandidate\nfolder\t[0-9]+ of 4000 chars\tno other item\n$", `^$`,
+			},
 		},
 		{
 			"propose of a known id adds the next version",
-			args{[][]string{proposeAgg}, proposeAggV2},
-			want{0, "^k-agg\tv2\tcandidate\n$", `^$`},
+			args{setup: [][]string{proposeAgg}, args: proposeAggV2},
+			want{0, "^k-agg\tv2\tcandidate\nfolder\t[0-9]+ of 4000 chars\tno other item\n$", `^$`},
 		},
 		{
 			"propose takes the trace as feedback evidence",
-			args{nil, append(checkTracking, "--trace", "d1", "--scope-context", "launch", "--exception", "other")},
-			want{0, "^k-t\tv1\tcandidate\n$", `^$`},
+			args{args: append(checkTracking, "--trace", "d1", "--scope-context", "launch", "--exception", "other")},
+			want{0, "^k-t\tv1\tcandidate\nfolder\t[0-9]+ of 4000 chars\tno other item\n$", `^$`},
 		},
 		{
 			"propose with an unknown trace fails",
-			args{nil, append(checkTracking, "--trace", "nope")},
+			args{args: append(checkTracking, "--trace", "nope")},
 			want{1, `^$`, `^nodloop knowledge: trace "nope": ` + trace.ErrNotFound.Error() + `\n$`},
 		},
 		{
 			"propose with a context trace as outcome evidence fails",
-			args{nil, append(checkTracking, "--evidence-outcome", "c1")},
+			args{args: append(checkTracking, "--evidence-outcome", "c1")},
 			want{1, `^$`, `^nodloop knowledge: .*not a diagnose trace: c1 is a context trace\n$`},
 		},
 		{
 			"approve without an approver fails",
-			args{[][]string{proposeAgg}, []string{"approve", "k-agg", "--version", "1"}},
+			args{setup: [][]string{proposeAgg}, args: []string{"approve", "k-agg", "--version", "1"}},
 			want{1, `^$`, `^nodloop knowledge: approve: an id, --version and --approver is required\n\nusage:`},
 		},
 		{
 			"approve names the approver",
-			args{[][]string{proposeAgg}, approveAgg},
+			args{setup: [][]string{proposeAgg}, args: approveAgg},
 			want{0, "^k-agg\tv1\tapproved\treviewer\n$", `^$`},
 		},
 		{
 			"approve twice fails",
-			args{[][]string{proposeAgg, approveAgg}, approveAgg},
+			args{setup: [][]string{proposeAgg, approveAgg}, args: approveAgg},
 			want{1, `^$`, `^nodloop knowledge: .*cannot become`},
 		},
 		{
 			"approve of the second version",
-			args{[][]string{proposeAgg, approveAgg, proposeAggV2}, approveAggV2},
+			args{setup: [][]string{proposeAgg, approveAgg, proposeAggV2}, args: approveAggV2},
 			want{0, "^k-agg\tv2\tapproved\treviewer\n$", `^$`},
 		},
 		{
 			"list shows only the current version",
-			args{secondVersion, []string{"list"}},
+			args{setup: secondVersion, args: []string{"list"}},
 			want{0, "^k-agg\tv2\tapproved\tmeaning\ttime bases differ by an hour\n$", `^$`},
 		},
 		{
 			"list filters by status and kind",
 			args{
-				[][]string{proposeAgg, approveAgg, proposeAgg2},
-				[]string{"list", "--status", "candidate", "--kind", "meaning"},
+				setup: [][]string{proposeAgg, approveAgg, proposeAgg2},
+				args:  []string{"list", "--status", "candidate", "--kind", "meaning"},
 			},
 			want{0, "^k-agg2\tv1\tcandidate\tmeaning\ta second item\n$", `^$`},
 		},
 		{
 			"show keeps the superseded first version",
-			args{secondVersion, []string{"show", "k-agg"}},
+			args{setup: secondVersion, args: []string{"show", "k-agg"}},
 			want{0, `"status": "superseded"`, `^$`},
 		},
 		{
 			"show links the second version to the first",
-			args{secondVersion, []string{"show", "k-agg"}},
+			args{setup: secondVersion, args: []string{"show", "k-agg"}},
 			want{0, `"supersedes": 1`, `^$`},
 		},
 		{
 			"show of an unknown id fails",
-			args{nil, []string{"show", "nope"}},
+			args{args: []string{"show", "nope"}},
 			want{1, `^$`, `^nodloop knowledge: .*not found`},
 		},
 		{
 			"show without an id fails",
-			args{nil, []string{"show"}},
+			args{args: []string{"show"}},
 			want{1, `^$`, `^nodloop knowledge: an id is required\n\nusage:`},
 		},
 		{
 			"overlaps lists items of the same scope",
-			args{[][]string{proposeAgg, proposeAgg2}, []string{"overlaps", "k-agg"}},
+			args{setup: [][]string{proposeAgg, proposeAgg2}, args: []string{"overlaps", "k-agg"}},
 			want{0, "^k-agg2\tv1\tcandidate\ta second item\n$", `^$`},
 		},
 		{
 			"overlaps of an unknown id fails",
-			args{nil, []string{"overlaps", "nope"}},
+			args{args: []string{"overlaps", "nope"}},
 			want{1, `^$`, `^nodloop knowledge: .*not found`},
 		},
 		{
 			"overlaps without an id fails",
-			args{nil, []string{"overlaps"}},
+			args{args: []string{"overlaps"}},
 			want{1, `^$`, `^nodloop knowledge: an id is required\n\nusage:`},
 		},
 		{
 			"retire marks the item retired",
-			args{[][]string{proposeAgg2}, []string{"retire", "k-agg2", "--version", "1", "--approver", "reviewer"}},
+			args{
+				setup: [][]string{proposeAgg2},
+				args:  []string{"retire", "k-agg2", "--version", "1", "--approver", "reviewer"},
+			},
 			want{0, "^k-agg2\tv1\tretired\treviewer\n$", `^$`},
 		},
 		{
 			"retire without a version fails",
-			args{nil, []string{"retire", "k-agg2", "--approver", "reviewer"}},
+			args{args: []string{"retire", "k-agg2", "--approver", "reviewer"}},
 			want{1, `^$`, `^nodloop knowledge: retire: an id, --version and --approver is required\n\nusage:`},
 		},
 		{
 			"retire of an unknown id fails",
-			args{nil, []string{"retire", "nope", "--version", "1", "--approver", "reviewer"}},
+			args{args: []string{"retire", "nope", "--version", "1", "--approver", "reviewer"}},
 			want{1, `^$`, `^nodloop knowledge: .*not found`},
 		},
 		{
 			"import appends the records of a file",
-			args{nil, []string{"import", "--file", valid}},
+			args{args: []string{"import", "--file", valid}},
 			want{0, "^imported 1\n$", `^$`},
 		},
 		{
 			"import without a file fails",
-			args{nil, []string{"import"}},
+			args{args: []string{"import"}},
 			want{1, `^$`, `^nodloop knowledge: --file is required\n\nusage:`},
 		},
 		{
 			"import of a missing file fails",
-			args{nil, []string{"import", "--file", filepath.Join(files, "missing.jsonl")}},
+			args{args: []string{"import", "--file", filepath.Join(files, "missing.jsonl")}},
 			want{1, `^$`, `^nodloop knowledge: stat .*missing.jsonl: no such file or directory\n$`},
 		},
 		{
 			"import of a broken file fails",
-			args{nil, []string{"import", "--file", broken}},
+			args{args: []string{"import", "--file", broken}},
 			want{1, `^$`, `^nodloop knowledge: broken.jsonl line 1`},
 		},
 		{
 			"import of an invalid record fails",
-			args{nil, []string{"import", "--file", invalid}},
+			args{args: []string{"import", "--file", invalid}},
 			want{1, `^$`, `^nodloop knowledge: .*invalid.jsonl: record 1`},
 		},
 		{
 			"record dir that is a file fails",
-			args{nil, []string{"list", "--record-dir", regular}},
+			args{args: []string{"list", "--record-dir", regular}},
 			want{1, `^$`, `^nodloop knowledge: record dir: `},
 		},
 		{
 			"unknown source fails",
-			args{nil, []string{"list", "--source", "postgres"}},
+			args{args: []string{"list", "--source", "postgres"}},
 			want{1, `^$`, `^nodloop knowledge: unknown source: "postgres"\n$`},
 		},
 		{
+			"propose with a veto adds a judgment that carries it",
+			args{args: proposeSed},
+			want{
+				0,
+				"^k-sed\tv1\tcandidate\nveto\tBash\tcommand matches sed\\\\s\\+-i unless \"\"\n" +
+					"folder\t[0-9]+ of 4000 chars\tno other item\n$",
+				`^$`,
+			},
+		},
+		{
+			"propose with a veto example that is not JSON fails",
+			args{args: proposeSedNotJSON},
+			want{1, `^$`, `^nodloop knowledge: veto example is not a JSON object: --veto-example: invalid character`},
+		},
+		{
+			"propose with a veto that lets its example through fails",
+			args{args: proposeSedMissed},
+			want{1, `^$`, `^nodloop knowledge: ` + knowledge.ErrVetoExample.Error() + `\n$`},
+		},
+		{
+			"approve of a veto says the guard hook is not installed",
+			args{setup: [][]string{proposeSed}, args: approveSed, home: "{home}"},
+			want{0, "^k-sed\tv1\tapproved\treviewer\n" + vetoes + unhooked + "$", `^$`},
+		},
+		{
+			"approve of a veto says the guard hook is installed",
+			args{
+				setup: [][]string{proposeSed}, args: approveSed, home: "{home}",
+				files: map[string]string{".claude/settings.json": hooked},
+			},
+			want{0, "^k-sed\tv1\tapproved\treviewer\n" + vetoes + "guard hook installed\n$", `^$`},
+		},
+		{
+			"approve of a veto with a broken settings file says the hook state is unknown",
+			args{
+				setup: [][]string{proposeSed}, args: approveSed, home: "{home}",
+				files: map[string]string{".claude/settings.json": "{"},
+			},
+			want{0, "^k-sed\tv1\tapproved\treviewer\n" + vetoes + "guard hook unknown: settings file: not valid JSON", `^$`},
+		},
+		{
+			"retire of the only veto says none is left",
+			args{setup: [][]string{proposeSed, approveSed}, args: retireSed, home: "{home}"},
+			want{0, "^k-sed\tv1\tretired\treviewer\nvetoes\t0 approved in .*\t" + unhooked + "$", `^$`},
+		},
+		{
+			"retire of a candidate with a veto says nothing about vetoes",
+			args{setup: [][]string{proposeSed}, args: retireSed, home: "{home}"},
+			want{0, "^k-sed\tv1\tretired\treviewer\n$", `^$`},
+		},
+		{
+			"approve of a veto without a home says it was not exported",
+			args{setup: [][]string{proposeSed}, args: approveSed},
+			want{0, "^k-sed\tv1\tapproved\treviewer\nvetoes\tnot exported because the home directory is unknown\n$", `^$`},
+		},
+		{
+			"approve of a veto whose export fails prints the approval and the error",
+			args{
+				setup: [][]string{proposeSed}, args: approveSed, home: "{home}",
+				files: map[string]string{".claude/nodloop": ""},
+			},
+			want{
+				1, "^k-sed\tv1\tapproved\treviewer\n$",
+				`^nodloop knowledge: knowledge: vetoes were not exported: k-sed v1 is approved: .*failed to write veto file`,
+			},
+		},
+		{
+			"export writes the approved vetoes again",
+			args{setup: [][]string{proposeSed, approveSed}, args: []string{"export"}, home: "{home}"},
+			want{0, "^" + vetoes + unhooked + "$", `^$`},
+		},
+		{
+			"approve of an item whose folder may outgrow the knowledge cap of the policy is refused",
+			args{
+				setup:  [][]string{proposeAgg, approveAgg, proposeAgg2},
+				args:   []string{"approve", "k-agg2", "--version", "1", "--approver", "reviewer"},
+				policy: "limits:\n  knowledge_chars: 100\n",
+			},
+			want{
+				1, `^$`,
+				`^nodloop knowledge: knowledge: folder may outgrow the review: 137 of 100 chars with k-agg v1 70 chars\n$`,
+			},
+		},
+		{
+			"a broken analyzer in the policy never blocks a knowledge command",
+			args{setup: [][]string{proposeAgg2}, args: []string{"list"}, policy: "version: v\nanalyzers:\n  - rule: nope\n"},
+			want{0, "^k-agg2\tv1\tcandidate\tmeaning\ta second item\n$", `^$`},
+		},
+		{
+			"a broken limits section fails",
+			args{args: []string{"list"}, policy: "limits: ["},
+			want{1, `^$`, `^nodloop knowledge: ` + regexp.QuoteMeta(diagnose.ErrBadLimits.Error())},
+		},
+		{
 			"unknown flag fails",
-			args{nil, []string{"list", "--nope"}},
+			args{args: []string{"list", "--nope"}},
 			want{1, `^$`, `^flag provided but not defined: -nope\n`},
 		},
 		{
 			"unknown action fails",
-			args{nil, []string{"bogus"}},
+			args{args: []string{"bogus"}},
 			want{1, `^$`, `^nodloop knowledge: unknown action "bogus"\n\nusage:`},
 		},
 	}
@@ -237,8 +371,17 @@ func TestRunKnowledge(t *testing.T) {
 			require.NoError(t, err)
 			require.NoError(t, traces.Append(ctx, trace.Trace{ID: "d1", Name: trace.NameDiagnose, Time: at}))
 			require.NoError(t, traces.Append(ctx, trace.Trace{ID: "c1", Name: trace.NameContext, Time: at}))
+			// The files always go to a temp dir and a row without a home leaves HOME empty
+			dir := t.TempDir()
+			for rel, content := range tc.args.files {
+				require.NoError(t, os.MkdirAll(filepath.Dir(filepath.Join(dir, rel)), 0o700))
+				require.NoError(t, os.WriteFile(filepath.Join(dir, rel), []byte(content), 0o600))
+			}
+			home := strings.NewReplacer("{home}", dir).Replace(tc.args.home)
+			data := t.TempDir()
+			require.NoError(t, os.WriteFile(filepath.Join(data, "policy.yaml"), []byte(tc.args.policy), 0o600))
 			getenv := func(k string) string {
-				return map[string]string{envFileDir: data, envRecordDir: records}[k]
+				return map[string]string{envFileDir: data, envRecordDir: records, "HOME": home}[k]
 			}
 			now := testkit.Open(t).Clock.Now
 			var stderr bytes.Buffer
@@ -253,6 +396,45 @@ func TestRunKnowledge(t *testing.T) {
 			assert.Equal(t, tc.want.code, got)
 			assert.Regexp(t, tc.want.stdout, stdout.String())
 			assert.Regexp(t, tc.want.stderr, stderr.String())
+		})
+	}
+}
+
+// The loop a correction closes: a judgment with a veto is approved and the next matching tool call is blocked
+func TestApprovedVetoBlocksTheCall(t *testing.T) {
+	t.Parallel()
+	tcs := []struct {
+		name string
+		args string
+		want int
+	}{
+		{"the example of the approved veto is blocked", `{"command":"sed -i s/a/b/ f"}`, 2},
+		{"a call the veto does not match passes", `{"command":"sed s/a/b/ f"}`, 0},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			home, records := t.TempDir(), t.TempDir()
+			getenv := func(k string) string {
+				return map[string]string{envFileDir: testkit.DemoDir(t), envRecordDir: records, "HOME": home}[k]
+			}
+			now := testkit.Open(t).Clock.Now
+			var stderr bytes.Buffer
+			for _, args := range [][]string{
+				{
+					"propose", "--id", "k-sed", "--kind", "judgment", "--content", "never edit files with sed -i",
+					"--evidence-paragraph", "p#1", "--veto-tool", "Bash", "--veto-field", "command",
+					"--veto-match", `sed\s+-i`, "--veto-example", `{"command":"sed -i x f"}`,
+				},
+				{"approve", "k-sed", "--version", "1", "--approver", "reviewer"},
+			} {
+				require.Equal(t, 0, runKnowledge(args, getenv, now, io.Discard, &stderr), stderr.String())
+			}
+			input := `{"tool_name":"Bash","cwd":"` + t.TempDir() + `","tool_input":` + tc.args + `}`
+
+			got := runGuard(nil, getenv, strings.NewReader(input), io.Discard, &stderr)
+
+			assert.Equal(t, tc.want, got)
 		})
 	}
 }

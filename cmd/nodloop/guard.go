@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 
 	"github.com/jeon-jihyeon/nodloop/internal/guard"
 	settingsfile "github.com/jeon-jihyeon/nodloop/internal/settings/file"
@@ -142,5 +141,5 @@ func (c guardCommand) settingsPath() (string, error) {
 	if c.home == "" {
 		return "", fmt.Errorf("%w: cannot locate settings.json", errHomeUnknown)
 	}
-	return filepath.Join(string(c.home), ".claude", "settings.json"), nil
+	return c.home.settingsPath(), nil
 }

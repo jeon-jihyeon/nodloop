@@ -22,6 +22,7 @@ import (
 	"github.com/jeon-jihyeon/nodloop/internal/llm"
 	"github.com/jeon-jihyeon/nodloop/internal/mcp"
 	tracefile "github.com/jeon-jihyeon/nodloop/internal/trace/file"
+	vetofile "github.com/jeon-jihyeon/nodloop/internal/veto/file"
 )
 
 // Repeatable string flag
@@ -73,12 +74,9 @@ func (a app) source() (*evidencefile.Source, error) {
 // analysis parses the analyzers and diagnose the limits section of the same bytes
 // The demo policy and default limits when the file is absent
 func (a app) policy() (analysis.Policy, diagnose.Limits, error) {
-	b, err := os.ReadFile(filepath.Join(a.cfg.dataDir, "policy.yaml"))
-	if errors.Is(err, os.ErrNotExist) {
-		return analysis.DefaultPolicy(), diagnose.Limits{}, nil
-	}
-	if err != nil {
-		return analysis.Policy{}, diagnose.Limits{}, err
+	b, err := a.policyBytes()
+	if err != nil || b == nil {
+		return analysis.DefaultPolicy(), diagnose.Limits{}, err
 	}
 	policy, err := analysis.LoadPolicy(b)
 	if err != nil {
@@ -89,6 +87,24 @@ func (a app) policy() (analysis.Policy, diagnose.Limits, error) {
 		return analysis.Policy{}, diagnose.Limits{}, err
 	}
 	return policy, limits, nil
+}
+
+// Only the limits section so a broken analyzer never blocks a knowledge command
+func (a app) limits() (diagnose.Limits, error) {
+	b, err := a.policyBytes()
+	if err != nil || b == nil {
+		return diagnose.Limits{}, err
+	}
+	return diagnose.LoadLimits(b)
+}
+
+// Nil bytes and no error when the file is absent
+func (a app) policyBytes() ([]byte, error) {
+	b, err := os.ReadFile(filepath.Join(a.cfg.dataDir, "policy.yaml"))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	return b, err
 }
 
 func (a app) makeRecordDir() (string, error) {
@@ -130,15 +146,25 @@ func (a app) ledger() (*knowledge.Ledger, error) {
 	if err != nil {
 		return nil, err
 	}
-	return a.ledgerIn(dir)
+	limits, err := a.limits()
+	if err != nil {
+		return nil, err
+	}
+	return a.ledgerIn(dir, limits.KnowledgeCap())
 }
 
-func (a app) ledgerIn(dir string) (*knowledge.Ledger, error) {
+// Approved vetoes of the record directory under home
+func (a app) vetoFile(dir string) *vetofile.ApprovedFile {
+	return vetofile.NewApprovedFile(string(a.cfg.home), dir)
+}
+
+// budget is the knowledge cap reviews are cut at so a full folder is one whose review may be cut
+func (a app) ledgerIn(dir string, budget int) (*knowledge.Ledger, error) {
 	store, err := knowledgefile.New(dir)
 	if err != nil {
 		return nil, err
 	}
-	return knowledge.NewLedger(store, a.now, a.knowledgeID), nil
+	return knowledge.NewLedger(store, a.vetoFile(dir), budget, a.now, a.knowledgeID), nil
 }
 
 // Clock milliseconds in hex and two random bytes so two proposals in one millisecond differ
@@ -206,7 +232,7 @@ func (a app) pipeline() (pipeline, error) {
 	if err != nil {
 		return pipeline{}, err
 	}
-	ledger, err := a.ledgerIn(dir)
+	ledger, err := a.ledgerIn(dir, limits.KnowledgeCap())
 	if err != nil {
 		return pipeline{}, err
 	}

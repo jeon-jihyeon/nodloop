@@ -226,3 +226,41 @@ func TestEditOfAnUnusablePath(t *testing.T) {
 		})
 	}
 }
+
+func TestInstalled(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join("testdata", "installed.json"))
+	require.NoError(t, err)
+	installed := string(b)
+	b, err = os.ReadFile(filepath.Join("testdata", "existing.json"))
+	require.NoError(t, err)
+	existing := string(b)
+	type want struct {
+		installed bool
+		err       error
+	}
+	tcs := []struct {
+		name string
+		// Files in the directory keyed by name. settings.json is the one read
+		args map[string]string
+		want want
+	}{
+		{"settings with the hook report it installed", map[string]string{"settings.json": installed}, want{true, nil}},
+		{"settings without the hook report it missing", map[string]string{"settings.json": existing}, want{false, nil}},
+		{"no settings file reports it missing", map[string]string{}, want{false, nil}},
+		{"broken settings fail", map[string]string{"settings.json": "{"}, want{false, file.ErrJSONInvalid}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			for name, content := range tc.args {
+				require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte(content), 0o600))
+			}
+
+			got, err := file.Installed(filepath.Join(dir, "settings.json"))
+
+			assert.ErrorIs(t, err, tc.want.err)
+			assert.Equal(t, tc.want.installed, got)
+		})
+	}
+}

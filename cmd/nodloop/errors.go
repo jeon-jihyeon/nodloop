@@ -13,6 +13,7 @@ var (
 	errConfigInvalid    = errors.New(configFile + " is not valid JSON")
 	errUnexpectedOutput = errors.New("unexpected output")
 	errWrongAnswer      = errors.New("wrong answer")
+	errVetoExample      = errors.New("veto example is not a JSON object")
 )
 
 // A command that cannot run as asked
