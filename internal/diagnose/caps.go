@@ -8,14 +8,15 @@ import (
 	"unicode/utf8"
 
 	"go.yaml.in/yaml/v3"
+
+	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 )
 
 // Sized so knowledge and examples together stay under a fifth of a demo context of about 50k characters
 // Ten candidates fit one screen when Claude Code lists them for the user
 const (
-	defaultKnowledgeChars = 4000
-	defaultExampleChars   = 6000
-	defaultCandidates     = 10
+	defaultExampleChars = 6000
+	defaultCandidates   = 10
 )
 
 // How much a review context carries
@@ -39,10 +40,15 @@ func LoadLimits(b []byte) (Limits, error) {
 	return file.Limits, nil
 }
 
+// The knowledge cap after the defaults so the ledger budgets folders with the cap reviews are cut at
+func (l Limits) KnowledgeCap() int {
+	return l.withDefaults().KnowledgeChars
+}
+
 // Defaults fill the limits the policy file leaves out
 func (l Limits) withDefaults() Limits {
 	if l.KnowledgeChars <= 0 {
-		l.KnowledgeChars = defaultKnowledgeChars
+		l.KnowledgeChars = knowledge.ReviewChars
 	}
 	if l.ExampleChars <= 0 {
 		l.ExampleChars = defaultExampleChars
@@ -59,7 +65,7 @@ func (l Limits) fit(selector Selector, items []chosenKnowledge, examples []chose
 	selected := selectInput{Selector: selector, Knowledge: []AppliedKnowledge{}, Examples: []appliedExample{}}
 	knowledgeTexts := make([]block, len(items))
 	for i, k := range items {
-		knowledgeTexts[i] = block{body: k.render()}
+		knowledgeTexts[i] = block{body: k.Text()}
 	}
 	knowledgeText, knowledgeSizes := budget(l.KnowledgeChars).section(knowledgeHeading, knowledgeNotice, knowledgeTexts)
 	for i, k := range items {

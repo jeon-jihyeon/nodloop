@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -469,20 +470,42 @@ func TestServerProposeAndApprove(t *testing.T) {
 		id     string
 		kind   knowledge.Kind
 		author string
+		// A metric of its own per case so no two cases share a folder or overlap
+		metric string
+		// The veto input as a client sends it
+		veto map[string]any
 	}
-	type answer struct {
+	type folder struct {
+		Chars  int      `json:"chars"`
+		Budget int      `json:"budget"`
+		Full   bool     `json:"full"`
+		Items  []string `json:"items"`
+	}
+	type proposal struct {
 		ID       string                `json:"id"`
 		Version  int                   `json:"version"`
 		Status   knowledge.Status      `json:"status"`
-		Approver string                `json:"approver"`
 		Overlaps []knowledge.Knowledge `json:"overlaps"`
+		Folder   folder                `json:"folder"`
+		Veto     *knowledge.Veto       `json:"veto"`
+	}
+	type approval struct {
+		ID       string           `json:"id"`
+		Version  int              `json:"version"`
+		Status   knowledge.Status `json:"status"`
+		Approver string           `json:"approver"`
+		Veto     bool             `json:"veto"`
 	}
 	type want struct {
-		proposed answer
-		approved answer
+		proposed proposal
+		approved approval
 		author   string
 	}
-	// The cases differ in kind so neither overlaps the other
+	sed := &knowledge.Veto{
+		Tool:    "Bash",
+		When:    []knowledge.VetoCondition{{Field: "command", Match: `sed\s+-i`}},
+		Example: map[string]any{"command": "sed -i s/a/b/ f"},
+	}
 	tcs := []struct {
 		name string
 		args args
@@ -490,50 +513,121 @@ func TestServerProposeAndApprove(t *testing.T) {
 	}{
 		{
 			name: "a candidate without an author is proposed by claude and approved by the named person",
-			args: args{id: "k-tracking", kind: knowledge.KindJudgment},
+			args: args{id: "k-tracking", kind: knowledge.KindJudgment, metric: "click_count_tracking"},
 			want: want{
-				proposed: answer{
+				proposed: proposal{
 					ID: "k-tracking", Version: 1, Status: knowledge.StatusCandidate, Overlaps: []knowledge.Knowledge{},
+					Folder: folder{Chars: 120, Budget: 4000, Items: []string{}},
 				},
-				approved: answer{ID: "k-tracking", Version: 1, Status: knowledge.StatusApproved, Approver: "reviewer"},
+				approved: approval{ID: "k-tracking", Version: 1, Status: knowledge.StatusApproved, Approver: "reviewer"},
 				author:   "claude",
 			},
 		},
 		{
 			name: "a candidate keeps the author the caller names",
-			args: args{id: "k-meaning", kind: knowledge.KindMeaning, author: "user"},
+			args: args{id: "k-meaning", kind: knowledge.KindMeaning, author: "user", metric: "click_count_meaning"},
 			want: want{
-				proposed: answer{ID: "k-meaning", Version: 1, Status: knowledge.StatusCandidate, Overlaps: []knowledge.Knowledge{}},
-				approved: answer{ID: "k-meaning", Version: 1, Status: knowledge.StatusApproved, Approver: "reviewer"},
+				proposed: proposal{
+					ID: "k-meaning", Version: 1, Status: knowledge.StatusCandidate, Overlaps: []knowledge.Knowledge{},
+					Folder: folder{Chars: 117, Budget: 4000, Items: []string{}},
+				},
+				approved: approval{ID: "k-meaning", Version: 1, Status: knowledge.StatusApproved, Approver: "reviewer"},
 				author:   "user",
 			},
 		},
+		{
+			name: "a judgment with a veto shows the veto before approval and says so after",
+			args: args{id: "k-no-sed", kind: knowledge.KindJudgment, metric: "click_count_no_sed", veto: map[string]any{
+				"tool":    "Bash",
+				"when":    []map[string]any{{"field": "command", "match": `sed\s+-i`}},
+				"example": map[string]any{"command": "sed -i s/a/b/ f"},
+			}},
+			want: want{
+				proposed: proposal{
+					ID: "k-no-sed", Version: 1, Status: knowledge.StatusCandidate, Overlaps: []knowledge.Knowledge{},
+					Folder: folder{Chars: 116, Budget: 4000, Items: []string{}}, Veto: sed,
+				},
+				approved: approval{
+					ID: "k-no-sed", Version: 1, Status: knowledge.StatusApproved, Approver: "reviewer", Veto: true,
+				},
+				author: "claude",
+			},
+		},
 	}
-	scope := knowledge.Scope{Metrics: []string{"click_count"}, Dims: map[string]string{"platform": "ios"}}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			var proposed answer
+			scope := knowledge.Scope{Metrics: []string{tc.args.metric}, Dims: map[string]string{"platform": "ios"}}
 			in := map[string]any{
 				"id": tc.args.id, "kind": tc.args.kind, "content": "after a planned change check tracking first",
-				"metrics": scope.Metrics, "dims": scope.Dims, "trace_ids": []string{reviewed.TraceID}, "author": tc.args.author,
+				"metrics": scope.Metrics, "dims": scope.Dims, "trace_ids": []string{reviewed.TraceID},
+				"author": tc.args.author, "veto": tc.args.veto,
 			}
+			var proposed proposal
 			require.NoError(t, c.Call(t, "propose", in, &proposed))
-			var approved answer
-			approval := map[string]any{"id": tc.args.id, "version": 1, "approver": "reviewer"}
-			require.NoError(t, c.Call(t, "approve", approval, &approved))
+			var approved approval
+			approve := map[string]any{"id": tc.args.id, "version": 1, "approver": "reviewer"}
+			require.NoError(t, c.Call(t, "approve", approve, &approved))
 			stored, err := st.Ledger.Approved(ctx, tc.args.id, 1)
 			require.NoError(t, err)
+
 			assert.Equal(t, tc.want.proposed, proposed)
 			assert.Equal(t, tc.want.approved, approved)
 			assert.Equal(t, knowledge.Knowledge{
 				ID: tc.args.id, Version: 1, Kind: tc.args.kind, Content: "after a planned change check tracking first",
-				Scope: scope, Evidence: knowledge.Evidence{FeedbackTraceIDs: []string{reviewed.TraceID}}, Basis: stored.Basis,
-				Status: knowledge.StatusApproved, Approver: "reviewer", ApprovedAt: stored.ApprovedAt, Time: stored.Time,
-				Author: tc.want.author,
+				Scope: scope, Evidence: knowledge.Evidence{FeedbackTraceIDs: []string{reviewed.TraceID}},
+				Basis: knowledge.BasisStated, Status: knowledge.StatusApproved, Approver: "reviewer",
+				ApprovedAt: stored.ApprovedAt, Time: stored.Time, Author: tc.want.author, Veto: tc.want.proposed.Veto,
 			}, stored)
 		})
 	}
+}
+
+// One server so the second proposal sees the first approval in its folder
+func TestServerProposeFolder(t *testing.T) {
+	t.Parallel()
+	st := testkit.Open(t)
+	policy := analysis.DefaultPolicy()
+	diagnoser := diagnose.New(st.Source, policy, diagnose.Limits{}, nil, st.Traces, st.Feedback, st.Ledger, st.Clock.Now)
+	srv := mcp.New(st.Source, policy, diagnoser, st.Traces, st.Feedback, st.Outcomes, st.Ledger, st.Clock.Now, "test")
+	c := testkit.Connect(t, srv.ServeTransport)
+	type folder struct {
+		Chars  int      `json:"chars"`
+		Budget int      `json:"budget"`
+		Full   bool     `json:"full"`
+		Items  []string `json:"items"`
+	}
+	var answer struct {
+		Folder folder `json:"folder"`
+	}
+	scope := []string{"conversion_count"}
+	first := map[string]any{
+		"id": "k-first", "kind": "meaning", "content": "clicks count once per session", "metrics": scope,
+		"paragraph_ids": []string{"p#1"},
+	}
+	require.NoError(t, c.Call(t, "propose", first, &answer))
+	require.NoError(t, c.Call(t, "approve", map[string]any{"id": "k-first", "version": 1, "approver": "jed"}, &answer))
+
+	next := map[string]any{
+		"id": "k-second", "kind": "meaning", "content": "conversions arrive late", "metrics": scope,
+		"paragraph_ids": []string{"p#1"},
+	}
+	require.NoError(t, c.Call(t, "propose", next, &answer))
+	second := answer.Folder
+	// Its text alone nearly fills the budget so the folder with k-first overflows it
+	large := map[string]any{
+		"id": "k-large", "kind": "meaning", "content": strings.Repeat("x", 3950), "metrics": scope,
+		"paragraph_ids": []string{"p#1"},
+	}
+	require.NoError(t, c.Call(t, "propose", large, &answer))
+	full := answer.Folder
+	err := c.Call(t, "approve", map[string]any{"id": "k-large", "version": 1, "approver": "jed"}, &answer)
+
+	assert.Equal(t, folder{Chars: 163, Budget: 4000, Items: []string{"k-first"}}, second)
+	assert.Equal(t, folder{Chars: 4089, Budget: 4000, Full: true, Items: []string{"k-first"}}, full)
+	assert.ErrorIs(t, err, testkit.ErrTool)
+	assert.EqualError(t, err, testkit.ErrTool.Error()+
+		": knowledge: folder may outgrow the review: 4089 of 4000 chars with k-first v1 84 chars")
 }
 
 // The answers are captured from the demo data and from a fixture event with more rows than the limit

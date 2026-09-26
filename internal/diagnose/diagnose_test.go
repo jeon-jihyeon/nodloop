@@ -27,6 +27,7 @@ import (
 	"github.com/jeon-jihyeon/nodloop/internal/testkit"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
 	tracefile "github.com/jeon-jihyeon/nodloop/internal/trace/file"
+	vetofile "github.com/jeon-jihyeon/nodloop/internal/veto/file"
 )
 
 func TestDiagnosisJSON(t *testing.T) {
@@ -1082,7 +1083,10 @@ func TestRunStoreFailure(t *testing.T) {
 			require.NoError(t, err)
 			verdicts, err := feedbackfile.New(dir)
 			require.NoError(t, err)
-			ledger := knowledge.NewLedger(items, s.Clock.Now, func() string { return "k-generated" })
+			ledger := knowledge.NewLedger(
+				items, vetofile.NewApprovedFile(t.TempDir(), "records"), knowledge.ReviewChars,
+				s.Clock.Now, func() string { return "k-generated" },
+			)
 			reviewer := diagnose.New(
 				s.Source, analysis.DefaultPolicy(), diagnose.Limits{}, nil, s.Traces, verdicts, ledger, s.Clock.Now,
 			)
@@ -1110,7 +1114,10 @@ func TestRunStoreFailure(t *testing.T) {
 				Store: verdicts,
 				Reads: testkit.Reads{Allowed: tc.args.feedbackReads, Err: assert.AnError},
 			}
-			flakyLedger := knowledge.NewLedger(flakyKnowledge, s.Clock.Now, func() string { return "k-generated" })
+			flakyLedger := knowledge.NewLedger(
+				flakyKnowledge, vetofile.NewApprovedFile(t.TempDir(), "records"), knowledge.ReviewChars,
+				s.Clock.Now, func() string { return "k-generated" },
+			)
 			client := llmmock.NewMockClient(gomock.NewController(t))
 			d := diagnose.New(
 				s.Source, analysis.DefaultPolicy(), diagnose.Limits{}, client, s.Traces, flakyFeedback, flakyLedger, s.Clock.Now,

@@ -29,6 +29,16 @@ func Uninstall(path string) (changed bool, err error) {
 	return edit(path, func(d settings.Document) (bool, error) { return d.Uninstall(), nil })
 }
 
+// Whether `settings.json` registers the nodloop hook
+// A missing file registers nothing
+func Installed(path string) (bool, error) {
+	_, doc, err := load(path)
+	if err != nil {
+		return false, err
+	}
+	return doc.Installed(), nil
+}
+
 // The bytes read once are the backup so a file that changed between read and write is never backed up as something else
 func edit(path string, change func(settings.Document) (bool, error)) (bool, error) {
 	raw, doc, err := load(path)

@@ -18,6 +18,7 @@ const usage = `usage: nodloop <command>
 commands:
   guard [--vetoes <path>]   PreToolUse hook. Reads hook input from stdin and blocks calls that match a veto.
                             Without --vetoes, loads .claude/nodloop/vetoes.yaml from the hook cwd and from $HOME
+                            and then every approved veto file under $HOME/.claude/nodloop
   guard check               Load veto files from the current directory and $HOME and report counts or errors
   guard install             Register this binary as a PreToolUse hook in ~/.claude/settings.json (backs up first)
   guard uninstall           Remove the hook registered by guard install
@@ -44,15 +45,19 @@ commands:
                             Record what a real check found: confirmed, refuted or inconclusive
   knowledge propose --kind <k> --content <text> [--id <id>] [--basis stated or verified] [--author <a>] [--scope-context <c>] [--scope-metric <m>] [--exception <c>]
                     [--evidence-paragraph <id>] [--evidence-feedback <id>] [--evidence-outcome <id>] [--trace <id>]
+                    [--veto-tool <t> --veto-field <f> --veto-match <re> [--veto-unless <re>] --veto-example <json>]
                             Add a candidate knowledge record and list its overlaps. The author is "author" unless given
+                            A judgment with a veto becomes a guard veto once approved
   knowledge list [--status <s>] [--kind <k>]
                             Current version per id
   knowledge show <id>       Every record of one id
   knowledge overlaps <id>   Current items of the same kind with an intersecting scope
   knowledge approve <id> --version <n> --approver <name>
+                            Refused when its folder may outgrow the review. Retire or replace an item or narrow the scope
   knowledge retire <id> --version <n> --approver <name>
   knowledge import --file <jsonl>
                             Append records from a file, such as the demo knowledge
+  knowledge export          Write the approved vetoes again after a failed export
   diagnose --event <id> [--examples <n>] [--knowledge none or selected or all] [--model <m>] [--session <s>] [--tag <t>]
                             Batch review of one event through claude -p. JSON on stdout and the trace id on stderr
   mcp                       Serve the MCP tools on stdio. --list prints the tool names without opening any data

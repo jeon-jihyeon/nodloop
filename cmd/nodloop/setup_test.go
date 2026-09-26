@@ -40,13 +40,16 @@ func TestRunSetup(t *testing.T) {
 			want{
 				0, "data {home}/.nodloop/demo\nconfig {home}/.nodloop/config.json\n" +
 					"demo events tq-001 to tq-024. Try: review event tq-023\n",
-				`^$`, config{"{home}/.nodloop/demo", "{home}/.nodloop/records"}, nil,
+				`^$`, config{dataDir: "{home}/.nodloop/demo", recordDir: "{home}/.nodloop/records", home: "{home}"}, nil,
 			},
 		},
 		{
 			"data dir and record dir are stored absolute",
 			args{[]string{"--data-dir", "../../internal/evidence/file/testdata", "--record-dir", "records"}, "{home}"},
-			want{0, "data {demo}\nconfig {home}/.nodloop/config.json\n", `^$`, config{"{demo}", "{cwd}/records"}, nil},
+			want{
+				0, "data {demo}\nconfig {home}/.nodloop/config.json\n", `^$`,
+				config{dataDir: "{demo}", recordDir: "{cwd}/records", home: "{home}"}, nil,
+			},
 		},
 		{
 			"data dir without events fails",
@@ -88,7 +91,10 @@ func TestRunSetup(t *testing.T) {
 			assert.Regexp(t, r.Replace(tc.want.stderr), stderr.String())
 			cfg, err := resolveConfig(getenv, "", "", "")
 			assert.ErrorIs(t, err, tc.want.err)
-			assert.Equal(t, config{r.Replace(tc.want.cfg.dataDir), r.Replace(tc.want.cfg.recordDir)}, cfg)
+			assert.Equal(t, config{
+				dataDir: r.Replace(tc.want.cfg.dataDir), recordDir: r.Replace(tc.want.cfg.recordDir),
+				home: homeDir(r.Replace(string(tc.want.cfg.home))),
+			}, cfg)
 		})
 	}
 }

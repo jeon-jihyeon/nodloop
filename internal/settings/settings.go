@@ -27,7 +27,7 @@ type Document map[string]any
 // 1. returns false without changes when already registered
 // 2. returns ErrHooksInvalid when hooks is not an object or PreToolUse is not an array so no user value is overwritten
 func (d Document) Install(exe string) (changed bool, err error) {
-	if d.installed() {
+	if d.Installed() {
 		return false, nil
 	}
 	hooks, ok := d["hooks"].(map[string]any)
@@ -82,7 +82,8 @@ func (d Document) Uninstall() (changed bool) {
 	return true
 }
 
-func (d Document) installed() bool {
+// Whether the hook of this binary is registered under PreToolUse
+func (d Document) Installed() bool {
 	hooks, _ := d["hooks"].(map[string]any)
 	pre, _ := hooks["PreToolUse"].([]any)
 	return slices.ContainsFunc(pre, ourGroup)

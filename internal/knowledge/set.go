@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/jeon-jihyeon/nodloop/internal/evidence"
+	"github.com/jeon-jihyeon/nodloop/internal/veto"
 )
 
 // Records as the store lists them with the newest first
@@ -55,6 +56,21 @@ func (s Set) Approved() Set {
 	return out
 }
 
+// The vetoes of the approved items in id order
+// The source names the version and the approver so a reader of the veto file can trace a block back
+func (s Set) Vetoes() []veto.Spec {
+	var out []veto.Spec
+	for _, k := range s.Approved() {
+		if k.Veto == nil {
+			continue
+		}
+		spec := k.Veto.spec(k.ID, k.Content)
+		spec.Source = fmt.Sprintf("nodloop knowledge %s v%d approved by %s", k.ID, k.Version, k.Approver)
+		out = append(out, spec)
+	}
+	return out
+}
+
 // Approved current items whose scope matches the event and whose exceptions do not
 func (s Set) Applicable(changeContext evidence.Context, moved Moved, dims Dims) Set {
 	out := Set{}
@@ -64,6 +80,20 @@ func (s Set) Applicable(changeContext evidence.Context, moved Moved, dims Dims) 
 		}
 	}
 	return out
+}
+
+// The approved items one review may carry together with the item
+// An upper bound since a review loads only the items whose scope fits its event
+// Another version of the item never counts because approval replaces it
+func (s Set) folder(item Knowledge, budget int) Folder {
+	f := Folder{Chars: len(item.Text()), Budget: budget, Items: Set{}}
+	for _, other := range s.Approved() {
+		if other.ID != item.ID && item.sharesFolder(other) {
+			f.Items = append(f.Items, other)
+			f.Chars += len(other.Text())
+		}
+	}
+	return f
 }
 
 // Current items other than id of the same kind whose scope intersects with scope
@@ -106,6 +136,15 @@ func (s Set) Matching(f Filter) Set {
 }
 
 // Records of id in their order
+// Fails with ErrNotFound when the id has no record
+func (s Set) historyOf(id string) (Set, error) {
+	history := s.history(id)
+	if len(history) == 0 {
+		return nil, fmt.Errorf("%w: %s", ErrNotFound, id)
+	}
+	return history, nil
+}
+
 func (s Set) history(id string) Set {
 	out := Set{}
 	for _, k := range s {

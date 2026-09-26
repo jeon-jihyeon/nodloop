@@ -17,6 +17,7 @@ import (
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	knowledgefile "github.com/jeon-jihyeon/nodloop/internal/knowledge/file"
 	tracefile "github.com/jeon-jihyeon/nodloop/internal/trace/file"
+	vetofile "github.com/jeon-jihyeon/nodloop/internal/veto/file"
 )
 
 // Counts the reads of a wrapped store and fails every read after the allowed ones
@@ -85,8 +86,13 @@ func Open(t *testing.T) Stores {
 	require.NoError(t, err)
 	// Later than every record in the demo data
 	clock := &Clock{now: time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)}
-	ledger := knowledge.NewLedger(items, clock.Now, func() string { return "k-generated" })
-	return Stores{Source: src, Traces: traces, Feedback: verdicts, Outcomes: outcomes, Ledger: ledger, Clock: clock}
+	ledger := knowledge.NewLedger(
+		items, vetofile.NewApprovedFile(t.TempDir(), dir), knowledge.ReviewChars,
+		clock.Now, func() string { return "k-generated" },
+	)
+	return Stores{
+		Source: src, Traces: traces, Feedback: verdicts, Outcomes: outcomes, Ledger: ledger, Clock: clock,
+	}
 }
 
 // The demo data set checked in next to the evidence file source

@@ -10,9 +10,11 @@ import (
 
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge/file"
+	vetofile "github.com/jeon-jihyeon/nodloop/internal/veto/file"
 )
 
 func TestKnowledgeValidate(t *testing.T) {
+	t.Parallel()
 	at := time.Date(2026, 9, 23, 0, 0, 0, 0, time.UTC)
 	valid := knowledge.Knowledge{
 		ID: "k1", Version: 1, Kind: knowledge.KindMeaning, Content: "clicks and conversions use different time bases",
@@ -43,6 +45,25 @@ func TestKnowledgeValidate(t *testing.T) {
 	unretired.Status = knowledge.StatusRetired
 	noAuthor := valid
 	noAuthor.Author = ""
+	sed := knowledge.Veto{
+		Tool:    "Bash",
+		When:    []knowledge.VetoCondition{{Field: "command", Match: `sed\s+-i`}},
+		Example: map[string]any{"command": "sed -i s/a/b/ f"},
+	}
+	judgment := valid
+	judgment.Kind, judgment.Content, judgment.Veto = knowledge.KindJudgment, "never edit files with sed -i", &sed
+	meaningVeto := valid
+	meaningVeto.Veto = &sed
+	badPattern := judgment
+	badPattern.Veto = &knowledge.Veto{
+		Tool: "Bash", When: []knowledge.VetoCondition{{Field: "command", Match: "("}}, Example: sed.Example,
+	}
+	noTool := judgment
+	noTool.Veto = &knowledge.Veto{When: sed.When, Example: sed.Example}
+	missedExample := judgment
+	missedExample.Veto = &knowledge.Veto{Tool: "Bash", When: sed.When, Example: map[string]any{"command": "ls"}}
+	otherTool := judgment
+	otherTool.Veto = &knowledge.Veto{Tool: "Edit|Bash", When: sed.When, Example: sed.Example}
 	tcs := []struct {
 		name string
 		args knowledge.Knowledge
@@ -61,6 +82,12 @@ func TestKnowledgeValidate(t *testing.T) {
 		{"approved without an approver fails", unapproved, knowledge.ErrApproverRequired},
 		{"retired without an approver fails", unretired, knowledge.ErrApproverRequired},
 		{"missing author fails", noAuthor, knowledge.ErrAuthorRequired},
+		{"judgment with a veto that blocks its example is valid", judgment, nil},
+		{"veto on any tool of a list blocks its example", otherTool, nil},
+		{"veto on a meaning fails", meaningVeto, knowledge.ErrVetoKind},
+		{"veto with a broken pattern fails", badPattern, knowledge.ErrVetoInvalid},
+		{"veto without a tool fails", noTool, knowledge.ErrVetoInvalid},
+		{"veto that lets its example through fails", missedExample, knowledge.ErrVetoExample},
 	}
 	ctx := context.Background()
 	for _, tc := range tcs {
@@ -68,7 +95,10 @@ func TestKnowledgeValidate(t *testing.T) {
 			t.Parallel()
 			store, err := file.New(t.TempDir())
 			require.NoError(t, err)
-			l := knowledge.NewLedger(store, func() time.Time { return at }, func() string { return "k-new" })
+			l := knowledge.NewLedger(
+				store, vetofile.NewApprovedFile(t.TempDir(), "records"), knowledge.ReviewChars,
+				func() time.Time { return at }, func() string { return "k-new" },
+			)
 			assert.ErrorIs(t, l.Import(ctx, []knowledge.Knowledge{tc.args}), tc.want)
 		})
 	}

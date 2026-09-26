@@ -57,6 +57,35 @@ func TestMatches(t *testing.T) {
 	}
 }
 
+func TestVetoBlocks(t *testing.T) {
+	t.Parallel()
+	condition, err := veto.NewCondition("file_path", `README\.md$`, "")
+	require.NoError(t, err)
+	readme, err := veto.New("no-readme", "Write|Edit", []veto.Condition{condition}, "r", true)
+	require.NoError(t, err)
+	disabled, err := veto.New("no-readme", "Write|Edit", []veto.Condition{condition}, "r", false)
+	require.NoError(t, err)
+	type args struct {
+		veto  veto.Veto
+		input map[string]any
+	}
+	tcs := []struct {
+		name string
+		args args
+		want bool
+	}{
+		{"input the conditions match is blocked", args{readme, map[string]any{"file_path": "README.md"}}, true},
+		{"input the conditions miss passes", args{readme, map[string]any{"file_path": "main.go"}}, false},
+		{"disabled veto blocks nothing", args{disabled, map[string]any{"file_path": "README.md"}}, false},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.want, tc.args.veto.Blocks(tc.args.input))
+		})
+	}
+}
+
 func TestVetoesMatch(t *testing.T) {
 	b, err := os.ReadFile("testdata/valid.yaml")
 	require.NoError(t, err)

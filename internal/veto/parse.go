@@ -7,40 +7,42 @@ import (
 )
 
 // YAML shape of a veto file
-// The keys are the contract shared with apply and every entry goes through New
 type document struct {
-	Vetoes []entry `yaml:"vetoes"`
+	Vetoes []Spec `yaml:"vetoes"`
 }
 
-type entry struct {
-	ID     string      `yaml:"id"`
-	Tool   string      `yaml:"tool"`
-	When   []condition `yaml:"when"`
-	Reason string      `yaml:"reason"`
+// One veto as a file states it
+// It becomes a Veto only through its Veto method so the patterns are compiled and checked
+type Spec struct {
+	ID     string `yaml:"id"`
+	Tool   string `yaml:"tool"`
+	When   []When `yaml:"when"`
+	Reason string `yaml:"reason"`
 	// Where the veto came from such as a session id
 	// Kept for the reader of the file and never read by code
-	Source string `yaml:"source"`
+	Source string `yaml:"source,omitempty"`
 	// nil means true
-	Enabled *bool `yaml:"enabled"`
+	Enabled *bool `yaml:"enabled,omitempty"`
 }
 
-type condition struct {
+// One condition of a spec on a `tool_input` field
+type When struct {
 	Field  string `yaml:"field"`
 	Match  string `yaml:"match"`
-	Unless string `yaml:"unless"`
+	Unless string `yaml:"unless,omitempty"`
 }
 
 // Errors name the condition index
-func (e entry) veto() (Veto, error) {
-	when := make([]Condition, 0, len(e.When))
-	for j, c := range e.When {
+func (s Spec) Veto() (Veto, error) {
+	when := make([]Condition, 0, len(s.When))
+	for j, c := range s.When {
 		cond, err := NewCondition(c.Field, c.Match, c.Unless)
 		if err != nil {
 			return Veto{}, fmt.Errorf("when[%d]: %w", j, err)
 		}
 		when = append(when, cond)
 	}
-	return New(e.ID, e.Tool, when, e.Reason, e.Enabled == nil || *e.Enabled)
+	return New(s.ID, s.Tool, when, s.Reason, s.Enabled == nil || *s.Enabled)
 }
 
 // Errors name the entry index and id
@@ -50,13 +52,13 @@ func Parse(b []byte) (Vetoes, error) {
 		return nil, fmt.Errorf("%w: %w", ErrYAMLInvalid, err)
 	}
 	vetoes := make(Vetoes, 0, len(d.Vetoes))
-	for i, e := range d.Vetoes {
-		v, err := e.veto()
+	for i, s := range d.Vetoes {
+		v, err := s.Veto()
 		if err == nil && vetoes.Has(v.id) {
 			err = ErrIDDuplicate
 		}
 		if err != nil {
-			return nil, fmt.Errorf("vetoes[%d] (%s): %w", i, e.ID, err)
+			return nil, fmt.Errorf("vetoes[%d] (%s): %w", i, s.ID, err)
 		}
 		vetoes = append(vetoes, v)
 	}

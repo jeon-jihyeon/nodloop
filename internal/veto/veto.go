@@ -52,7 +52,12 @@ func (v Veto) Reason() string { return v.reason }
 
 // Every condition must match and a disabled veto never matches
 func (v Veto) Matches(tool string, input map[string]any) bool {
-	if !v.enabled || !slices.Contains(v.tools, tool) {
+	return slices.Contains(v.tools, tool) && v.Blocks(input)
+}
+
+// The conditions never depend on the tool so an input is blocked for every tool the veto lists
+func (v Veto) Blocks(input map[string]any) bool {
+	if !v.enabled {
 		return false
 	}
 	for _, c := range v.when {

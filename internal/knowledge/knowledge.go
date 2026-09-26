@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/jeon-jihyeon/nodloop/internal/evidence"
+	"github.com/jeon-jihyeon/nodloop/internal/veto"
 )
 
 type Kind string
@@ -90,6 +91,53 @@ type Knowledge struct {
 	// Every status change is a new record so this is not the creation time of the version
 	Time   time.Time `json:"time"`
 	Author string    `json:"author"`
+	// A tool call the judgment forbids
+	// Approval exports it as a guard veto whose id is the knowledge id and whose reason is the content
+	Veto *Veto `json:"veto,omitempty"`
+}
+
+// Characters of approved knowledge one review carries unless the policy sets another cap
+const ReviewChars = 4000
+
+// Folders are measured with the text a review sees so the budget and the review cap count the same characters
+func (k Knowledge) Text() string {
+	return fmt.Sprintf("\n[%s v%d %s] %s\nScope: %s\n", k.ID, k.Version, k.Kind, k.Content, k.Scope)
+}
+
+// Tool call rule of a judgment
+type Veto struct {
+	// One tool name or a list such as `Edit|Write`
+	Tool string          `json:"tool"`
+	When []VetoCondition `json:"when"`
+	// A tool input the rule must block so a pattern that blocks nothing is refused before anyone approves it
+	Example map[string]any `json:"example"`
+}
+
+// Regexp condition on one `tool_input` field
+type VetoCondition struct {
+	Field  string `json:"field"`
+	Match  string `json:"match"`
+	Unless string `json:"unless,omitempty"`
+}
+
+// The veto of the item id whose reason is the content
+func (v Veto) spec(id, reason string) veto.Spec {
+	when := make([]veto.When, 0, len(v.When))
+	for _, c := range v.When {
+		when = append(when, veto.When{Field: c.Field, Match: c.Match, Unless: c.Unless})
+	}
+	return veto.Spec{ID: id, Tool: v.Tool, When: when, Reason: reason}
+}
+
+func (v Veto) check(id, reason string) error {
+	compiled, err := v.spec(id, reason).Veto()
+	if err != nil {
+		return fmt.Errorf("%w: %w", ErrVetoInvalid, err)
+	}
+	if !compiled.Blocks(v.Example) {
+		return ErrVetoExample
+	}
+	return nil
 }
 
 func (k Knowledge) validate() error {
@@ -112,8 +160,12 @@ func (k Knowledge) validate() error {
 		return fmt.Errorf("%w: %s needs one", ErrApproverRequired, k.Status)
 	case k.Author == "":
 		return ErrAuthorRequired
+	case k.Veto == nil:
+		return nil
+	case k.Kind != KindJudgment:
+		return ErrVetoKind
 	}
-	return nil
+	return k.Veto.check(k.ID, k.Content)
 }
 
 // Same id and version with a new status as the next append only record
@@ -135,6 +187,28 @@ func (k Knowledge) changed(status Status, approver string, now time.Time) Knowle
 		k.ApprovedAt = now
 	}
 	return k
+}
+
+// Whether one review may carry both items
+// 1. their change contexts and metrics intersect
+// 2. neither excepts every change context the other is scoped to
+// Dims split nothing because one review often carries several dims
+func (k Knowledge) sharesFolder(other Knowledge) bool {
+	return k.Scope.sharesFolder(other.Scope) && !k.excepts(other.Scope.ChangeContexts) &&
+		!other.excepts(k.Scope.ChangeContexts)
+}
+
+// An empty list is every change context and no exception covers all of them
+func (k Knowledge) excepts(contexts []evidence.Context) bool {
+	if len(contexts) == 0 {
+		return false
+	}
+	for _, c := range contexts {
+		if !slices.Contains(k.Exceptions, c) {
+			return false
+		}
+	}
+	return true
 }
 
 func (k Knowledge) applies(changeContext evidence.Context, moved Moved, dims Dims) bool {

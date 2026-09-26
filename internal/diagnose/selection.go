@@ -140,10 +140,6 @@ type chosenKnowledge struct {
 	Reason string
 }
 
-func (k chosenKnowledge) render() string {
-	return fmt.Sprintf("\n[%s v%d %s] %s\nScope: %s\n", k.ID, k.Version, k.Kind, k.Content, k.Scope)
-}
-
 // An offered item the ledger loads by id and version
 // Select and Run both hand the loader this instead of the candidate list it would search
 type knowledgeRef struct {

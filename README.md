@@ -33,7 +33,7 @@ The second review applies the knowledge you approved. When you are done with the
 
 Claude Code writes the review with its own model, so there's no API key to set up. nodloop gives it the numbers, computed from your events by plain code, and the runbook paragraphs it can cite. A cause without a citation puts the review on hold.
 
-When you correct a review, the correction can become a knowledge item. It's used only after someone approves it, and only on events that match its scope. Reviews, verdicts and knowledge versions are all kept in `~/.nodloop/records`.
+When you correct a review, the correction can become a knowledge item. It's used only after someone approves it, and only on events that match its scope. If approving an item would make the knowledge a review carries outgrow its budget, nodloop refuses and asks you to retire an item, replace one or narrow the scope, instead of cutting text you never see. Reviews, verdicts and knowledge versions are all kept in `~/.nodloop/records`.
 
 ## Measured
 
@@ -65,6 +65,8 @@ curl -fsSL --create-dirs https://raw.githubusercontent.com/jeon-jihyeon/nodloop/
 ```
 
 `guard install` backs up `~/.claude/settings.json` before adding the hook, and `guard uninstall` removes it.
+
+A correction can become a veto too. Propose it as a judgment with a veto, and once someone approves it, nodloop writes it to an approved veto file under `~/.claude/nodloop` and the guard blocks that call from then on. Retiring the knowledge removes the veto, and a veto you write by hand wins over an approved one with the same id.
 
 ## Supported
 

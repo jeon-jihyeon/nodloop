@@ -3,17 +3,20 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"time"
 
 	"github.com/jeon-jihyeon/nodloop/internal/feedback"
 	"github.com/jeon-jihyeon/nodloop/internal/jsonl"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
+	settingsfile "github.com/jeon-jihyeon/nodloop/internal/settings/file"
 )
 
 // Flags of the knowledge subcommands
@@ -22,6 +25,7 @@ type knowledgeFlags struct {
 	id, kind, content, basis, approver, author, status, traceID, file  string
 	version                                                            int
 	contexts, metrics, exceptions, paragraphs, feedbackIDs, outcomeIDs listFlag
+	vetoTool, vetoField, vetoMatch, vetoUnless, vetoExample            string
 }
 
 func (f *knowledgeFlags) bind(fs *flag.FlagSet) {
@@ -41,13 +45,24 @@ func (f *knowledgeFlags) bind(fs *flag.FlagSet) {
 	fs.Var(&f.paragraphs, "evidence-paragraph", "runbook paragraph id. Repeatable")
 	fs.Var(&f.feedbackIDs, "evidence-feedback", "diagnose trace id whose feedback supports it. Repeatable")
 	fs.Var(&f.outcomeIDs, "evidence-outcome", "diagnose trace id whose outcome supports it. Repeatable")
+	fs.StringVar(&f.vetoTool, "veto-tool", "",
+		"propose: tool a judgment forbids such as Bash. Approval makes it a guard veto")
+	fs.StringVar(&f.vetoField, "veto-field", "", "propose: tool_input field the veto matches such as command")
+	fs.StringVar(&f.vetoMatch, "veto-match", "", "propose: RE2 regexp the field must match")
+	fs.StringVar(&f.vetoUnless, "veto-unless", "", "propose: RE2 regexp that lets the call through")
+	fs.StringVar(&f.vetoExample, "veto-example", "",
+		`propose: a tool_input JSON object the veto must block such as {"command":"sed -i s/a/b/ f"}`)
 }
 
 // The candidate the propose flags describe
-func (f knowledgeFlags) draft() knowledge.Knowledge {
+func (f knowledgeFlags) draft() (knowledge.Knowledge, error) {
 	feedbackIDs := []string(f.feedbackIDs)
 	if f.traceID != "" {
 		feedbackIDs = slices.Concat(feedbackIDs, []string{f.traceID})
+	}
+	v, err := f.veto()
+	if err != nil {
+		return knowledge.Knowledge{}, err
 	}
 	return knowledge.Knowledge{
 		ID:         f.id,
@@ -58,7 +73,24 @@ func (f knowledgeFlags) draft() knowledge.Knowledge {
 		Evidence:   knowledge.Evidence{FeedbackTraceIDs: feedbackIDs, OutcomeTraceIDs: f.outcomeIDs, ParagraphIDs: f.paragraphs},
 		Basis:      knowledge.Basis(f.basis),
 		Author:     f.author,
+		Veto:       v,
+	}, nil
+}
+
+// Nil without `--veto-tool` so a plain proposal carries no veto
+func (f knowledgeFlags) veto() (*knowledge.Veto, error) {
+	if f.vetoTool == "" {
+		return nil, nil
 	}
+	var example map[string]any
+	if err := json.Unmarshal([]byte(f.vetoExample), &example); err != nil {
+		return nil, fmt.Errorf("%w: --veto-example: %w", errVetoExample, err)
+	}
+	return &knowledge.Veto{
+		Tool:    f.vetoTool,
+		When:    []knowledge.VetoCondition{{Field: f.vetoField, Match: f.vetoMatch, Unless: f.vetoUnless}},
+		Example: example,
+	}, nil
 }
 
 func (f knowledgeFlags) filter() knowledge.Filter {
@@ -94,11 +126,14 @@ func runKnowledge(args []string, getenv func(string) string, now func() time.Tim
 	if err != nil {
 		return fail(stderr, "knowledge", err)
 	}
-	cmd := knowledgeCommand{app: a, ledger: ledger, out: stdout}
+	cmd := knowledgeCommand{
+		app: a, ledger: ledger, vetoPath: a.vetoFile(a.cfg.recordDir).Path(), settingsPath: a.cfg.home.settingsPath(),
+		out: stdout,
+	}
 	ctx := context.Background()
 	switch args[0] {
 	case "propose":
-		err = cmd.propose(ctx, flags.draft())
+		err = cmd.propose(ctx, flags)
 	case "list":
 		err = cmd.list(ctx, flags.filter())
 	case "show":
@@ -111,6 +146,8 @@ func runKnowledge(args []string, getenv func(string) string, now func() time.Tim
 		err = cmd.transition(ctx, "retire", ledger.Retire, id, flags.version, flags.approver)
 	case "import":
 		err = cmd.importFile(ctx, flags.file)
+	case "export":
+		err = cmd.export(ctx)
 	default:
 		err = fmt.Errorf("%w %q", errUnknownAction, args[0])
 	}
@@ -123,11 +160,20 @@ func runKnowledge(args []string, getenv func(string) string, now func() time.Tim
 type knowledgeCommand struct {
 	app    app
 	ledger *knowledge.Ledger
-	out    io.Writer
+	// The approved veto file of the record directory
+	// Empty without a home
+	vetoPath     string
+	settingsPath string
+	out          io.Writer
 }
 
-func (c knowledgeCommand) propose(ctx context.Context, draft knowledge.Knowledge) error {
-	if err := c.app.checkReviews(ctx, draft.Evidence.TraceIDs()...); err != nil {
+// Prints the candidate and its veto and the folder it would join so the person sees both before approving
+func (c knowledgeCommand) propose(ctx context.Context, flags knowledgeFlags) error {
+	draft, err := flags.draft()
+	if err != nil {
+		return err
+	}
+	if err = c.app.checkReviews(ctx, draft.Evidence.TraceIDs()...); err != nil {
 		return err
 	}
 	k, overlaps, err := c.ledger.Propose(ctx, draft)
@@ -138,6 +184,16 @@ func (c knowledgeCommand) propose(ctx context.Context, draft knowledge.Knowledge
 	for _, o := range overlaps {
 		fmt.Fprintf(c.out, "overlaps\t%s\tv%d\t%s\n", o.ID, o.Version, o.Status)
 	}
+	if k.Veto != nil {
+		for _, w := range k.Veto.When {
+			fmt.Fprintf(c.out, "veto\t%s\t%s matches %s unless %q\n", k.Veto.Tool, w.Field, w.Match, w.Unless)
+		}
+	}
+	folder, err := c.ledger.Folder(ctx, k.ID, k.Version)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(c.out, "folder\t%d of %d chars\t%s\n", folder.Chars, folder.Budget, folder)
 	return nil
 }
 
@@ -183,6 +239,8 @@ func (c knowledgeCommand) overlaps(ctx context.Context, id string) error {
 }
 
 // Approve and retire move one version to a new status under a name
+// 1. a failed veto export still prints the status line because the record is written and the error follows
+// 2. the veto line appears only when the export worked and the approved vetoes changed
 func (c knowledgeCommand) transition(
 	ctx context.Context, action string, move func(context.Context, string, int, string) (knowledge.Knowledge, error),
 	id string, version int, approver string,
@@ -190,12 +248,55 @@ func (c knowledgeCommand) transition(
 	if id == "" || version <= 0 || approver == "" {
 		return fmt.Errorf("%s: an id, --version and --approver %w", action, errRequired)
 	}
-	k, err := move(ctx, id, version, approver)
+	before, err := c.ledger.All(ctx)
 	if err != nil {
 		return err
 	}
+	k, err := move(ctx, id, version, approver)
+	if err != nil && !errors.Is(err, knowledge.ErrVetoExport) {
+		return err
+	}
 	fmt.Fprintf(c.out, "%s\tv%d\t%s\t%s\n", k.ID, k.Version, k.Status, k.Approver)
+	if err != nil {
+		return err
+	}
+	after, err := c.ledger.All(ctx)
+	if err != nil || reflect.DeepEqual(before.Vetoes(), after.Vetoes()) {
+		return err
+	}
+	c.vetoLine(len(after.Vetoes()))
 	return nil
+}
+
+// Hands the approved vetoes to the file again after a failed export
+func (c knowledgeCommand) export(ctx context.Context) error {
+	if err := c.ledger.ExportVetoes(ctx); err != nil {
+		return err
+	}
+	all, err := c.ledger.All(ctx)
+	if err != nil {
+		return err
+	}
+	c.vetoLine(len(all.Vetoes()))
+	return nil
+}
+
+// Where the vetoes went and whether guard enforces them
+// The file blocks nothing until the hook is registered
+func (c knowledgeCommand) vetoLine(count int) {
+	if c.vetoPath == "" {
+		fmt.Fprintln(c.out, "vetoes\tnot exported because the home directory is unknown")
+		return
+	}
+	hook := "guard hook installed"
+	installed, err := settingsfile.Installed(c.settingsPath)
+	switch {
+	case err != nil:
+		hook = "guard hook unknown: " + err.Error()
+	case !installed:
+		hook = "guard hook not installed. Run nodloop guard install to enforce them"
+	}
+	fmt.Fprintf(c.out, "vetoes\t%d approved in %s\t%s\n", count, c.vetoPath, hook)
 }
 
 // Appends the records of a jsonl file as they are

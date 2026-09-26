@@ -49,6 +49,11 @@ func (s Scope) intersects(other Scope) bool {
 			return false
 		}
 	}
+	return s.sharesFolder(other)
+}
+
+// Whether the change contexts and the metrics intersect
+func (s Scope) sharesFolder(other Scope) bool {
 	contexts := len(s.ChangeContexts) == 0 || len(other.ChangeContexts) == 0 ||
 		sharesValue(s.ChangeContexts, other.ChangeContexts)
 	metrics := len(s.Metrics) == 0 || len(other.Metrics) == 0 || sharesValue(s.Metrics, other.Metrics)
