@@ -54,6 +54,20 @@ The eval holds out 12 of the 24 demo events and reviews them with Sonnet. With n
 
 Run `nodloop eval seed`, `holdout` and `report` to reproduce the table.
 
+### Beyond the demo
+
+Nothing in the core knows about ads. The same loop ran on 300 events built from the public [Tennessee Eastman Process data of Rieth et al.](https://doi.org/10.7910/DVN/6C3JR1), a simulated chemical plant with seeded faults. Five runbooks, four planted traps and a scripted reviewer stood in for a plant team, so no human took part. 150 events were seed and 150 held out, all reviewed with Sonnet.
+
+| condition | events | status acc | hold acc | citation p | citation r | required checks | first check | knowledge hit | misapplied | revised | mean cost usd |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| seed | 150 | 0.75 | 0.63 | 0.49 | 0.97 | 0.85 | 0.85 | 0.00 | 0 | 6 | 0.0458 |
+| feedback:off | 150 | 0.74 | 0.60 | 0.48 | 0.95 | 0.85 | 0.85 | 0.00 | 0 | 4 | 0.0454 |
+| feedback:on | 150 | 0.99 | 1.00 | 0.69 | 0.98 | 1.00 | 1.00 | 0.00 | 0 | 2 | 0.0424 |
+| knowledge:on | 150 | 1.00 | 1.00 | 0.55 | 1.00 | 1.00 | 0.98 | 1.00 | 0 | 6 | 0.0253 |
+| knowledge:all | 150 | 0.99 | 1.00 | 0.49 | 0.98 | 0.99 | 0.98 | 1.00 | 548 | 1 | 0.0469 |
+
+In 36 held-out events a trap decides the status. With no feedback, none of them got it right. With corrections or scoped knowledge, all 36 did, and scoped knowledge never landed on an event outside its scope. Applying every item regardless of scope landed 548 items that don't belong.
+
 ## Guard
 
 `nodloop guard` blocks tool calls you've vetoed before they run. It's a PreToolUse hook, so the model can't talk its way past it.

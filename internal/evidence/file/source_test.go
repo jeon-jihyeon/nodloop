@@ -63,15 +63,18 @@ func TestSourceLabels(t *testing.T) {
 	}{
 		{
 			name: "labels are read in file order with every field",
-			args: map[string]string{"labels.jsonl": `{"event_id":"e2","type":"click_spike","seed":true,` +
+			args: map[string]string{"labels.jsonl": `{"event_id":"e2","type":"click_spike",` +
+				`"expected_status":"ready_for_review","seed":true,` +
 				`"anomalies":[{"metric":"click_count","dims":{"source":"a"}}],"paragraph_ids":["p1"],` +
 				`"required_checks":["p2"],"knowledge":["k1"],"hold":false}` + "\n\n" +
-				`{"event_id":"e1","type":"hold","seed":false,"anomalies":[],"paragraph_ids":[],` +
+				`{"event_id":"e1","type":"hold","expected_status":"hold","seed":false,` +
+				`"anomalies":[],"paragraph_ids":[],` +
 				`"required_checks":["p3"],"hold":true}` + "\n"},
 			want: want{labels: []evidence.Label{
 				{
 					EventID:        "e2",
-					Type:           evidence.TypeClickSpike,
+					Type:           "click_spike",
+					Expected:       evidence.StatusReadyForReview,
 					Seed:           true,
 					Anomalies:      []evidence.SeriesRef{{Metric: "click_count", Dims: map[string]string{"source": "a"}}},
 					Paragraphs:     []evidence.ParagraphID{"p1"},
@@ -80,7 +83,8 @@ func TestSourceLabels(t *testing.T) {
 				},
 				{
 					EventID:        "e1",
-					Type:           evidence.TypeHold,
+					Type:           "hold",
+					Expected:       evidence.StatusHold,
 					Anomalies:      []evidence.SeriesRef{},
 					Paragraphs:     []evidence.ParagraphID{},
 					RequiredChecks: []evidence.ParagraphID{"p3"},
@@ -94,8 +98,32 @@ func TestSourceLabels(t *testing.T) {
 		},
 		{
 			name: "a corrupt line is named in the error",
-			args: map[string]string{"labels.jsonl": "{\"event_id\":\"a\"}\n\n{not json}\n"},
+			args: map[string]string{
+				"labels.jsonl": "{\"event_id\":\"a\",\"type\":\"t\",\"expected_status\":\"hold\"}\n\n{not json}\n",
+			},
 			want: want{text: "labels.jsonl line 3"},
+		},
+		{
+			name: "a label without an event id is named",
+			args: map[string]string{"labels.jsonl": "\n{\"type\":\"t\",\"expected_status\":\"hold\"}\n"},
+			want: want{text: "labels.jsonl line 2: evidence: malformed data: label without event id"},
+		},
+		{
+			name: "a label without a type is named",
+			args: map[string]string{"labels.jsonl": "{\"event_id\":\"a\",\"expected_status\":\"hold\"}\n"},
+			want: want{text: "labels.jsonl line 1: evidence: malformed data: label a without type"},
+		},
+		{
+			name: "a label without an expected status is named",
+			args: map[string]string{"labels.jsonl": "{\"event_id\":\"a\",\"type\":\"t\"}\n"},
+			want: want{text: "labels.jsonl line 1: evidence: malformed data: label a expects unknown status \"\""},
+		},
+		{
+			name: "a label with an unknown expected status is named",
+			args: map[string]string{
+				"labels.jsonl": "{\"event_id\":\"a\",\"type\":\"t\",\"expected_status\":\"maybe\"}\n",
+			},
+			want: want{text: "labels.jsonl line 1: evidence: malformed data: label a expects unknown status \"maybe\""},
 		},
 	}
 	ctx := context.Background()

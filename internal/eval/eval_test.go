@@ -14,7 +14,6 @@ import (
 
 	"github.com/jeon-jihyeon/nodloop/internal/diagnose"
 	"github.com/jeon-jihyeon/nodloop/internal/eval"
-	"github.com/jeon-jihyeon/nodloop/internal/evidence"
 	evidencefile "github.com/jeon-jihyeon/nodloop/internal/evidence/file"
 	"github.com/jeon-jihyeon/nodloop/internal/feedback"
 	"github.com/jeon-jihyeon/nodloop/internal/testkit"
@@ -72,7 +71,7 @@ func TestReport(t *testing.T) {
 				}},
 				AgainstBaseline: uncompared,
 				Scores: []eval.Score{{
-					EventID: "tq-005", Condition: base, Type: evidence.TypeClickSpike,
+					EventID: "tq-005", Condition: base, Type: "click_spike",
 					ExpectedStatus: diagnose.StatusReadyForReview, Status: diagnose.StatusReadyForReview, StatusOK: true,
 					CitationPrecision: 0.5, CitationRecall: 0.5, RequiredChecks: 0.5, FirstCheck: 1,
 					CostUSD: 0.25, InputTokens: 20, OutputTokens: 3, DurationMS: 5,
@@ -92,7 +91,7 @@ func TestReport(t *testing.T) {
 				}},
 				AgainstBaseline: uncompared,
 				Scores: []eval.Score{{
-					EventID: "tq-005", Condition: base, Type: evidence.TypeClickSpike,
+					EventID: "tq-005", Condition: base, Type: "click_spike",
 					ExpectedStatus: diagnose.StatusReadyForReview, Status: diagnose.StatusReadyForReview, StatusOK: true,
 				}},
 			}},
@@ -111,7 +110,7 @@ func TestReport(t *testing.T) {
 				}},
 				AgainstBaseline: uncompared,
 				Scores: []eval.Score{{
-					EventID: "tq-017", Condition: base, Type: evidence.TypeHold,
+					EventID: "tq-017", Condition: base, Type: "hold",
 					ExpectedStatus: diagnose.StatusHold, Status: diagnose.StatusHold, StatusOK: true, ForcedHold: true,
 					CitationPrecision: na, CitationRecall: na, KnowledgeHit: na,
 				}},
@@ -128,7 +127,7 @@ func TestReport(t *testing.T) {
 				}},
 				AgainstBaseline: uncompared,
 				Scores: []eval.Score{{
-					EventID: "tq-005", Condition: base, Type: evidence.TypeClickSpike,
+					EventID: "tq-005", Condition: base, Type: "click_spike",
 					ExpectedStatus: diagnose.StatusReadyForReview, Failed: true, DurationMS: 7,
 				}},
 			}},
@@ -144,7 +143,7 @@ func TestReport(t *testing.T) {
 				}},
 				AgainstBaseline: uncompared,
 				Scores: []eval.Score{{
-					EventID: "tq-001", Condition: base, Type: evidence.TypeNormalVariation,
+					EventID: "tq-001", Condition: base, Type: "normal_variation",
 					ExpectedStatus: diagnose.StatusNoAction, Failed: true,
 					CitationPrecision: na, CitationRecall: na, RequiredChecks: na, FirstCheck: na, KnowledgeHit: na,
 				}},
@@ -160,7 +159,7 @@ func TestReport(t *testing.T) {
 				}},
 				AgainstBaseline: uncompared,
 				Scores: []eval.Score{{
-					EventID: "tq-005", Condition: base, Type: evidence.TypeClickSpike,
+					EventID: "tq-005", Condition: base, Type: "click_spike",
 					ExpectedStatus: diagnose.StatusReadyForReview, Failed: true,
 				}},
 			}},
@@ -180,7 +179,7 @@ func TestReport(t *testing.T) {
 				}},
 				AgainstBaseline: uncompared,
 				Scores: []eval.Score{{
-					EventID: "tq-001", Condition: base, Type: evidence.TypeNormalVariation,
+					EventID: "tq-001", Condition: base, Type: "normal_variation",
 					ExpectedStatus: diagnose.StatusNoAction, Failed: true, Verdict: feedback.VerdictReject,
 					CitationPrecision: na, CitationRecall: na, RequiredChecks: na, FirstCheck: na, KnowledgeHit: na,
 				}},
@@ -201,7 +200,7 @@ func TestReport(t *testing.T) {
 				}},
 				AgainstBaseline: uncompared,
 				Scores: []eval.Score{{
-					EventID: "tq-005", Condition: base, Type: evidence.TypeClickSpike,
+					EventID: "tq-005", Condition: base, Type: "click_spike",
 					ExpectedStatus: diagnose.StatusReadyForReview, Status: diagnose.StatusReadyForReview, StatusOK: true,
 					CitationPrecision: 0.5, CitationRecall: 0.5, RequiredChecks: 0.5, FirstCheck: 1,
 					Verdict: feedback.VerdictEdit, EditWidth: 2,
@@ -223,7 +222,7 @@ func TestReport(t *testing.T) {
 				}},
 				AgainstBaseline: uncompared,
 				Scores: []eval.Score{{
-					EventID: "tq-005", Condition: base, Type: evidence.TypeClickSpike,
+					EventID: "tq-005", Condition: base, Type: "click_spike",
 					ExpectedStatus: diagnose.StatusReadyForReview, Status: diagnose.StatusReadyForReview, StatusOK: true,
 					CitationPrecision: 0.5, CitationRecall: 0.5, RequiredChecks: 0.5, FirstCheck: 1,
 					Verdict: feedback.VerdictEdit,
@@ -242,7 +241,7 @@ func TestReport(t *testing.T) {
 				}},
 				AgainstBaseline: uncompared,
 				Scores: []eval.Score{{
-					EventID: "tq-005", Condition: base, Type: evidence.TypeClickSpike,
+					EventID: "tq-005", Condition: base, Type: "click_spike",
 					ExpectedStatus: diagnose.StatusReadyForReview, Status: diagnose.StatusReadyForReview, StatusOK: true,
 					CitationPrecision: 0.5, CitationRecall: 0.5, RequiredChecks: 0.5, FirstCheck: 1,
 					KnowledgeHit: 1, Misapplications: 1, KnowledgeUsed: []string{"k-aggregation-basis", "k9"},
@@ -263,7 +262,7 @@ func TestReport(t *testing.T) {
 				}},
 				AgainstBaseline: uncompared,
 				Scores: []eval.Score{{
-					EventID: "tq-001", Condition: base, Type: evidence.TypeNormalVariation,
+					EventID: "tq-001", Condition: base, Type: "normal_variation",
 					ExpectedStatus: diagnose.StatusNoAction, Status: diagnose.StatusNoAction, StatusOK: true,
 					CitationPrecision: na, CitationRecall: na, RequiredChecks: na, FirstCheck: na, KnowledgeHit: na,
 					Misapplications: 1, KnowledgeUsed: []string{"k1"},
@@ -283,7 +282,7 @@ func TestReport(t *testing.T) {
 				}},
 				AgainstBaseline: uncompared,
 				Scores: []eval.Score{{
-					EventID: "tq-021", Condition: base, Type: evidence.TypeAttributionLag,
+					EventID: "tq-021", Condition: base, Type: "attribution_lag",
 					ExpectedStatus: diagnose.StatusNoAction, Status: diagnose.StatusNoAction, StatusOK: true,
 					CitationPrecision: na, CitationRecall: na, RequiredChecks: na, FirstCheck: na,
 				}},
@@ -300,7 +299,7 @@ func TestReport(t *testing.T) {
 				}},
 				AgainstBaseline: uncompared,
 				Scores: []eval.Score{{
-					EventID: "tq-001", Condition: base, Type: evidence.TypeNormalVariation,
+					EventID: "tq-001", Condition: base, Type: "normal_variation",
 					ExpectedStatus: diagnose.StatusNoAction, Status: diagnose.StatusReadyForReview,
 					CitationPrecision: na, CitationRecall: na, RequiredChecks: na, FirstCheck: na, KnowledgeHit: na,
 				}},
@@ -339,18 +338,18 @@ func TestReport(t *testing.T) {
 				AgainstBaseline: uncompared,
 				Scores: []eval.Score{
 					{
-						EventID: "tq-001", Condition: base, Type: evidence.TypeNormalVariation,
+						EventID: "tq-001", Condition: base, Type: "normal_variation",
 						ExpectedStatus: diagnose.StatusNoAction, Failed: true, Verdict: feedback.VerdictReject, DurationMS: 200,
 						CitationPrecision: na, CitationRecall: na, RequiredChecks: na, FirstCheck: na, KnowledgeHit: na,
 					},
 					{
-						EventID: "tq-005", Condition: base, Type: evidence.TypeClickSpike,
+						EventID: "tq-005", Condition: base, Type: "click_spike",
 						ExpectedStatus: diagnose.StatusReadyForReview, Status: diagnose.StatusReadyForReview, StatusOK: true,
 						CitationPrecision: 1, CitationRecall: 1, RequiredChecks: 0.5, FirstCheck: 1,
 						Verdict: feedback.VerdictEdit, EditWidth: 3, CostUSD: 0.5, InputTokens: 300, DurationMS: 300,
 					},
 					{
-						EventID: "tq-017", Condition: base, Type: evidence.TypeHold,
+						EventID: "tq-017", Condition: base, Type: "hold",
 						ExpectedStatus: diagnose.StatusHold, Status: diagnose.StatusHold, StatusOK: true, ForcedHold: true,
 						CitationPrecision: na, CitationRecall: na, RequiredChecks: 1, FirstCheck: 1, KnowledgeHit: na,
 						Verdict: feedback.VerdictApprove, CostUSD: 0.25, InputTokens: 100, OutputTokens: 30, DurationMS: 100,
@@ -373,12 +372,12 @@ func TestReport(t *testing.T) {
 				AgainstBaseline: uncompared,
 				Scores: []eval.Score{
 					{
-						EventID: "tq-003", Condition: base, Type: evidence.TypeNormalVariation,
+						EventID: "tq-003", Condition: base, Type: "normal_variation",
 						ExpectedStatus: diagnose.StatusNoAction, Status: diagnose.StatusHold,
 						CitationPrecision: na, CitationRecall: na, RequiredChecks: na, FirstCheck: na, KnowledgeHit: na,
 					},
 					{
-						EventID: "tq-017", Condition: base, Type: evidence.TypeHold,
+						EventID: "tq-017", Condition: base, Type: "hold",
 						ExpectedStatus: diagnose.StatusHold, Status: diagnose.StatusHold, StatusOK: true,
 						CitationPrecision: na, CitationRecall: na, KnowledgeHit: na,
 					},
@@ -409,51 +408,51 @@ func TestReport(t *testing.T) {
 				AgainstBaseline: uncompared,
 				Scores: []eval.Score{
 					{
-						EventID: "tq-001", Condition: base, Type: evidence.TypeNormalVariation, ExpectedStatus: diagnose.StatusNoAction,
+						EventID: "tq-001", Condition: base, Type: "normal_variation", ExpectedStatus: diagnose.StatusNoAction,
 						Failed: true, DurationMS: 100,
 						CitationPrecision: na, CitationRecall: na, RequiredChecks: na, FirstCheck: na, KnowledgeHit: na,
 					},
 					{
-						EventID: "tq-002", Condition: base, Type: evidence.TypeNormalVariation, ExpectedStatus: diagnose.StatusNoAction,
+						EventID: "tq-002", Condition: base, Type: "normal_variation", ExpectedStatus: diagnose.StatusNoAction,
 						Failed: true, DurationMS: 200,
 						CitationPrecision: na, CitationRecall: na, RequiredChecks: na, FirstCheck: na, KnowledgeHit: na,
 					},
 					{
-						EventID: "tq-003", Condition: base, Type: evidence.TypeNormalVariation, ExpectedStatus: diagnose.StatusNoAction,
+						EventID: "tq-003", Condition: base, Type: "normal_variation", ExpectedStatus: diagnose.StatusNoAction,
 						Failed: true, DurationMS: 300,
 						CitationPrecision: na, CitationRecall: na, RequiredChecks: na, FirstCheck: na, KnowledgeHit: na,
 					},
 					{
-						EventID: "tq-004", Condition: base, Type: evidence.TypeNormalVariation, ExpectedStatus: diagnose.StatusNoAction,
+						EventID: "tq-004", Condition: base, Type: "normal_variation", ExpectedStatus: diagnose.StatusNoAction,
 						Failed: true, DurationMS: 400,
 						CitationPrecision: na, CitationRecall: na, RequiredChecks: na, FirstCheck: na, KnowledgeHit: na,
 					},
 					{
-						EventID: "tq-005", Condition: base, Type: evidence.TypeClickSpike,
+						EventID: "tq-005", Condition: base, Type: "click_spike",
 						ExpectedStatus: diagnose.StatusReadyForReview, Failed: true, DurationMS: 500,
 					},
 					{
-						EventID: "tq-006", Condition: base, Type: evidence.TypeClickSpike,
+						EventID: "tq-006", Condition: base, Type: "click_spike",
 						ExpectedStatus: diagnose.StatusReadyForReview, Failed: true, DurationMS: 600,
 					},
 					{
-						EventID: "tq-007", Condition: base, Type: evidence.TypeClickSpike,
+						EventID: "tq-007", Condition: base, Type: "click_spike",
 						ExpectedStatus: diagnose.StatusReadyForReview, Failed: true, DurationMS: 700,
 					},
 					{
-						EventID: "tq-008", Condition: base, Type: evidence.TypeClickSpike,
+						EventID: "tq-008", Condition: base, Type: "click_spike",
 						ExpectedStatus: diagnose.StatusReadyForReview, Failed: true, DurationMS: 800,
 					},
 					{
-						EventID: "tq-009", Condition: base, Type: evidence.TypeConversionRateDrop,
+						EventID: "tq-009", Condition: base, Type: "conversion_rate_drop",
 						ExpectedStatus: diagnose.StatusReadyForReview, Failed: true, DurationMS: 900,
 					},
 					{
-						EventID: "tq-010", Condition: base, Type: evidence.TypeConversionRateDrop,
+						EventID: "tq-010", Condition: base, Type: "conversion_rate_drop",
 						ExpectedStatus: diagnose.StatusReadyForReview, Failed: true, DurationMS: 1000,
 					},
 					{
-						EventID: "tq-011", Condition: base, Type: evidence.TypeConversionRateDrop,
+						EventID: "tq-011", Condition: base, Type: "conversion_rate_drop",
 						ExpectedStatus: diagnose.StatusReadyForReview, Failed: true, DurationMS: 1100,
 					},
 				},
@@ -482,12 +481,12 @@ func TestReport(t *testing.T) {
 				AgainstBaseline: uncompared,
 				Scores: []eval.Score{
 					{
-						EventID: "tq-001", Condition: eval.ConditionSeed, Type: evidence.TypeNormalVariation,
+						EventID: "tq-001", Condition: eval.ConditionSeed, Type: "normal_variation",
 						ExpectedStatus: diagnose.StatusNoAction, Status: diagnose.StatusNoAction, StatusOK: true,
 						CitationPrecision: na, CitationRecall: na, RequiredChecks: na, FirstCheck: na, KnowledgeHit: na,
 					},
 					{
-						EventID: "tq-003", Condition: eval.ConditionKnowledgeAll, Type: evidence.TypeNormalVariation,
+						EventID: "tq-003", Condition: eval.ConditionKnowledgeAll, Type: "normal_variation",
 						ExpectedStatus: diagnose.StatusNoAction, Status: diagnose.StatusNoAction, StatusOK: true,
 						CitationPrecision: na, CitationRecall: na, RequiredChecks: na, FirstCheck: na, KnowledgeHit: na,
 					},
@@ -509,7 +508,7 @@ func TestReport(t *testing.T) {
 				}},
 				AgainstBaseline: uncompared,
 				Scores: []eval.Score{{
-					EventID: "tq-003", Condition: base, Type: evidence.TypeNormalVariation,
+					EventID: "tq-003", Condition: base, Type: "normal_variation",
 					ExpectedStatus: diagnose.StatusNoAction, Status: diagnose.StatusNoAction, StatusOK: true,
 					CitationPrecision: na, CitationRecall: na, RequiredChecks: na, FirstCheck: na, KnowledgeHit: na,
 				}},
@@ -535,7 +534,7 @@ func TestReport(t *testing.T) {
 				}},
 				AgainstBaseline: uncompared,
 				Scores: []eval.Score{{
-					EventID: "tq-003", Condition: eval.ConditionExamples, Type: evidence.TypeNormalVariation,
+					EventID: "tq-003", Condition: eval.ConditionExamples, Type: "normal_variation",
 					ExpectedStatus: diagnose.StatusNoAction, Status: diagnose.StatusNoAction, StatusOK: true,
 					CitationPrecision: na, CitationRecall: na, RequiredChecks: na, FirstCheck: na, KnowledgeHit: na,
 				}},
@@ -573,17 +572,17 @@ func TestReport(t *testing.T) {
 				},
 				Scores: []eval.Score{
 					{
-						EventID: "tq-003", Condition: base, Type: evidence.TypeNormalVariation,
+						EventID: "tq-003", Condition: base, Type: "normal_variation",
 						ExpectedStatus: diagnose.StatusNoAction, Status: diagnose.StatusNoAction, StatusOK: true,
 						CitationPrecision: na, CitationRecall: na, RequiredChecks: na, FirstCheck: na, KnowledgeHit: na,
 					},
 					{
-						EventID: "tq-003", Condition: eval.ConditionExamples, Type: evidence.TypeNormalVariation,
+						EventID: "tq-003", Condition: eval.ConditionExamples, Type: "normal_variation",
 						ExpectedStatus: diagnose.StatusNoAction, Status: diagnose.StatusHold,
 						CitationPrecision: na, CitationRecall: na, RequiredChecks: na, FirstCheck: na, KnowledgeHit: na,
 					},
 					{
-						EventID: "tq-003", Condition: eval.ConditionKnowledge, Type: evidence.TypeNormalVariation,
+						EventID: "tq-003", Condition: eval.ConditionKnowledge, Type: "normal_variation",
 						ExpectedStatus: diagnose.StatusNoAction, Status: diagnose.StatusNoAction, StatusOK: true,
 						CitationPrecision: na, CitationRecall: na, RequiredChecks: na, FirstCheck: na, KnowledgeHit: na,
 					},
@@ -616,22 +615,22 @@ func TestReport(t *testing.T) {
 				},
 				Scores: []eval.Score{
 					{
-						EventID: "tq-003", Condition: base, Type: evidence.TypeNormalVariation,
+						EventID: "tq-003", Condition: base, Type: "normal_variation",
 						ExpectedStatus: diagnose.StatusNoAction, Status: diagnose.StatusHold,
 						CitationPrecision: na, CitationRecall: na, RequiredChecks: na, FirstCheck: na, KnowledgeHit: na,
 					},
 					{
-						EventID: "tq-005", Condition: base, Type: evidence.TypeClickSpike,
+						EventID: "tq-005", Condition: base, Type: "click_spike",
 						ExpectedStatus: diagnose.StatusReadyForReview, Status: diagnose.StatusReadyForReview, StatusOK: true,
 						CitationPrecision: 0.5, CitationRecall: 0.5, RequiredChecks: 0.5, FirstCheck: 1,
 					},
 					{
-						EventID: "tq-003", Condition: eval.ConditionExamples, Type: evidence.TypeNormalVariation,
+						EventID: "tq-003", Condition: eval.ConditionExamples, Type: "normal_variation",
 						ExpectedStatus: diagnose.StatusNoAction, Status: diagnose.StatusNoAction, StatusOK: true,
 						CitationPrecision: na, CitationRecall: na, RequiredChecks: na, FirstCheck: na, KnowledgeHit: na,
 					},
 					{
-						EventID: "tq-005", Condition: eval.ConditionExamples, Type: evidence.TypeClickSpike,
+						EventID: "tq-005", Condition: eval.ConditionExamples, Type: "click_spike",
 						ExpectedStatus: diagnose.StatusReadyForReview, Status: diagnose.StatusReadyForReview, StatusOK: true,
 					},
 				},
@@ -655,7 +654,7 @@ func TestReport(t *testing.T) {
 				}},
 				AgainstBaseline: uncompared,
 				Scores: []eval.Score{{
-					EventID: "tq-003", Condition: eval.ConditionSeed, Type: evidence.TypeNormalVariation,
+					EventID: "tq-003", Condition: eval.ConditionSeed, Type: "normal_variation",
 					ExpectedStatus: diagnose.StatusNoAction, Status: diagnose.StatusNoAction, StatusOK: true,
 					CitationPrecision: na, CitationRecall: na, RequiredChecks: na, FirstCheck: na, KnowledgeHit: na,
 					Verdict: feedback.VerdictApprove,
@@ -691,13 +690,13 @@ func TestReport(t *testing.T) {
 				AgainstBaseline: uncompared,
 				Scores: []eval.Score{
 					{
-						EventID: "tq-001", Condition: base, Type: evidence.TypeNormalVariation,
+						EventID: "tq-001", Condition: base, Type: "normal_variation",
 						ExpectedStatus: diagnose.StatusNoAction, Status: diagnose.StatusNoAction, StatusOK: true,
 						CitationPrecision: na, CitationRecall: na, RequiredChecks: na, FirstCheck: na, KnowledgeHit: na,
 						Revised: true, CostUSD: 0.375, InputTokens: 250, DurationMS: 800,
 					},
 					{
-						EventID: "tq-002", Condition: base, Type: evidence.TypeNormalVariation,
+						EventID: "tq-002", Condition: base, Type: "normal_variation",
 						ExpectedStatus: diagnose.StatusNoAction, Status: diagnose.StatusNoAction, StatusOK: true,
 						CitationPrecision: na, CitationRecall: na, RequiredChecks: na, FirstCheck: na, KnowledgeHit: na,
 						CostUSD: 0.5, DurationMS: 100,

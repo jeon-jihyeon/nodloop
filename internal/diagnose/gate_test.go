@@ -8,7 +8,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeon-jihyeon/nodloop/internal/analysis"
 	"github.com/jeon-jihyeon/nodloop/internal/diagnose"
 	"github.com/jeon-jihyeon/nodloop/internal/testkit"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
@@ -192,7 +191,7 @@ func TestRecordGate(t *testing.T) {
 			t.Parallel()
 			s := testkit.Open(t)
 			d := diagnose.New(
-				s.Source, analysis.DefaultPolicy(), diagnose.Limits{}, nil, s.Traces, s.Feedback, s.Ledger, s.Clock.Now,
+				s.Source, testkit.Policy(t), diagnose.Limits{}, nil, s.Traces, s.Feedback, s.Ledger, s.Clock.Now,
 			)
 			c, err := d.Prepare(ctx, "tq-005", diagnose.ModeInteractive, diagnose.Session{})
 			require.NoError(t, err)

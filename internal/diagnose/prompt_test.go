@@ -127,7 +127,7 @@ func TestPrepareText(t *testing.T) {
 	}{
 		{
 			name: "lists observations and every runbook paragraph",
-			args: args{analysis.DefaultPolicy(), "tq-005"},
+			args: args{testkit.Policy(t), "tq-005"},
 			want: want{
 				present: []string{
 					"# Event tq-005",
@@ -144,7 +144,7 @@ func TestPrepareText(t *testing.T) {
 		},
 		{
 			name: "says so when no analyzer reported a change",
-			args: args{analysis.DefaultPolicy(), "tq-001"},
+			args: args{testkit.Policy(t), "tq-001"},
 			want: want{
 				present: []string{"# Event tq-001", "No analyzer reported a change against the baseline."},
 				absent:  []string{"- ["},
@@ -157,7 +157,7 @@ func TestPrepareText(t *testing.T) {
 		},
 		{
 			name: "reports missing points of a gapped series",
-			args: args{analysis.DefaultPolicy(), "tq-017"},
+			args: args{testkit.Policy(t), "tq-017"},
 			want: want{present: []string{"Change context: data_availability_issue", "samples 39, missing 9, adequate"}},
 		},
 	}

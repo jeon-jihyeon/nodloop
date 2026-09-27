@@ -10,7 +10,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 
-	"github.com/jeon-jihyeon/nodloop/internal/analysis"
 	"github.com/jeon-jihyeon/nodloop/internal/diagnose"
 	"github.com/jeon-jihyeon/nodloop/internal/evidence"
 	"github.com/jeon-jihyeon/nodloop/internal/feedback"
@@ -181,7 +180,7 @@ func TestPrepareCandidates(t *testing.T) {
 			t.Parallel()
 			s := testkit.Open(t)
 			d := diagnose.New(
-				s.Source, analysis.DefaultPolicy(), tc.args.limits, nil, s.Traces, s.Feedback, s.Ledger, s.Clock.Now,
+				s.Source, testkit.Policy(t), tc.args.limits, nil, s.Traces, s.Feedback, s.Ledger, s.Clock.Now,
 			)
 			for _, k := range tc.args.knowledge {
 				k.Evidence, k.Author = knowledge.Evidence{ParagraphIDs: []string{"p-1"}}, "author"
@@ -586,7 +585,7 @@ func TestSelect(t *testing.T) {
 			t.Parallel()
 			s := testkit.Open(t)
 			d := diagnose.New(
-				s.Source, analysis.DefaultPolicy(), tc.args.limits, nil, s.Traces, s.Feedback, s.Ledger, s.Clock.Now,
+				s.Source, testkit.Policy(t), tc.args.limits, nil, s.Traces, s.Feedback, s.Ledger, s.Clock.Now,
 			)
 			for _, k := range drafts {
 				k.Evidence, k.Author = knowledge.Evidence{ParagraphIDs: []string{"p-1"}}, "author"
@@ -763,7 +762,7 @@ func TestRunSelection(t *testing.T) {
 			s := testkit.Open(t)
 			client := llmmock.NewMockClient(gomock.NewController(t))
 			d := diagnose.New(
-				s.Source, analysis.DefaultPolicy(), diagnose.Limits{}, client, s.Traces, s.Feedback, s.Ledger, s.Clock.Now,
+				s.Source, testkit.Policy(t), diagnose.Limits{}, client, s.Traces, s.Feedback, s.Ledger, s.Clock.Now,
 			)
 			for _, k := range drafts {
 				k.Evidence, k.Author = knowledge.Evidence{ParagraphIDs: []string{"p-1"}}, "author"

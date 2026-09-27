@@ -10,6 +10,7 @@ var (
 	errDataDirUnset     = errors.New(envFileDir + " is not set")
 	errUnknownSource    = errors.New("unknown source")
 	errNoEvents         = errors.New("no events.csv")
+	errPolicyMissing    = errors.New("no policy.yaml")
 	errConfigInvalid    = errors.New(configFile + " is not valid JSON")
 	errUnexpectedOutput = errors.New("unexpected output")
 	errWrongAnswer      = errors.New("wrong answer")

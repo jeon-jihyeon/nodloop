@@ -148,7 +148,7 @@ func TestPrepare(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			s := testkit.Open(t)
-			policy := analysis.DefaultPolicy()
+			policy := testkit.Policy(t)
 			d := diagnose.New(s.Source, policy, diagnose.Limits{}, nil, s.Traces, s.Feedback, s.Ledger, s.Clock.Now)
 			ev, err := s.Source.Event(ctx, "tq-005")
 			require.NoError(t, err)
@@ -214,7 +214,7 @@ func TestPrepareFailure(t *testing.T) {
 	}{
 		{
 			"unknown event fails without a trace",
-			args{analysis.DefaultPolicy(), "nope", diagnose.ModeBatch},
+			args{testkit.Policy(t), "nope", diagnose.ModeBatch},
 			evidence.ErrNotFound,
 		},
 		{
@@ -222,7 +222,7 @@ func TestPrepareFailure(t *testing.T) {
 			args{analysis.Policy{Analyzers: []analysis.RuleSpec{{Rule: "nope"}}}, "tq-005", diagnose.ModeBatch},
 			analysis.ErrUnknownRule,
 		},
-		{"unknown mode fails without a trace", args{analysis.DefaultPolicy(), "tq-005", "chat"}, diagnose.ErrUnknownMode},
+		{"unknown mode fails without a trace", args{testkit.Policy(t), "tq-005", "chat"}, diagnose.ErrUnknownMode},
 	}
 	ctx := context.Background()
 	for _, tc := range tcs {
@@ -580,7 +580,7 @@ func TestRecord(t *testing.T) {
 			t.Parallel()
 			s := testkit.Open(t)
 			d := diagnose.New(
-				s.Source, analysis.DefaultPolicy(), tc.args.limits, nil, s.Traces, s.Feedback, s.Ledger, s.Clock.Now,
+				s.Source, testkit.Policy(t), tc.args.limits, nil, s.Traces, s.Feedback, s.Ledger, s.Clock.Now,
 			)
 			ids := map[string]string{"no-such-id": "no-such-id", "bad": "bad", "old": "old"}
 			for _, event := range tc.args.rejected {
@@ -696,7 +696,7 @@ func TestRecordConcurrent(t *testing.T) {
 			t.Parallel()
 			s := testkit.Open(t)
 			d := diagnose.New(
-				s.Source, analysis.DefaultPolicy(), diagnose.Limits{}, nil, s.Traces, s.Feedback, s.Ledger, s.Clock.Now,
+				s.Source, testkit.Policy(t), diagnose.Limits{}, nil, s.Traces, s.Feedback, s.Ledger, s.Clock.Now,
 			)
 			c, err := d.Prepare(ctx, "tq-005", diagnose.ModeInteractive, diagnose.Session{})
 			require.NoError(t, err)
@@ -773,7 +773,7 @@ func TestRun(t *testing.T) {
 	ctx := context.Background()
 	base := testkit.Open(t)
 	preparer := diagnose.New(
-		base.Source, analysis.DefaultPolicy(), diagnose.Limits{}, nil, base.Traces, base.Feedback, base.Ledger,
+		base.Source, testkit.Policy(t), diagnose.Limits{}, nil, base.Traces, base.Feedback, base.Ledger,
 		base.Clock.Now,
 	)
 	prepared, err := preparer.Prepare(ctx, "tq-005", diagnose.ModeBatch, diagnose.Session{})
@@ -937,7 +937,7 @@ func TestRun(t *testing.T) {
 			s := testkit.Open(t)
 			client := llmmock.NewMockClient(gomock.NewController(t))
 			d := diagnose.New(
-				s.Source, analysis.DefaultPolicy(), diagnose.Limits{}, client, s.Traces, s.Feedback, s.Ledger, s.Clock.Now,
+				s.Source, testkit.Policy(t), diagnose.Limits{}, client, s.Traces, s.Feedback, s.Ledger, s.Clock.Now,
 			)
 			var calls []any
 			for _, c := range tc.args.calls {
@@ -1006,7 +1006,7 @@ func TestRunWithoutModelCall(t *testing.T) {
 			t.Parallel()
 			s := testkit.Open(t)
 			d := diagnose.New(
-				s.Source, analysis.DefaultPolicy(), diagnose.Limits{}, tc.args.client, s.Traces, s.Feedback, s.Ledger, s.Clock.Now,
+				s.Source, testkit.Policy(t), diagnose.Limits{}, tc.args.client, s.Traces, s.Feedback, s.Ledger, s.Clock.Now,
 			)
 
 			got, err := d.Run(ctx, tc.args.event, diagnose.BatchOptions{Knowledge: tc.args.knowledge})
@@ -1088,7 +1088,7 @@ func TestRunStoreFailure(t *testing.T) {
 				s.Clock.Now, func() string { return "k-generated" },
 			)
 			reviewer := diagnose.New(
-				s.Source, analysis.DefaultPolicy(), diagnose.Limits{}, nil, s.Traces, verdicts, ledger, s.Clock.Now,
+				s.Source, testkit.Policy(t), diagnose.Limits{}, nil, s.Traces, verdicts, ledger, s.Clock.Now,
 			)
 			c, err := reviewer.Prepare(ctx, "tq-007", diagnose.ModeBatch, diagnose.Session{})
 			require.NoError(t, err)
@@ -1120,7 +1120,7 @@ func TestRunStoreFailure(t *testing.T) {
 			)
 			client := llmmock.NewMockClient(gomock.NewController(t))
 			d := diagnose.New(
-				s.Source, analysis.DefaultPolicy(), diagnose.Limits{}, client, s.Traces, flakyFeedback, flakyLedger, s.Clock.Now,
+				s.Source, testkit.Policy(t), diagnose.Limits{}, client, s.Traces, flakyFeedback, flakyLedger, s.Clock.Now,
 			)
 
 			got, err := d.Run(ctx, "tq-005", tc.args.opts)
@@ -1246,7 +1246,7 @@ func TestRunKeepsItsSelection(t *testing.T) {
 					return llm.Response{Output: output}, nil
 				})
 			d := diagnose.New(
-				s.Source, analysis.DefaultPolicy(), diagnose.Limits{}, client, traces, s.Feedback, s.Ledger, s.Clock.Now,
+				s.Source, testkit.Policy(t), diagnose.Limits{}, client, traces, s.Feedback, s.Ledger, s.Clock.Now,
 			)
 
 			got, err := d.Run(ctx, "tq-008", diagnose.BatchOptions{Knowledge: tc.args.mode})
@@ -1279,7 +1279,7 @@ func TestRunLive(t *testing.T) {
 	s := testkit.Open(t)
 	client := llm.NewClaudeCLI("", "", "", 0)
 	d := diagnose.New(
-		s.Source, analysis.DefaultPolicy(), diagnose.Limits{}, client, s.Traces, s.Feedback, s.Ledger, s.Clock.Now,
+		s.Source, testkit.Policy(t), diagnose.Limits{}, client, s.Traces, s.Feedback, s.Ledger, s.Clock.Now,
 	)
 
 	got, err := d.Run(ctx, "tq-005", diagnose.BatchOptions{Model: "haiku"})

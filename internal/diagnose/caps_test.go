@@ -3,6 +3,8 @@ package diagnose_test
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -10,13 +12,14 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeon-jihyeon/nodloop/internal/analysis"
 	"github.com/jeon-jihyeon/nodloop/internal/diagnose"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	"github.com/jeon-jihyeon/nodloop/internal/testkit"
 )
 
 func TestLoadLimits(t *testing.T) {
+	demo, err := os.ReadFile(filepath.Join(testkit.DemoDir(t), "policy.yaml"))
+	require.NoError(t, err)
 	type want struct {
 		limits diagnose.Limits
 		err    error
@@ -28,12 +31,12 @@ func TestLoadLimits(t *testing.T) {
 	}{
 		{
 			name: "limits section of a policy file is read beside its analyzers",
-			args: analysis.DefaultPolicyYAML + "limits:\n  knowledge_chars: 100\n  example_chars: 200\n  candidates: 3\n",
+			args: string(demo) + "limits:\n  knowledge_chars: 100\n  example_chars: 200\n  candidates: 3\n",
 			want: want{limits: diagnose.Limits{KnowledgeChars: 100, ExampleChars: 200, Candidates: 3}},
 		},
 		{
 			name: "policy file without limits gives zero limits",
-			args: analysis.DefaultPolicyYAML,
+			args: string(demo),
 		},
 		{
 			name: "broken yaml is refused",
@@ -165,7 +168,7 @@ func TestCaps(t *testing.T) {
 			t.Parallel()
 			s := testkit.Open(t)
 			d := diagnose.New(
-				s.Source, analysis.DefaultPolicy(), tc.args.limits, nil, s.Traces, s.Feedback, s.Ledger, s.Clock.Now,
+				s.Source, testkit.Policy(t), tc.args.limits, nil, s.Traces, s.Feedback, s.Ledger, s.Clock.Now,
 			)
 			// Imported because approval refuses a folder over the cap and a cut then needs an import or a lowered cap
 			for i := range tc.args.items {

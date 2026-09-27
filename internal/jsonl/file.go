@@ -79,7 +79,8 @@ func (f File[T]) write(file *os.File, record []byte) error {
 // File order
 // A missing file reads as empty only while its directory exists
 // A directory moved or removed after Open is a store failure and never an empty store
-func (f File[T]) All() ([]T, error) {
+// A record that fails a check fails the read with its line named
+func (f File[T]) All(checks ...func(T) error) ([]T, error) {
 	data, err := os.ReadFile(f.path)
 	if errors.Is(err, os.ErrNotExist) {
 		if _, err = os.Stat(filepath.Dir(f.path)); err != nil {
@@ -104,6 +105,11 @@ func (f File[T]) All() ([]T, error) {
 		var v T
 		if err = json.Unmarshal(raw, &v); err != nil {
 			return nil, fmt.Errorf("%s line %d: %w", f.name(), line, err)
+		}
+		for _, check := range checks {
+			if err = check(v); err != nil {
+				return nil, fmt.Errorf("%s line %d: %w", f.name(), line, err)
+			}
 		}
 		all = append(all, v)
 	}

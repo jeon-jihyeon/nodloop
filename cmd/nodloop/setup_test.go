@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -57,6 +58,11 @@ func TestRunSetup(t *testing.T) {
 			want{1, "", "^nodloop setup: no events.csv: {empty}\n$", config{}, errDataDirUnset},
 		},
 		{
+			"data dir without a policy fails",
+			args{[]string{"--data-dir", "{events}"}, "{home}"},
+			want{1, "", "^nodloop setup: no policy.yaml: {events}\n$", config{}, errDataDirUnset},
+		},
+		{
 			"no flags fail",
 			args{nil, "{home}"},
 			want{1, "", "^nodloop setup: --data-dir or --demo is required\n\nusage:", config{}, errDataDirUnset},
@@ -75,7 +81,12 @@ func TestRunSetup(t *testing.T) {
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			r := strings.NewReplacer("{home}", t.TempDir(), "{empty}", t.TempDir(), "{demo}", testkit.DemoDir(t), "{cwd}", cwd)
+			events := t.TempDir()
+			require.NoError(t, os.WriteFile(filepath.Join(events, "events.csv"), nil, 0o600))
+			r := strings.NewReplacer(
+				"{home}", t.TempDir(), "{empty}", t.TempDir(), "{events}", events,
+				"{demo}", testkit.DemoDir(t), "{cwd}", cwd,
+			)
 			args := make([]string, 0, len(tc.args.args))
 			for _, a := range tc.args.args {
 				args = append(args, r.Replace(a))

@@ -245,13 +245,38 @@ func TestFileAllWithoutFile(t *testing.T) {
 }
 
 func TestFileAllNamesTheBrokenLine(t *testing.T) {
-	dir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "rows.jsonl"), []byte("{\"id\":\"a\"}\n\nnot json\n"), 0o600))
-	f, err := jsonl.Open[row](dir, "rows.jsonl")
-	require.NoError(t, err)
-	got, err := f.All()
-	assert.ErrorContains(t, err, "rows.jsonl line 3")
-	assert.Nil(t, got)
+	type args struct {
+		content string
+		check   func(row) error
+	}
+	refuseB := func(r row) error {
+		return map[string]error{"b": assert.AnError}[r.ID]
+	}
+	tcs := []struct {
+		name string
+		args args
+		// A fragment of the message naming the file and line and the cause
+		want string
+	}{
+		{"a line that is not JSON is named", args{"{\"id\":\"a\"}\n\nnot json\n", refuseB}, "rows.jsonl line 3: invalid"},
+		{
+			"a record the check refuses is named",
+			args{"{\"id\":\"a\"}\n\n{\"id\":\"b\"}\n", refuseB},
+			"rows.jsonl line 3: " + assert.AnError.Error(),
+		},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "rows.jsonl"), []byte(tc.args.content), 0o600))
+			f, err := jsonl.Open[row](dir, "rows.jsonl")
+			require.NoError(t, err)
+			got, err := f.All(tc.args.check)
+			assert.ErrorContains(t, err, tc.want)
+			assert.Nil(t, got)
+		})
+	}
 }
 
 func TestFileNewest(t *testing.T) {
