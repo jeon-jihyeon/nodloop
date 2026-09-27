@@ -23,6 +23,22 @@ func (c citable) keep(ids []string) []string {
 	return out
 }
 
+// Ids of the review the context does not list in citation order
+// The diagnose trace keeps them because the gated output no longer shows why a cause lost its citation
+func (c citable) unknown(diag Diagnosis) []string {
+	ids := diag.Checks.Paragraphs()
+	for _, cause := range diag.Causes {
+		ids = append(ids, cause.ParagraphIDs...)
+	}
+	var out []string
+	for _, id := range ids {
+		if _, ok := c[id]; !ok && !slices.Contains(out, id) {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
 // The review with unknown and repeated ids dropped and each cause cut to its first causeCitations ids
 // Checks and causes are cloned first because their backing arrays belong to the caller
 // Revisions and the gate both judge this review so what is sent back and what is recorded agree

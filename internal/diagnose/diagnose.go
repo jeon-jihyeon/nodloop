@@ -263,6 +263,8 @@ type recordInput struct {
 	Examples  []appliedExample   `json:"examples"`
 	// Set when the select cut an item at a cap
 	Omitted bool `json:"omitted"`
+	// Paragraph ids the review cited that the context did not list
+	UnknownIDs []string `json:"unknown_ids,omitempty"`
 }
 
 // Same change context and at least one shared metric
@@ -272,7 +274,7 @@ func (in recordInput) matches(changeContext evidence.Context, metrics []string) 
 
 // The diagnose trace without Output
 // A context without a select trace names no knowledge and no examples
-func (c Context) diagnoseTrace(now time.Time, selected *selectInput, run modelRun) trace.Trace {
+func (c Context) diagnoseTrace(now time.Time, selected *selectInput, run modelRun, unknownIDs []string) trace.Trace {
 	if selected == nil {
 		selected = &selectInput{}
 	}
@@ -281,6 +283,7 @@ func (c Context) diagnoseTrace(now time.Time, selected *selectInput, run modelRu
 		Mode: c.Mode, PolicyVersion: c.PolicyVersion, PromptVersion: c.PromptVersion, ChangeContext: c.ChangeContext,
 		Metrics: c.Observations.Metrics(), Selector: selected.Selector, Knowledge: selected.givenKnowledge(),
 		Examples: slices.DeleteFunc(append([]appliedExample{}, selected.Examples...), appliedExample.dropped), Omitted: selected.Omitted,
+		UnknownIDs: unknownIDs,
 	}
 	tr.Input, _ = json.Marshal(in)
 	return tr
@@ -413,7 +416,7 @@ func (d *Diagnoser) Record(ctx context.Context, pendingID string, diag Diagnosis
 	if err != nil || len(res.Revisions) > 0 {
 		return res, err
 	}
-	return d.appendReview(ctx, c, selected, cited, modelRun{})
+	return d.appendReview(ctx, c, selected, diag, modelRun{})
 }
 
 // Usage of the batch path
@@ -426,20 +429,21 @@ type modelRun struct {
 
 // Closes the context of the batch path with the review of its own selection
 // The selection is never read back from the store so a store that lost it fails as a store and never as a missing select
-func (d *Diagnoser) recordRun(ctx context.Context, c Context, selected selectInput, cited Diagnosis, run modelRun) (Result, error) {
+func (d *Diagnoser) recordRun(ctx context.Context, c Context, selected selectInput, diag Diagnosis, run modelRun) (Result, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if err := d.ensureOpen(ctx, c.PendingID); err != nil {
 		return Result{}, err
 	}
-	return d.appendReview(ctx, c, &selected, cited, run)
+	return d.appendReview(ctx, c, &selected, diag, run)
 }
 
-// Gates the cited review and closes the context with it
+// Cites and gates the review as the model wrote it and closes the context with it
 // The caller has checked that the context is open
-func (d *Diagnoser) appendReview(ctx context.Context, c Context, selected *selectInput, cited Diagnosis, run modelRun) (Result, error) {
-	tr := c.diagnoseTrace(d.now(), selected, run)
-	gated, forced := cited.gate()
+func (d *Diagnoser) appendReview(ctx context.Context, c Context, selected *selectInput, diag Diagnosis, run modelRun) (Result, error) {
+	known := c.citable()
+	tr := c.diagnoseTrace(d.now(), selected, run, known.unknown(diag))
+	gated, forced := diag.cited(known).gate()
 	if forced {
 		tr.Tags = append(tr.Tags, TagGateHold)
 	}
@@ -459,7 +463,7 @@ func (d *Diagnoser) recordFailure(ctx context.Context, c Context, selected *sele
 	if err := d.ensureOpen(ctx, c.PendingID); err != nil {
 		return Result{}, errors.Join(failure, err)
 	}
-	tr := c.diagnoseTrace(d.now(), selected, run)
+	tr := c.diagnoseTrace(d.now(), selected, run, nil)
 	tr.Error = failure.Error()
 	if err := d.traces.Append(ctx, tr); err != nil {
 		return Result{}, errors.Join(failure, err)
@@ -509,11 +513,11 @@ func (d *Diagnoser) Run(ctx context.Context, eventID string, opts BatchOptions) 
 	if err != nil {
 		return d.recordFailure(ctx, c, nil, modelRun{}, err)
 	}
-	cited, run, err := d.review(ctx, c, c.Text+sel.Text, opts.Model)
+	diag, run, err := d.review(ctx, c, c.Text+sel.Text, opts.Model)
 	if err != nil {
 		return d.recordFailure(ctx, c, &selected, run, err)
 	}
-	return d.recordRun(ctx, c, selected, cited, run)
+	return d.recordRun(ctx, c, selected, diag, run)
 }
 
 // The code side selection of the batch path
@@ -542,23 +546,21 @@ func (d *Diagnoser) batchSelection(ctx context.Context, c Context, mode Knowledg
 }
 
 // One model call and a second one when the first review is sent back
-// Returns the cited review of the last call
+// Returns the review of the last call as the model wrote it
 // The run of a failure is the call that failed so its cost is counted
 func (d *Diagnoser) review(ctx context.Context, c Context, prompt, model string) (Diagnosis, modelRun, error) {
 	diag, run, err := d.complete(ctx, prompt, model)
 	if err != nil {
 		return Diagnosis{}, run, err
 	}
-	known := c.citable()
-	cited := diag.cited(known)
+	cited := diag.cited(c.citable())
 	d.mu.Lock()
 	res, err := d.revise(ctx, c, diag, cited.revisions(c.firstStep(cited.leadRunbook())), run)
 	d.mu.Unlock()
 	if err != nil || len(res.Revisions) == 0 {
-		return cited, run, err
+		return diag, run, err
 	}
-	diag, run, err = d.complete(ctx, revisePrompt(prompt, diag, res.Revisions), model)
-	return diag.cited(known), run, err
+	return d.complete(ctx, revisePrompt(prompt, diag, res.Revisions), model)
 }
 
 // One model call and its decoded review
