@@ -16,7 +16,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 
-	"github.com/jeon-jihyeon/nodloop/internal/analysis"
 	"github.com/jeon-jihyeon/nodloop/internal/diagnose"
 	"github.com/jeon-jihyeon/nodloop/internal/eval"
 	"github.com/jeon-jihyeon/nodloop/internal/evidence"
@@ -152,7 +151,7 @@ func TestSeed(t *testing.T) {
 					return tc.args.response, tc.args.failures[eventRe.FindStringSubmatch(req.Prompt)[1]]
 				}).AnyTimes()
 			d := diagnose.New(
-				s.Source, analysis.DefaultPolicy(), diagnose.Limits{}, client, s.Traces, s.Feedback, s.Ledger, s.Clock.Now,
+				s.Source, testkit.Policy(t), diagnose.Limits{}, client, s.Traces, s.Feedback, s.Ledger, s.Clock.Now,
 			)
 			var log bytes.Buffer
 			opts := tc.args.opts
@@ -243,7 +242,7 @@ func TestSeedStops(t *testing.T) {
 				func(_ context.Context, req llm.Request) (llm.Response, error) { return tc.args.complete(cancel, req) },
 			).AnyTimes()
 			d := diagnose.New(
-				s.Source, analysis.DefaultPolicy(), diagnose.Limits{}, client, s.Traces, s.Feedback, s.Ledger, s.Clock.Now,
+				s.Source, testkit.Policy(t), diagnose.Limits{}, client, s.Traces, s.Feedback, s.Ledger, s.Clock.Now,
 			)
 			opts := eval.RunOptions{SessionID: "s", Events: tc.args.events, Parallel: tc.args.parallel}
 			traces, err := eval.New(s.Source, d, s.Traces, s.Feedback, s.Ledger).Seed(runCtx, opts)
@@ -279,7 +278,7 @@ func TestSeedWithoutClient(t *testing.T) {
 			old.Tags = []string{string(eval.ConditionSeed)}
 			require.NoError(t, s.Traces.Append(ctx, old))
 			d := diagnose.New(
-				s.Source, analysis.DefaultPolicy(), diagnose.Limits{}, nil, s.Traces, s.Feedback, s.Ledger, s.Clock.Now,
+				s.Source, testkit.Policy(t), diagnose.Limits{}, nil, s.Traces, s.Feedback, s.Ledger, s.Clock.Now,
 			)
 			opts := eval.RunOptions{SessionID: "s", Events: []string{"tq-001"}}
 			traces, err := eval.New(s.Source, d, s.Traces, s.Feedback, s.Ledger).Seed(ctx, opts)
@@ -434,7 +433,7 @@ func TestHoldout(t *testing.T) {
 			client := llmmock.NewMockClient(gomock.NewController(t))
 			client.EXPECT().Complete(gomock.Any(), gomock.Any()).Return(noAction, nil).AnyTimes()
 			d := diagnose.New(
-				s.Source, analysis.DefaultPolicy(), diagnose.Limits{}, client, s.Traces, s.Feedback, s.Ledger, s.Clock.Now,
+				s.Source, testkit.Policy(t), diagnose.Limits{}, client, s.Traces, s.Feedback, s.Ledger, s.Clock.Now,
 			)
 			held := trace.Trace{
 				ID: "t1", Name: trace.NameDiagnose, SessionID: "s", Subject: "tq-003", Tags: []string{"feedback:off"},
@@ -534,7 +533,7 @@ func TestHoldoutFeedbackDuringTheRun(t *testing.T) {
 					return noAction, nil
 				}).Times(len(tc.want.reviews))
 			d := diagnose.New(
-				s.Source, analysis.DefaultPolicy(), diagnose.Limits{}, client, s.Traces, s.Feedback, s.Ledger, s.Clock.Now,
+				s.Source, testkit.Policy(t), diagnose.Limits{}, client, s.Traces, s.Feedback, s.Ledger, s.Clock.Now,
 			)
 			traces, err := eval.New(s.Source, d, s.Traces, s.Feedback, s.Ledger).Holdout(ctx, tc.args)
 			var got []review
@@ -695,7 +694,7 @@ func TestSeedThenHoldoutReport(t *testing.T) {
 					return llm.Response{Output: b, CostUSD: 0.01, InputTokens: 50}, nil
 				}).AnyTimes()
 			d := diagnose.New(
-				s.Source, analysis.DefaultPolicy(), diagnose.Limits{}, client, s.Traces, s.Feedback, s.Ledger, s.Clock.Now,
+				s.Source, testkit.Policy(t), diagnose.Limits{}, client, s.Traces, s.Feedback, s.Ledger, s.Clock.Now,
 			)
 			r := eval.New(s.Source, d, s.Traces, s.Feedback, s.Ledger)
 

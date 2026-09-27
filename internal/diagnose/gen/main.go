@@ -13,7 +13,7 @@ import (
 
 const skill = `---
 name: review
-description: Evidence-grounded review of an event from registered data and runbooks with nodloop, with the user's verdict recorded as feedback. Use when the user asks to check, review or investigate metrics, traffic quality, anomalies or an incident, and when the user corrects a review that nodloop recorded.
+description: Evidence-grounded review of an event from registered data and runbooks with nodloop, with the user's verdict recorded as feedback. Use when the user asks to check, review or investigate metrics, anomalies or an incident, and when the user corrects a review that nodloop recorded.
 ---
 
 # Review with nodloop

@@ -83,6 +83,9 @@ func newUserConfig(dataDir, recordDir string) (userConfig, error) {
 	if _, err := os.Stat(filepath.Join(abs, "events.csv")); err != nil {
 		return userConfig{}, fmt.Errorf("%w: %s", errNoEvents, abs)
 	}
+	if _, err := os.Stat(filepath.Join(abs, "policy.yaml")); err != nil {
+		return userConfig{}, fmt.Errorf("%w: %s", errPolicyMissing, abs)
+	}
 	return userConfig{DataDir: abs, RecordDir: recordDir}, nil
 }
 
@@ -115,7 +118,7 @@ func (h homeDir) setupDemo(recordDir string) (userConfig, error) {
 func runSetup(args []string, getenv func(string) string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("setup", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	dataDir := fs.String("data-dir", "", "reference data directory with events.csv and runbooks")
+	dataDir := fs.String("data-dir", "", "reference data directory with events.csv and policy.yaml and runbooks")
 	recordDir := fs.String("record-dir", "", "record directory. Empty means ~/.nodloop/records")
 	useDemo := fs.Bool("demo", false, "unpack the demo data set under ~/.nodloop/demo and use it")
 	if err := fs.Parse(args); err != nil {

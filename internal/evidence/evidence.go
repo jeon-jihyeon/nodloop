@@ -36,25 +36,27 @@ func (c Context) Breaks() bool {
 	return c == ContextMeasurementChanged || c == ContextDataAvailability
 }
 
-// The shape a label assigns to an event
+// The category a label assigns to an event
+// The data set names its own categories so any non empty name is valid
 type EventType string
 
-const (
-	TypeNormalVariation     EventType = "normal_variation"
-	TypeClickSpike          EventType = "click_spike"
-	TypeConversionRateDrop  EventType = "conversion_rate_drop"
-	TypeSourceConcentration EventType = "source_concentration"
-	TypeAttributionLag      EventType = "attribution_lag"
-	TypeHold                EventType = "hold"
-)
-
-var validTypes = map[EventType]struct{}{
-	TypeNormalVariation: {}, TypeClickSpike: {}, TypeConversionRateDrop: {},
-	TypeSourceConcentration: {}, TypeAttributionLag: {}, TypeHold: {},
+func (t EventType) Valid() bool {
+	return t != ""
 }
 
-func (t EventType) Valid() bool {
-	_, ok := validTypes[t]
+// The review status a label expects
+type Status string
+
+const (
+	StatusNoAction       Status = "no_action"        // nothing to check
+	StatusReadyForReview Status = "ready_for_review" // a cause backed by runbook checks
+	StatusHold           Status = "hold"             // no runbook covers the cause or the data cannot be trusted
+)
+
+var validStatuses = map[Status]struct{}{StatusNoAction: {}, StatusReadyForReview: {}, StatusHold: {}}
+
+func (s Status) Valid() bool {
+	_, ok := validStatuses[s]
 	return ok
 }
 
@@ -164,6 +166,8 @@ type Paragraph struct {
 type Label struct {
 	EventID string    `json:"event_id"`
 	Type    EventType `json:"type"`
+	// Status a correct review answers with
+	Expected Status `json:"expected_status"`
 	// Seed events donate feedback to holdout events
 	// Holdout events are scored
 	Seed bool `json:"seed"`
@@ -181,7 +185,20 @@ type Label struct {
 
 // The correct answer is a hold because no runbook covers the cause or the data cannot be trusted
 func (l Label) IsHold() bool {
-	return l.Type == TypeHold
+	return l.Expected == StatusHold
+}
+
+// A label without an event id or a type or a known expected status cannot score a review
+func (l Label) Validate() error {
+	switch {
+	case l.EventID == "":
+		return fmt.Errorf("%w: label without event id", ErrMalformed)
+	case !l.Type.Valid():
+		return fmt.Errorf("%w: label %s without type", ErrMalformed, l.EventID)
+	case !l.Expected.Valid():
+		return fmt.Errorf("%w: label %s expects unknown status %q", ErrMalformed, l.EventID, l.Expected)
+	}
+	return nil
 }
 
 type SeriesRef struct {

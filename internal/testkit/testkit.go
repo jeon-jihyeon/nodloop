@@ -3,6 +3,7 @@ package testkit
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"runtime"
 	"sync"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeon-jihyeon/nodloop/internal/analysis"
 	evidencefile "github.com/jeon-jihyeon/nodloop/internal/evidence/file"
 	"github.com/jeon-jihyeon/nodloop/internal/feedback"
 	feedbackfile "github.com/jeon-jihyeon/nodloop/internal/feedback/file"
@@ -102,6 +104,16 @@ func DemoDir(t *testing.T) string {
 	_, self, _, ok := runtime.Caller(0)
 	require.True(t, ok, "caller unknown")
 	return filepath.Join(filepath.Dir(self), "..", "evidence", "file", "testdata")
+}
+
+// The policy of the demo data set
+func Policy(t *testing.T) analysis.Policy {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(DemoDir(t), "policy.yaml"))
+	require.NoError(t, err)
+	policy, err := analysis.LoadPolicy(b)
+	require.NoError(t, err)
+	return policy
 }
 
 // Steps a second per call so two calls around a model call give a positive duration

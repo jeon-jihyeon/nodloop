@@ -46,6 +46,11 @@ func TestDemoDir(t *testing.T) {
 	assert.NoError(t, err)
 }
 
+func TestPolicy(t *testing.T) {
+	t.Parallel()
+	assert.Equal(t, "demo-1", testkit.Policy(t).Version)
+}
+
 // Each read returns the current time and moves the clock one step
 func TestClockNow(t *testing.T) {
 	t.Parallel()

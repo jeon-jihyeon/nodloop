@@ -11,7 +11,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeon-jihyeon/nodloop/internal/analysis"
 	"github.com/jeon-jihyeon/nodloop/internal/diagnose"
 	"github.com/jeon-jihyeon/nodloop/internal/evidence"
 	evidencefile "github.com/jeon-jihyeon/nodloop/internal/evidence/file"
@@ -36,7 +35,7 @@ const (
 func TestServerTools(t *testing.T) {
 	t.Parallel()
 	st := testkit.Open(t)
-	policy := analysis.DefaultPolicy()
+	policy := testkit.Policy(t)
 	diagnoser := diagnose.New(st.Source, policy, diagnose.Limits{}, nil, st.Traces, st.Feedback, st.Ledger, st.Clock.Now)
 	srv := mcp.New(st.Source, policy, diagnoser, st.Traces, st.Feedback, st.Outcomes, st.Ledger, st.Clock.Now, "test")
 	c := testkit.Connect(t, srv.ServeTransport)
@@ -47,7 +46,7 @@ func TestServerTools(t *testing.T) {
 func TestServerEvents(t *testing.T) {
 	t.Parallel()
 	st := testkit.Open(t)
-	policy := analysis.DefaultPolicy()
+	policy := testkit.Policy(t)
 	diagnoser := diagnose.New(st.Source, policy, diagnose.Limits{}, nil, st.Traces, st.Feedback, st.Ledger, st.Clock.Now)
 	srv := mcp.New(st.Source, policy, diagnoser, st.Traces, st.Feedback, st.Outcomes, st.Ledger, st.Clock.Now, "test")
 	c := testkit.Connect(t, srv.ServeTransport)
@@ -63,7 +62,7 @@ func TestServerEvents(t *testing.T) {
 func TestServerObserve(t *testing.T) {
 	t.Parallel()
 	st := testkit.Open(t)
-	policy := analysis.DefaultPolicy()
+	policy := testkit.Policy(t)
 	diagnoser := diagnose.New(st.Source, policy, diagnose.Limits{}, nil, st.Traces, st.Feedback, st.Ledger, st.Clock.Now)
 	srv := mcp.New(st.Source, policy, diagnoser, st.Traces, st.Feedback, st.Outcomes, st.Ledger, st.Clock.Now, "test")
 	c := testkit.Connect(t, srv.ServeTransport)
@@ -99,7 +98,7 @@ func TestServerObserve(t *testing.T) {
 func TestServerContext(t *testing.T) {
 	t.Parallel()
 	st := testkit.Open(t)
-	policy := analysis.DefaultPolicy()
+	policy := testkit.Policy(t)
 	diagnoser := diagnose.New(st.Source, policy, diagnose.Limits{}, nil, st.Traces, st.Feedback, st.Ledger, st.Clock.Now)
 	srv := mcp.New(st.Source, policy, diagnoser, st.Traces, st.Feedback, st.Outcomes, st.Ledger, st.Clock.Now, "test")
 	c := testkit.Connect(t, srv.ServeTransport)
@@ -131,7 +130,7 @@ func TestServerOffers(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	st := testkit.Open(t)
-	policy := analysis.DefaultPolicy()
+	policy := testkit.Policy(t)
 	diagnoser := diagnose.New(st.Source, policy, diagnose.Limits{}, nil, st.Traces, st.Feedback, st.Ledger, st.Clock.Now)
 	srv := mcp.New(st.Source, policy, diagnoser, st.Traces, st.Feedback, st.Outcomes, st.Ledger, st.Clock.Now, "test")
 	c := testkit.Connect(t, srv.ServeTransport)
@@ -212,7 +211,7 @@ func TestServerOffers(t *testing.T) {
 func TestServerRecordSendsBack(t *testing.T) {
 	t.Parallel()
 	st := testkit.Open(t)
-	policy := analysis.DefaultPolicy()
+	policy := testkit.Policy(t)
 	diagnoser := diagnose.New(st.Source, policy, diagnose.Limits{}, nil, st.Traces, st.Feedback, st.Ledger, st.Clock.Now)
 	srv := mcp.New(st.Source, policy, diagnoser, st.Traces, st.Feedback, st.Outcomes, st.Ledger, st.Clock.Now, "test")
 	c := testkit.Connect(t, srv.ServeTransport)
@@ -250,7 +249,7 @@ func TestServerRecordSendsBack(t *testing.T) {
 func TestServerRecord(t *testing.T) {
 	t.Parallel()
 	st := testkit.Open(t)
-	policy := analysis.DefaultPolicy()
+	policy := testkit.Policy(t)
 	diagnoser := diagnose.New(st.Source, policy, diagnose.Limits{}, nil, st.Traces, st.Feedback, st.Ledger, st.Clock.Now)
 	srv := mcp.New(st.Source, policy, diagnoser, st.Traces, st.Feedback, st.Outcomes, st.Ledger, st.Clock.Now, "test")
 	c := testkit.Connect(t, srv.ServeTransport)
@@ -299,7 +298,7 @@ func TestServerFeedback(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	st := testkit.Open(t)
-	policy := analysis.DefaultPolicy()
+	policy := testkit.Policy(t)
 	diagnoser := diagnose.New(st.Source, policy, diagnose.Limits{}, nil, st.Traces, st.Feedback, st.Ledger, st.Clock.Now)
 	srv := mcp.New(st.Source, policy, diagnoser, st.Traces, st.Feedback, st.Outcomes, st.Ledger, st.Clock.Now, "test")
 	c := testkit.Connect(t, srv.ServeTransport)
@@ -373,7 +372,7 @@ func TestServerOutcome(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	st := testkit.Open(t)
-	policy := analysis.DefaultPolicy()
+	policy := testkit.Policy(t)
 	diagnoser := diagnose.New(st.Source, policy, diagnose.Limits{}, nil, st.Traces, st.Feedback, st.Ledger, st.Clock.Now)
 	srv := mcp.New(st.Source, policy, diagnoser, st.Traces, st.Feedback, st.Outcomes, st.Ledger, st.Clock.Now, "test")
 	c := testkit.Connect(t, srv.ServeTransport)
@@ -451,7 +450,7 @@ func TestServerProposeAndApprove(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	st := testkit.Open(t)
-	policy := analysis.DefaultPolicy()
+	policy := testkit.Policy(t)
 	diagnoser := diagnose.New(st.Source, policy, diagnose.Limits{}, nil, st.Traces, st.Feedback, st.Ledger, st.Clock.Now)
 	srv := mcp.New(st.Source, policy, diagnoser, st.Traces, st.Feedback, st.Outcomes, st.Ledger, st.Clock.Now, "test")
 	c := testkit.Connect(t, srv.ServeTransport)
@@ -587,7 +586,7 @@ func TestServerProposeAndApprove(t *testing.T) {
 func TestServerProposeFolder(t *testing.T) {
 	t.Parallel()
 	st := testkit.Open(t)
-	policy := analysis.DefaultPolicy()
+	policy := testkit.Policy(t)
 	diagnoser := diagnose.New(st.Source, policy, diagnose.Limits{}, nil, st.Traces, st.Feedback, st.Ledger, st.Clock.Now)
 	srv := mcp.New(st.Source, policy, diagnoser, st.Traces, st.Feedback, st.Outcomes, st.Ledger, st.Clock.Now, "test")
 	c := testkit.Connect(t, srv.ServeTransport)
@@ -669,7 +668,7 @@ func TestServerDetail(t *testing.T) {
 			st := testkit.Open(t)
 			src, err := evidencefile.New(tc.args.dir)
 			require.NoError(t, err)
-			policy := analysis.DefaultPolicy()
+			policy := testkit.Policy(t)
 			diagnoser := diagnose.New(src, policy, diagnose.Limits{}, nil, st.Traces, st.Feedback, st.Ledger, st.Clock.Now)
 			srv := mcp.New(src, policy, diagnoser, st.Traces, st.Feedback, st.Outcomes, st.Ledger, st.Clock.Now, "test")
 			c := testkit.Connect(t, srv.ServeTransport)
@@ -688,7 +687,7 @@ func TestServerPending(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	st := testkit.Open(t)
-	policy := analysis.DefaultPolicy()
+	policy := testkit.Policy(t)
 	diagnoser := diagnose.New(st.Source, policy, diagnose.Limits{}, nil, st.Traces, st.Feedback, st.Ledger, st.Clock.Now)
 	srv := mcp.New(st.Source, policy, diagnoser, st.Traces, st.Feedback, st.Outcomes, st.Ledger, st.Clock.Now, "test")
 	c := testkit.Connect(t, srv.ServeTransport)
@@ -724,7 +723,7 @@ func TestServerPending(t *testing.T) {
 func TestServerRefusals(t *testing.T) {
 	t.Parallel()
 	st := testkit.Open(t)
-	policy := analysis.DefaultPolicy()
+	policy := testkit.Policy(t)
 	diagnoser := diagnose.New(st.Source, policy, diagnose.Limits{}, nil, st.Traces, st.Feedback, st.Ledger, st.Clock.Now)
 	srv := mcp.New(st.Source, policy, diagnoser, st.Traces, st.Feedback, st.Outcomes, st.Ledger, st.Clock.Now, "test")
 	c := testkit.Connect(t, srv.ServeTransport)

@@ -32,7 +32,7 @@ commands:
   evidence labels           List ground truth labels. Empty when the data directory has none
   analysis observe --event <id>
                             Print the observations of one event under the policy
-  analysis policy           Print the loaded policy
+  analysis policy           Print the policy.yaml of the data directory
   trace list [--name <n>] [--session <id>] [--subject <s>] [--limit <n>]
                             List traces newest first
   trace show <id>           Print one trace as JSON
@@ -69,6 +69,7 @@ commands:
   version                   Print the build version
 
 Data commands accept --source, --data-dir and --record-dir. Each overrides the matching NODLOOP_* variable
+analysis, diagnose, eval and mcp read the analyzers from policy.yaml in the data directory and fail without it
 `
 
 // Set by goreleaser through ldflags

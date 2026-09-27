@@ -72,11 +72,14 @@ func (a app) source() (*evidencefile.Source, error) {
 
 // `policy.yaml` in the reference directory read once
 // analysis parses the analyzers and diagnose the limits section of the same bytes
-// The demo policy and default limits when the file is absent
+// The data set owns its analyzers so a directory without the file cannot be analyzed
 func (a app) policy() (analysis.Policy, diagnose.Limits, error) {
 	b, err := a.policyBytes()
-	if err != nil || b == nil {
-		return analysis.DefaultPolicy(), diagnose.Limits{}, err
+	if err != nil {
+		return analysis.Policy{}, diagnose.Limits{}, err
+	}
+	if b == nil {
+		return analysis.Policy{}, diagnose.Limits{}, fmt.Errorf("%w: %s", errPolicyMissing, a.cfg.dataDir)
 	}
 	policy, err := analysis.LoadPolicy(b)
 	if err != nil {
@@ -90,6 +93,7 @@ func (a app) policy() (analysis.Policy, diagnose.Limits, error) {
 }
 
 // Only the limits section so a broken analyzer never blocks a knowledge command
+// Default limits when the file is absent
 func (a app) limits() (diagnose.Limits, error) {
 	b, err := a.policyBytes()
 	if err != nil || b == nil {

@@ -124,20 +124,6 @@ type Summary struct {
 	P95DurationMS    int64   `json:"p95_duration_ms"`
 }
 
-// 1. hold when the label holds
-// 2. no_action for normal variation and attribution lag
-// 3. ready_for_review otherwise
-func expectedStatus(hold bool, eventType evidence.EventType) diagnose.Status {
-	switch {
-	case hold:
-		return diagnose.StatusHold
-	case eventType == evidence.TypeNormalVariation, eventType == evidence.TypeAttributionLag:
-		return diagnose.StatusNoAction
-	default:
-		return diagnose.StatusReadyForReview
-	}
-}
-
 // Scores one diagnose trace against its label and the latest verdict on it
 // An empty verdict means the trace has no feedback
 // 1. a failed trace scores as an empty review so every metric keeps failures in its denominator
@@ -149,7 +135,7 @@ func expectedStatus(hold bool, eventType evidence.EventType) diagnose.Status {
 // 7. the verdict counts on a failed trace too
 func newScore(condition Condition, l evidence.Label, tr trace.Trace, revised bool, verdict feedback.Verdict, edited json.RawMessage) Score {
 	s := Score{
-		EventID: l.EventID, Condition: condition, Type: l.Type, ExpectedStatus: expectedStatus(l.IsHold(), l.Type),
+		EventID: l.EventID, Condition: condition, Type: l.Type, ExpectedStatus: diagnose.Status(l.Expected),
 		CitationPrecision: notApplicable, CitationRecall: notApplicable, RequiredChecks: notApplicable, FirstCheck: notApplicable, KnowledgeHit: notApplicable,
 		ForcedHold: slices.Contains(tr.Tags, diagnose.TagGateHold),
 		Revised:    revised,

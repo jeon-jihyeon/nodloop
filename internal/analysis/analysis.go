@@ -244,46 +244,6 @@ func (spec RuleSpec) validate() error {
 	return nil
 }
 
-// Policy for the demo data set
-// Hourly series of 48 points with the last 12 under test
-const DefaultPolicyYAML = `version: demo-1
-analyzers:
-  - rule: zscore
-    metrics: [click_count]
-    baseline: 36
-    window: 12
-    threshold: 3
-    min_samples: 12
-  - rule: proportion_control
-    metrics: [conversion_count, click_count]
-    baseline: 36
-    window: 12
-    threshold: 3
-    min_samples: 12
-    recent: 4
-  - rule: concentration_change
-    metrics: [click_count]
-    group_by: source
-    baseline: 36
-    window: 12
-    threshold: 0.15
-    min_samples: 12
-  - rule: coverage_rule
-    metrics: [click_count, conversion_count]
-    baseline: 36
-    window: 12
-    threshold: 0.2
-    min_samples: 12
-`
-
-func DefaultPolicy() Policy {
-	p, err := LoadPolicy([]byte(DefaultPolicyYAML))
-	if err != nil {
-		panic(err)
-	}
-	return p
-}
-
 // Points in time order
 // An analyzer receives every point of the event and bySeries splits them into one series per key
 type series []evidence.Point

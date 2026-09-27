@@ -82,7 +82,7 @@ func Run(t *testing.T, src Store, seed Seed) {
 		labeled := func(l evidence.Label) bool { return l.EventID == seed.LabeledEventID }
 		assert.True(t, slices.ContainsFunc(labels, labeled), "label for %s missing", seed.LabeledEventID)
 		for _, l := range labels {
-			assert.True(t, l.Type.Valid(), "label %s has type %q", l.EventID, l.Type)
+			assert.NoError(t, l.Validate())
 			assert.False(t, l.IsHold() && len(l.Paragraphs) > 0, "hold label %s cites paragraphs", l.EventID)
 			cited := slices.Concat(l.Paragraphs, l.RequiredChecks)
 			assert.Subset(t, known, cited, "label %s cites an unknown paragraph", l.EventID)

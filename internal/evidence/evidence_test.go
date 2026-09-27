@@ -1,6 +1,7 @@
 package evidence_test
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -57,14 +58,28 @@ func TestEventTypeValid(t *testing.T) {
 		args evidence.EventType
 		want bool
 	}{
-		{"normal variation is valid", evidence.TypeNormalVariation, true},
-		{"click spike is valid", evidence.TypeClickSpike, true},
-		{"conversion rate drop is valid", evidence.TypeConversionRateDrop, true},
-		{"source concentration is valid", evidence.TypeSourceConcentration, true},
-		{"attribution lag is valid", evidence.TypeAttributionLag, true},
-		{"hold is valid", evidence.TypeHold, true},
+		{"a named type is valid", "spike", true},
 		{"empty type is invalid", "", false},
-		{"unlisted type is invalid", "bogus", false},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.want, tc.args.Valid())
+		})
+	}
+}
+
+func TestStatusValid(t *testing.T) {
+	tcs := []struct {
+		name string
+		args evidence.Status
+		want bool
+	}{
+		{"no action is valid", evidence.StatusNoAction, true},
+		{"ready for review is valid", evidence.StatusReadyForReview, true},
+		{"hold is valid", evidence.StatusHold, true},
+		{"empty status is invalid", "", false},
+		{"unlisted status is invalid", "bogus", false},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
@@ -254,13 +269,59 @@ func TestLabelIsHold(t *testing.T) {
 		args evidence.Label
 		want bool
 	}{
-		{"a hold label holds", evidence.Label{Type: evidence.TypeHold}, true},
-		{"any other type does not hold", evidence.Label{Type: evidence.TypeClickSpike}, false},
+		{"a label expecting a hold holds", evidence.Label{Type: "spike", Expected: evidence.StatusHold}, true},
+		{
+			"a label expecting another status does not hold",
+			evidence.Label{Type: "hold", Expected: evidence.StatusNoAction},
+			false,
+		},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			assert.Equal(t, tc.want, tc.args.IsHold())
+		})
+	}
+}
+
+func TestLabelValidate(t *testing.T) {
+	type want struct {
+		// The whole message or <nil>
+		text string
+		err  error
+	}
+	tcs := []struct {
+		name string
+		args evidence.Label
+		want want
+	}{
+		{
+			"a complete label is valid",
+			evidence.Label{EventID: "e1", Type: "spike", Expected: evidence.StatusHold},
+			want{text: "<nil>"},
+		},
+		{
+			"a label without an event id is malformed",
+			evidence.Label{Type: "spike", Expected: evidence.StatusHold},
+			want{"evidence: malformed data: label without event id", evidence.ErrMalformed},
+		},
+		{
+			"a label without a type is malformed",
+			evidence.Label{EventID: "e1", Expected: evidence.StatusHold},
+			want{"evidence: malformed data: label e1 without type", evidence.ErrMalformed},
+		},
+		{
+			"a label with an unknown expected status is malformed",
+			evidence.Label{EventID: "e1", Type: "spike", Expected: "maybe"},
+			want{"evidence: malformed data: label e1 expects unknown status \"maybe\"", evidence.ErrMalformed},
+		},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			err := tc.args.Validate()
+			assert.ErrorIs(t, err, tc.want.err)
+			assert.Equal(t, tc.want.text, fmt.Sprint(err))
 		})
 	}
 }

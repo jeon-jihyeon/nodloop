@@ -19,6 +19,8 @@ import (
 )
 
 func TestLoadPolicy(t *testing.T) {
+	demo, err := os.ReadFile(filepath.Join(testkit.DemoDir(t), "policy.yaml"))
+	require.NoError(t, err)
 	type want struct {
 		policy analysis.Policy
 		err    error
@@ -29,8 +31,8 @@ func TestLoadPolicy(t *testing.T) {
 		want want
 	}{
 		{
-			name: "default policy reads every analyzer",
-			args: analysis.DefaultPolicyYAML,
+			name: "demo policy reads every analyzer",
+			args: string(demo),
 			want: want{policy: analysis.Policy{Version: "demo-1", Analyzers: []analysis.RuleSpec{
 				{
 					Rule: analysis.RuleZScore, Metrics: []string{"click_count"},
@@ -104,14 +106,6 @@ func TestLoadPolicy(t *testing.T) {
 			assert.Equal(t, tc.want.policy, got)
 		})
 	}
-}
-
-func TestDefaultPolicyMatchesTestdata(t *testing.T) {
-	b, err := os.ReadFile(filepath.Join("testdata", "policy.yaml"))
-	require.NoError(t, err)
-	want, err := analysis.LoadPolicy(b)
-	require.NoError(t, err)
-	assert.Equal(t, want, analysis.DefaultPolicy())
 }
 
 func TestPolicyAnalyze(t *testing.T) {
@@ -343,6 +337,7 @@ func TestObservationsMoved(t *testing.T) {
 func TestAnalyzeDemoSetFindsEveryLabeledAnomaly(t *testing.T) {
 	src, err := file.New(testkit.DemoDir(t))
 	require.NoError(t, err)
+	policy := testkit.Policy(t)
 	ctx := context.Background()
 	labels, err := src.Labels(ctx)
 	require.NoError(t, err)
@@ -358,7 +353,7 @@ func TestAnalyzeDemoSetFindsEveryLabeledAnomaly(t *testing.T) {
 			t.Parallel()
 			ev, err := src.Event(ctx, l.EventID)
 			require.NoError(t, err)
-			got, err := analysis.DefaultPolicy().Analyze(ev)
+			got, err := policy.Analyze(ev)
 			require.NoError(t, err)
 			missed := func(a evidence.SeriesRef) bool {
 				return !slices.ContainsFunc(got, func(o analysis.Observation) bool { return flags(o, a) })
@@ -371,6 +366,7 @@ func TestAnalyzeDemoSetFindsEveryLabeledAnomaly(t *testing.T) {
 func TestAnalyzeDemoSetMovesNothingOnQuietEvents(t *testing.T) {
 	src, err := file.New(testkit.DemoDir(t))
 	require.NoError(t, err)
+	policy := testkit.Policy(t)
 	ctx := context.Background()
 	labels, err := src.Labels(ctx)
 	require.NoError(t, err)
@@ -383,7 +379,7 @@ func TestAnalyzeDemoSetMovesNothingOnQuietEvents(t *testing.T) {
 			t.Parallel()
 			ev, err := src.Event(ctx, l.EventID)
 			require.NoError(t, err)
-			got, err := analysis.DefaultPolicy().Analyze(ev)
+			got, err := policy.Analyze(ev)
 			require.NoError(t, err)
 			assert.Nil(t, got.Moved())
 		})

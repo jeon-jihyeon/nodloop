@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"regexp"
 	"testing"
 	"time"
 
@@ -17,6 +18,11 @@ func TestRunAnalysis(t *testing.T) {
 	brokenPolicy := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(brokenPolicy, "policy.yaml"), []byte("rules: ["), 0o600))
 	data := testkit.DemoDir(t)
+	onlyPolicy := t.TempDir()
+	demo, err := os.ReadFile(filepath.Join(data, "policy.yaml"))
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(onlyPolicy, "policy.yaml"), demo, 0o600))
+	empty := t.TempDir()
 	getenv := func(k string) string {
 		return map[string]string{envFileDir: data}[k]
 	}
@@ -35,13 +41,13 @@ func TestRunAnalysis(t *testing.T) {
 	}{
 		{"policy prints the demo policy", []string{"policy"}, want{0, `(?s)^{\n  "version": "demo-1",.*\n}\n$`, `^$`}},
 		{
-			"policy defaults without a policy file",
-			[]string{"policy", "--data-dir", t.TempDir()},
-			want{0, `^{\n  "version": "demo-1",`, `^$`},
+			"policy fails without a policy file",
+			[]string{"policy", "--data-dir", empty},
+			want{1, `^$`, `^nodloop analysis: no policy.yaml: ` + regexp.QuoteMeta(empty) + `\n$`},
 		},
 		{
-			"policy does not open the data dir",
-			[]string{"policy", "--data-dir", "/nonexistent"},
+			"policy reads only the policy file of the data dir",
+			[]string{"policy", "--data-dir", onlyPolicy},
 			want{0, `^{\n  "version": "demo-1",`, `^$`},
 		},
 		{
@@ -68,7 +74,13 @@ func TestRunAnalysis(t *testing.T) {
 		{
 			"observe without the data dir fails",
 			[]string{"observe", "--event", "tq-001", "--data-dir", "/nonexistent"},
-			want{1, `^$`, `^nodloop analysis: evidence file source: stat /nonexistent: no such file or directory\n$`},
+			want{1, `^$`, `^nodloop analysis: no policy.yaml: /nonexistent\n$`},
+		},
+		{
+			"observe without a policy file fails",
+			[]string{"observe", "--event", "tq-001", "--data-dir", empty},
+			want{1, `^$`, `^nodloop analysis: no policy.yaml: ` + regexp.QuoteMeta(empty) + `
+$`},
 		},
 		{
 			"observe without an event fails",

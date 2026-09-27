@@ -17,7 +17,6 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/jeon-jihyeon/nodloop/internal/analysis"
 	"github.com/jeon-jihyeon/nodloop/internal/evidence"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 )
@@ -57,6 +56,48 @@ func demoKnowledge() []knowledge.Knowledge {
 		},
 	}
 }
+
+// Event types of the demo data set
+const (
+	kindNormalVariation     evidence.EventType = "normal_variation"
+	kindClickSpike          evidence.EventType = "click_spike"
+	kindConversionRateDrop  evidence.EventType = "conversion_rate_drop"
+	kindSourceConcentration evidence.EventType = "source_concentration"
+	kindAttributionLag      evidence.EventType = "attribution_lag"
+	kindHold                evidence.EventType = "hold"
+)
+
+// Policy of the demo data set
+// Hourly series of 48 points with the last 12 under test
+const policyYAML = `version: demo-1
+analyzers:
+  - rule: zscore
+    metrics: [click_count]
+    baseline: 36
+    window: 12
+    threshold: 3
+    min_samples: 12
+  - rule: proportion_control
+    metrics: [conversion_count, click_count]
+    baseline: 36
+    window: 12
+    threshold: 3
+    min_samples: 12
+    recent: 4
+  - rule: concentration_change
+    metrics: [click_count]
+    group_by: source
+    baseline: 36
+    window: 12
+    threshold: 0.15
+    min_samples: 12
+  - rule: coverage_rule
+    metrics: [click_count, conversion_count]
+    baseline: 36
+    window: 12
+    threshold: 0.2
+    min_samples: 12
+`
 
 // Every event type has perKind events in plan order and the first seeds of them are seed events
 // The gap of a data availability hold starts two hours into the window so it has points on both sides
@@ -128,15 +169,15 @@ func plan() []event {
 	half := map[string]float64{"source-a": 0.5, "source-b": 0.5, "source-c": 0.5}
 	concentrated := map[string]float64{"source-a": 2.2, "source-b": 0.45, "source-c": 0.45}
 	out := slices.Concat(
-		batch(evidence.TypeNormalVariation, event{conversionFactor: 1}, none, none, none, unknown),
-		batch(evidence.TypeClickSpike, event{clickFactors: map[string]float64{"source-a": 4}, conversionFactor: 1},
+		batch(kindNormalVariation, event{conversionFactor: 1}, none, none, none, unknown),
+		batch(kindClickSpike, event{clickFactors: map[string]float64{"source-a": 4}, conversionFactor: 1},
 			none, unknown, none, none),
-		batch(evidence.TypeConversionRateDrop, event{conversionFactor: 0.35}, planned, none, planned, none),
-		batch(evidence.TypeSourceConcentration, event{clickFactors: concentrated, conversionFactor: 1},
+		batch(kindConversionRateDrop, event{conversionFactor: 0.35}, planned, none, planned, none),
+		batch(kindSourceConcentration, event{clickFactors: concentrated, conversionFactor: 1},
 			none, none, none, none),
-		batch(evidence.TypeHold, event{dropHours: 9, conversionFactor: 1}, availability, availability),
-		batch(evidence.TypeHold, event{clickFactors: half, conversionFactor: 0.5}, measurement, measurement),
-		batch(evidence.TypeAttributionLag, event{conversionFactor: 1, lag: []float64{0.5, 0.3, 0.15, 0.05}},
+		batch(kindHold, event{dropHours: 9, conversionFactor: 1}, availability, availability),
+		batch(kindHold, event{clickFactors: half, conversionFactor: 0.5}, measurement, measurement),
+		batch(kindAttributionLag, event{conversionFactor: 1, lag: []float64{0.5, 0.3, 0.15, 0.05}},
 			none, none, none, none),
 	)
 	for i := range out {
@@ -166,28 +207,39 @@ type label struct {
 // Normal variation and attribution lag expect no_action which carries no checks so they require none
 func (e event) label() label {
 	l := evidence.Label{
-		EventID: e.id, Type: e.kind, Seed: e.seed, Anomalies: []evidence.SeriesRef{},
+		EventID: e.id, Type: e.kind, Expected: e.expected(), Seed: e.seed, Anomalies: []evidence.SeriesRef{},
 		Paragraphs: []evidence.ParagraphID{}, RequiredChecks: []evidence.ParagraphID{}, Knowledge: e.knowledge(),
 	}
 	switch e.kind {
-	case evidence.TypeClickSpike:
+	case kindClickSpike:
 		l.Anomalies = anomalies("click_count", "source-a")
 		l.Paragraphs = []evidence.ParagraphID{anomalySegment, anomalyDownstream}
 		l.RequiredChecks = []evidence.ParagraphID{anomalyConfirm, anomalySegment}
-	case evidence.TypeConversionRateDrop:
+	case kindConversionRateDrop:
 		l.Anomalies = anomalies("conversion_count", sources...)
 		l.Paragraphs = []evidence.ParagraphID{rateSeparate, rateTracking}
 		l.RequiredChecks = []evidence.ParagraphID{rateConfirm, rateSeparate}
-	case evidence.TypeAttributionLag:
+	case kindAttributionLag:
 		l.Anomalies = anomalies("conversion_count", sources...)
-	case evidence.TypeSourceConcentration:
+	case kindSourceConcentration:
 		l.Anomalies = anomalies("click_count", "source-a")
 		l.Paragraphs = []evidence.ParagraphID{concentrationTotal, concentrationSegment}
 		l.RequiredChecks = []evidence.ParagraphID{concentrationMeasure, concentrationTotal}
-	case evidence.TypeHold:
+	case kindHold:
 		l.RequiredChecks = []evidence.ParagraphID{holdChecks[e.context]}
 	}
 	return label{Label: l, Hold: l.IsHold()}
+}
+
+// Normal variation and attribution lag need no action and a hold type holds
+func (e event) expected() evidence.Status {
+	switch e.kind {
+	case kindNormalVariation, kindAttributionLag:
+		return evidence.StatusNoAction
+	case kindHold:
+		return evidence.StatusHold
+	}
+	return evidence.StatusReadyForReview
 }
 
 // Anomalous series of one metric in the given sources of the demo topic
@@ -207,8 +259,8 @@ func anomalies(metric string, srcs ...string) []evidence.SeriesRef {
 func (e event) knowledge() []string {
 	var ids []string
 	switch e.kind {
-	case evidence.TypeConversionRateDrop, evidence.TypeAttributionLag,
-		evidence.TypeClickSpike, evidence.TypeSourceConcentration:
+	case kindConversionRateDrop, kindAttributionLag,
+		kindClickSpike, kindSourceConcentration:
 		ids = append(ids, knowledgeAggregation)
 	}
 	if e.context == evidence.ContextPlannedChange {
@@ -247,7 +299,7 @@ func write(dir string) error {
 	if err := writeJSONL(filepath.Join(dir, "labels.jsonl"), labels); err != nil {
 		return err
 	}
-	if err := os.WriteFile(filepath.Join(dir, "policy.yaml"), []byte(analysis.DefaultPolicyYAML), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "policy.yaml"), []byte(policyYAML), 0o644); err != nil {
 		return err
 	}
 	return writeJSONL(filepath.Join(dir, "knowledge.jsonl"), demoKnowledge())

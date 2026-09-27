@@ -100,12 +100,13 @@ func (s *Source) Paragraphs(_ context.Context) ([]evidence.Paragraph, error) {
 
 // File order
 // A missing file reads as empty because labels are optional
+// An invalid label fails the read with its line named
 func (s *Source) Labels(_ context.Context) ([]evidence.Label, error) {
 	f, err := jsonl.Open[evidence.Label](s.dir, labelsFile)
 	if err != nil {
 		return nil, err
 	}
-	return f.All()
+	return f.All(evidence.Label.Validate)
 }
 
 func (s *Source) loadEvents() ([]evidence.Event, error) {
