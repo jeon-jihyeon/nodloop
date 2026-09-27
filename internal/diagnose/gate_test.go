@@ -200,6 +200,11 @@ func TestRecordGate(t *testing.T) {
 
 			got, err := d.Record(ctx, c.PendingID, tc.args)
 			require.NoError(t, err)
+			// The gate judges the recorded review so one sent back is submitted again
+			if len(got.Revisions) > 0 {
+				got, err = d.Record(ctx, c.PendingID, tc.args)
+				require.NoError(t, err)
+			}
 			after, err := json.Marshal(tc.args)
 			require.NoError(t, err)
 			tr, err := s.Traces.Get(ctx, got.TraceID)

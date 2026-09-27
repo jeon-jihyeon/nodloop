@@ -281,6 +281,7 @@ func TestRecord(t *testing.T) {
 		Knowledge     []diagnose.AppliedKnowledge `json:"knowledge"`
 		Examples      []example                   `json:"examples"`
 		Omitted       bool                        `json:"omitted"`
+		UnknownIDs    []string                    `json:"unknown_ids"`
 	}
 	type revised struct {
 		Subject string
@@ -337,6 +338,11 @@ func TestRecord(t *testing.T) {
 		Status: diagnose.StatusReadyForReview, Causes: []diagnose.Cause{{Summary: "c", ParagraphIDs: []string{segment}}},
 		Checks: diagnose.Checks{{Step: "s", Purpose: "p", ParagraphIDs: []string{confirm}}},
 	}
+	madeUp := diagnose.Diagnosis{
+		Status: diagnose.StatusReadyForReview, Causes: []diagnose.Cause{{Summary: "worn trim", ParagraphIDs: []string{"made-up"}}},
+		Checks: checks,
+	}
+	citesNone := `cause "worn trim" cites no paragraph id from the list. Cite the paragraph that states it or return hold`
 	twoRunbooks := diagnose.Diagnosis{
 		Status: diagnose.StatusReadyForReview,
 		Causes: []diagnose.Cause{{Summary: "c", ParagraphIDs: []string{segment, ordSplit}}},
@@ -351,6 +357,10 @@ func TestRecord(t *testing.T) {
 		ChangeContext: evidence.ContextNoKnownChange, Metrics: []string{"click_count", "conversion_count"},
 		Knowledge: []diagnose.AppliedKnowledge{}, Examples: []example{},
 	}
+	withUnknown := recorded
+	withUnknown.UnknownIDs = []string{"made-up"}
+	heldUnknown := withUnknown
+	heldUnknown.Tags = []string{"feedback:off", diagnose.TagGateHold}
 	selected := recorded
 	selected.Selector = diagnose.SelectByClaude
 	chosen := selected
@@ -364,7 +374,7 @@ func TestRecord(t *testing.T) {
 	old := input{
 		Mode: diagnose.ModeInteractive, PolicyVersion: "demo-0", PromptVersion: "diagnose/v2",
 		ChangeContext: evidence.ContextNoKnownChange, Metrics: []string{},
-		Knowledge: []diagnose.AppliedKnowledge{}, Examples: []example{},
+		Knowledge: []diagnose.AppliedKnowledge{}, Examples: []example{}, UnknownIDs: []string{confirm},
 	}
 	oldContext := `{"mode":"interactive","policy_version":"demo-0","prompt_version":"diagnose/v2",` +
 		`"paragraph_ids":["` + segment + `"]}`
@@ -381,7 +391,7 @@ func TestRecord(t *testing.T) {
 				Causes: []diagnose.Cause{{Summary: "low quality traffic", ParagraphIDs: []string{segment, "made-up"}}},
 			}},
 			want: want{
-				outcome: outcome{result: diagnose.Result{Diagnosis: ready}, traced: trace.NameDiagnose, inputs: []input{recorded}},
+				outcome: outcome{result: diagnose.Result{Diagnosis: ready}, traced: trace.NameDiagnose, inputs: []input{withUnknown}},
 			},
 		},
 		{
@@ -473,6 +483,26 @@ func TestRecord(t *testing.T) {
 			want: want{outcome: outcome{
 				result: diagnose.Result{Revisions: []string{citesDecide}}, traced: trace.NameRevise,
 				revised: []revised{{Subject: "tq-005", Reasons: []string{citesDecide}, Review: decideCause}},
+			}},
+		},
+		{
+			name: "sends back a cause left without a listed paragraph",
+			args: args{pending: "context", diag: madeUp},
+			want: want{outcome: outcome{
+				result: diagnose.Result{Revisions: []string{citesNone}}, traced: trace.NameRevise,
+				revised: []revised{{Subject: "tq-005", Reasons: []string{citesNone}, Review: madeUp}},
+			}},
+		},
+		{
+			name: "records the forced hold of a cause still uncited after the send back with the unknown ids",
+			args: args{records: []diagnose.Diagnosis{madeUp}, pending: "context", diag: madeUp},
+			want: want{outcome: outcome{
+				result: diagnose.Result{Diagnosis: diagnose.Diagnosis{
+					Status: diagnose.StatusHold, Causes: []diagnose.Cause{}, Checks: checks,
+					HoldReasons: []string{"no paragraph supports: worn trim"},
+				}, Forced: true},
+				traced: trace.NameDiagnose, inputs: []input{heldUnknown},
+				revised: []revised{{Subject: "tq-005", Reasons: []string{citesNone}, Review: madeUp}},
 			}},
 		},
 		{

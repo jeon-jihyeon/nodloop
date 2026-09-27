@@ -54,12 +54,16 @@ func revisePrompt(prompt string, diag Diagnosis, reasons []string) string {
 // Reasons a review must be revised before it is recorded
 // Each reason names one defect the model can fix without new information
 // 1. a Decide paragraph never states a cause
-// 2. a ready_for_review keeps firstStep as a check
+// 2. a ready_for_review cause keeps a listed paragraph id because the gate holds a cause without one
+// 3. a ready_for_review keeps firstStep as a check
 func (diag Diagnosis) revisions(firstStep string) []string {
 	var out []string
 	for _, c := range diag.Causes {
 		if i := slices.IndexFunc(c.ParagraphIDs, func(id string) bool { return evidence.ParagraphID(id).IsDecide() }); i >= 0 {
 			out = append(out, fmt.Sprintf("cause %q cites the Decide paragraph %s. A Decide paragraph states no cause", c.Summary, c.ParagraphIDs[i]))
+		}
+		if diag.Status == StatusReadyForReview && len(c.ParagraphIDs) == 0 {
+			out = append(out, fmt.Sprintf("cause %q cites no paragraph id from the list. Cite the paragraph that states it or return hold", c.Summary))
 		}
 	}
 	if diag.Status != StatusReadyForReview || firstStep == "" || slices.Contains(diag.Checks.Paragraphs(), firstStep) {
