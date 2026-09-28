@@ -88,8 +88,7 @@ macOS and Linux, or Windows through WSL. It runs as a Claude Code plugin. For Co
 
 ## Limits
 
-- Every runbook paragraph goes to the model, so a large set of runbooks means a large context.
-- nodloop can't make Claude Code call its tools. It can only refuse to record a review that skipped a step.
+Every runbook paragraph goes to the model, so a large set of runbooks means a large context.
 
 ## License
 
