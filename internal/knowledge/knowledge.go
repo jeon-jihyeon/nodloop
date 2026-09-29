@@ -251,10 +251,13 @@ func (k Knowledge) excepts(contexts []evidence.Context) bool {
 }
 
 func (k Knowledge) applies(changeContext evidence.Context, moved Moved, dims Dims) bool {
-	if k.Status != StatusApproved || slices.Contains(k.Exceptions, changeContext) {
-		return false
-	}
-	return k.Scope.admits(changeContext, moved, dims)
+	return k.mayApply(changeContext) && k.Scope.admits(changeContext, moved, dims)
+}
+
+// Whether the item applies to some event of the change context whatever its metrics and dims
+func (k Knowledge) mayApply(changeContext evidence.Context) bool {
+	return k.Status == StatusApproved && !slices.Contains(k.Exceptions, changeContext) &&
+		k.Scope.MatchesContext(changeContext)
 }
 
 // Whether this version stands in for the id instead of the current one with status and version
