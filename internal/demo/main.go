@@ -22,7 +22,7 @@ import (
 )
 
 // Approved seed knowledge shipped with the demo
-// Evidence points at runbook paragraphs because no correction exists yet
+// Evidence points at procedure paragraphs because no correction exists yet
 const (
 	knowledgeAggregation = "k-aggregation-basis"
 	knowledgeMeasurement = "k-measurement-first"
@@ -38,7 +38,7 @@ func demoKnowledge() []knowledge.Knowledge {
 				"until attribution catches up. " +
 				"A rate that is low only in the newest hours while the earlier hours sit at baseline is attribution lag, " +
 				"not a degradation, and needs no action beyond a re-read after the lag",
-			Scope:    knowledge.Scope{Metrics: []string{"conversion_count"}},
+			Scope:    knowledge.Scope{Scope: evidence.Scope{Metrics: []string{"conversion_count"}}},
 			Evidence: knowledge.Evidence{ParagraphIDs: []string{rateConfirm, rateTracking}},
 			Basis:    knowledge.BasisStated, Status: knowledge.StatusApproved,
 			Approver: "demo", ApprovedAt: start, Time: start, Author: "demo",
@@ -49,7 +49,7 @@ func demoKnowledge() []knowledge.Knowledge {
 				"the conversion tracking and aggregation check comes before any other check. " +
 				"Do not name a source as low quality until the measurement is confirmed unchanged, " +
 				"and say so in the purpose of the first check",
-			Scope:    knowledge.Scope{ChangeContexts: []evidence.Context{evidence.ContextPlannedChange}},
+			Scope:    knowledge.Scope{Scope: evidence.Scope{ChangeContexts: []evidence.Context{evidence.ContextPlannedChange}}},
 			Evidence: knowledge.Evidence{ParagraphIDs: []string{rateTracking, holdMeasurement}},
 			Basis:    knowledge.BasisStated, Status: knowledge.StatusApproved,
 			Approver: "demo", ApprovedAt: start, Time: start, Author: "demo",
@@ -118,7 +118,7 @@ var (
 	start      = time.Date(2026, 9, 20, 0, 0, 0, 0, time.UTC)
 )
 
-// Paragraph ids of the demo runbooks
+// Paragraph ids of the demo procedures
 // The contract suite checks them against the split output
 const (
 	anomalyConfirm       = "metric-anomaly-investigation#Metric anomaly investigation/Confirm the signal#1"
@@ -134,7 +134,7 @@ const (
 	holdMeasurement      = "data-integrity-hold#Data integrity hold/Measurement changes#1"
 )
 
-// The paragraph a hold event must cite for each context the runbook holds on
+// The paragraph a hold event must cite for each context the procedure holds on
 var holdChecks = map[evidence.Context]evidence.ParagraphID{
 	evidence.ContextDataAvailability:   holdCoverage,
 	evidence.ContextMeasurementChanged: holdMeasurement,
@@ -157,7 +157,7 @@ type event struct {
 }
 
 // One batch per event type with the window shape its events share
-// 1. the hold type splits into two batches because the runbook holds on two contexts with different shapes
+// 1. the hold type splits into two batches because the procedure holds on two contexts with different shapes
 // 2. the attribution lag rate is at baseline for eight hours and falls only in the newest four
 // 3. without the aggregation knowledge the attribution lag reads as a fresh degradation
 func plan() []event {
@@ -205,6 +205,7 @@ type label struct {
 }
 
 // Normal variation and attribution lag expect no_action which carries no checks so they require none
+// The tracking paragraph applies only under the change contexts its procedure names
 func (e event) label() label {
 	l := evidence.Label{
 		EventID: e.id, Type: e.kind, Expected: e.expected(), Seed: e.seed, Anomalies: []evidence.SeriesRef{},
@@ -217,7 +218,10 @@ func (e event) label() label {
 		l.RequiredChecks = []evidence.ParagraphID{anomalyConfirm, anomalySegment}
 	case kindConversionRateDrop:
 		l.Anomalies = anomalies("conversion_count", sources...)
-		l.Paragraphs = []evidence.ParagraphID{rateSeparate, rateTracking}
+		l.Paragraphs = []evidence.ParagraphID{rateSeparate}
+		if e.context == evidence.ContextPlannedChange {
+			l.Paragraphs = append(l.Paragraphs, rateTracking)
+		}
 		l.RequiredChecks = []evidence.ParagraphID{rateConfirm, rateSeparate}
 	case kindAttributionLag:
 		l.Anomalies = anomalies("conversion_count", sources...)
@@ -255,7 +259,7 @@ func anomalies(metric string, srcs ...string) []evidence.SeriesRef {
 // 1. the aggregation item belongs to every event whose conversion rate reading is part of the picture
 // 2. a click surge with flat conversions lowers the rate too so it counts
 // 3. the measurement item belongs to every event right after a planned change
-// 4. a measurement context change is a hold by runbook and the item must not reach it
+// 4. a measurement context change is a hold by procedure and the item must not reach it
 func (e event) knowledge() []string {
 	var ids []string
 	switch e.kind {
@@ -270,7 +274,7 @@ func (e event) knowledge() []string {
 }
 
 func main() {
-	out := flag.String("out", ".", "output directory")
+	out := flag.String("out", filepath.Join("examples", "demo"), "output directory relative to the working directory")
 	flag.Parse()
 	if err := write(*out); err != nil {
 		fmt.Fprintln(os.Stderr, "demo:", err)

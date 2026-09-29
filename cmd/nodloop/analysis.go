@@ -27,7 +27,7 @@ func runAnalysis(args []string, getenv func(string) string, now func() time.Time
 	if err != nil {
 		return fail(stderr, "analysis", err)
 	}
-	policy, _, err := a.policy()
+	policy, err := a.policy()
 	if err != nil {
 		return fail(stderr, "analysis", err)
 	}

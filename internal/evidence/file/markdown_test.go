@@ -14,11 +14,11 @@ import (
 	"github.com/jeon-jihyeon/nodloop/internal/evidence/file"
 )
 
-func TestSourceParagraphs(t *testing.T) {
+func TestSourceProceduresParagraphs(t *testing.T) {
 	type args struct {
 		// Data directory name under the temp directory
-		dir      string
-		runbooks map[string]string
+		dir        string
+		procedures map[string]string
 	}
 	type want struct {
 		paragraphs []evidence.Paragraph
@@ -33,7 +33,7 @@ func TestSourceParagraphs(t *testing.T) {
 	}{
 		{
 			name: "fenced code stays in one paragraph under deep headings",
-			args: args{runbooks: map[string]string{"db-failover.md": "# DB failover\n\n## Recovery\n\n### Replica lag\n\n" +
+			args: args{procedures: map[string]string{"db-failover.md": "# DB failover\n\n## Recovery\n\n### Replica lag\n\n" +
 				"Promote a replica.\n\n```\nkubectl get pods\n\nstill fenced\n```\n\nReset alerts.\n"}},
 			want: want{paragraphs: []evidence.Paragraph{
 				{ID: lag + "1", File: "db-failover.md", Path: deep, Text: "Promote a replica."},
@@ -43,7 +43,7 @@ func TestSourceParagraphs(t *testing.T) {
 		},
 		{
 			name: "a heading drops deeper levels and restarts the index",
-			args: args{runbooks: map[string]string{"r.md": "# T\n\n## A\n\nfirst\n\nsecond\n\n## B\n\nthird\n"}},
+			args: args{procedures: map[string]string{"r.md": "# T\n\n## A\n\nfirst\n\nsecond\n\n## B\n\nthird\n"}},
 			want: want{paragraphs: []evidence.Paragraph{
 				{ID: "r#T/A#1", File: "r.md", Path: []string{"T", "A"}, Text: "first"},
 				{ID: "r#T/A#2", File: "r.md", Path: []string{"T", "A"}, Text: "second"},
@@ -52,7 +52,7 @@ func TestSourceParagraphs(t *testing.T) {
 		},
 		{
 			name: "text before a heading and a skipped level keep empty path parts",
-			args: args{runbooks: map[string]string{
+			args: args{procedures: map[string]string{
 				"r.md": "no heading\n\n## Skipped level\n\ntext\n#notaheading\n####### seven\n",
 			}},
 			want: want{paragraphs: []evidence.Paragraph{
@@ -67,7 +67,7 @@ func TestSourceParagraphs(t *testing.T) {
 		},
 		{
 			name: "files are read in name order",
-			args: args{runbooks: map[string]string{
+			args: args{procedures: map[string]string{
 				"b.md": "# B\n\nbee\n", "a.md": "# A\n\nay\n", "notes.txt": "# N\n\nskipped\n",
 			}},
 			want: want{paragraphs: []evidence.Paragraph{
@@ -76,18 +76,18 @@ func TestSourceParagraphs(t *testing.T) {
 			}},
 		},
 		{
-			name: "no runbooks give no paragraphs",
-			args: args{runbooks: map[string]string{}},
+			name: "no procedures give no paragraphs",
+			args: args{procedures: map[string]string{}},
 			want: want{},
 		},
 		{
-			name: "data directory with glob characters still reads its runbooks",
-			args: args{dir: "data[1]*?", runbooks: map[string]string{"r.md": "# T\n\nbody\n"}},
+			name: "data directory with glob characters still reads its procedures",
+			args: args{dir: "data[1]*?", procedures: map[string]string{"r.md": "# T\n\nbody\n"}},
 			want: want{paragraphs: []evidence.Paragraph{{ID: "r#T#1", File: "r.md", Path: []string{"T"}, Text: "body"}}},
 		},
 		{
 			name: "a heading with a separator keeps its paragraph under a hyphenated id",
-			args: args{runbooks: map[string]string{"r.md": "# T\n\n## A/B test\n\ntext\n\n## C#1\n\nmore\n"}},
+			args: args{procedures: map[string]string{"r.md": "# T\n\n## A/B test\n\ntext\n\n## C#1\n\nmore\n"}},
 			want: want{paragraphs: []evidence.Paragraph{
 				{ID: "r#T/A-B test#1", File: "r.md", Path: []string{"T", "A/B test"}, Text: "text"},
 				{ID: "r#T/C-1#1", File: "r.md", Path: []string{"T", "C#1"}, Text: "more"},
@@ -99,28 +99,82 @@ func TestSourceParagraphs(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			dir := filepath.Join(t.TempDir(), tc.args.dir)
-			require.NoError(t, os.MkdirAll(filepath.Join(dir, "runbooks"), 0o700))
-			for name, content := range tc.args.runbooks {
-				require.NoError(t, os.WriteFile(filepath.Join(dir, "runbooks", name), []byte(content), 0o600))
+			require.NoError(t, os.MkdirAll(filepath.Join(dir, "procedures"), 0o700))
+			for name, content := range tc.args.procedures {
+				require.NoError(t, os.WriteFile(filepath.Join(dir, "procedures", name), []byte(content), 0o600))
 			}
 			src, err := file.New(dir)
 			require.NoError(t, err)
-			got, err := src.Paragraphs(ctx)
+			got, err := src.Procedures(ctx)
 			assert.ErrorIs(t, err, tc.want.err)
-			assert.Equal(t, tc.want.paragraphs, got)
+			assert.Equal(t, tc.want.paragraphs, got.Paragraphs())
 		})
 	}
 }
 
-func TestSourceParagraphsWithoutRunbooksDirectory(t *testing.T) {
-	src, err := file.New(t.TempDir())
-	require.NoError(t, err)
-	got, err := src.Paragraphs(context.Background())
-	assert.NoError(t, err)
-	assert.Nil(t, got)
+func TestSourceProceduresFolder(t *testing.T) {
+	type args struct {
+		folders []string
+		files   map[string]string
+	}
+	type want struct {
+		texts []string
+		err   error
+	}
+	tcs := []struct {
+		name string
+		args args
+		want want
+	}{
+		{"no folder reads as no procedures", args{}, want{}},
+		{
+			"the procedures folder is read",
+			args{folders: []string{"procedures"}, files: map[string]string{"procedures/r.md": "current"}},
+			want{texts: []string{"current"}},
+		},
+		{
+			"a runbooks folder fails with a rename hint",
+			args{folders: []string{"runbooks"}, files: map[string]string{"runbooks/r.md": "old"}},
+			want{err: file.ErrRunbooksFolder},
+		},
+		{
+			"a runbooks folder beside procedures still fails",
+			args{folders: []string{"procedures", "runbooks"}, files: map[string]string{
+				"procedures/r.md": "current", "runbooks/r.md": "old",
+			}},
+			want{err: file.ErrRunbooksFolder},
+		},
+		{
+			"an unreadable procedures folder returns its error",
+			args{files: map[string]string{"procedures": "file"}},
+			want{err: syscall.ENOTDIR},
+		},
+	}
+	ctx := context.Background()
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			for _, folder := range tc.args.folders {
+				require.NoError(t, os.MkdirAll(filepath.Join(dir, folder), 0o700))
+			}
+			for name, content := range tc.args.files {
+				require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte(content), 0o600))
+			}
+			src, err := file.New(dir)
+			require.NoError(t, err)
+			got, err := src.Procedures(ctx)
+			var texts []string
+			for _, p := range got.Paragraphs() {
+				texts = append(texts, p.Text)
+			}
+			assert.ErrorIs(t, err, tc.want.err)
+			assert.Equal(t, tc.want.texts, texts)
+		})
+	}
 }
 
-func TestSourceParagraphsFailsOnUnreadableRunbooks(t *testing.T) {
+func TestSourceProceduresFailsOnUnreadableFiles(t *testing.T) {
 	type args struct {
 		folders []string
 		files   []string
@@ -130,8 +184,8 @@ func TestSourceParagraphsFailsOnUnreadableRunbooks(t *testing.T) {
 		args args
 		want error
 	}{
-		{"folder named like a runbook fails", args{folders: []string{"runbooks/folder.md"}}, syscall.EISDIR},
-		{"runbooks path that is a file fails", args{files: []string{"runbooks"}}, syscall.ENOTDIR},
+		{"folder named like a procedure fails", args{folders: []string{"procedures/folder.md"}}, syscall.EISDIR},
+		{"procedures path that is a file fails", args{files: []string{"procedures"}}, syscall.ENOTDIR},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
@@ -145,7 +199,7 @@ func TestSourceParagraphsFailsOnUnreadableRunbooks(t *testing.T) {
 			}
 			src, err := file.New(dir)
 			require.NoError(t, err)
-			got, err := src.Paragraphs(context.Background())
+			got, err := src.Procedures(context.Background())
 			assert.ErrorIs(t, err, tc.want)
 			assert.Nil(t, got)
 		})

@@ -1,4 +1,4 @@
-// Package file reads events and runbooks and labels from a directory of plain files
+// Package file reads events and procedures and labels from a directory of plain files
 package file
 
 import (
@@ -14,10 +14,11 @@ import (
 )
 
 const (
-	eventsFile   = "events.csv"
-	contextsFile = "contexts.csv"
-	runbooksDir  = "runbooks"
-	labelsFile   = "labels.jsonl"
+	eventsFile    = "events.csv"
+	contextsFile  = "contexts.csv"
+	proceduresDir = "procedures"
+	runbooksDir   = "runbooks"
+	labelsFile    = "labels.jsonl"
 )
 
 // Stateless
@@ -72,11 +73,16 @@ func (s *Source) Event(_ context.Context, id string) (evidence.Event, error) {
 	return ev, nil
 }
 
-// Runbooks in name order
+// Procedures in file name order
 // 1. the directory is listed rather than globbed so a data path with glob characters still reads
-// 2. a missing runbooks directory reads as no paragraphs
-func (s *Source) Paragraphs(_ context.Context) ([]evidence.Paragraph, error) {
-	dir := filepath.Join(s.dir, runbooksDir)
+// 2. a runbooks folder fails the read because its procedures would otherwise vanish without a word
+// 3. a missing procedures directory reads as no procedures
+func (s *Source) Procedures(_ context.Context) (evidence.Procedures, error) {
+	old := filepath.Join(s.dir, runbooksDir)
+	if _, err := os.Stat(old); err == nil {
+		return nil, fmt.Errorf("%w: %s", ErrRunbooksFolder, old)
+	}
+	dir := filepath.Join(s.dir, proceduresDir)
 	entries, err := os.ReadDir(dir)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
@@ -84,7 +90,7 @@ func (s *Source) Paragraphs(_ context.Context) ([]evidence.Paragraph, error) {
 	if err != nil {
 		return nil, err
 	}
-	var out []evidence.Paragraph
+	var out evidence.Procedures
 	for _, entry := range entries {
 		if filepath.Ext(entry.Name()) != ".md" {
 			continue
@@ -93,7 +99,11 @@ func (s *Source) Paragraphs(_ context.Context) ([]evidence.Paragraph, error) {
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, splitParagraphs(entry.Name(), string(b))...)
+		p, err := parseProcedure(entry.Name(), string(b))
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, p)
 	}
 	return out, nil
 }

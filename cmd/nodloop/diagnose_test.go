@@ -13,6 +13,7 @@ import (
 	"go.uber.org/mock/gomock"
 
 	"github.com/jeon-jihyeon/nodloop/internal/diagnose"
+	"github.com/jeon-jihyeon/nodloop/internal/evidence"
 	"github.com/jeon-jihyeon/nodloop/internal/llm"
 	"github.com/jeon-jihyeon/nodloop/internal/llm/llmmock"
 	"github.com/jeon-jihyeon/nodloop/internal/testkit"
@@ -30,13 +31,13 @@ func TestRunDiagnose(t *testing.T) {
 		ParagraphIDs: []string{"metric-anomaly-investigation#Metric anomaly investigation/Check the segment#1"},
 	}
 	ready := diagnose.Diagnosis{
-		Status: diagnose.StatusReadyForReview, Observations: []string{"clicks up"},
+		Status: evidence.StatusReadyForReview, Observations: []string{"clicks up"},
 		Causes:        []diagnose.Cause{{Summary: "low quality traffic", ParagraphIDs: segment.ParagraphIDs}},
 		Checks:        []diagnose.Check{confirm, segment},
 		OpenQuestions: []string{},
 	}
 	hold := diagnose.Diagnosis{
-		Status: diagnose.StatusHold, Observations: []string{}, Causes: []diagnose.Cause{},
+		Status: evidence.StatusHold, Observations: []string{}, Causes: []diagnose.Cause{},
 		Checks: []diagnose.Check{confirm, segment}, OpenQuestions: []string{}, HoldReasons: []string{"gap in the window"},
 	}
 	readyJSON, err := json.Marshal(ready)

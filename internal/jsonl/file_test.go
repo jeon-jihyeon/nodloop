@@ -156,6 +156,41 @@ func TestFileAppendConcurrentWritersKeepEveryRecord(t *testing.T) {
 	assert.ElementsMatch(t, want, got)
 }
 
+func TestFileAppendIfUnchanged(t *testing.T) {
+	type args struct {
+		content  string
+		expected []row
+	}
+	type want struct {
+		rows []row
+		err  error
+	}
+	tcs := []struct {
+		name string
+		args args
+		want want
+	}{
+		{"nil snapshot", args{"", nil}, want{[]row{{"b", 1}}, nil}},
+		{"empty snapshot", args{"", []row{}}, want{[]row{{"b", 1}}, nil}},
+		{"matching snapshot", args{"{\"id\":\"a\"}\n", []row{{"a", 0}}}, want{[]row{{"a", 0}, {"b", 1}}, nil}},
+		{"changed snapshot", args{"{\"id\":\"a\"}\n", nil}, want{[]row{{"a", 0}}, jsonl.ErrChanged}},
+		{"torn tail", args{"{\"id\":\"a\"}\n{", []row{{"a", 0}}}, want{[]row{{"a", 0}, {"b", 1}}, nil}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "rows.jsonl"), []byte(tc.args.content), 0o600))
+			f, err := jsonl.Open[row](dir, "rows.jsonl")
+			require.NoError(t, err)
+			assert.ErrorIs(t, f.AppendIfUnchanged(row{"b", 1}, tc.args.expected), tc.want.err)
+			got, err := f.All()
+			assert.NoError(t, err)
+			assert.Equal(t, tc.want.rows, got)
+		})
+	}
+}
+
 func TestFileAppendFailsOnUnencodableValue(t *testing.T) {
 	f, err := jsonl.Open[any](t.TempDir(), "rows.jsonl")
 	require.NoError(t, err)

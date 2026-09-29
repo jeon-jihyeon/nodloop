@@ -2,6 +2,7 @@ package file_test
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -92,6 +93,50 @@ func TestStoreList(t *testing.T) {
 			got, err := store.List(ctx)
 			assert.ErrorIs(t, err, tc.want.err)
 			assert.Equal(t, tc.want.records, got)
+		})
+	}
+}
+
+func TestStoreAppendIfUnchangedConcurrent(t *testing.T) {
+	tcs := []struct {
+		name  string
+		seeds []knowledge.Knowledge
+	}{
+		{"empty snapshot", nil},
+		{"newest first snapshot", []knowledge.Knowledge{{ID: "old"}, {ID: "new"}}},
+	}
+	ctx := context.Background()
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			first, err := file.New(dir)
+			require.NoError(t, err)
+			second, err := file.New(dir)
+			require.NoError(t, err)
+			for _, item := range tc.seeds {
+				require.NoError(t, first.Append(ctx, item))
+			}
+			expected, err := first.List(ctx)
+			require.NoError(t, err)
+			start, results := make(chan struct{}), make(chan error, 2)
+			for i, store := range []*file.Store{first, second} {
+				go func() {
+					<-start
+					results <- store.AppendIfUnchanged(ctx, knowledge.Knowledge{ID: "winner", Version: i}, expected)
+				}()
+			}
+			close(start)
+			counts := map[bool]int{}
+			for range 2 {
+				err := <-results
+				assert.True(t, err == nil || errors.Is(err, knowledge.ErrRecordsChanged))
+				counts[err == nil]++
+			}
+			assert.Equal(t, map[bool]int{true: 1, false: 1}, counts)
+			got, err := first.List(ctx)
+			assert.NoError(t, err)
+			assert.Len(t, got, len(tc.seeds)+1)
 		})
 	}
 }

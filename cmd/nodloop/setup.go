@@ -8,8 +8,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-
-	evidencefile "github.com/jeon-jihyeon/nodloop/internal/evidence/file"
 )
 
 const configFile = "config.json"
@@ -21,15 +19,11 @@ type userConfig struct {
 	RecordDir string `json:"record_dir,omitempty"`
 }
 
-// nodloop keeps the setup config and the demo set and the default records under `.nodloop` there
+// nodloop keeps the setup config and the default records under `.nodloop` there
 type homeDir string
 
 func (h homeDir) dir() string {
 	return filepath.Join(string(h), ".nodloop")
-}
-
-func (h homeDir) demoDir() string {
-	return filepath.Join(h.dir(), "demo")
 }
 
 func (h homeDir) recordDir() string {
@@ -43,15 +37,6 @@ func (h homeDir) settingsPath() string {
 
 func (h homeDir) configPath() string {
 	return filepath.Join(h.dir(), configFile)
-}
-
-// An unknown home has no config
-func (h homeDir) configured() bool {
-	if h == "" {
-		return false
-	}
-	_, err := os.Stat(h.configPath())
-	return err == nil
 }
 
 func (h homeDir) readConfig() (userConfig, error) {
@@ -107,20 +92,11 @@ func (h homeDir) setup(dataDir, recordDir string) (userConfig, error) {
 	return uc, nil
 }
 
-// The demo set is unpacked under home and becomes the data directory
-func (h homeDir) setupDemo(recordDir string) (userConfig, error) {
-	if err := evidencefile.WriteDemo(h.demoDir()); err != nil {
-		return userConfig{}, err
-	}
-	return h.setup(h.demoDir(), recordDir)
-}
-
 func runSetup(args []string, getenv func(string) string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("setup", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	dataDir := fs.String("data-dir", "", "reference data directory with events.csv and policy.yaml and runbooks")
+	dataDir := fs.String("data-dir", "", "reference data directory with events.csv and policy.yaml and procedures")
 	recordDir := fs.String("record-dir", "", "record directory. Empty means ~/.nodloop/records")
-	useDemo := fs.Bool("demo", false, "unpack the demo data set under ~/.nodloop/demo and use it")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -129,16 +105,10 @@ func runSetup(args []string, getenv func(string) string, stdout, stderr io.Write
 		return fail(stderr, "setup", fmt.Errorf("%w: HOME is not set", errHomeUnknown))
 	}
 	cmd := setupCommand{home: h, out: stdout}
-	var err error
-	switch {
-	case *useDemo:
-		err = cmd.demo(*recordDir)
-	case *dataDir != "":
-		err = cmd.data(*dataDir, *recordDir)
-	default:
-		err = fmt.Errorf("--data-dir or --demo %w", errRequired)
+	if *dataDir == "" {
+		return fail(stderr, "setup", fmt.Errorf("--data-dir %w", errRequired))
 	}
-	if err != nil {
+	if err := cmd.data(*dataDir, *recordDir); err != nil {
 		return fail(stderr, "setup", err)
 	}
 	return 0
@@ -155,15 +125,5 @@ func (c setupCommand) data(dataDir, recordDir string) error {
 		return err
 	}
 	fmt.Fprintf(c.out, "data %s\nconfig %s\n", uc.DataDir, c.home.configPath())
-	return nil
-}
-
-func (c setupCommand) demo(recordDir string) error {
-	uc, err := c.home.setupDemo(recordDir)
-	if err != nil {
-		return err
-	}
-	fmt.Fprintf(c.out, "data %s\nconfig %s\n", uc.DataDir, c.home.configPath())
-	fmt.Fprintln(c.out, "demo events tq-001 to tq-024. Try: review event tq-023")
 	return nil
 }

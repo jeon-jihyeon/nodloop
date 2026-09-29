@@ -1,14 +1,12 @@
 package eval
 
 import (
-	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"slices"
 	"strings"
-	"sync"
-	"sync/atomic"
 
 	"github.com/jeon-jihyeon/nodloop/internal/diagnose"
 	"github.com/jeon-jihyeon/nodloop/internal/evidence"
@@ -52,6 +50,9 @@ func New(src Source, diagnoser *diagnose.Diagnoser, traces TraceStore, feedback 
 type RunOptions struct {
 	SessionID string
 	Model     string
+	// Reviews per event and condition
+	// Zero and one mean one run without a repeat tag
+	Repeat int
 	// Examples injected in the examples condition
 	// Zero means none
 	Examples int
@@ -69,17 +70,21 @@ type RunOptions struct {
 	Log io.Writer
 }
 
-const defaultParallel = 4
-
-// One job per event and condition in event order then condition order
+// One job per event and condition and repeat in that order
+// The condition is the session tag that groups the traces of a job and a repeated run adds its repeat tag
 // No job takes a review of an excluded event as an example
-func (o RunOptions) jobs(eventIDs []string, conditions []Condition, excluded []string) []job {
-	out := make([]job, 0, len(eventIDs)*len(conditions))
+func (o RunOptions) jobs(eventIDs []string, conditions []Condition, excluded []string) []diagnose.Job {
+	out := make([]diagnose.Job, 0, len(eventIDs)*len(conditions)*max(1, o.Repeat))
 	for _, id := range eventIDs {
 		for _, cond := range conditions {
-			batch := cond.options(o.Examples)
-			batch.Model, batch.Session, batch.Exclude = o.Model, diagnose.Session{ID: o.SessionID, Tags: []string{string(cond)}}, excluded
-			out = append(out, job{id, cond, batch})
+			for i := 1; i <= max(1, o.Repeat); i++ {
+				batch := cond.options(o.Examples)
+				batch.Model, batch.Session, batch.Exclude = o.Model, diagnose.Session{ID: o.SessionID, Tags: []string{string(cond)}}, excluded
+				if o.Repeat > 1 {
+					batch.Session.Tags = append(batch.Session.Tags, repeat(i).tag())
+				}
+				out = append(out, diagnose.Job{EventID: id, Options: batch})
+			}
 		}
 	}
 	return out
@@ -97,14 +102,6 @@ func (o RunOptions) conditions() ([]Condition, error) {
 		}
 	}
 	return o.Conditions, nil
-}
-
-// One review to run
-// The condition is the tag that groups its traces
-type job struct {
-	eventID   string
-	condition Condition
-	opts      diagnose.BatchOptions
 }
 
 // Labels of the source in source order
@@ -211,8 +208,10 @@ func (r *Runner) Seed(ctx context.Context, opts RunOptions) ([]trace.Trace, erro
 	if err != nil {
 		return nil, err
 	}
-	jobs := opts.jobs(labels.ids(), []Condition{ConditionSeed}, labelSet(all).holdout().ids())
-	return r.reviewAll(ctx, jobs, opts.Parallel, opts.Log)
+	if err := r.checkRepeat(ctx, opts.SessionID, opts.Repeat, []Condition{ConditionSeed}); err != nil {
+		return nil, err
+	}
+	return r.reviewAll(ctx, opts.jobs(labels.ids(), []Condition{ConditionSeed}, labelSet(all).holdout().ids()), opts.Parallel, opts.Log)
 }
 
 // Reviews every holdout event under each condition
@@ -236,6 +235,9 @@ func (r *Runner) Holdout(ctx context.Context, opts RunOptions) ([]trace.Trace, e
 	if err != nil {
 		return nil, err
 	}
+	if err := r.checkRepeat(ctx, opts.SessionID, opts.Repeat, holdoutConditions()); err != nil {
+		return nil, err
+	}
 	records, err := r.feedback.List(ctx, feedback.Filter{})
 	if err != nil {
 		return nil, err
@@ -250,91 +252,29 @@ func (r *Runner) Holdout(ctx context.Context, opts RunOptions) ([]trace.Trace, e
 	return r.reviewAll(ctx, opts.jobs(labels.ids(), conditions, holdout.ids()), opts.Parallel, opts.Log)
 }
 
-// Runs the jobs with parallel reviews in flight
-// Zero parallel means the default and a nil log means silent
-// 1. a negative parallel is refused before any review
-// 2. traces come back in job order
-// 3. the first error stops new reviews while those in flight finish so none is cut into a false model failure
-// 4. the traces finished so far are returned with the first error in job order
-// 5. a context cancelled before every job started is the error when no job failed
-// 6. a panic becomes the error of its job instead of taking the whole run down
-func (r *Runner) reviewAll(ctx context.Context, jobs []job, parallel int, log io.Writer) ([]trace.Trace, error) {
-	if parallel < 0 {
-		return nil, fmt.Errorf("%w: %d", ErrNegativeParallel, parallel)
+// Refuses a run whose repeat setting differs from the reviews of the same conditions already in the session
+func (r *Runner) checkRepeat(ctx context.Context, sessionID string, count int, conditions []Condition) error {
+	session, err := r.traces.List(ctx, trace.Filter{Name: trace.NameDiagnose, SessionID: sessionID})
+	if err != nil {
+		return err
 	}
-	progress := &lockedWriter{w: cmp.Or(log, io.Discard)}
-	results := make([]trace.Trace, len(jobs))
-	errs := make([]error, len(jobs))
-	var failed atomic.Bool
-	var wg sync.WaitGroup
-	var stopped error
-	slots := make(chan struct{}, cmp.Or(parallel, defaultParallel))
-	for i, j := range jobs {
-		slots <- struct{}{}
-		if stopped = ctx.Err(); stopped != nil || failed.Load() {
-			break
-		}
-		wg.Go(func() {
-			defer func() {
-				if p := recover(); p != nil {
-					errs[i] = fmt.Errorf("%w: %s: %v", ErrReviewPanicked, j.eventID, p)
-				}
-				if errs[i] != nil {
-					failed.Store(true)
-				}
-				<-slots
-			}()
-			results[i], errs[i] = r.review(ctx, j, progress)
-		})
-	}
-	wg.Wait()
-	out := make([]trace.Trace, 0, len(jobs))
-	for i := range jobs {
-		if results[i].ID != "" {
-			out = append(out, results[i])
-		}
-	}
-	for _, err := range errs {
+	return reviews(session).of(conditions).checkRepeat(count)
+}
+
+// Runs the jobs through the pool of diagnose and reads back the trace of every result
+// The traces finished so far come back with the error of the run
+// A failed read back joins the error of the run so neither is lost
+func (r *Runner) reviewAll(ctx context.Context, jobs []diagnose.Job, parallel int, log io.Writer) ([]trace.Trace, error) {
+	results, runErr := r.diagnoser.RunAll(ctx, jobs, parallel, log)
+	out := make([]trace.Trace, 0, len(results))
+	for _, res := range results {
+		tr, err := r.traces.Get(ctx, res.TraceID)
 		if err != nil {
-			return out, err
+			return out, errors.Join(runErr, err)
 		}
+		out = append(out, tr)
 	}
-	return out, stopped
-}
-
-// Progress lines from several workers must not interleave inside one line
-type lockedWriter struct {
-	mu sync.Mutex
-	w  io.Writer
-}
-
-func (l *lockedWriter) Write(p []byte) (int, error) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	return l.w.Write(p)
-}
-
-// 1. a review that fails after its context was built comes back with its failed trace and the run continues
-// 2. a cancelled context is the error of that job and never a model failure
-// 3. a failure without a trace is a store failure or a review that never built its context and ends the run
-func (r *Runner) review(ctx context.Context, j job, log io.Writer) (trace.Trace, error) {
-	res, err := r.diagnoser.Run(ctx, j.eventID, j.opts)
-	if err != nil {
-		switch {
-		case ctx.Err() != nil:
-			return trace.Trace{}, ctx.Err()
-		case res.TraceID == "":
-			return trace.Trace{}, fmt.Errorf("%w: %s: %w", ErrNoFailedTrace, j.eventID, err)
-		}
-		fmt.Fprintf(log, "%s\t%s\tfailed: %v\n", j.eventID, j.condition, err)
-		return r.traces.Get(ctx, res.TraceID)
-	}
-	tr, err := r.traces.Get(ctx, res.TraceID)
-	if err != nil {
-		return trace.Trace{}, err
-	}
-	fmt.Fprintf(log, "%s\t%s\t%s\tforced=%t\t$%.4f\t%dms\n", j.eventID, j.condition, res.Diagnosis.Status, res.Forced, tr.Usage.CostUSD, tr.DurationMS)
-	return tr, nil
+	return out, runErr
 }
 
 type Report struct {
@@ -343,15 +283,29 @@ type Report struct {
 	// Per condition against the baseline
 	// Empty when the baseline was not run
 	AgainstBaseline map[Condition]Comparison `json:"against_baseline"`
-	Scores          []Score                  `json:"scores"`
+	// The scores of the first repeat
+	Scores []Score `json:"scores"`
+	// Per repeat of a repeated session and empty for a single run
+	Runs []RunReport `json:"runs,omitempty"`
+	// Across the repeats of a repeated session
+	Stability []Stability `json:"stability,omitempty"`
+	// The condition pairs of the first repeat
+	Pairs []Pair `json:"pairs,omitempty"`
+	// The paired bootstrap across every repeat
+	Intervals []Interval `json:"intervals,omitempty"`
+	// Set by Triage on request
+	Triage []Triage `json:"triage,omitempty"`
 }
 
 // Markdown table with one row per condition
 // 1. not applicable cells print as a dash
 // 2. verdicts print as approve:edit:reject counts
 // 3. each condition is compared with the baseline event by event or marked not compared without one
+// 4. a repeated session prints its repeat tables first and a single run its condition pairs and intervals after the comparison
+// 5. the triage rows come last when they were asked for
 func (rep Report) Table() string {
 	var b strings.Builder
+	b.WriteString(rep.repeatTable())
 	b.WriteString("| condition | events | status acc | hold acc | hold precision | citation p | citation r | required checks | first check | knowledge hit | misapplied | revised | forced holds | failures | annotated | approve:edit:reject | edit rate | mean edit width | mean cost usd | mean input tokens | mean output tokens | p50 ms | p95 ms |\n")
 	b.WriteString("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|\n")
 	for _, s := range rep.Summaries {
@@ -360,12 +314,22 @@ func (rep Report) Table() string {
 			s.Misapplications, s.Revisions, s.ForcedHolds, s.Failures, s.Annotated, s.Approvals, s.Edits, s.Rejections, ratio(s.EditRate), ratio(s.MeanEditWidth),
 			s.MeanCostUSD, s.MeanInputTokens, s.MeanOutputTokens, s.P50DurationMS, s.P95DurationMS)
 	}
-	b.WriteString("\nAgainst " + string(ConditionBaseline))
-	if len(rep.AgainstBaseline) == 0 {
-		b.WriteString(": not compared\n")
-		return b.String()
+	b.WriteString(rep.comparisonTable())
+	if len(rep.Stability) == 0 {
+		b.WriteString(pairs(rep.Pairs).table())
+		b.WriteString(intervals(rep.Intervals).table())
 	}
-	b.WriteString("\n\n| condition | fixed | regressed | weakened |\n|---|---|---|---|\n")
+	b.WriteString(triages(rep.Triage).table())
+	return b.String()
+}
+
+// Each condition against the baseline or a line that says it was not compared
+func (rep Report) comparisonTable() string {
+	if len(rep.AgainstBaseline) == 0 {
+		return "\nAgainst " + string(ConditionBaseline) + ": not compared\n"
+	}
+	var b strings.Builder
+	b.WriteString("\nAgainst " + string(ConditionBaseline) + "\n\n| condition | fixed | regressed | weakened |\n|---|---|---|---|\n")
 	for _, cond := range allConditions() {
 		c, ok := rep.AgainstBaseline[cond]
 		if !ok {
@@ -420,7 +384,7 @@ func (r *Runner) Report(ctx context.Context, sessionID string) (Report, error) {
 	if err != nil {
 		return Report{}, err
 	}
-	return labelSet(labels).score(rs.newest(), feedback.Records(all).Latest(), revisedIDs).report(sessionID), nil
+	return labelSet(labels).report(sessionID, rs, feedback.Records(all).Latest(), revisedIDs), nil
 }
 
 // The diagnose traces of one session
@@ -505,6 +469,7 @@ type conditionScores map[Condition]scores
 
 // 1. conditions in report order and scores in event order
 // 2. every holdout condition but the baseline is compared with the baseline when the baseline was run
+// 3. every pair of holdout conditions that share an event counts its discordant events
 func (cs conditionScores) report(sessionID string) Report {
 	rep := Report{SessionID: sessionID, AgainstBaseline: map[Condition]Comparison{}}
 	base := cs[ConditionBaseline].byEvent()
@@ -520,5 +485,6 @@ func (cs conditionScores) report(sessionID string) Report {
 		}
 		rep.AgainstBaseline[cond] = ss.comparedTo(base)
 	}
+	rep.Pairs = cs.pairs()
 	return rep
 }

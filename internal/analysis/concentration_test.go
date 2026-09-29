@@ -13,12 +13,15 @@ import (
 
 func TestAnalyzeConcentrationChange(t *testing.T) {
 	t0 := time.Date(2026, 9, 22, 0, 0, 0, 0, time.UTC)
-	hourly := func(metric string, dims map[string]string, values []float64) []evidence.Point {
+	hourlyFrom := func(start int, metric string, dims map[string]string, values []float64) []evidence.Point {
 		points := make([]evidence.Point, len(values))
 		for i, v := range values {
-			points[i] = evidence.Point{Time: t0.Add(time.Duration(i) * time.Hour), Metric: metric, Value: v, Dims: dims}
+			points[i] = evidence.Point{Time: t0.Add(time.Duration(start+i) * time.Hour), Metric: metric, Value: v, Dims: dims}
 		}
 		return points
+	}
+	hourly := func(metric string, dims map[string]string, values []float64) []evidence.Point {
+		return hourlyFrom(0, metric, dims, values)
 	}
 	threshold := 0.15
 	metrics := []string{"click_count"}
@@ -47,6 +50,8 @@ func TestAnalyzeConcentrationChange(t *testing.T) {
 	thirdDelta := thirdWindow - thirdBaseline
 	// Runtime subtraction so the want matches the analyzer bit for bit
 	gainingShare, losingShare := 660.0/1260, 600.0/1260
+	// 24 baseline hours of a against 18 of b that starts six hours later
+	lateBaseline, lateLosing := 2400.0/4200, 1800.0/4200
 	type args struct {
 		spec   analysis.RuleSpec
 		points []evidence.Point
@@ -68,14 +73,14 @@ func TestAnalyzeConcentrationChange(t *testing.T) {
 					Current: 0.75, Baseline: 0.5, Change: 0.25, Severity: 0.25 / (2 * threshold), Adequate: true,
 					Detail: analysis.Detail{PeakTime: t0.Add(24 * time.Hour), PeakValue: 300, Samples: 60}, Ref: ref,
 					Summary: "click_count source=a: window share 0.75 against baseline 0.5, delta 0.25, " +
-						"peak 300 at 2026-09-23T00:00:00Z",
+						"peak 300 at 2026-09-23T00:00:00Z, total window mean 400 against baseline 200",
 				},
 				{
 					Rule: analysis.RuleConcentration, Target: b, Metric: "click_count", Window: windowOf(12),
 					Current: 0.25, Baseline: 0.5, Change: -0.25, Severity: 0.25 / (2 * threshold), Adequate: true,
 					Detail: analysis.Detail{PeakTime: t0.Add(24 * time.Hour), PeakValue: 100, Samples: 60}, Ref: ref,
 					Summary: "click_count source=b: window share 0.25 against baseline 0.5, delta -0.25, " +
-						"peak 100 at 2026-09-23T00:00:00Z",
+						"peak 100 at 2026-09-23T00:00:00Z, total window mean 400 against baseline 200",
 				},
 			},
 		},
@@ -92,7 +97,7 @@ func TestAnalyzeConcentrationChange(t *testing.T) {
 				Severity: thirdDelta / (2 * threshold), Adequate: true,
 				Detail: analysis.Detail{PeakTime: t0.Add(24 * time.Hour), PeakValue: 250, Samples: 90}, Ref: ref,
 				Summary: "click_count source=a: window share 0.5556 against baseline 0.3333, delta 0.2222, " +
-					"peak 250 at 2026-09-23T00:00:00Z",
+					"peak 250 at 2026-09-23T00:00:00Z, total window mean 450 against baseline 300",
 			}},
 		},
 		{
@@ -109,14 +114,39 @@ func TestAnalyzeConcentrationChange(t *testing.T) {
 					Current: gainingShare, Baseline: 0.5, Change: gainingShare - 0.5, Severity: 1, Adequate: true,
 					Detail: analysis.Detail{PeakTime: t0.Add(24 * time.Hour), PeakValue: 110, Samples: 60}, Ref: ref,
 					Summary: "click_count source=a: window share 0.5238 against baseline 0.5, delta 0.0238, " +
-						"peak 110 at 2026-09-23T00:00:00Z",
+						"peak 110 at 2026-09-23T00:00:00Z, total window mean 210 against baseline 200",
 				},
 				{
 					Rule: analysis.RuleConcentration, Target: b, Metric: "click_count", Window: windowOf(12),
 					Current: losingShare, Baseline: 0.5, Change: losingShare - 0.5, Severity: 1, Adequate: true,
 					Detail: analysis.Detail{PeakTime: t0.Add(24 * time.Hour), PeakValue: 100, Samples: 60}, Ref: ref,
 					Summary: "click_count source=b: window share 0.4762 against baseline 0.5, delta -0.0238, " +
-						"peak 100 at 2026-09-23T00:00:00Z",
+						"peak 100 at 2026-09-23T00:00:00Z, total window mean 210 against baseline 200",
+				},
+			},
+		},
+		{
+			name: "total mean divides by the distinct times when one group starts later",
+			args: args{spec: spec, points: slices.Concat(
+				hourly("click_count", a, shifted(300)),
+				hourlyFrom(6, "click_count", b, steady[:24]),
+			)},
+			want: analysis.Observations{
+				{
+					Rule: analysis.RuleConcentration, Target: a, Metric: "click_count", Window: windowOf(12),
+					Current: 0.75, Baseline: lateBaseline, Change: 0.75 - lateBaseline,
+					Severity: (0.75 - lateBaseline) / (2 * threshold), Adequate: true,
+					Detail: analysis.Detail{PeakTime: t0.Add(24 * time.Hour), PeakValue: 300, Samples: 54}, Ref: ref,
+					Summary: "click_count source=a: window share 0.75 against baseline 0.5714, delta 0.1786, " +
+						"peak 300 at 2026-09-23T00:00:00Z, total window mean 400 against baseline 175",
+				},
+				{
+					Rule: analysis.RuleConcentration, Target: b, Metric: "click_count", Window: windowOf(12),
+					Current: 0.25, Baseline: lateLosing, Change: 0.25 - lateLosing,
+					Severity: (lateLosing - 0.25) / (2 * threshold), Adequate: true,
+					Detail: analysis.Detail{PeakTime: t0.Add(24 * time.Hour), PeakValue: 100, Samples: 54}, Ref: ref,
+					Summary: "click_count source=b: window share 0.25 against baseline 0.4286, delta -0.1786, " +
+						"peak 100 at 2026-09-23T00:00:00Z, total window mean 400 against baseline 175",
 				},
 			},
 		},

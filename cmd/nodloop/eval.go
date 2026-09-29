@@ -30,8 +30,10 @@ func runEval(
 	fs.StringVar(&opts.Model, "model", "", "model alias or name. Empty means the llm default")
 	fs.IntVar(&opts.Examples, "examples", defaultExamples, "examples injected in the feedback:on condition. 0 means none")
 	conditions := fs.String("conditions", "", "holdout: comma separated subset of feedback:off, feedback:on, knowledge:on, knowledge:all. Empty means all")
-	events := fs.String("events", "", "seed and holdout: comma separated event ids to run. Empty means every event of that half")
+	fs.Var((*idList)(&opts.Events), "events", "seed and holdout: comma separated event ids to run. Empty means every event of that half")
 	fs.IntVar(&opts.Parallel, "parallel", 0, "reviews in flight at once. 0 means 4")
+	fs.IntVar(&opts.Repeat, "repeat", 1, "seed and holdout: reviews per event and condition. Above 1 every review carries its repeat tag")
+	triage := fs.Bool("triage", false, "report: add how many wrong statuses the top 5 of the queue order hold")
 	if err := fs.Parse(args[1:]); err != nil {
 		return 1
 	}
@@ -42,9 +44,6 @@ func runEval(
 		for _, c := range strings.Split(*conditions, ",") {
 			opts.Conditions = append(opts.Conditions, eval.Condition(c))
 		}
-	}
-	if *events != "" {
-		opts.Events = strings.Split(*events, ",")
 	}
 	a, err := data.app(getenv, now)
 	if err != nil {
@@ -66,7 +65,11 @@ func runEval(
 	case "holdout":
 		err = cmd.holdout(ctx, opts)
 	case "report":
-		err = cmd.report(ctx, opts.SessionID)
+		if *triage {
+			err = cmd.triage(ctx, opts.SessionID)
+		} else {
+			err = cmd.report(ctx, opts.SessionID)
+		}
 	default:
 		err = fmt.Errorf("%w %q", errUnknownAction, args[0])
 	}
@@ -103,17 +106,33 @@ func (c evalCommand) holdout(ctx context.Context, opts eval.RunOptions) error {
 	return nil
 }
 
-// Prints the table and writes the full report next to the records
 func (c evalCommand) report(ctx context.Context, sessionID string) error {
 	rep, err := c.runner.Report(ctx, sessionID)
 	if err != nil {
 		return err
 	}
+	return c.write(rep)
+}
+
+// The report with the triage rows of the queue order
+func (c evalCommand) triage(ctx context.Context, sessionID string) error {
+	rep, err := c.runner.Report(ctx, sessionID)
+	if err != nil {
+		return err
+	}
+	if rep.Triage, err = c.runner.Triage(ctx, sessionID); err != nil {
+		return err
+	}
+	return c.write(rep)
+}
+
+// Prints the table and writes the full report next to the records
+func (c evalCommand) write(rep eval.Report) error {
 	b, err := json.MarshalIndent(rep, "", "  ")
 	if err != nil {
 		return err
 	}
-	path := filepath.Join(c.recordDir, "eval-"+sessionID+".json")
+	path := filepath.Join(c.recordDir, "eval-"+rep.SessionID+".json")
 	if err := os.WriteFile(path, append(b, '\n'), 0o600); err != nil {
 		return err
 	}

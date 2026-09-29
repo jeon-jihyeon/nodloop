@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 
@@ -18,6 +19,7 @@ import (
 	"github.com/jeon-jihyeon/nodloop/internal/analysis"
 	"github.com/jeon-jihyeon/nodloop/internal/diagnose"
 	"github.com/jeon-jihyeon/nodloop/internal/evidence"
+	evidencefile "github.com/jeon-jihyeon/nodloop/internal/evidence/file"
 	"github.com/jeon-jihyeon/nodloop/internal/feedback"
 	feedbackfile "github.com/jeon-jihyeon/nodloop/internal/feedback/file"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
@@ -39,7 +41,7 @@ func TestDiagnosisJSON(t *testing.T) {
 		{
 			name: "ready review keeps every field and leaves hold reasons out",
 			args: diagnose.Diagnosis{
-				Status:       diagnose.StatusReadyForReview,
+				Status:       evidence.StatusReadyForReview,
 				Observations: []string{"click_count source-a up"},
 				Causes:       []diagnose.Cause{{Summary: "low quality traffic", ParagraphIDs: []string{"mai#1"}}},
 				Checks: diagnose.Checks{
@@ -54,7 +56,7 @@ func TestDiagnosisJSON(t *testing.T) {
 		},
 		{
 			name: "hold review carries its reasons",
-			args: diagnose.Diagnosis{Status: diagnose.StatusHold, HoldReasons: []string{"gap"}},
+			args: diagnose.Diagnosis{Status: evidence.StatusHold, HoldReasons: []string{"gap"}},
 			want: `{"status":"hold","observations":null,"causes":null,"checks":null,` +
 				`"open_questions":null,"hold_reasons":["gap"]}`,
 		},
@@ -116,16 +118,30 @@ func TestKnowledgeApplied(t *testing.T) {
 	}
 }
 
+// Every demo event keeps all four procedures because none has front matter
+// The scoped front matter puts segment-concentration-review on click_count
+// An event that observes conversion_count only loses it
 func TestPrepare(t *testing.T) {
+	const scoped = "---\nmetrics: [click_count]\n---\n"
 	type args struct {
-		mode    diagnose.Mode
-		session diagnose.Session
+		// Opens segment-concentration-review
+		frontMatter string
+		event       string
+		mode        diagnose.Mode
+		session     diagnose.Session
+	}
+	type want struct {
+		procedures []string
+		// Runes of the procedure paragraph section
+		procedureChars int
 	}
 	type input struct {
-		Mode          diagnose.Mode `json:"mode"`
-		PolicyVersion string        `json:"policy_version"`
-		PromptVersion string        `json:"prompt_version"`
-		ParagraphIDs  []string      `json:"paragraph_ids"`
+		Mode           diagnose.Mode `json:"mode"`
+		PolicyVersion  string        `json:"policy_version"`
+		PromptVersion  string        `json:"prompt_version"`
+		Procedures     []string      `json:"procedures"`
+		ParagraphIDs   []string      `json:"paragraph_ids"`
+		ProcedureChars int           `json:"procedure_chars"`
 	}
 	type output struct {
 		ChangeContext       evidence.Context              `json:"change_context"`
@@ -133,15 +149,32 @@ func TestPrepare(t *testing.T) {
 		KnowledgeCandidates []diagnose.KnowledgeCandidate `json:"knowledge_candidates"`
 		ExampleCandidates   []diagnose.ExampleCandidate   `json:"example_candidates"`
 	}
+	all := want{procedures: demoProcedures, procedureChars: demoProcedureChars}
 	tcs := []struct {
 		name string
 		args args
+		want want
 	}{
 		{
-			"interactive context carries the session",
-			args{diagnose.ModeInteractive, diagnose.Session{ID: "s1", Tags: []string{"feedback:off"}}},
+			"interactive context carries the session and every demo procedure",
+			args{
+				event: "tq-005", mode: diagnose.ModeInteractive,
+				session: diagnose.Session{ID: "s1", Tags: []string{"feedback:off"}},
+			},
+			all,
 		},
-		{"batch context without a session", args{mode: diagnose.ModeBatch}},
+		{"batch context without a session", args{event: "tq-005", mode: diagnose.ModeBatch}, all},
+		{"a demo event that observes nothing keeps every procedure", args{event: "tq-001", mode: diagnose.ModeBatch}, all},
+		{
+			"a scoped procedure stays with an event that observes its metric",
+			args{frontMatter: scoped, event: "tq-005", mode: diagnose.ModeBatch},
+			all,
+		},
+		{
+			"a scoped procedure leaves an event that observes none of its metrics",
+			args{frontMatter: scoped, event: "tq-009", mode: diagnose.ModeBatch},
+			want{procedures: demoProcedures[:3], procedureChars: 4181},
+		},
 	}
 	ctx := context.Background()
 	for _, tc := range tcs {
@@ -149,19 +182,22 @@ func TestPrepare(t *testing.T) {
 			t.Parallel()
 			s := testkit.Open(t)
 			policy := testkit.Policy(t)
-			d := diagnose.New(s.Source, policy, diagnose.Limits{}, nil, s.Traces, s.Feedback, s.Ledger, s.Clock.Now)
-			ev, err := s.Source.Event(ctx, "tq-005")
+			src := scopedDemo(t, "segment-concentration-review.md", tc.args.frontMatter)
+			d := diagnose.New(src, policy, nil, s.Traces, s.Feedback, s.Ledger, s.Clock.Now)
+			ev, err := src.Event(ctx, tc.args.event)
 			require.NoError(t, err)
 			observations, err := policy.Analyze(ev)
 			require.NoError(t, err)
-			paragraphs, err := s.Source.Paragraphs(ctx)
+			procedures, err := src.Procedures(ctx)
 			require.NoError(t, err)
 			var ids []string
-			for _, p := range paragraphs {
-				ids = append(ids, string(p.ID))
+			for _, p := range procedures.Paragraphs() {
+				if slices.Contains(tc.want.procedures, p.ID.Procedure()) {
+					ids = append(ids, string(p.ID))
+				}
 			}
 
-			got, err := d.Prepare(ctx, "tq-005", tc.args.mode, tc.args.session)
+			got, err := d.Prepare(ctx, tc.args.event, tc.args.mode, tc.args.session)
 			require.NoError(t, err)
 			tr, err := s.Traces.Get(ctx, got.PendingID)
 			require.NoError(t, err)
@@ -169,36 +205,53 @@ func TestPrepare(t *testing.T) {
 			require.NoError(t, json.Unmarshal(tr.Input, &in))
 			var out output
 			require.NoError(t, json.Unmarshal(tr.Output, &out))
-			all, err := s.Traces.List(ctx, trace.Filter{})
+			traces, err := s.Traces.List(ctx, trace.Filter{})
 			require.NoError(t, err)
-			pending := all.Pending()
+			pending := traces.Pending()
 
 			assert.Equal(t, diagnose.Context{
-				PendingID:     tr.ID,
-				EventID:       "tq-005",
-				Mode:          tc.args.mode,
-				PolicyVersion: "demo-1",
-				PromptVersion: "diagnose/v9",
-				ChangeContext: evidence.ContextNoKnownChange,
-				Session:       tc.args.session,
-				Observations:  observations,
-				ParagraphIDs:  ids,
-				Text:          got.Text,
+				PendingID:      tr.ID,
+				EventID:        tc.args.event,
+				Mode:           tc.args.mode,
+				PolicyVersion:  "demo-1",
+				PromptVersion:  "diagnose/v12",
+				ChangeContext:  ev.ChangeContext,
+				Session:        tc.args.session,
+				Observations:   observations,
+				Procedures:     tc.want.procedures,
+				ParagraphIDs:   ids,
+				ProcedureChars: tc.want.procedureChars,
+				Text:           got.Text,
 			}, got)
 			assert.Equal(t, trace.Trace{
-				ID: got.PendingID, Name: trace.NameContext, SessionID: tc.args.session.ID, Subject: "tq-005", Time: tr.Time,
+				ID: got.PendingID, Name: trace.NameContext, SessionID: tc.args.session.ID, Subject: tc.args.event, Time: tr.Time,
 				Input: tr.Input, Output: tr.Output, Tags: tc.args.session.Tags,
 			}, tr)
-			assert.Equal(
-				t, input{Mode: tc.args.mode, PolicyVersion: "demo-1", PromptVersion: "diagnose/v9", ParagraphIDs: ids}, in,
-			)
+			assert.Equal(t, input{
+				Mode: tc.args.mode, PolicyVersion: "demo-1", PromptVersion: "diagnose/v12", Procedures: tc.want.procedures,
+				ParagraphIDs: ids, ProcedureChars: tc.want.procedureChars,
+			}, in)
 			assert.Equal(t, output{
-				ChangeContext: evidence.ContextNoKnownChange, Metrics: observations.Metrics(),
+				ChangeContext: ev.ChangeContext, Metrics: observations.Metrics(),
 				KnowledgeCandidates: []diagnose.KnowledgeCandidate{}, ExampleCandidates: []diagnose.ExampleCandidate{},
 			}, out)
 			assert.Equal(t, trace.Traces{tr}, pending)
 		})
 	}
+}
+
+// A copy of the demo data set whose procedure file opens with the front matter
+func scopedDemo(t *testing.T, file, frontMatter string) *evidencefile.Source {
+	t.Helper()
+	dir := t.TempDir()
+	require.NoError(t, os.CopyFS(dir, os.DirFS(testkit.DemoDir(t))))
+	path := filepath.Join(dir, "procedures", file)
+	b, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(path, append([]byte(frontMatter), b...), 0o600))
+	src, err := evidencefile.New(dir)
+	require.NoError(t, err)
+	return src
 }
 
 func TestPrepareFailure(t *testing.T) {
@@ -229,7 +282,7 @@ func TestPrepareFailure(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			s := testkit.Open(t)
-			d := diagnose.New(s.Source, tc.args.policy, diagnose.Limits{}, nil, s.Traces, s.Feedback, s.Ledger, s.Clock.Now)
+			d := diagnose.New(s.Source, tc.args.policy, nil, s.Traces, s.Feedback, s.Ledger, s.Clock.Now)
 
 			got, err := d.Prepare(ctx, tc.args.event, tc.args.mode, diagnose.Session{})
 			assert.ErrorIs(t, err, tc.want)
@@ -241,6 +294,20 @@ func TestPrepareFailure(t *testing.T) {
 		})
 	}
 }
+
+// The procedures of every demo event and the runes of their paragraph section in its context text
+var demoProcedures = []string{
+	"data-integrity-hold", "metric-anomaly-investigation", "outcome-rate-degradation", "segment-concentration-review",
+}
+
+const (
+	demoProcedureChars = 5655
+	// Runes of the section headings and the cut notice of the select text
+	knowledgeHeading = 141
+	knowledgeNotice  = 110
+	examplesHeading  = 188
+	examplesNotice   = 185
+)
 
 func TestRecord(t *testing.T) {
 	const (
@@ -256,9 +323,15 @@ func TestRecord(t *testing.T) {
 		Chars   int    `json:"chars"`
 		Cut     bool   `json:"cut"`
 	}
+	type sections struct {
+		Procedures int `json:"procedures"`
+		Knowledge  int `json:"knowledge"`
+		Examples   int `json:"examples"`
+	}
 	type args struct {
-		limits    diagnose.Limits
 		knowledge []knowledge.Knowledge
+		// Approved items imported because approval refuses a folder over the cap
+		imported []knowledge.Knowledge
 		// Events reviewed and rejected before the context so they become example candidates
 		rejected []string
 		selects  []diagnose.Choices
@@ -278,9 +351,12 @@ func TestRecord(t *testing.T) {
 		ChangeContext evidence.Context            `json:"change_context"`
 		Metrics       []string                    `json:"metrics"`
 		Selector      diagnose.Selector           `json:"select_mode"`
+		Procedures    []string                    `json:"procedures"`
 		Knowledge     []diagnose.AppliedKnowledge `json:"knowledge"`
 		Examples      []example                   `json:"examples"`
 		Omitted       bool                        `json:"omitted"`
+		Chars         sections                    `json:"chars"`
+		OmittedChars  sections                    `json:"omitted_chars"`
 		UnknownIDs    []string                    `json:"unknown_ids"`
 	}
 	type revised struct {
@@ -302,60 +378,82 @@ func TestRecord(t *testing.T) {
 	}
 	agg := knowledge.Knowledge{
 		ID: "k-agg", Kind: knowledge.KindMeaning, Content: "clicks and conversions use different aggregation time bases",
-		Scope: knowledge.Scope{Metrics: []string{"conversion_count"}},
+		Scope: knowledge.Scope{Scope: evidence.Scope{Metrics: []string{"conversion_count"}}},
 	}
 	checks := diagnose.Checks{
 		{Step: "confirm the signal", Purpose: "signal", ParagraphIDs: []string{confirm}},
 		{Step: "check the segment", Purpose: "segment", ParagraphIDs: []string{segment}},
 	}
 	ready := diagnose.Diagnosis{
-		Status: diagnose.StatusReadyForReview,
+		Status: evidence.StatusReadyForReview,
 		Causes: []diagnose.Cause{{Summary: "low quality traffic", ParagraphIDs: []string{segment}}},
 		Checks: checks,
 	}
-	// Misses the first step of its lead runbook
+	// Misses the first step of its lead procedure
 	incomplete := diagnose.Diagnosis{
-		Status: diagnose.StatusReadyForReview,
+		Status: evidence.StatusReadyForReview,
 		Causes: []diagnose.Cause{{Summary: "low quality traffic", ParagraphIDs: []string{segment}}},
 		Checks: diagnose.Checks{{Step: "s", Purpose: "p", ParagraphIDs: []string{segment}}},
 	}
-	missing := "check " + confirm + " is missing. The first step of the lead runbook is always a check"
+	missing := "check " + confirm + " is missing. The first step of the lead procedure is always a check"
 	decideCause := diagnose.Diagnosis{
-		Status: diagnose.StatusReadyForReview, Causes: []diagnose.Cause{{Summary: "c", ParagraphIDs: []string{decide}}},
+		Status: evidence.StatusReadyForReview, Causes: []diagnose.Cause{{Summary: "c", ParagraphIDs: []string{decide}}},
 		Checks: diagnose.Checks{{Step: "s", Purpose: "p", ParagraphIDs: []string{confirm}}},
 	}
 	citesDecide := `cause "c" cites the Decide paragraph ` + decide + `. A Decide paragraph states no cause`
 	ordCauses := diagnose.Diagnosis{
-		Status: diagnose.StatusReadyForReview,
+		Status: evidence.StatusReadyForReview,
 		Causes: []diagnose.Cause{
 			{Summary: "a", ParagraphIDs: []string{ordSplit}},
 			{Summary: "b", ParagraphIDs: []string{ordConfirm}},
 		},
 		Checks: diagnose.Checks{{Step: "s", Purpose: "p", ParagraphIDs: []string{ordSplit}}},
 	}
-	ordMissing := "check " + ordConfirm + " is missing. The first step of the lead runbook is always a check"
+	ordMissing := "check " + ordConfirm + " is missing. The first step of the lead procedure is always a check"
+	firstStepCause := func(summary, id string) string {
+		return `cause "` + summary + `" cites ` + id + `, the first step of its procedure. ` +
+			`A first step is a check and never states a cause. Cite the paragraph that states the cause`
+	}
+	// The first step of the lead procedure is both a check and a cause
+	confirmCause := diagnose.Diagnosis{
+		Status: evidence.StatusReadyForReview,
+		Causes: []diagnose.Cause{{Summary: "c", ParagraphIDs: []string{segment, confirm}}},
+		Checks: checks,
+	}
+	// The first step of an included procedure other than the lead
+	otherFirstStep := diagnose.Diagnosis{
+		Status: evidence.StatusReadyForReview,
+		Causes: []diagnose.Cause{
+			{Summary: "a", ParagraphIDs: []string{segment}}, {Summary: "b", ParagraphIDs: []string{ordConfirm}},
+		},
+		Checks: checks,
+	}
+	heldConfirm := diagnose.Diagnosis{
+		Status: evidence.StatusHold, Causes: []diagnose.Cause{{Summary: "c", ParagraphIDs: []string{confirm}}},
+	}
 	stepUnchecked := diagnose.Diagnosis{
-		Status: diagnose.StatusReadyForReview, Causes: []diagnose.Cause{{Summary: "c", ParagraphIDs: []string{segment}}},
+		Status: evidence.StatusReadyForReview, Causes: []diagnose.Cause{{Summary: "c", ParagraphIDs: []string{segment}}},
 		Checks: diagnose.Checks{{Step: "s", Purpose: "p", ParagraphIDs: []string{confirm}}},
 	}
 	madeUp := diagnose.Diagnosis{
-		Status: diagnose.StatusReadyForReview, Causes: []diagnose.Cause{{Summary: "worn trim", ParagraphIDs: []string{"made-up"}}},
+		Status: evidence.StatusReadyForReview,
+		Causes: []diagnose.Cause{{Summary: "worn trim", ParagraphIDs: []string{"made-up"}}},
 		Checks: checks,
 	}
 	citesNone := `cause "worn trim" cites no paragraph id from the list. Cite the paragraph that states it or return hold`
-	twoRunbooks := diagnose.Diagnosis{
-		Status: diagnose.StatusReadyForReview,
+	twoProcedures := diagnose.Diagnosis{
+		Status: evidence.StatusReadyForReview,
 		Causes: []diagnose.Cause{{Summary: "c", ParagraphIDs: []string{segment, ordSplit}}},
 		Checks: diagnose.Checks{},
 	}
-	// The old context knows only the segment paragraph so the gate drops the signal id
+	// The old context knows the two paragraphs the review cites
 	oldReady := ready
-	oldReady.Checks = diagnose.Checks{{Step: "confirm the signal", Purpose: "signal"}, checks[1]}
 	recorded := input{
 		SessionID: "s1", Subject: "tq-005", Tags: []string{"feedback:off"},
-		Mode: diagnose.ModeInteractive, PolicyVersion: "demo-1", PromptVersion: "diagnose/v9",
+		Mode: diagnose.ModeInteractive, PolicyVersion: "demo-1", PromptVersion: "diagnose/v12",
 		ChangeContext: evidence.ContextNoKnownChange, Metrics: []string{"click_count", "conversion_count"},
-		Knowledge: []diagnose.AppliedKnowledge{}, Examples: []example{},
+		Procedures: demoProcedures, Knowledge: []diagnose.AppliedKnowledge{}, Examples: []example{},
+		Chars: sections{Procedures: demoProcedureChars},
 	}
 	withUnknown := recorded
 	withUnknown.UnknownIDs = []string{"made-up"}
@@ -365,19 +463,28 @@ func TestRecord(t *testing.T) {
 	selected.Selector = diagnose.SelectByClaude
 	chosen := selected
 	chosen.Knowledge = []diagnose.AppliedKnowledge{{ID: "k-agg", Version: 1, Reason: "part of the picture", Chars: 112}}
-	cut := selected
-	cut.Omitted = true
-	shared := cut
-	shared.Knowledge = []diagnose.AppliedKnowledge{{ID: "k-agg", Version: 1, Chars: 59, OmittedChars: 89, Cut: true}}
+	chosen.Chars.Knowledge = knowledgeHeading + 112
+	// One item over the knowledge cap in Korean so its sizes read in runes
+	large := agg
+	large.Content = strings.Repeat("가", knowledge.ReviewChars+1000)
+	shared := selected
+	shared.Omitted = true
+	shared.Knowledge = []diagnose.AppliedKnowledge{
+		{ID: "k-agg", Version: 1, Chars: knowledge.ReviewChars - 1, OmittedChars: 1092, Cut: true},
+	}
+	// The cut mark of four digits leaves one rune of the share unused
+	shared.Chars.Knowledge = knowledgeHeading + knowledge.ReviewChars - 1 + knowledgeNotice
+	shared.OmittedChars.Knowledge = 1092
 	withExample := selected
-	withExample.Examples = []example{{TraceID: "tq-007", Reason: "same shape", Chars: 592}}
+	withExample.Examples = []example{{TraceID: "tq-007", Reason: "same shape", Chars: 683}}
+	withExample.Chars.Examples = examplesHeading + 683
 	old := input{
 		Mode: diagnose.ModeInteractive, PolicyVersion: "demo-0", PromptVersion: "diagnose/v2",
 		ChangeContext: evidence.ContextNoKnownChange, Metrics: []string{},
-		Knowledge: []diagnose.AppliedKnowledge{}, Examples: []example{}, UnknownIDs: []string{confirm},
+		Knowledge: []diagnose.AppliedKnowledge{}, Examples: []example{},
 	}
 	oldContext := `{"mode":"interactive","policy_version":"demo-0","prompt_version":"diagnose/v2",` +
-		`"paragraph_ids":["` + segment + `"]}`
+		`"paragraph_ids":["` + confirm + `","` + segment + `"]}`
 	oldOutput := `{"change_context":"no_known_change","knowledge_candidates":[],"example_candidates":[]}`
 	tcs := []struct {
 		name string
@@ -387,11 +494,13 @@ func TestRecord(t *testing.T) {
 		{
 			name: "records a gated review of a context without candidates",
 			args: args{pending: "context", diag: diagnose.Diagnosis{
-				Status: diagnose.StatusReadyForReview, Checks: checks,
+				Status: evidence.StatusReadyForReview, Checks: checks,
 				Causes: []diagnose.Cause{{Summary: "low quality traffic", ParagraphIDs: []string{segment, "made-up"}}},
 			}},
 			want: want{
-				outcome: outcome{result: diagnose.Result{Diagnosis: ready}, traced: trace.NameDiagnose, inputs: []input{withUnknown}},
+				outcome: outcome{
+					result: diagnose.Result{Diagnosis: ready}, traced: trace.NameDiagnose, inputs: []input{withUnknown},
+				},
 			},
 		},
 		{
@@ -405,19 +514,9 @@ func TestRecord(t *testing.T) {
 			},
 		},
 		{
-			name: "names a knowledge item cut at the cap as omitted and leaves it out",
-			args: args{
-				limits: diagnose.Limits{KnowledgeChars: 10}, knowledge: []knowledge.Knowledge{agg}, pending: "context", diag: ready,
-				selects: []diagnose.Choices{{Knowledge: []diagnose.Choice{{ID: "k-agg"}}}},
-			},
-			want: want{
-				outcome: outcome{result: diagnose.Result{Diagnosis: ready}, traced: trace.NameDiagnose, inputs: []input{cut}},
-			},
-		},
-		{
 			name: "copies a knowledge item cut inside its share with the omitted size into the record",
 			args: args{
-				limits: diagnose.Limits{KnowledgeChars: 60}, knowledge: []knowledge.Knowledge{agg}, pending: "context", diag: ready,
+				imported: []knowledge.Knowledge{large}, pending: "context", diag: ready,
 				selects: []diagnose.Choices{{Knowledge: []diagnose.Choice{{ID: "k-agg"}}}},
 			},
 			want: want{
@@ -454,15 +553,16 @@ func TestRecord(t *testing.T) {
 		{
 			name: "newest select replaces an earlier one",
 			args: args{
-				knowledge: []knowledge.Knowledge{agg}, selects: []diagnose.Choices{{Knowledge: []diagnose.Choice{{ID: "k-agg"}}}, {}},
-				pending: "context", diag: ready,
+				knowledge: []knowledge.Knowledge{agg},
+				selects:   []diagnose.Choices{{Knowledge: []diagnose.Choice{{ID: "k-agg"}}}, {}},
+				pending:   "context", diag: ready,
 			},
 			want: want{
 				outcome: outcome{result: diagnose.Result{Diagnosis: ready}, traced: trace.NameDiagnose, inputs: []input{selected}},
 			},
 		},
 		{
-			name: "sends back a review that misses the first step of its lead runbook",
+			name: "sends back a review that misses the first step of its lead procedure",
 			args: args{pending: "context", diag: incomplete},
 			want: want{outcome: outcome{
 				result: diagnose.Result{Revisions: []string{missing}}, traced: trace.NameRevise,
@@ -498,7 +598,7 @@ func TestRecord(t *testing.T) {
 			args: args{records: []diagnose.Diagnosis{madeUp}, pending: "context", diag: madeUp},
 			want: want{outcome: outcome{
 				result: diagnose.Result{Diagnosis: diagnose.Diagnosis{
-					Status: diagnose.StatusHold, Causes: []diagnose.Cause{}, Checks: checks,
+					Status: evidence.StatusHold, Causes: []diagnose.Cause{}, Checks: checks,
 					HoldReasons: []string{"no paragraph supports: worn trim"},
 				}, Forced: true},
 				traced: trace.NameDiagnose, inputs: []input{heldUnknown},
@@ -506,11 +606,40 @@ func TestRecord(t *testing.T) {
 			}},
 		},
 		{
-			name: "holds causes of one runbook to the first step of that runbook",
+			name: "holds causes of one procedure to the first step of that procedure and never to it as a cause",
 			args: args{pending: "context", diag: ordCauses},
 			want: want{outcome: outcome{
-				result: diagnose.Result{Revisions: []string{ordMissing}}, traced: trace.NameRevise,
-				revised: []revised{{Subject: "tq-005", Reasons: []string{ordMissing}, Review: ordCauses}},
+				result: diagnose.Result{Revisions: []string{firstStepCause("b", ordConfirm), ordMissing}}, traced: trace.NameRevise,
+				revised: []revised{
+					{Subject: "tq-005", Reasons: []string{firstStepCause("b", ordConfirm), ordMissing}, Review: ordCauses},
+				},
+			}},
+		},
+		{
+			name: "sends back a cause that cites the first step of the lead procedure",
+			args: args{pending: "context", diag: confirmCause},
+			want: want{outcome: outcome{
+				result: diagnose.Result{Revisions: []string{firstStepCause("c", confirm)}}, traced: trace.NameRevise,
+				revised: []revised{{Subject: "tq-005", Reasons: []string{firstStepCause("c", confirm)}, Review: confirmCause}},
+			}},
+		},
+		{
+			name: "sends back a cause that cites the first step of another included procedure",
+			args: args{pending: "context", diag: otherFirstStep},
+			want: want{outcome: outcome{
+				result: diagnose.Result{Revisions: []string{firstStepCause("b", ordConfirm)}}, traced: trace.NameRevise,
+				revised: []revised{{Subject: "tq-005", Reasons: []string{firstStepCause("b", ordConfirm)}, Review: otherFirstStep}},
+			}},
+		},
+		{
+			name: "never sends a hold back for a first step it cites as a cause",
+			args: args{pending: "context", diag: heldConfirm},
+			want: want{outcome: outcome{
+				result: diagnose.Result{Diagnosis: diagnose.Diagnosis{
+					Status: evidence.StatusHold, Causes: []diagnose.Cause{},
+					HoldReasons: []string{"the model returned hold without a reason"},
+				}},
+				traced: trace.NameDiagnose, inputs: []input{recorded},
 			}},
 		},
 		{
@@ -525,11 +654,11 @@ func TestRecord(t *testing.T) {
 			},
 		},
 		{
-			name: "never holds causes across two runbooks to the steps of either",
-			args: args{pending: "context", diag: twoRunbooks},
+			name: "never holds causes across two procedures to the steps of either",
+			args: args{pending: "context", diag: twoProcedures},
 			want: want{
 				outcome: outcome{
-					result: diagnose.Result{Diagnosis: twoRunbooks},
+					result: diagnose.Result{Diagnosis: twoProcedures},
 					traced: trace.NameDiagnose,
 					inputs: []input{recorded},
 				},
@@ -538,11 +667,11 @@ func TestRecord(t *testing.T) {
 		{
 			name: "never holds a hold to the steps",
 			args: args{pending: "context", diag: diagnose.Diagnosis{
-				Status: diagnose.StatusHold, Causes: []diagnose.Cause{{Summary: "c", ParagraphIDs: []string{segment}}},
+				Status: evidence.StatusHold, Causes: []diagnose.Cause{{Summary: "c", ParagraphIDs: []string{segment}}},
 			}},
 			want: want{outcome: outcome{
 				result: diagnose.Result{Diagnosis: diagnose.Diagnosis{
-					Status: diagnose.StatusHold, Causes: []diagnose.Cause{},
+					Status: evidence.StatusHold, Causes: []diagnose.Cause{},
 					HoldReasons: []string{"the model returned hold without a reason"},
 				}},
 				traced: trace.NameDiagnose, inputs: []input{recorded},
@@ -550,9 +679,9 @@ func TestRecord(t *testing.T) {
 		},
 		{
 			name: "records a no_action without causes",
-			args: args{pending: "context", diag: diagnose.Diagnosis{Status: diagnose.StatusNoAction}},
+			args: args{pending: "context", diag: diagnose.Diagnosis{Status: evidence.StatusNoAction}},
 			want: want{outcome: outcome{
-				result: diagnose.Result{Diagnosis: diagnose.Diagnosis{Status: diagnose.StatusNoAction}}, traced: trace.NameDiagnose,
+				result: diagnose.Result{Diagnosis: diagnose.Diagnosis{Status: evidence.StatusNoAction}}, traced: trace.NameDiagnose,
 				inputs: []input{recorded},
 			}},
 		},
@@ -610,7 +739,7 @@ func TestRecord(t *testing.T) {
 			t.Parallel()
 			s := testkit.Open(t)
 			d := diagnose.New(
-				s.Source, testkit.Policy(t), tc.args.limits, nil, s.Traces, s.Feedback, s.Ledger, s.Clock.Now,
+				s.Source, testkit.Policy(t), nil, s.Traces, s.Feedback, s.Ledger, s.Clock.Now,
 			)
 			ids := map[string]string{"no-such-id": "no-such-id", "bad": "bad", "old": "old"}
 			for _, event := range tc.args.rejected {
@@ -629,6 +758,12 @@ func TestRecord(t *testing.T) {
 				require.NoError(t, err)
 				_, err = s.Ledger.Approve(ctx, k.ID, 1, "author")
 				require.NoError(t, err)
+			}
+			for _, k := range tc.args.imported {
+				k.Version, k.Basis, k.Author = 1, knowledge.BasisStated, "author"
+				k.Evidence = knowledge.Evidence{ParagraphIDs: []string{"p-1"}}
+				k.Status, k.Approver, k.Time = knowledge.StatusApproved, "author", s.Clock.Now()
+				require.NoError(t, s.Ledger.Import(ctx, []knowledge.Knowledge{k}))
 			}
 			c, err := d.Prepare(
 				ctx, "tq-005", diagnose.ModeInteractive, diagnose.Session{ID: "s1", Tags: []string{"feedback:off"}},
@@ -726,12 +861,12 @@ func TestRecordConcurrent(t *testing.T) {
 			t.Parallel()
 			s := testkit.Open(t)
 			d := diagnose.New(
-				s.Source, testkit.Policy(t), diagnose.Limits{}, nil, s.Traces, s.Feedback, s.Ledger, s.Clock.Now,
+				s.Source, testkit.Policy(t), nil, s.Traces, s.Feedback, s.Ledger, s.Clock.Now,
 			)
 			c, err := d.Prepare(ctx, "tq-005", diagnose.ModeInteractive, diagnose.Session{})
 			require.NoError(t, err)
 			ready := diagnose.Diagnosis{
-				Status: diagnose.StatusReadyForReview,
+				Status: evidence.StatusReadyForReview,
 				Causes: []diagnose.Cause{{Summary: "low quality traffic", ParagraphIDs: []string{segment}}},
 				Checks: diagnose.Checks{
 					{Step: "confirm the signal", Purpose: "signal", ParagraphIDs: []string{confirm}},
@@ -803,14 +938,14 @@ func TestRun(t *testing.T) {
 	ctx := context.Background()
 	base := testkit.Open(t)
 	preparer := diagnose.New(
-		base.Source, testkit.Policy(t), diagnose.Limits{}, nil, base.Traces, base.Feedback, base.Ledger,
+		base.Source, testkit.Policy(t), nil, base.Traces, base.Feedback, base.Ledger,
 		base.Clock.Now,
 	)
 	prepared, err := preparer.Prepare(ctx, "tq-005", diagnose.ModeBatch, diagnose.Session{})
 	require.NoError(t, err)
 	text := prepared.Text
 	ready := diagnose.Diagnosis{
-		Status: diagnose.StatusReadyForReview,
+		Status: evidence.StatusReadyForReview,
 		Causes: []diagnose.Cause{{Summary: "low quality traffic", ParagraphIDs: []string{segment}}},
 		Checks: diagnose.Checks{
 			{Step: "confirm the signal", Purpose: "signal", ParagraphIDs: []string{confirm}},
@@ -820,13 +955,13 @@ func TestRun(t *testing.T) {
 	output, err := json.Marshal(ready)
 	require.NoError(t, err)
 	incomplete := diagnose.Diagnosis{
-		Status: diagnose.StatusReadyForReview,
+		Status: evidence.StatusReadyForReview,
 		Causes: []diagnose.Cause{{Summary: "low quality traffic", ParagraphIDs: []string{segment}}},
 		Checks: diagnose.Checks{{Step: "s", Purpose: "p", ParagraphIDs: []string{segment}}},
 	}
 	incompleteOutput, err := json.Marshal(incomplete)
 	require.NoError(t, err)
-	missing := "check " + confirm + " is missing. The first step of the lead runbook is always a check"
+	missing := "check " + confirm + " is missing. The first step of the lead procedure is always a check"
 	revisePrompt := text + "\n\n## Your previous review\n\n" + string(incompleteOutput) +
 		"\n\n## Revise\n\nReturn the review again with only these defects fixed:\n- " + missing + "\n"
 	maxTurns := &llm.ResultError{Subtype: "error_max_turns", CostUSD: 0.01}
@@ -951,7 +1086,7 @@ func TestRun(t *testing.T) {
 						{
 							Name: trace.NameDiagnose,
 							Error: "diagnose: output does not match the schema: " +
-								"json: cannot unmarshal number into Go struct field Diagnosis.status of type diagnose.Status",
+								"json: cannot unmarshal number into Go struct field Diagnosis.status of type evidence.Status",
 							Usage: trace.Usage{CostUSD: 0.02}, DurationMS: step, Mode: diagnose.ModeBatch, Selector: diagnose.SelectByCode,
 						},
 						selectedByCode,
@@ -967,7 +1102,7 @@ func TestRun(t *testing.T) {
 			s := testkit.Open(t)
 			client := llmmock.NewMockClient(gomock.NewController(t))
 			d := diagnose.New(
-				s.Source, testkit.Policy(t), diagnose.Limits{}, client, s.Traces, s.Feedback, s.Ledger, s.Clock.Now,
+				s.Source, testkit.Policy(t), client, s.Traces, s.Feedback, s.Ledger, s.Clock.Now,
 			)
 			var calls []any
 			for _, c := range tc.args.calls {
@@ -1036,7 +1171,7 @@ func TestRunWithoutModelCall(t *testing.T) {
 			t.Parallel()
 			s := testkit.Open(t)
 			d := diagnose.New(
-				s.Source, testkit.Policy(t), diagnose.Limits{}, tc.args.client, s.Traces, s.Feedback, s.Ledger, s.Clock.Now,
+				s.Source, testkit.Policy(t), tc.args.client, s.Traces, s.Feedback, s.Ledger, s.Clock.Now,
 			)
 
 			got, err := d.Run(ctx, tc.args.event, diagnose.BatchOptions{Knowledge: tc.args.knowledge})
@@ -1114,24 +1249,23 @@ func TestRunStoreFailure(t *testing.T) {
 			verdicts, err := feedbackfile.New(dir)
 			require.NoError(t, err)
 			ledger := knowledge.NewLedger(
-				items, vetofile.NewApprovedFile(t.TempDir(), "records"), knowledge.ReviewChars,
-				s.Clock.Now, func() string { return "k-generated" },
+				items, vetofile.NewApprovedFile(t.TempDir(), "records"),
+				s.Clock.Now, func(prefix string) string { return prefix + "generated" },
 			)
 			reviewer := diagnose.New(
-				s.Source, testkit.Policy(t), diagnose.Limits{}, nil, s.Traces, verdicts, ledger, s.Clock.Now,
+				s.Source, testkit.Policy(t), nil, s.Traces, verdicts, ledger, s.Clock.Now,
 			)
 			c, err := reviewer.Prepare(ctx, "tq-007", diagnose.ModeBatch, diagnose.Session{})
 			require.NoError(t, err)
-			res, err := reviewer.Record(ctx, c.PendingID, diagnose.Diagnosis{Status: diagnose.StatusNoAction})
+			res, err := reviewer.Record(ctx, c.PendingID, diagnose.Diagnosis{Status: evidence.StatusNoAction})
 			require.NoError(t, err)
 			fb, err := feedback.New(res.TraceID, feedback.VerdictReject, "wrong cause", nil, "", s.Clock.Now())
 			require.NoError(t, err)
 			require.NoError(t, verdicts.Append(ctx, fb))
 			_, _, err = ledger.Propose(ctx, knowledge.Knowledge{
 				ID: "k-agg", Kind: knowledge.KindMeaning, Content: "aggregation time bases differ", Author: "author",
-				Scope: knowledge.Scope{
-					Metrics: []string{"conversion_count"},
-				}, Evidence: knowledge.Evidence{ParagraphIDs: []string{"p-1"}},
+				Scope:    knowledge.Scope{Scope: evidence.Scope{Metrics: []string{"conversion_count"}}},
+				Evidence: knowledge.Evidence{ParagraphIDs: []string{"p-1"}},
 			})
 			require.NoError(t, err)
 			_, err = ledger.Approve(ctx, "k-agg", 1, "author")
@@ -1145,12 +1279,12 @@ func TestRunStoreFailure(t *testing.T) {
 				Reads: testkit.Reads{Allowed: tc.args.feedbackReads, Err: assert.AnError},
 			}
 			flakyLedger := knowledge.NewLedger(
-				flakyKnowledge, vetofile.NewApprovedFile(t.TempDir(), "records"), knowledge.ReviewChars,
-				s.Clock.Now, func() string { return "k-generated" },
+				flakyKnowledge, vetofile.NewApprovedFile(t.TempDir(), "records"),
+				s.Clock.Now, func(prefix string) string { return prefix + "generated" },
 			)
 			client := llmmock.NewMockClient(gomock.NewController(t))
 			d := diagnose.New(
-				s.Source, testkit.Policy(t), diagnose.Limits{}, client, s.Traces, flakyFeedback, flakyLedger, s.Clock.Now,
+				s.Source, testkit.Policy(t), client, s.Traces, flakyFeedback, flakyLedger, s.Clock.Now,
 			)
 
 			got, err := d.Run(ctx, "tq-005", tc.args.opts)
@@ -1238,7 +1372,7 @@ func TestRunKeepsItsSelection(t *testing.T) {
 			},
 		},
 	}
-	output, err := json.Marshal(diagnose.Diagnosis{Status: diagnose.StatusNoAction})
+	output, err := json.Marshal(diagnose.Diagnosis{Status: evidence.StatusNoAction})
 	require.NoError(t, err)
 	ctx := context.Background()
 	for _, tc := range tcs {
@@ -1252,9 +1386,8 @@ func TestRunKeepsItsSelection(t *testing.T) {
 			require.NoError(t, err)
 			_, _, err = s.Ledger.Propose(ctx, knowledge.Knowledge{
 				ID: "k-agg", Kind: knowledge.KindMeaning, Content: "aggregation time bases differ", Author: "author",
-				Scope: knowledge.Scope{
-					Metrics: []string{"conversion_count"},
-				}, Evidence: knowledge.Evidence{ParagraphIDs: []string{"p-1"}},
+				Scope:    knowledge.Scope{Scope: evidence.Scope{Metrics: []string{"conversion_count"}}},
+				Evidence: knowledge.Evidence{ParagraphIDs: []string{"p-1"}},
 			})
 			require.NoError(t, err)
 			_, err = s.Ledger.Approve(ctx, "k-agg", 1, "author")
@@ -1276,7 +1409,7 @@ func TestRunKeepsItsSelection(t *testing.T) {
 					return llm.Response{Output: output}, nil
 				})
 			d := diagnose.New(
-				s.Source, testkit.Policy(t), diagnose.Limits{}, client, traces, s.Feedback, s.Ledger, s.Clock.Now,
+				s.Source, testkit.Policy(t), client, traces, s.Feedback, s.Ledger, s.Clock.Now,
 			)
 
 			got, err := d.Run(ctx, "tq-008", diagnose.BatchOptions{Knowledge: tc.args.mode})
@@ -1309,7 +1442,7 @@ func TestRunLive(t *testing.T) {
 	s := testkit.Open(t)
 	client := llm.NewClaudeCLI("", "", "", 0)
 	d := diagnose.New(
-		s.Source, testkit.Policy(t), diagnose.Limits{}, client, s.Traces, s.Feedback, s.Ledger, s.Clock.Now,
+		s.Source, testkit.Policy(t), client, s.Traces, s.Feedback, s.Ledger, s.Clock.Now,
 	)
 
 	got, err := d.Run(ctx, "tq-005", diagnose.BatchOptions{Model: "haiku"})
@@ -1317,10 +1450,86 @@ func TestRunLive(t *testing.T) {
 	tr, err := s.Traces.Get(ctx, got.TraceID)
 	require.NoError(t, err)
 
-	statuses := []diagnose.Status{diagnose.StatusNoAction, diagnose.StatusReadyForReview, diagnose.StatusHold}
+	statuses := []evidence.Status{evidence.StatusNoAction, evidence.StatusReadyForReview, evidence.StatusHold}
 	assert.Contains(t, statuses, got.Diagnosis.Status)
 	t.Logf(
 		"status %s causes %d forced %v cost $%.4f tokens in %d out %d", got.Diagnosis.Status, len(got.Diagnosis.Causes),
 		got.Forced, tr.Usage.CostUSD, tr.Usage.InputTokens, tr.Usage.OutputTokens,
 	)
+}
+
+// A paragraph of a procedure whose scope leaves the event is unknown to its review like any other unlisted id
+func TestRecordExcludedProcedure(t *testing.T) {
+	const excluded = "segment-concentration-review#Segment concentration review/Check the concentrated segment#1"
+	type want struct {
+		// Whether the context lists the cited paragraph
+		listed    bool
+		revisions []string
+		forced    bool
+		status    evidence.Status
+		unknown   []string
+	}
+	tcs := []struct {
+		name string
+		// The paragraph the cause cites
+		args string
+		want want
+	}{
+		{
+			"a paragraph of a scoped out procedure is sent back and then held as unknown",
+			excluded,
+			want{
+				revisions: []string{
+					`cause "low quality source" cites no paragraph id from the list. Cite the paragraph that states it or return hold`,
+				},
+				forced: true, status: evidence.StatusHold, unknown: []string{excluded},
+			},
+		},
+		{
+			"a paragraph of an included procedure is known",
+			"outcome-rate-degradation#Outcome rate degradation/Separate numerator from denominator#1",
+			want{
+				listed: true,
+				revisions: []string{
+					"check outcome-rate-degradation#Outcome rate degradation/Confirm the rate#1 is missing. " +
+						"The first step of the lead procedure is always a check",
+				},
+				status: evidence.StatusReadyForReview,
+			},
+		},
+	}
+	ctx := context.Background()
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			s := testkit.Open(t)
+			src := scopedDemo(t, "segment-concentration-review.md", "---\nmetrics: [click_count]\n---\n")
+			d := diagnose.New(src, testkit.Policy(t), nil, s.Traces, s.Feedback, s.Ledger, s.Clock.Now)
+			c, err := d.Prepare(ctx, "tq-009", diagnose.ModeInteractive, diagnose.Session{})
+			require.NoError(t, err)
+			_, err = d.Select(ctx, c.PendingID, diagnose.Choices{})
+			require.NoError(t, err)
+			review := diagnose.Diagnosis{
+				Status: evidence.StatusReadyForReview,
+				Causes: []diagnose.Cause{{Summary: "low quality source", ParagraphIDs: []string{tc.args}}},
+				Checks: diagnose.Checks{},
+			}
+
+			first, err := d.Record(ctx, c.PendingID, review)
+			require.NoError(t, err)
+			second, err := d.Record(ctx, c.PendingID, review)
+			require.NoError(t, err)
+			tr, err := s.Traces.Get(ctx, second.TraceID)
+			require.NoError(t, err)
+			var in struct {
+				UnknownIDs []string `json:"unknown_ids"`
+			}
+			require.NoError(t, json.Unmarshal(tr.Input, &in))
+
+			assert.Equal(t, tc.want, want{
+				listed: slices.Contains(c.ParagraphIDs, tc.args), revisions: first.Revisions, forced: second.Forced,
+				status: second.Diagnosis.Status, unknown: in.UnknownIDs,
+			})
+		})
+	}
 }

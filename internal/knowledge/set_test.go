@@ -2,6 +2,7 @@ package knowledge_test
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 
@@ -48,6 +49,64 @@ func TestSetCurrent(t *testing.T) {
 	}
 }
 
+func TestSetVersions(t *testing.T) {
+	a1 := knowledge.Knowledge{ID: "a", Version: 1, Status: knowledge.StatusCandidate}
+	a1Approved := knowledge.Knowledge{ID: "a", Version: 1, Status: knowledge.StatusApproved}
+	a2 := knowledge.Knowledge{ID: "a", Version: 2, Status: knowledge.StatusCandidate}
+	b1 := knowledge.Knowledge{ID: "b", Version: 1, Status: knowledge.StatusCandidate}
+	tcs := []struct {
+		name string
+		args knowledge.Set
+		want knowledge.Set
+	}{
+		{"no records give nothing", nil, knowledge.Set{}},
+		{"the first listed record of a version stands for it", knowledge.Set{a1Approved, a1}, knowledge.Set{a1Approved}},
+		{
+			"a candidate beside its approved version stays",
+			knowledge.Set{a2, a1Approved, a1, b1},
+			knowledge.Set{a2, a1Approved, b1},
+		},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.want, tc.args.Versions())
+		})
+	}
+}
+
+func TestSetCovers(t *testing.T) {
+	planned := knowledge.Knowledge{
+		ID: "planned", Version: 1, Status: knowledge.StatusApproved,
+		Scope: knowledge.Scope{Scope: evidence.Scope{ChangeContexts: []evidence.Context{evidence.ContextPlannedChange}}},
+	}
+	open := knowledge.Knowledge{
+		ID: "open", Version: 1, Status: knowledge.StatusApproved, Exceptions: []evidence.Context{evidence.ContextUnknown},
+	}
+	candidate := knowledge.Knowledge{ID: "candidate", Version: 1, Status: knowledge.StatusCandidate}
+	type args struct {
+		set           knowledge.Set
+		changeContext evidence.Context
+	}
+	tcs := []struct {
+		name string
+		args args
+		want bool
+	}{
+		{"a scoped item covers its context", args{knowledge.Set{planned}, evidence.ContextPlannedChange}, true},
+		{"a scoped item leaves another context", args{knowledge.Set{planned}, evidence.ContextNoKnownChange}, false},
+		{"an unscoped item covers every context", args{knowledge.Set{open}, evidence.ContextNoKnownChange}, true},
+		{"an exception leaves its context", args{knowledge.Set{open}, evidence.ContextUnknown}, false},
+		{"a candidate covers nothing", args{knowledge.Set{candidate}, evidence.ContextNoKnownChange}, false},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.want, tc.args.set.Covers(tc.args.changeContext))
+		})
+	}
+}
+
 func TestSetApproved(t *testing.T) {
 	a := knowledge.Knowledge{ID: "a", Version: 1, Status: knowledge.StatusApproved}
 	b := knowledge.Knowledge{ID: "b", Version: 1, Status: knowledge.StatusCandidate}
@@ -72,11 +131,11 @@ func TestSetApplicable(t *testing.T) {
 	approved := knowledge.Knowledge{ID: "any", Version: 1, Status: knowledge.StatusApproved}
 	planned := knowledge.Knowledge{
 		ID: "ctx", Version: 1, Status: knowledge.StatusApproved,
-		Scope: knowledge.Scope{ChangeContexts: []evidence.Context{evidence.ContextPlannedChange}},
+		Scope: knowledge.Scope{Scope: evidence.Scope{ChangeContexts: []evidence.Context{evidence.ContextPlannedChange}}},
 	}
 	metric := knowledge.Knowledge{
 		ID: "metric", Version: 1, Status: knowledge.StatusApproved,
-		Scope: knowledge.Scope{Metrics: []string{"conversion_count", "impressions"}},
+		Scope: knowledge.Scope{Scope: evidence.Scope{Metrics: []string{"conversion_count", "impressions"}}},
 	}
 	dim := knowledge.Knowledge{
 		ID: "dim", Version: 1, Status: knowledge.StatusApproved,
@@ -131,7 +190,10 @@ func TestSetApplicable(t *testing.T) {
 }
 
 func TestSetMatching(t *testing.T) {
-	a := knowledge.Knowledge{ID: "a", Version: 1, Kind: knowledge.KindMeaning, Status: knowledge.StatusApproved}
+	approvedAt := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	a := knowledge.Knowledge{
+		ID: "a", Version: 1, Kind: knowledge.KindMeaning, Status: knowledge.StatusApproved, ApprovedAt: approvedAt,
+	}
 	b := knowledge.Knowledge{ID: "b", Version: 1, Kind: knowledge.KindJudgment, Status: knowledge.StatusCandidate}
 	c := knowledge.Knowledge{ID: "c", Version: 1, Kind: knowledge.KindMeaning, Status: knowledge.StatusCandidate}
 	items := knowledge.Set{c, b, a}
@@ -154,6 +216,16 @@ func TestSetMatching(t *testing.T) {
 			knowledge.Set{c},
 		},
 		{
+			"a stale time keeps the approved versions past their review deadline",
+			knowledge.Filter{StaleAt: approvedAt.AddDate(0, 0, knowledge.ReviewDays)},
+			knowledge.Set{a},
+		},
+		{
+			"a stale time before the deadline keeps nothing",
+			knowledge.Filter{StaleAt: approvedAt.AddDate(0, 0, knowledge.ReviewDays-1)},
+			knowledge.Set{},
+		},
+		{
 			"filter nothing matches gives an empty set",
 			knowledge.Filter{Statuses: []knowledge.Status{knowledge.StatusRetired}},
 			knowledge.Set{},
@@ -170,19 +242,19 @@ func TestSetMatching(t *testing.T) {
 func TestSetOverlaps(t *testing.T) {
 	xy := knowledge.Knowledge{
 		ID: "xy", Version: 1, Kind: knowledge.KindMeaning, Status: knowledge.StatusCandidate,
-		Scope: knowledge.Scope{ChangeContexts: []evidence.Context{"x", "y"}, Metrics: []string{"m"}},
+		Scope: knowledge.Scope{Scope: evidence.Scope{ChangeContexts: []evidence.Context{"x", "y"}, Metrics: []string{"m"}}},
 	}
 	y := knowledge.Knowledge{
 		ID: "y", Version: 1, Kind: knowledge.KindMeaning, Status: knowledge.StatusCandidate,
-		Scope: knowledge.Scope{ChangeContexts: []evidence.Context{"y"}},
+		Scope: knowledge.Scope{Scope: evidence.Scope{ChangeContexts: []evidence.Context{"y"}}},
 	}
 	z := knowledge.Knowledge{
 		ID: "z", Version: 1, Kind: knowledge.KindMeaning, Status: knowledge.StatusCandidate,
-		Scope: knowledge.Scope{ChangeContexts: []evidence.Context{"z"}},
+		Scope: knowledge.Scope{Scope: evidence.Scope{ChangeContexts: []evidence.Context{"z"}}},
 	}
 	n := knowledge.Knowledge{
 		ID: "n", Version: 1, Kind: knowledge.KindMeaning, Status: knowledge.StatusCandidate,
-		Scope: knowledge.Scope{Metrics: []string{"n"}},
+		Scope: knowledge.Scope{Scope: evidence.Scope{Metrics: []string{"n"}}},
 	}
 	judgment := knowledge.Knowledge{
 		ID: "judgment", Version: 1, Kind: knowledge.KindJudgment, Status: knowledge.StatusCandidate,
@@ -210,7 +282,7 @@ func TestSetOverlaps(t *testing.T) {
 		},
 		{
 			"other kind never overlaps",
-			args{"new", knowledge.KindJudgment, knowledge.Scope{Metrics: []string{"m"}}},
+			args{"new", knowledge.KindJudgment, knowledge.Scope{Scope: evidence.Scope{Metrics: []string{"m"}}}},
 			knowledge.Set{judgment, sourceA},
 		},
 		{
@@ -230,7 +302,7 @@ func TestSetOverlaps(t *testing.T) {
 		},
 		{
 			"disjoint contexts overlap only items without contexts",
-			args{"new", knowledge.KindMeaning, knowledge.Scope{ChangeContexts: []evidence.Context{"w"}}},
+			args{"new", knowledge.KindMeaning, knowledge.Scope{Scope: evidence.Scope{ChangeContexts: []evidence.Context{"w"}}}},
 			knowledge.Set{n},
 		},
 	}

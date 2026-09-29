@@ -2,9 +2,8 @@ package diagnose_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -15,61 +14,46 @@ import (
 	"github.com/jeon-jihyeon/nodloop/internal/diagnose"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	"github.com/jeon-jihyeon/nodloop/internal/testkit"
+	"github.com/jeon-jihyeon/nodloop/internal/trace"
 )
 
-func TestLoadLimits(t *testing.T) {
-	demo, err := os.ReadFile(filepath.Join(testkit.DemoDir(t), "policy.yaml"))
-	require.NoError(t, err)
-	type want struct {
-		limits diagnose.Limits
-		err    error
-	}
-	tcs := []struct {
-		name string
-		args string
-		want want
-	}{
-		{
-			name: "limits section of a policy file is read beside its analyzers",
-			args: string(demo) + "limits:\n  knowledge_chars: 100\n  example_chars: 200\n  candidates: 3\n",
-			want: want{limits: diagnose.Limits{KnowledgeChars: 100, ExampleChars: 200, Candidates: 3}},
-		},
-		{
-			name: "policy file without limits gives zero limits",
-			args: string(demo),
-		},
-		{
-			name: "broken yaml is refused",
-			args: "limits: [",
-			want: want{err: diagnose.ErrBadLimits},
-		},
-	}
-	for _, tc := range tcs {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			got, err := diagnose.LoadLimits([]byte(tc.args))
-			assert.ErrorIs(t, err, tc.want.err)
-			assert.Equal(t, tc.want.limits, got)
-		})
-	}
-}
-
+// The caps are constants so every row sizes its items against them
+// Sizes count runes so a Korean or emoji item counts the same as an ASCII one of the same length
 func TestCaps(t *testing.T) {
 	type args struct {
-		limits diagnose.Limits
-		items  int
+		items int
 		// Runes of content per item
 		chars int
 		unit  string
 	}
+	type sections struct {
+		Knowledge int `json:"knowledge"`
+		Examples  int `json:"examples"`
+	}
 	type want struct {
 		candidates []string
+		omitted    bool
 		applied    []string
-		// Chars of each applied item
+		// Runes of each applied item as sent
 		chars []int
-		// Characters left out of each applied item
+		// Runes left out of each applied item
 		omittedChars []int
-		omitted      bool
+		// The select trace section sizes
+		section, sectionOmitted sections
+	}
+	ids := func(n int) []string {
+		var out []string
+		for i := range n {
+			out = append(out, fmt.Sprintf("k-%02d", i))
+		}
+		return out
+	}
+	repeat := func(v, n int) []int {
+		var out []int
+		for range n {
+			out = append(out, v)
+		}
+		return out
 	}
 	tcs := []struct {
 		name string
@@ -77,88 +61,47 @@ func TestCaps(t *testing.T) {
 		want want
 	}{
 		{
-			name: "default candidate cap offers ten items",
+			name: "the candidate cap offers ten items and marks the rest omitted",
 			args: args{items: 11, chars: 10, unit: "x"},
 			want: want{
-				candidates:   []string{"k-00", "k-01", "k-02", "k-03", "k-04", "k-05", "k-06", "k-07", "k-08", "k-09"},
-				applied:      []string{"k-00", "k-01", "k-02", "k-03", "k-04", "k-05", "k-06", "k-07", "k-08", "k-09"},
-				chars:        []int{47, 47, 47, 47, 47, 47, 47, 47, 47, 47},
-				omittedChars: []int{0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+				candidates: ids(10), omitted: true, applied: ids(10), chars: repeat(47, 10), omittedChars: repeat(0, 10),
+				section: sections{Knowledge: knowledgeHeading + 470},
 			},
 		},
 		{
-			name: "policy candidate cap overrides the default",
-			args: args{limits: diagnose.Limits{Candidates: 2}, items: 3, chars: 10, unit: "x"},
+			name: "two folders at FolderItems fit the candidate list whole",
+			args: args{items: 2 * knowledge.FolderItems, chars: 10, unit: "x"},
 			want: want{
-				candidates:   []string{"k-00", "k-01"},
-				applied:      []string{"k-00", "k-01"},
-				chars:        []int{47, 47},
-				omittedChars: []int{0, 0},
+				candidates: ids(10), applied: ids(10), chars: repeat(47, 10), omittedChars: repeat(0, 10),
+				section: sections{Knowledge: knowledgeHeading + 470},
 			},
 		},
 		{
-			name: "default knowledge cap of four thousand chars gives every item an equal share",
-			args: args{items: 3, chars: 1900, unit: "x"},
+			name: "the knowledge cap gives every item an equal share in runes",
+			args: args{items: 3, chars: 30_000, unit: "x"},
 			want: want{
-				candidates:   []string{"k-00", "k-01", "k-02"},
-				applied:      []string{"k-00", "k-01", "k-02"},
-				chars:        []int{1332, 1332, 1333},
-				omittedChars: []int{642, 642, 641},
-				omitted:      true,
+				candidates: ids(3), applied: ids(3), chars: []int{23_332, 23_332, 23_333},
+				omittedChars:   []int{6743, 6743, 6742},
+				section:        sections{Knowledge: knowledgeHeading + 2*23_332 + 23_333 + knowledgeNotice},
+				sectionOmitted: sections{Knowledge: 2*6743 + 6742},
 			},
 		},
 		{
-			name: "policy knowledge cap overrides the default",
-			args: args{limits: diagnose.Limits{KnowledgeChars: 120}, items: 2, chars: 60, unit: "x"},
+			name: "a Korean item is cut at a rune and counted in runes",
+			args: args{items: 1, chars: 80_000, unit: "한"},
 			want: want{
-				candidates:   []string{"k-00", "k-01"},
-				applied:      []string{"k-00", "k-01"},
-				chars:        []int{60, 60},
-				omittedChars: []int{73, 73},
-				omitted:      true,
+				candidates: ids(1), applied: ids(1), chars: []int{knowledge.ReviewChars}, omittedChars: []int{10_076},
+				section:        sections{Knowledge: knowledgeHeading + knowledge.ReviewChars + knowledgeNotice},
+				sectionOmitted: sections{Knowledge: 10_076},
 			},
 		},
 		{
-			name: "items whose shares cannot hold the cut mark do not reach the model",
-			args: args{limits: diagnose.Limits{KnowledgeChars: 40}, items: 2, chars: 60, unit: "x"},
-			want: want{candidates: []string{"k-00", "k-01"}, omitted: true},
-		},
-		{
-			name: "an item whose share holds the cut mark and no character does not reach the model",
-			args: args{limits: diagnose.Limits{KnowledgeChars: 36}, items: 1, chars: 60, unit: "x"},
-			want: want{candidates: []string{"k-00"}, omitted: true},
-		},
-		{
-			name: "a cut inside a three byte Korean rune backs off to its start and counts the rune as omitted",
-			args: args{limits: diagnose.Limits{KnowledgeChars: 100}, items: 1, chars: 40, unit: "한"},
+			name: "an emoji item is cut at a rune and counted in runes",
+			args: args{items: 1, chars: 80_000, unit: "😀"},
 			want: want{
-				candidates:   []string{"k-00"},
-				applied:      []string{"k-00"},
-				chars:        []int{97},
-				omittedChars: []int{96},
-				omitted:      true,
-			},
-		},
-		{
-			name: "a cut inside a four byte emoji rune backs off to its start and counts the rune as omitted",
-			args: args{limits: diagnose.Limits{KnowledgeChars: 102}, items: 1, chars: 30, unit: "😀"},
-			want: want{
-				candidates:   []string{"k-00"},
-				applied:      []string{"k-00"},
-				chars:        []int{99},
-				omittedChars: []int{94},
-				omitted:      true,
-			},
-		},
-		{
-			name: "a cut that lands on a rune start keeps every whole rune before it",
-			args: args{limits: diagnose.Limits{KnowledgeChars: 100}, items: 1, chars: 30, unit: "😀"},
-			want: want{
-				candidates:   []string{"k-00"},
-				applied:      []string{"k-00"},
-				chars:        []int{99},
-				omittedChars: []int{94},
-				omitted:      true,
+				candidates: ids(1), applied: ids(1), chars: []int{knowledge.ReviewChars}, omittedChars: []int{10_076},
+				section:        sections{Knowledge: knowledgeHeading + knowledge.ReviewChars + knowledgeNotice},
+				sectionOmitted: sections{Knowledge: 10_076},
 			},
 		},
 	}
@@ -167,10 +110,8 @@ func TestCaps(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			s := testkit.Open(t)
-			d := diagnose.New(
-				s.Source, testkit.Policy(t), tc.args.limits, nil, s.Traces, s.Feedback, s.Ledger, s.Clock.Now,
-			)
-			// Imported because approval refuses a folder over the cap and a cut then needs an import or a lowered cap
+			d := diagnose.New(s.Source, testkit.Policy(t), nil, s.Traces, s.Feedback, s.Ledger, s.Clock.Now)
+			// Imported because approval refuses a folder over the cap
 			for i := range tc.args.items {
 				require.NoError(t, s.Ledger.Import(ctx, []knowledge.Knowledge{{
 					ID:       fmt.Sprintf("k-%02d", i),
@@ -196,7 +137,17 @@ func TestCaps(t *testing.T) {
 			}
 			sel, err := d.Select(ctx, c.PendingID, choices)
 			require.NoError(t, err)
-			view := want{candidates: candidates, omitted: sel.Omitted}
+			recorded, err := s.Traces.List(ctx, trace.Filter{Name: trace.NameSelect, Ref: c.PendingID})
+			require.NoError(t, err)
+			require.Len(t, recorded, 1)
+			var in struct {
+				Chars        sections `json:"chars"`
+				OmittedChars sections `json:"omitted_chars"`
+			}
+			require.NoError(t, json.Unmarshal(recorded[0].Input, &in))
+			view := want{
+				candidates: candidates, omitted: c.CandidatesOmitted, section: in.Chars, sectionOmitted: in.OmittedChars,
+			}
 			for _, k := range sel.Applied {
 				view.applied = append(view.applied, k.ID)
 				view.chars = append(view.chars, k.Chars)
@@ -205,6 +156,7 @@ func TestCaps(t *testing.T) {
 
 			assert.Equal(t, tc.want, view)
 			assert.True(t, utf8.ValidString(sel.Text))
+			assert.Equal(t, in.Chars.Knowledge, utf8.RuneCountInString(sel.Text))
 		})
 	}
 }

@@ -2,10 +2,15 @@ package evidence_test
 
 import (
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"strconv"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/jeon-jihyeon/nodloop/internal/evidence"
 )
@@ -30,6 +35,30 @@ func TestContextValid(t *testing.T) {
 			assert.Equal(t, tc.want, tc.args.Valid())
 		})
 	}
+}
+
+// The declared Context constants are read from the source so a constant left out of Contexts fails here
+func TestContexts(t *testing.T) {
+	f, err := parser.ParseFile(token.NewFileSet(), "evidence.go", nil, 0)
+	require.NoError(t, err)
+	var declared []evidence.Context
+	for _, decl := range f.Decls {
+		gen, ok := decl.(*ast.GenDecl)
+		if !ok || gen.Tok != token.CONST {
+			continue
+		}
+		for _, spec := range gen.Specs {
+			vs := spec.(*ast.ValueSpec)
+			if typ, ok := vs.Type.(*ast.Ident); !ok || typ.Name != "Context" {
+				continue
+			}
+			value, err := strconv.Unquote(vs.Values[0].(*ast.BasicLit).Value)
+			require.NoError(t, err)
+			declared = append(declared, evidence.Context(value))
+		}
+	}
+	require.NotEmpty(t, declared)
+	assert.ElementsMatch(t, declared, evidence.Contexts())
 }
 
 func TestContextBreaks(t *testing.T) {
@@ -239,25 +268,25 @@ func TestNewParagraphID(t *testing.T) {
 
 func TestParagraphIDParts(t *testing.T) {
 	type want struct {
-		runbook string
-		section string
-		step    bool
-		decide  bool
+		procedure string
+		section   string
+		step      bool
+		decide    bool
 	}
 	tcs := []struct {
 		name string
 		args evidence.ParagraphID
 		want want
 	}{
-		{"a section below the title is a step", "r#T/A#1", want{runbook: "r", section: "T/A", step: true}},
-		{"the Decide section is not a step", "r#T/Decide#1", want{runbook: "r", section: "T/Decide", decide: true}},
-		{"the title section is neither", "r#T#1", want{runbook: "r", section: "T"}},
+		{"a section below the title is a step", "r#T/A#1", want{procedure: "r", section: "T/A", step: true}},
+		{"the Decide section is not a step", "r#T/Decide#1", want{procedure: "r", section: "T/Decide", decide: true}},
+		{"the title section is neither", "r#T#1", want{procedure: "r", section: "T"}},
 		{"an empty id has empty parts", "", want{}},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got := want{tc.args.Runbook(), tc.args.Section(), tc.args.IsStep(), tc.args.IsDecide()}
+			got := want{tc.args.Procedure(), tc.args.Section(), tc.args.IsStep(), tc.args.IsDecide()}
 			assert.Equal(t, tc.want, got)
 		})
 	}

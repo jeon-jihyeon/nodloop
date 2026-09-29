@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+
+	"github.com/jeon-jihyeon/nodloop/internal/evidence"
 )
 
 // Paragraph ids a cause keeps at most
@@ -70,7 +72,7 @@ func (diag Diagnosis) gate() (Diagnosis, bool) {
 		}
 	}
 	switch diag.Status {
-	case StatusReadyForReview:
+	case evidence.StatusReadyForReview:
 		if len(diag.Causes) == 0 {
 			return diag.hold("no cause was given"), true
 		}
@@ -78,12 +80,12 @@ func (diag Diagnosis) gate() (Diagnosis, bool) {
 			return diag.hold(fmt.Sprintf("no paragraph supports: %s", strings.Join(uncited, "; "))), true
 		}
 		return diag, false
-	case StatusNoAction:
+	case evidence.StatusNoAction:
 		if len(diag.Causes) > 0 {
 			return diag.hold("no_action was returned together with causes"), true
 		}
 		return diag, false
-	case StatusHold:
+	case evidence.StatusHold:
 		diag.Causes = []Cause{}
 		if len(diag.HoldReasons) == 0 {
 			diag.HoldReasons = []string{"the model returned hold without a reason"}
@@ -95,7 +97,7 @@ func (diag Diagnosis) gate() (Diagnosis, bool) {
 }
 
 func (diag Diagnosis) hold(reason string) Diagnosis {
-	diag.Status = StatusHold
+	diag.Status = evidence.StatusHold
 	diag.Causes = []Cause{}
 	diag.HoldReasons = append(slices.Clip(diag.HoldReasons), reason)
 	return diag

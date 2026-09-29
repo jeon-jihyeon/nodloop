@@ -1,4 +1,4 @@
-// Package evidence is the read only reference data behind the Evidence Loop: events and runbook paragraphs and labels
+// Package evidence is the read only reference data behind the Evidence Loop: events and procedure paragraphs and labels
 package evidence
 
 import (
@@ -20,18 +20,21 @@ const (
 	ContextUnknown            Context = "unknown"
 )
 
-var validContexts = map[Context]struct{}{
-	ContextNoKnownChange: {}, ContextPlannedChange: {}, ContextMeasurementChanged: {},
-	ContextDataAvailability: {}, ContextUnknown: {},
+var contexts = []Context{
+	ContextNoKnownChange, ContextPlannedChange, ContextMeasurementChanged, ContextDataAvailability, ContextUnknown,
 }
 
 func (c Context) Valid() bool {
-	_, ok := validContexts[c]
-	return ok
+	return slices.Contains(contexts, c)
+}
+
+// Every change context in a fixed order
+func Contexts() []Context {
+	return slices.Clone(contexts)
 }
 
 // A measurement or availability change leaves the baseline comparison untrusted
-// A planned change or an unknown context does not because the runbooks read through them
+// A planned change or an unknown context does not because the procedures read through them
 func (c Context) Breaks() bool {
 	return c == ContextMeasurementChanged || c == ContextDataAvailability
 }
@@ -49,8 +52,8 @@ type Status string
 
 const (
 	StatusNoAction       Status = "no_action"        // nothing to check
-	StatusReadyForReview Status = "ready_for_review" // a cause backed by runbook checks
-	StatusHold           Status = "hold"             // no runbook covers the cause or the data cannot be trusted
+	StatusReadyForReview Status = "ready_for_review" // a cause backed by procedure checks
+	StatusHold           Status = "hold"             // no procedure covers the cause or the data cannot be trusted
 )
 
 var validStatuses = map[Status]struct{}{StatusNoAction: {}, StatusReadyForReview: {}, StatusHold: {}}
@@ -114,12 +117,12 @@ func (e Event) SeriesCounts() map[string]int {
 	return counts
 }
 
-// `runbook slug#heading path#index`
+// `procedure slug#heading path#index`
 // Derived from position only so editing text keeps the id
 type ParagraphID string
 
-// A hash or slash inside the slug or a heading becomes a hyphen because Runbook and Section split on them
-// A heading such as A/B test stays a paragraph instead of failing the whole runbook set
+// A hash or slash inside the slug or a heading becomes a hyphen because Procedure and Section split on them
+// A heading such as an AB test with a slash stays a paragraph instead of failing the whole procedure set
 func NewParagraphID(slug string, path []string, index int) ParagraphID {
 	parts := make([]string, len(path))
 	for i, heading := range path {
@@ -130,8 +133,8 @@ func NewParagraphID(slug string, path []string, index int) ParagraphID {
 
 var separators = strings.NewReplacer("#", "-", "/", "-")
 
-// The runbook slug before the first hash
-func (id ParagraphID) Runbook() string {
+// The procedure slug before the first hash
+func (id ParagraphID) Procedure() string {
 	slug, _, _ := strings.Cut(string(id), "#")
 	return slug
 }
@@ -148,7 +151,7 @@ func (id ParagraphID) IsStep() bool {
 	return strings.Contains(id.Section(), "/") && !id.IsDecide()
 }
 
-// The section a runbook ends with
+// The section a procedure ends with
 // It states the decision and never a cause
 func (id ParagraphID) IsDecide() bool {
 	return strings.HasSuffix(id.Section(), "/Decide")
@@ -183,7 +186,7 @@ type Label struct {
 	Knowledge []string `json:"knowledge,omitempty"`
 }
 
-// The correct answer is a hold because no runbook covers the cause or the data cannot be trusted
+// The correct answer is a hold because no procedure covers the cause or the data cannot be trusted
 func (l Label) IsHold() bool {
 	return l.Expected == StatusHold
 }

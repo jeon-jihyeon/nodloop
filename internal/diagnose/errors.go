@@ -15,14 +15,22 @@ var (
 	ErrBadOutput = errors.New("diagnose: output does not match the schema")
 	// A context or select trace whose recorded JSON no longer decodes
 	ErrMalformed = errors.New("diagnose: malformed trace")
-	// An example candidate whose trace carries no feedback
+	// A trace that lacks the feedback its caller needs
+	// 1. an example candidate whose trace carries no feedback
+	// 2. a correction asked of a review with no verdict a person gave
 	ErrNoFeedback = errors.New("diagnose: no feedback on trace")
+	// A correction was asked of a review whose latest human verdict approves it
+	ErrNotCorrected = errors.New("diagnose: the latest verdict on the review is not an edit or reject")
 	// Run on a Diagnoser built for the conversation without a model client
 	ErrNoClient = errors.New("diagnose: no model client for the batch path")
 	// Prepare refuses a mode outside interactive and batch
 	ErrUnknownMode = errors.New("diagnose: unknown mode")
 	// Run refuses a knowledge mode outside none, selected and all
 	ErrUnknownKnowledgeMode = errors.New("diagnose: unknown knowledge mode")
-	// A policy file whose limits section does not decode
-	ErrBadLimits = errors.New("diagnose: limits do not decode")
+	// RunAll refuses a negative count of reviews in flight
+	ErrNegativeParallel = errors.New("diagnose: negative parallel")
+	// A review of RunAll panicked and the panic became its error
+	ErrReviewPanicked = errors.New("diagnose: review panicked")
+	// A review of RunAll failed without recording a trace so the store failed or no context was built
+	ErrNoFailedTrace = errors.New("diagnose: no trace recorded for the failed review")
 )

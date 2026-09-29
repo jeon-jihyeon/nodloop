@@ -3,6 +3,7 @@ package diagnose_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -32,7 +33,6 @@ func TestPrepareCandidates(t *testing.T) {
 		edited  json.RawMessage
 	}
 	type args struct {
-		limits    diagnose.Limits
 		knowledge []knowledge.Knowledge
 		reviews   []string
 		// Appended as they are so a verdict can name them by id
@@ -59,8 +59,24 @@ func TestPrepareCandidates(t *testing.T) {
 		{"tq-009", feedback.VerdictReject, "other context", nil},
 		{"tq-013", feedback.VerdictApprove, "", nil},
 	}
+	// Eleven corrections that fit tq-008 so the cap leaves out the oldest
+	var many []trace.Trace
+	var manyVerdicts []verdict
+	var manyOffered []diagnose.ExampleCandidate
+	for i := range 11 {
+		id := fmt.Sprintf("r%02d", i)
+		many = append(many, trace.Trace{
+			ID: id, Name: trace.NameDiagnose, Subject: "tq-005", Output: json.RawMessage(`{"status":"hold"}`),
+			Input: json.RawMessage(`{"change_context":"no_known_change","metrics":["click_count"]}`),
+		})
+		manyVerdicts = append(manyVerdicts, verdict{id, feedback.VerdictReject, "reason " + id, nil})
+		if i > 0 {
+			offered := diagnose.ExampleCandidate{TraceID: id, Verdict: feedback.VerdictReject, Head: "reason " + id}
+			manyOffered = append([]diagnose.ExampleCandidate{offered}, manyOffered...)
+		}
+	}
 	aggregation := "clicks and conversions use different aggregation time bases"
-	conversions := knowledge.Scope{Metrics: []string{"conversion_count"}}
+	conversions := knowledge.Scope{Scope: evidence.Scope{Metrics: []string{"conversion_count"}}}
 	tcs := []struct {
 		name string
 		args args
@@ -73,7 +89,7 @@ func TestPrepareCandidates(t *testing.T) {
 					{ID: "k-agg", Kind: knowledge.KindMeaning, Content: aggregation, Scope: conversions},
 					{
 						ID: "k-other", Kind: knowledge.KindJudgment, Content: "only for planned changes",
-						Scope: knowledge.Scope{ChangeContexts: []evidence.Context{evidence.ContextPlannedChange}},
+						Scope: knowledge.Scope{Scope: evidence.Scope{ChangeContexts: []evidence.Context{evidence.ContextPlannedChange}}},
 					},
 				},
 				event: "tq-005",
@@ -99,21 +115,6 @@ func TestPrepareCandidates(t *testing.T) {
 			}}},
 		},
 		{
-			name: "marks knowledge over the candidate cap as omitted",
-			args: args{
-				limits: diagnose.Limits{Candidates: 1},
-				knowledge: []knowledge.Knowledge{
-					{ID: "k-a", Kind: knowledge.KindMeaning, Content: "first"},
-					{ID: "k-b", Kind: knowledge.KindMeaning, Content: "second"},
-				},
-				event: "tq-005",
-			},
-			want: want{offer: offer{
-				knowledge: []diagnose.KnowledgeCandidate{{ID: "k-a", Version: 1, Kind: knowledge.KindMeaning, Head: "first"}},
-				omitted:   true,
-			}},
-		},
-		{
 			name: "offers corrections of the same context and metric newest first without later approved ones",
 			args: args{reviews: reviews, verdicts: verdicts, event: "tq-008"},
 			want: want{offer: offer{examples: []diagnose.ExampleCandidate{
@@ -129,12 +130,9 @@ func TestPrepareCandidates(t *testing.T) {
 			}},
 		},
 		{
-			name: "policy candidate cap limits corrections and marks the rest omitted",
-			args: args{limits: diagnose.Limits{Candidates: 1}, reviews: reviews, verdicts: verdicts, event: "tq-008"},
-			want: want{offer: offer{
-				examples: []diagnose.ExampleCandidate{{TraceID: "tq-007", Verdict: feedback.VerdictEdit, Head: "newer reason"}},
-				omitted:  true,
-			}},
+			name: "the candidate cap offers the ten newest corrections and marks the rest omitted",
+			args: args{traces: many, verdicts: manyVerdicts, event: "tq-008"},
+			want: want{offer: offer{examples: manyOffered, omitted: true}},
 		},
 		{
 			name: "skips a correction of the same context that shares no metric",
@@ -167,7 +165,7 @@ func TestPrepareCandidates(t *testing.T) {
 		},
 	}
 	ready := diagnose.Diagnosis{
-		Status: diagnose.StatusReadyForReview,
+		Status: evidence.StatusReadyForReview,
 		Causes: []diagnose.Cause{{Summary: "low quality traffic", ParagraphIDs: []string{segment}}},
 		Checks: diagnose.Checks{
 			{Step: "confirm the signal", Purpose: "signal", ParagraphIDs: []string{confirm}},
@@ -180,7 +178,7 @@ func TestPrepareCandidates(t *testing.T) {
 			t.Parallel()
 			s := testkit.Open(t)
 			d := diagnose.New(
-				s.Source, testkit.Policy(t), tc.args.limits, nil, s.Traces, s.Feedback, s.Ledger, s.Clock.Now,
+				s.Source, testkit.Policy(t), nil, s.Traces, s.Feedback, s.Ledger, s.Clock.Now,
 			)
 			for _, k := range tc.args.knowledge {
 				k.Evidence, k.Author = knowledge.Evidence{ParagraphIDs: []string{"p-1"}}, "author"
@@ -238,11 +236,12 @@ func TestSelect(t *testing.T) {
 		edited  json.RawMessage
 	}
 	type args struct {
-		limits  diagnose.Limits
 		reviews []string
 		// Knowledge ids retired after the context was built
 		retired  []string
 		verdicts []verdict
+		// Verdicts given after the context was built
+		later []verdict
 		// Reviews recorded on the context before the select under test
 		records []diagnose.Diagnosis
 		pending string
@@ -255,13 +254,19 @@ func TestSelect(t *testing.T) {
 		OmittedChars int    `json:"omitted_chars"`
 		Cut          bool   `json:"cut"`
 	}
+	type sections struct {
+		Knowledge int `json:"knowledge"`
+		Examples  int `json:"examples"`
+	}
 	type input struct {
-		SessionID string
-		Subject   string
-		Selector  diagnose.Selector           `json:"mode"`
-		Knowledge []diagnose.AppliedKnowledge `json:"knowledge"`
-		Examples  []example                   `json:"examples"`
-		Omitted   bool                        `json:"omitted"`
+		SessionID    string
+		Subject      string
+		Selector     diagnose.Selector           `json:"mode"`
+		Knowledge    []diagnose.AppliedKnowledge `json:"knowledge"`
+		Examples     []example                   `json:"examples"`
+		Omitted      bool                        `json:"omitted"`
+		Chars        sections                    `json:"chars"`
+		OmittedChars sections                    `json:"omitted_chars"`
 	}
 	type selected struct {
 		applied []diagnose.AppliedKnowledge
@@ -282,19 +287,18 @@ func TestSelect(t *testing.T) {
 		{"tq-007", feedback.VerdictEdit, "newer reason", json.RawMessage(`{"status":"hold"}`)},
 		{"tq-009", feedback.VerdictReject, "other context", nil},
 	}
-	// One correction outgrows an even share of the example cap
-	three := []string{"tq-005", "tq-007", "tq-010"}
-	long := `{"status":"no_action","observations":["` + strings.Repeat("lag ", 80) + `"]}`
-	uneven := []verdict{
-		{"tq-005", feedback.VerdictEdit, "short correction", json.RawMessage(`{"status":"hold"}`)},
-		{"tq-007", feedback.VerdictEdit, "short correction", json.RawMessage(`{"status":"hold"}`)},
-		{"tq-010", feedback.VerdictEdit, "long correction", json.RawMessage(long)},
+	// A correction that leaves the original review less than the example cap
+	longest := `{"status":"no_action","observations":["` + strings.Repeat("lag ", 1550) + `"]}`
+	longEdit := []verdict{
+		{"tq-005", feedback.VerdictReject, "older reason", nil},
+		{"tq-007", feedback.VerdictEdit, "newer reason", json.RawMessage(longest)},
 	}
-	twoLong := []verdict{
-		{"tq-005", feedback.VerdictEdit, "short correction", json.RawMessage(`{"status":"hold"}`)},
-		{"tq-007", feedback.VerdictEdit, "long correction", json.RawMessage(long)},
-		{"tq-010", feedback.VerdictEdit, "long correction", json.RawMessage(long)},
+	// What the edits of tq-007 changed in the recorded ready review
+	changed := func(status string) string {
+		return "Original status: ready_for_review with 1 cause\nCorrected status: " + status + " with no causes\n" +
+			"Cause paragraphs removed: " + segment + "\n"
 	}
+	handEdit := []verdict{{"tq-007", feedback.VerdictEdit, "newer reason", json.RawMessage(`"rewritten by hand"`)}}
 	aggregation := diagnose.AppliedKnowledge{
 		ID:      "k-agg",
 		Version: 1,
@@ -304,7 +308,7 @@ func TestSelect(t *testing.T) {
 	none := []diagnose.AppliedKnowledge{}
 	empty := input{Selector: diagnose.SelectByClaude, Knowledge: none, Examples: []example{}}
 	ready := diagnose.Diagnosis{
-		Status: diagnose.StatusReadyForReview,
+		Status: evidence.StatusReadyForReview,
 		Causes: []diagnose.Cause{{Summary: "low quality traffic", ParagraphIDs: []string{segment}}},
 		Checks: diagnose.Checks{
 			{Step: "confirm the signal", Purpose: "signal", ParagraphIDs: []string{confirm}},
@@ -327,6 +331,7 @@ func TestSelect(t *testing.T) {
 					applied: []diagnose.AppliedKnowledge{aggregation},
 					inputs: []input{{
 						Selector: diagnose.SelectByClaude, Knowledge: []diagnose.AppliedKnowledge{aggregation}, Examples: []example{},
+						Chars: sections{Knowledge: knowledgeHeading + 112},
 					}},
 				},
 				present: []string{
@@ -349,6 +354,7 @@ func TestSelect(t *testing.T) {
 					applied: []diagnose.AppliedKnowledge{aggregation},
 					inputs: []input{{
 						Selector: diagnose.SelectByClaude, Knowledge: []diagnose.AppliedKnowledge{aggregation}, Examples: []example{},
+						Chars: sections{Knowledge: knowledgeHeading + 112},
 					}},
 				},
 				present: []string{"## Approved knowledge"},
@@ -374,14 +380,67 @@ func TestSelect(t *testing.T) {
 			want: want{
 				selected: selected{applied: none, inputs: []input{{
 					Selector: diagnose.SelectByClaude, Knowledge: none,
-					Examples: []example{{TraceID: "tq-007", Reason: "same shape", Chars: 618}},
+					Examples: []example{{TraceID: "tq-007", Reason: "same shape", Chars: 807}},
+					Chars:    sections{Examples: examplesHeading + 807},
 				}}},
 				present: []string{
 					"## Examples",
 					"### Example 1",
-					"Verdict: edit\nReason: newer reason\nCorrected: {\"status\":\"hold\"}\n",
+					"Verdict: edit\nReason: newer reason\n" + changed("hold") + "Corrected: {\"status\":\"hold\"}\n",
 				},
 				absent: []string{"older reason", "## Approved knowledge"},
+			},
+		},
+		{
+			name: "marks the original review of a rejected example as wrong",
+			args: args{
+				reviews: reviews, verdicts: verdicts, pending: "context",
+				choices: diagnose.Choices{Examples: []diagnose.Choice{{ID: "tq-005"}}},
+			},
+			want: want{
+				selected: selected{applied: none, inputs: []input{{
+					Selector: diagnose.SelectByClaude, Knowledge: none,
+					Examples: []example{{TraceID: "tq-005", Chars: 682}},
+					Chars:    sections{Examples: examplesHeading + 682},
+				}}},
+				present: []string{
+					"Verdict: reject\nReason: older reason\n" +
+						"Original status: ready_for_review with 1 cause. The reviewer rejected this review as wrong\nOriginal review: {",
+				},
+				absent: []string{"Corrected"},
+			},
+		},
+		{
+			name: "renders an example approved after the context was built by its approval",
+			args: args{
+				reviews: reviews, verdicts: verdicts, pending: "context",
+				later:   []verdict{{"tq-005", feedback.VerdictApprove, "right after all", nil}},
+				choices: diagnose.Choices{Examples: []diagnose.Choice{{ID: "tq-005"}}},
+			},
+			want: want{
+				selected: selected{applied: none, inputs: []input{{
+					Selector: diagnose.SelectByClaude, Knowledge: none,
+					Examples: []example{{TraceID: "tq-005", Chars: 595}},
+					Chars:    sections{Examples: examplesHeading + 595},
+				}}},
+				present: []string{"Verdict: approve\nReason: right after all\nOriginal review: {"},
+				absent:  []string{"rejected", "Original status", "Corrected"},
+			},
+		},
+		{
+			name: "renders an edited review that is no review without the change",
+			args: args{
+				reviews: reviews, verdicts: handEdit, pending: "context",
+				choices: diagnose.Choices{Examples: []diagnose.Choice{{ID: "tq-007"}}},
+			},
+			want: want{
+				selected: selected{applied: none, inputs: []input{{
+					Selector: diagnose.SelectByClaude, Knowledge: none,
+					Examples: []example{{TraceID: "tq-007", Chars: 620}},
+					Chars:    sections{Examples: examplesHeading + 620},
+				}}},
+				present: []string{"Verdict: edit\nReason: newer reason\nCorrected: \"rewritten by hand\"\n"},
+				absent:  []string{"Original status"},
 			},
 		},
 		{
@@ -395,7 +454,8 @@ func TestSelect(t *testing.T) {
 			want: want{
 				selected: selected{applied: none, inputs: []input{{
 					Selector: diagnose.SelectByClaude, Knowledge: none,
-					Examples: []example{{TraceID: "tq-007", Reason: "same shape", Chars: 618}},
+					Examples: []example{{TraceID: "tq-007", Reason: "same shape", Chars: 807}},
+					Chars:    sections{Examples: examplesHeading + 807},
 				}}},
 				present: []string{"### Example 1"},
 				absent:  []string{"### Example 2"},
@@ -404,136 +464,20 @@ func TestSelect(t *testing.T) {
 		{
 			name: "cuts the original review first and keeps the verdict, reason and corrected review",
 			args: args{
-				limits: diagnose.Limits{ExampleChars: 150}, reviews: reviews, verdicts: verdicts, pending: "context",
+				reviews: reviews, verdicts: longEdit, pending: "context",
 				choices: diagnose.Choices{Examples: []diagnose.Choice{{ID: "tq-007"}}},
 			},
 			want: want{
 				selected: selected{applied: none, omitted: true, inputs: []input{{
 					Selector: diagnose.SelectByClaude, Knowledge: none, Omitted: true,
-					Examples: []example{{TraceID: "tq-007", Chars: 150, OmittedChars: 505, Cut: true}},
+					Examples: []example{{TraceID: "tq-007", Chars: 6999, OmittedChars: 74, Cut: true}},
+					Chars:    sections{Examples: examplesHeading + 6999 + examplesNotice}, OmittedChars: sections{Examples: 74},
 				}}},
 				present: []string{
-					"\n### Example 1\n\nVerdict: edit\nReason: newer reason\nCorrected: {\"status\":\"hold\"}\nOriginal review: ",
-					"\n[505 characters omitted at the cap]\n", "The original review gives way first",
+					"\n### Example 1\n\nVerdict: edit\nReason: newer reason\n" + changed("no_action") + "Corrected: " + longest +
+						"\nOriginal review: ",
+					"\n[74 characters omitted at the cap]\n", "The original review gives way first",
 				},
-			},
-		},
-		{
-			name: "leaves out an original review whose room cannot hold the cut mark without a mark",
-			args: args{
-				limits: diagnose.Limits{ExampleChars: 100}, reviews: reviews, verdicts: verdicts, pending: "context",
-				choices: diagnose.Choices{Examples: []diagnose.Choice{{ID: "tq-007"}}},
-			},
-			want: want{
-				selected: selected{applied: none, omitted: true, inputs: []input{{
-					Selector: diagnose.SelectByClaude, Knowledge: none, Omitted: true,
-					Examples: []example{{TraceID: "tq-007", Chars: 80, OmittedChars: 538, Cut: true}},
-				}}},
-				present: []string{
-					"\n### Example 1\n\nVerdict: edit\nReason: newer reason\n" +
-						"Corrected: {\"status\":\"hold\"}\n\nSome examples were cut",
-				},
-				absent: []string{"Original review:", "characters omitted at the cap]"},
-			},
-		},
-		{
-			name: "leaves out an example whose share cannot hold its verdict, reason and the cut mark",
-			args: args{
-				limits: diagnose.Limits{ExampleChars: 60}, reviews: reviews, verdicts: verdicts, pending: "context",
-				choices: diagnose.Choices{Examples: []diagnose.Choice{{ID: "tq-007"}}},
-			},
-			want: want{
-				selected: selected{applied: none, omitted: true, inputs: []input{{
-					Selector: diagnose.SelectByClaude, Knowledge: none, Omitted: true,
-					Examples: []example{{TraceID: "tq-007", OmittedChars: 618, Cut: true}},
-				}}},
-				present: []string{"Some examples were cut to fit the example cap"},
-				absent:  []string{"### Example", "newer reason"},
-			},
-		},
-		{
-			name: "leaves out an example whose share cannot hold the cut mark and records it whole as omitted",
-			args: args{
-				limits: diagnose.Limits{ExampleChars: 10}, reviews: reviews, verdicts: verdicts, pending: "context",
-				choices: diagnose.Choices{Examples: []diagnose.Choice{{ID: "tq-007"}}},
-			},
-			want: want{
-				selected: selected{applied: none, omitted: true, inputs: []input{{
-					Selector: diagnose.SelectByClaude, Knowledge: none, Omitted: true,
-					Examples: []example{{TraceID: "tq-007", OmittedChars: 618, Cut: true}},
-				}}},
-				present: []string{"Some examples were cut to fit the example cap"},
-				absent:  []string{"### Example"},
-			},
-		},
-		{
-			name: "original reviews of equal length split evenly what the leads and corrections leave",
-			args: args{
-				limits: diagnose.Limits{ExampleChars: 400}, reviews: reviews, verdicts: verdicts, pending: "context",
-				choices: diagnose.Choices{Examples: []diagnose.Choice{{ID: "tq-007"}, {ID: "tq-005"}}},
-			},
-			want: want{
-				selected: selected{applied: none, omitted: true, inputs: []input{{
-					Selector: diagnose.SelectByClaude, Knowledge: none, Omitted: true,
-					Examples: []example{
-						{
-							TraceID:      "tq-007",
-							Chars:        213,
-							OmittedChars: 442,
-							Cut:          true,
-						}, {TraceID: "tq-005", Chars: 187, OmittedChars: 441, Cut: true},
-					},
-				}}},
-				present: []string{
-					"### Example 1", "Corrected: {\"status\":\"hold\"}\nOriginal review: ", "### Example 2",
-					"Reason: older reason\nOriginal review: ", "Some examples were cut to fit the example cap",
-				},
-			},
-		},
-		{
-			name: "a correction larger than an even share arrives whole when the leads and corrections fit together",
-			args: args{
-				limits: diagnose.Limits{ExampleChars: 600}, reviews: three, verdicts: uneven, pending: "context",
-				choices: diagnose.Choices{Examples: []diagnose.Choice{{ID: "tq-010"}, {ID: "tq-005"}, {ID: "tq-007"}}},
-			},
-			want: want{
-				selected: selected{applied: none, omitted: true, inputs: []input{{
-					Selector: diagnose.SelectByClaude, Knowledge: none, Omitted: true,
-					Examples: []example{
-						{TraceID: "tq-010", Chars: 428, OmittedChars: 538, Cut: true},
-						{TraceID: "tq-005", Chars: 84, OmittedChars: 538, Cut: true},
-						{TraceID: "tq-007", Chars: 84, OmittedChars: 538, Cut: true},
-					},
-				}}},
-				present: []string{
-					"Reason: long correction\nCorrected: " + long + "\n\n### Example 2",
-					"Some examples were cut to fit the example cap",
-				},
-				absent: []string{"Original review:", "characters omitted at the cap]"},
-			},
-		},
-		{
-			name: "corrections that outgrow the cap together are cut evenly and marked while a short correction stays whole",
-			args: args{
-				limits: diagnose.Limits{ExampleChars: 400}, reviews: three, verdicts: twoLong, pending: "context",
-				choices: diagnose.Choices{Examples: []diagnose.Choice{{ID: "tq-010"}, {ID: "tq-005"}, {ID: "tq-007"}}},
-			},
-			want: want{
-				selected: selected{applied: none, omitted: true, inputs: []input{{
-					Selector: diagnose.SelectByClaude, Knowledge: none, Omitted: true,
-					Examples: []example{
-						{TraceID: "tq-010", Chars: 158, OmittedChars: 845, Cut: true},
-						{TraceID: "tq-005", Chars: 84, OmittedChars: 538, Cut: true},
-						{TraceID: "tq-007", Chars: 158, OmittedChars: 845, Cut: true},
-					},
-				}}},
-				present: []string{
-					"Reason: long correction\nCorrected: {\"status\":\"no_action\"",
-					"lag lag lag lag l\n[845 characters omitted at the cap]\n\n### Example 2",
-					"Reason: short correction\nCorrected: {\"status\":\"hold\"}\n\n### Example 3",
-					"Some examples were cut to fit the example cap",
-				},
-				absent: []string{"Original review:"},
 			},
 		},
 		{
@@ -572,11 +516,11 @@ func TestSelect(t *testing.T) {
 	drafts := []knowledge.Knowledge{
 		{
 			ID: "k-agg", Kind: knowledge.KindMeaning, Content: "clicks and conversions use different aggregation time bases",
-			Scope: knowledge.Scope{Metrics: []string{"conversion_count"}},
+			Scope: knowledge.Scope{Scope: evidence.Scope{Metrics: []string{"conversion_count"}}},
 		},
 		{
 			ID: "k-other", Kind: knowledge.KindJudgment, Content: "only for planned changes",
-			Scope: knowledge.Scope{ChangeContexts: []evidence.Context{evidence.ContextPlannedChange}},
+			Scope: knowledge.Scope{Scope: evidence.Scope{ChangeContexts: []evidence.Context{evidence.ContextPlannedChange}}},
 		},
 	}
 	ctx := context.Background()
@@ -585,7 +529,7 @@ func TestSelect(t *testing.T) {
 			t.Parallel()
 			s := testkit.Open(t)
 			d := diagnose.New(
-				s.Source, testkit.Policy(t), tc.args.limits, nil, s.Traces, s.Feedback, s.Ledger, s.Clock.Now,
+				s.Source, testkit.Policy(t), nil, s.Traces, s.Feedback, s.Ledger, s.Clock.Now,
 			)
 			for _, k := range drafts {
 				k.Evidence, k.Author = knowledge.Evidence{ParagraphIDs: []string{"p-1"}}, "author"
@@ -612,6 +556,11 @@ func TestSelect(t *testing.T) {
 			c, err := d.Prepare(ctx, "tq-008", diagnose.ModeInteractive, diagnose.Session{ID: "s1"})
 			require.NoError(t, err)
 			ids["context"] = c.PendingID
+			for _, v := range tc.args.later {
+				fb, err := feedback.New(ids[v.review], v.verdict, v.reason, v.edited, "", s.Clock.Now())
+				require.NoError(t, err)
+				require.NoError(t, s.Feedback.Append(ctx, fb))
+			}
 			for _, id := range tc.args.retired {
 				_, err := s.Ledger.Retire(ctx, id, 1, "author")
 				require.NoError(t, err)
@@ -729,15 +678,15 @@ func TestRunSelection(t *testing.T) {
 			ID:      "k-agg",
 			Kind:    knowledge.KindMeaning,
 			Content: "aggregation time bases differ",
-			Scope:   knowledge.Scope{Metrics: []string{"conversion_count"}},
+			Scope:   knowledge.Scope{Scope: evidence.Scope{Metrics: []string{"conversion_count"}}},
 		},
 		{
 			ID: "k-planned", Kind: knowledge.KindJudgment, Content: "only for planned changes",
-			Scope: knowledge.Scope{ChangeContexts: []evidence.Context{evidence.ContextPlannedChange}},
+			Scope: knowledge.Scope{Scope: evidence.Scope{ChangeContexts: []evidence.Context{evidence.ContextPlannedChange}}},
 		},
 	}
 	ready := diagnose.Diagnosis{
-		Status: diagnose.StatusReadyForReview,
+		Status: evidence.StatusReadyForReview,
 		Causes: []diagnose.Cause{{Summary: "low quality traffic", ParagraphIDs: []string{segment}}},
 		Checks: diagnose.Checks{
 			{Step: "confirm the signal", Purpose: "signal", ParagraphIDs: []string{confirm}},
@@ -753,7 +702,7 @@ func TestRunSelection(t *testing.T) {
 		{"tq-005", feedback.VerdictReject, "older reason", nil},
 		{"tq-007", feedback.VerdictEdit, "newer reason", json.RawMessage(`{"status":"hold"}`)},
 	}
-	held, err := json.Marshal(diagnose.Diagnosis{Status: diagnose.StatusHold, HoldReasons: []string{"x"}})
+	held, err := json.Marshal(diagnose.Diagnosis{Status: evidence.StatusHold, HoldReasons: []string{"x"}})
 	require.NoError(t, err)
 	ctx := context.Background()
 	for _, tc := range tcs {
@@ -762,7 +711,7 @@ func TestRunSelection(t *testing.T) {
 			s := testkit.Open(t)
 			client := llmmock.NewMockClient(gomock.NewController(t))
 			d := diagnose.New(
-				s.Source, testkit.Policy(t), diagnose.Limits{}, client, s.Traces, s.Feedback, s.Ledger, s.Clock.Now,
+				s.Source, testkit.Policy(t), client, s.Traces, s.Feedback, s.Ledger, s.Clock.Now,
 			)
 			for _, k := range drafts {
 				k.Evidence, k.Author = knowledge.Evidence{ParagraphIDs: []string{"p-1"}}, "author"

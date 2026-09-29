@@ -9,14 +9,27 @@ import (
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
 )
 
-const tracesFile = "traces.jsonl"
+const (
+	tracesFile  = "traces.jsonl"
+	replaysFile = "replays.jsonl"
+)
 
 type Store struct {
 	file jsonl.File[trace.Trace]
 }
 
 func New(dir string) (*Store, error) {
-	f, err := jsonl.Open[trace.Trace](dir, tracesFile)
+	return open(dir, tracesFile)
+}
+
+// The reviews of compaction replays
+// Kept apart so eval and pending and example candidates never read them
+func NewReplays(dir string) (*Store, error) {
+	return open(dir, replaysFile)
+}
+
+func open(dir, name string) (*Store, error) {
+	f, err := jsonl.Open[trace.Trace](dir, name)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrOpen, err)
 	}

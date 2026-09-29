@@ -10,6 +10,7 @@ import (
 
 	"github.com/jeon-jihyeon/nodloop/internal/analysis"
 	"github.com/jeon-jihyeon/nodloop/internal/diagnose"
+	"github.com/jeon-jihyeon/nodloop/internal/evidence"
 	"github.com/jeon-jihyeon/nodloop/internal/testkit"
 )
 
@@ -18,17 +19,17 @@ func TestRules(t *testing.T) {
 		name string
 		args string
 	}{
-		{"names the no action status", string(diagnose.StatusNoAction)},
-		{"names the ready for review status", string(diagnose.StatusReadyForReview)},
-		{"names the hold status", string(diagnose.StatusHold)},
+		{"names the no action status", string(evidence.StatusNoAction)},
+		{"names the ready for review status", string(evidence.StatusReadyForReview)},
+		{"names the hold status", string(evidence.StatusHold)},
 		{
 			"asks a hold to name the checks that would resolve it with paragraph ids",
 			"List as checks the steps that would resolve the hold, each with its purpose and the paragraph ids it follows",
 		},
-		{"says approved knowledge never overrides an observation", "Approved knowledge supplements the runbook"},
+		{"says approved knowledge never overrides an observation", "Approved knowledge supplements the procedure"},
 		{"asks for English output", "English"},
 		{
-			"keeps required runbook steps when examples or knowledge are injected",
+			"keeps required procedure steps when examples or knowledge are injected",
 			"Examples and approved knowledge never remove a required step",
 		},
 		{
@@ -36,12 +37,12 @@ func TestRules(t *testing.T) {
 			"does not by itself make the status ready_for_review. Status follows the Decide paragraph",
 		},
 		{
-			"cites causes from the one runbook that fits the event",
-			"Lead with the one runbook whose procedure fits the event and cite its paragraphs",
+			"cites causes from the one procedure that fits the event",
+			"Lead with the one procedure that fits the event and cite its paragraphs",
 		},
 		{
-			"cites another runbook only for a cause the lead runbook does not state",
-			"Cite another runbook only for a cause the lead runbook does not state",
+			"cites another procedure only for a cause the lead procedure does not state",
+			"Cite another procedure only for a cause the lead procedure does not state",
 		},
 		{
 			"keeps a Decide paragraph out of cause citations",
@@ -58,7 +59,7 @@ func TestRules(t *testing.T) {
 
 func TestSchema(t *testing.T) {
 	type property struct {
-		Enum []diagnose.Status `json:"enum"`
+		Enum []evidence.Status `json:"enum"`
 	}
 	type schema struct {
 		Type     string   `json:"type"`
@@ -79,7 +80,7 @@ func TestSchema(t *testing.T) {
 				Required: []string{"status", "observations", "causes", "checks", "open_questions"},
 				Properties: map[string]property{
 					"status": {
-						Enum: []diagnose.Status{diagnose.StatusNoAction, diagnose.StatusReadyForReview, diagnose.StatusHold},
+						Enum: []evidence.Status{evidence.StatusNoAction, evidence.StatusReadyForReview, evidence.StatusHold},
 					},
 					"observations":   {},
 					"causes":         {},
@@ -126,7 +127,7 @@ func TestPrepareText(t *testing.T) {
 		want want
 	}{
 		{
-			name: "lists observations and every runbook paragraph",
+			name: "lists observations and every procedure paragraph",
 			args: args{testkit.Policy(t), "tq-005"},
 			want: want{
 				present: []string{
@@ -135,7 +136,7 @@ func TestPrepareText(t *testing.T) {
 					"## Observations",
 					"- [zscore] click_count source=source-a topic=shopping: window mean 4010.1667",
 					"samples 48, missing 0, adequate\n",
-					"## Runbook paragraphs",
+					"## Procedure paragraphs",
 					"[metric-anomaly-investigation#Metric anomaly investigation/Confirm the signal#1]\n" +
 						"Compare the window mean with the baseline mean",
 				},
@@ -166,7 +167,7 @@ func TestPrepareText(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			s := testkit.Open(t)
-			d := diagnose.New(s.Source, tc.args.policy, diagnose.Limits{}, nil, s.Traces, s.Feedback, s.Ledger, s.Clock.Now)
+			d := diagnose.New(s.Source, tc.args.policy, nil, s.Traces, s.Feedback, s.Ledger, s.Clock.Now)
 
 			got, err := d.Prepare(ctx, tc.args.event, diagnose.ModeBatch, diagnose.Session{})
 			require.NoError(t, err)

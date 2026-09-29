@@ -8,7 +8,7 @@ Read the window share and the baseline share of the concentrated source and of t
 
 ## Compare against total volume
 
-Compare the total click_count of the window with the baseline total. A flat total with a shifted share means traffic was redistributed between sources. A rising total with a shifted share means one source grew on its own and the metric anomaly investigation applies to that source.
+Compare the total click_count of the window with the baseline total. When the window mean of the total is at least 1.5 times its baseline mean, one source grew on its own and the metric anomaly investigation applies to that source. A total below 1.5 times its baseline with a shifted share means traffic was redistributed between sources.
 
 ## Check the concentrated segment
 

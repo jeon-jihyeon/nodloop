@@ -14,7 +14,7 @@ func TestWriteReproducesTheCommittedDataSet(t *testing.T) {
 	dir := t.TempDir()
 	require.NoError(t, write(dir))
 	for _, name := range []string{"events.csv", "contexts.csv", "labels.jsonl", "policy.yaml", "knowledge.jsonl"} {
-		want, err := os.ReadFile(filepath.Join("..", "evidence", "file", "testdata", name))
+		want, err := os.ReadFile(filepath.Join("..", "..", "examples", "demo", name))
 		require.NoError(t, err)
 		got, err := os.ReadFile(filepath.Join(dir, name))
 		require.NoError(t, err)

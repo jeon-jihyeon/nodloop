@@ -205,11 +205,19 @@ func (p Policy) Analyze(ev evidence.Event) (Observations, error) {
 	return out, nil
 }
 
+// A limits section is refused so a file written for the configurable caps never loses them without a word
 func LoadPolicy(b []byte) (Policy, error) {
-	var p Policy
-	if err := yaml.Unmarshal(b, &p); err != nil {
+	var file struct {
+		Policy `yaml:",inline"`
+		Limits yaml.Node `yaml:"limits"`
+	}
+	if err := yaml.Unmarshal(b, &file); err != nil {
 		return Policy{}, fmt.Errorf("%w: %w", ErrMalformedPolicy, err)
 	}
+	if file.Limits.Kind != 0 {
+		return Policy{}, ErrLimitsSection
+	}
+	p := file.Policy
 	if p.Version == "" {
 		return Policy{}, ErrMissingVersion
 	}
@@ -322,6 +330,16 @@ func (s series) stddev(mean float64) float64 {
 		sum += d * d
 	}
 	return math.Sqrt(sum / float64(len(s)))
+}
+
+// Distinct points in time
+// Several groups share one time so a total over them divides by this and not by the point count
+func (s series) times() int {
+	seen := map[int64]struct{}{}
+	for _, p := range s {
+		seen[p.Time.UnixNano()] = struct{}{}
+	}
+	return len(seen)
 }
 
 func (s series) window() Window {

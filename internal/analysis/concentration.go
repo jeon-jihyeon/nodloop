@@ -14,16 +14,18 @@ import (
 // 2. Change is the share delta so a gaining group is positive and a losing one negative
 // 3. series without the group dimension cannot be attributed and are ignored
 // 4. adequacy is judged on the baseline points of every group together because shares are relative
+// 5. the summary ends with the total per point in time because a share alone cannot tell redistribution from growth
 func (spec RuleSpec) concentrationChange(eventID string, all series) []Observation {
 	metric := spec.Metrics[0]
 	g := spec.group(all, metric)
 	if len(g.names) == 0 {
 		return nil
 	}
-	reason := spec.inadequacy(g.baselineSamples)
+	reason := spec.inadequacy(len(g.baselinePoints))
 	if reason == "" {
 		reason = g.inadequacy()
 	}
+	baselineMean, windowMean := g.totalMeans()
 	var out []Observation
 	for _, name := range g.names {
 		obs := Observation{
@@ -48,9 +50,9 @@ func (spec RuleSpec) concentrationChange(eventID string, all series) []Observati
 		obs.Adequate = true
 		obs.Change = delta
 		obs.Severity = spec.severity(delta)
-		obs.Summary = fmt.Sprintf("%s: window share %s against baseline %s, delta %s, peak %s at %s", title,
-			formatNumber(obs.Current), formatNumber(obs.Baseline), formatNumber(delta), formatNumber(g.peaks[name].Value),
-			g.peaks[name].Time.UTC().Format(time.RFC3339))
+		obs.Summary = fmt.Sprintf("%s: window share %s against baseline %s, delta %s, peak %s at %s, total window mean %s against baseline %s",
+			title, formatNumber(obs.Current), formatNumber(obs.Baseline), formatNumber(delta), formatNumber(g.peaks[name].Value),
+			g.peaks[name].Time.UTC().Format(time.RFC3339), formatNumber(windowMean), formatNumber(baselineMean))
 		out = append(out, obs)
 	}
 	return out
@@ -68,7 +70,7 @@ type groups struct {
 	// Points of every group across the baseline and the window
 	samples int
 	// Baseline points of every group judged against MinSamples
-	baselineSamples int
+	baselinePoints series
 	// Sums over every group so each share divides by the same total
 	baselineTotal, windowTotal float64
 }
@@ -87,7 +89,7 @@ func (spec RuleSpec) group(all series, metric string) groups {
 		g.baseline[name] += baseline.sum()
 		g.window[name] += window.sum()
 		g.samples += len(points)
-		g.baselineSamples += len(baseline)
+		g.baselinePoints = append(g.baselinePoints, baseline...)
 		g.windowPoints = append(g.windowPoints, window...)
 		for _, p := range window {
 			if peak, ok := g.peaks[name]; !ok || p.Value > peak.Value {
@@ -113,6 +115,13 @@ func (g groups) inadequacy() string {
 		return "window total is zero"
 	}
 	return ""
+}
+
+// Total over every group per point in time in the baseline and the window
+// A side without points gives a mean that is not a number
+// Summaries read it only once inadequacy is empty
+func (g groups) totalMeans() (baseline, window float64) {
+	return g.baselineTotal / float64(g.baselinePoints.times()), g.windowTotal / float64(g.windowPoints.times())
 }
 
 // Baseline share and window share of one group

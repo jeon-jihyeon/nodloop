@@ -59,8 +59,8 @@ type Score struct {
 	EventID           string             `json:"event_id"`
 	Condition         Condition          `json:"condition"`
 	Type              evidence.EventType `json:"type"`
-	ExpectedStatus    diagnose.Status    `json:"expected_status"`
-	Status            diagnose.Status    `json:"status"`
+	ExpectedStatus    evidence.Status    `json:"expected_status"`
+	Status            evidence.Status    `json:"status"`
 	StatusOK          bool               `json:"status_ok"`
 	ForcedHold        bool               `json:"forced_hold"`
 	Failed            bool               `json:"failed"`
@@ -68,7 +68,7 @@ type Score struct {
 	CitationRecall    float64            `json:"citation_recall"`
 	RequiredChecks    float64            `json:"required_checks"`
 	// 1 when the first check cites the first required check of the label and 0 otherwise
-	// The runbook orders its steps and the label keeps that order
+	// The procedure orders its steps and the label keeps that order
 	FirstCheck float64 `json:"first_check"`
 	// Whether record sent the review back once before this one
 	Revised bool `json:"revised"`
@@ -135,7 +135,7 @@ type Summary struct {
 // 7. the verdict counts on a failed trace too
 func newScore(condition Condition, l evidence.Label, tr trace.Trace, revised bool, verdict feedback.Verdict, edited json.RawMessage) Score {
 	s := Score{
-		EventID: l.EventID, Condition: condition, Type: l.Type, ExpectedStatus: diagnose.Status(l.Expected),
+		EventID: l.EventID, Condition: condition, Type: l.Type, ExpectedStatus: l.Expected,
 		CitationPrecision: notApplicable, CitationRecall: notApplicable, RequiredChecks: notApplicable, FirstCheck: notApplicable, KnowledgeHit: notApplicable,
 		ForcedHold: slices.Contains(tr.Tags, diagnose.TagGateHold),
 		Revised:    revised,
@@ -154,7 +154,7 @@ func newScore(condition Condition, l evidence.Label, tr trace.Trace, revised boo
 	if len(diag.Checks) > 0 {
 		first = diag.Checks[0].ParagraphIDs
 	}
-	if s.ExpectedStatus != diagnose.StatusNoAction {
+	if s.ExpectedStatus != evidence.StatusNoAction {
 		s.scoreChecks(diag.Checks.Paragraphs(), first, l.RequiredChecks)
 	}
 	s.scoreVerdict(tr.Output, verdict, edited)
@@ -200,7 +200,7 @@ func (s *Score) scoreCitations(causes []diagnose.Cause, expected []evidence.Para
 	s.CitationRecall = float64(hit) / float64(len(expected))
 }
 
-// Required keeps the order the runbook runs its steps
+// Required keeps the order the procedure runs its steps
 // first holds the paragraphs of the first check of the review and is held to the first entry of required
 func (s *Score) scoreChecks(checked, first []string, required []evidence.ParagraphID) {
 	if len(required) == 0 {
@@ -289,7 +289,7 @@ func (t *tally) add(s Score) {
 	if s.StatusOK {
 		t.statusOK++
 	}
-	t.addHold(s.ExpectedStatus == diagnose.StatusHold, s.Status == diagnose.StatusHold)
+	t.addHold(s.ExpectedStatus == evidence.StatusHold, s.Status == evidence.StatusHold)
 	t.citationPrecision.add(s.CitationPrecision)
 	t.citationRecall.add(s.CitationRecall)
 	t.requiredChecks.add(s.RequiredChecks)
@@ -382,6 +382,17 @@ type Comparison struct {
 	Regressed []string `json:"regressed"`
 	// Status unchanged but required checks or citation recall below the baseline value
 	Weakened []string `json:"weakened"`
+}
+
+// The scores of one condition in their order
+func (ss scores) of(cond Condition) scores {
+	var out scores
+	for _, s := range ss {
+		if s.Condition == cond {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 func (ss scores) byEvent() map[string]Score {
