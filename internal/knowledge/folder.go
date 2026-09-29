@@ -19,6 +19,11 @@ type Folder struct {
 	Compactable int
 }
 
+// The item itself counts beside Items
+func (f Folder) Size() int {
+	return len(f.Items) + 1
+}
+
 func (f Folder) Full() bool {
 	return f.Chars > ReviewChars
 }
