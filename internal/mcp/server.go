@@ -181,7 +181,7 @@ var tools = []tool{
 		"The content you write is stored as a draft. "+
 		"Candidates never enter a review until a person approves them. Returns overlapping items to review "+
 		"and the folder: the approved items a review would carry with it, their size against the budget "+
-		"and compaction_due when the folder holds more than five approved items", (*Server).propose),
+		"and compaction_due when the folder holds more than five approved items an event can replay", (*Server).propose),
 	newTool("approve", "Approve a knowledge candidate on behalf of a named person. "+
 		"Only call it when the user explicitly approves and names themselves. "+
 		"Fails when the folder would outgrow the review and names the items to retire or replace. "+

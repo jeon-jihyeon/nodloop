@@ -27,7 +27,6 @@ func TestFolderFull(t *testing.T) {
 	}
 }
 
-// The item itself counts so a folder of n other items holds n plus one
 func TestFolderCrowded(t *testing.T) {
 	t.Parallel()
 	tcs := []struct {
@@ -35,14 +34,14 @@ func TestFolderCrowded(t *testing.T) {
 		args int
 		want bool
 	}{
-		{"the item alone is not crowded", 0, false},
-		{"five items with the item are not crowded", 4, false},
-		{"six items with the item are crowded", 5, true},
+		{"a folder no compaction can anchor is not crowded", 0, false},
+		{"five items a compaction would cover are not crowded", 5, false},
+		{"six items a compaction would cover are crowded", 6, true},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			assert.Equal(t, tc.want, knowledge.Folder{Items: make(knowledge.Set, tc.args)}.Crowded())
+			assert.Equal(t, tc.want, knowledge.Folder{Compactable: tc.args}.Crowded())
 		})
 	}
 }

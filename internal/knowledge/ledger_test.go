@@ -948,12 +948,17 @@ func TestLedgerFolder(t *testing.T) {
 	korean.Content = strings.Repeat("가", 60)
 	emoji := candidate
 	emoji.Content = strings.Repeat("🙂", 60)
-	crowd := make([]knowledge.Knowledge, 0, 6)
+	crowd := make([]knowledge.Knowledge, 0, 5)
+	replayed := make([]knowledge.Knowledge, 0, 5)
 	for _, id := range []string{"k-a", "k-b", "k-c", "k-d", "k-e"} {
 		k := neighbour
 		k.ID = id
 		crowd = append(crowd, k)
+		k.Evidence = knowledge.Evidence{FeedbackTraceIDs: []string{"t-" + id}}
+		replayed = append(replayed, k)
 	}
+	anchor := oldVersion
+	anchor.Evidence = knowledge.Evidence{FeedbackTraceIDs: []string{"t-k1"}}
 	type args struct {
 		seeds   []knowledge.Knowledge
 		version int
@@ -1014,14 +1019,24 @@ func TestLedgerFolder(t *testing.T) {
 			want{knowledge.Folder{Chars: 143, Items: knowledge.Set{}}, false, nil},
 		},
 		{
-			"five items with the item are not crowded",
-			args{append(slices.Clone(crowd[:4]), candidate), 1},
-			want{knowledge.Folder{Chars: 143 + 4*144, Items: knowledge.Set(crowd[:4])}, false, nil},
+			"five replayable items with an approved replayable item are not crowded",
+			args{append(slices.Clone(replayed[:4]), anchor), 1},
+			want{knowledge.Folder{Chars: 143 + 4*144, Items: knowledge.Set(replayed[:4]), Compactable: 5}, false, nil},
 		},
 		{
-			"six items with the item are crowded",
-			args{append(slices.Clone(crowd), candidate), 1},
-			want{knowledge.Folder{Chars: 143 + 5*144, Items: knowledge.Set(crowd)}, true, nil},
+			"six replayable items with an approved replayable item are crowded",
+			args{append(slices.Clone(replayed), anchor), 1},
+			want{knowledge.Folder{Chars: 143 + 5*144, Items: knowledge.Set(replayed), Compactable: 6}, true, nil},
+		},
+		{
+			"items that cite only paragraphs never count toward a compaction",
+			args{append(slices.Clone(crowd), anchor), 1},
+			want{knowledge.Folder{Chars: 143 + 5*144, Items: knowledge.Set(crowd), Compactable: 1}, false, nil},
+		},
+		{
+			"a candidate is never crowded because only an approved item anchors a compaction",
+			args{append(slices.Clone(replayed), candidate), 1},
+			want{knowledge.Folder{Chars: 143 + 5*144, Items: knowledge.Set(replayed)}, false, nil},
 		},
 		{
 			"an unknown version is not found",
