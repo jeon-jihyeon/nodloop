@@ -337,6 +337,10 @@ func TestLedgerApprove(t *testing.T) {
 	drafted.Drafted = true
 	draftedApproved := approvedNow
 	draftedApproved.Drafted = true
+	compacted := candidate
+	compacted.Compaction, compacted.CompactionSize = "c-1", 1
+	compactedApproved := compacted
+	compactedApproved.Status, compactedApproved.Approver, compactedApproved.ApprovedAt = knowledge.StatusApproved, "ann", at
 	// Its text alone nearly fills ReviewChars in runes so any other item of its folder overflows it
 	large := approved
 	large.ID, large.Content = "k-large", strings.Repeat("가", knowledge.ReviewChars-50)
@@ -426,6 +430,11 @@ func TestLedgerApprove(t *testing.T) {
 			"superseded version cannot be approved",
 			args{[]knowledge.Knowledge{candidate, approved, superseded}, 1, "jed"},
 			want{history: knowledge.Set{superseded, approved, candidate}, err: knowledge.ErrTransitionInvalid},
+		},
+		{
+			"an approved item of a finished compaction cannot be approved again",
+			args{[]knowledge.Knowledge{compacted, compactedApproved}, 1, "jed"},
+			want{history: knowledge.Set{compactedApproved, compacted}, err: knowledge.ErrTransitionInvalid},
 		},
 	}
 	ctx := context.Background()
