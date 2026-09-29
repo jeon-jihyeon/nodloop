@@ -740,15 +740,29 @@ func TestServerProposeFolder(t *testing.T) {
 	full, err := call("propose", item("k-large", strings.Repeat("x", knowledge.ReviewChars-50)))
 	require.NoError(t, err)
 	_, refused := call("approve", approve("k-large"))
-	// Five approved items in the folder and a sixth makes a compaction due
-	var fifth folder
-	for _, id := range []string{"k-b", "k-c", "k-d", "k-e"} {
-		_, err = call("propose", item(id, "item "+id))
-		require.NoError(t, err)
-		fifth, err = call("approve", approve(id))
-		require.NoError(t, err)
+	// Items an event can replay count toward a compaction and items that cite only paragraphs never do
+	replayable := func(id string, status knowledge.Status) knowledge.Knowledge {
+		k := knowledge.Knowledge{
+			ID: id, Version: 1, Kind: knowledge.KindMeaning, Content: "item " + id,
+			Scope:    knowledge.Scope{Scope: evidence.Scope{Metrics: scope}},
+			Evidence: knowledge.Evidence{FeedbackTraceIDs: []string{"t-" + id}}, Basis: knowledge.BasisStated,
+			Status: status, Author: "author", Time: st.Clock.Now(),
+		}
+		if status == knowledge.StatusApproved {
+			k.Approver, k.ApprovedAt = "ann", st.Clock.Now()
+		}
+		return k
 	}
-	sixth, err := call("approve", approve("k-second"))
+	require.NoError(t, st.Ledger.Import(context.Background(), []knowledge.Knowledge{
+		replayable("k-b", knowledge.StatusApproved), replayable("k-c", knowledge.StatusApproved),
+		replayable("k-d", knowledge.StatusApproved), replayable("k-e", knowledge.StatusApproved),
+		replayable("k-f", knowledge.StatusCandidate), replayable("k-g", knowledge.StatusCandidate),
+	}))
+	fifth, err := call("approve", approve("k-f"))
+	require.NoError(t, err)
+	sixth, err := call("approve", approve("k-g"))
+	require.NoError(t, err)
+	paragraphOnly, err := call("approve", approve("k-second"))
 	require.NoError(t, err)
 
 	assert.Equal(t, folder{Chars: 84, Budget: knowledge.ReviewChars, Items: []string{}}, first)
@@ -758,8 +772,9 @@ func TestServerProposeFolder(t *testing.T) {
 	assert.EqualError(t, refused, testkit.ErrTool.Error()+
 		": knowledge: folder may outgrow the review: 70089 of 70000 chars with k-first v1 84 chars")
 	assert.False(t, fifth.CompactionDue)
-	assert.Equal(t, []string{"k-b", "k-c", "k-d", "k-e", "k-first"}, sixth.Items)
+	assert.Equal(t, []string{"k-b", "k-c", "k-d", "k-e", "k-f", "k-first"}, sixth.Items)
 	assert.True(t, sixth.CompactionDue)
+	assert.False(t, paragraphOnly.CompactionDue)
 }
 
 // The answers are captured from the demo data and from a fixture event with more rows than the limit

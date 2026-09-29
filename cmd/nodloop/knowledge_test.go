@@ -363,18 +363,23 @@ func TestRunKnowledge(t *testing.T) {
 		{
 			"approve prints the folder and says when a compaction is due",
 			args{
-				setup: [][]string{
-					proposeAgg, approveAgg, proposeAgg2, {"approve", "k-agg2", "--version", "1", "--approver", "reviewer"},
-					proposeNamed("k-a3"), approveNamed("k-a3"), proposeNamed("k-a4"), approveNamed("k-a4"),
-					proposeNamed("k-a5"), approveNamed("k-a5"), proposeNamed("k-a6"),
-				},
-				args: approveNamed("k-a6"),
+				setup: [][]string{{"import", "--file", "testdata/crowded.jsonl"}},
+				args:  approveNamed("k-r6"),
 			},
 			want{
-				0, "^k-a6\tv1\tapproved\treviewer\nfolder\t[0-9]+ of 70000 chars\t6 items\t.*\n" +
-					"compaction due\tthe folder holds more than 5 approved items\\. Run nodloop knowledge compact k-a6\n$",
+				0, "^k-r6\tv1\tapproved\treviewer\nfolder\t[0-9]+ of 70000 chars\t6 items\t.*\n" +
+					"compaction due\tthe folder holds more than 5 approved items an event can replay\\. " +
+					"Run nodloop knowledge compact k-r6\n$",
 				`^$`,
 			},
+		},
+		{
+			"an item that cites only paragraphs never makes a compaction due since it cannot anchor one",
+			args{
+				setup: [][]string{{"import", "--file", "testdata/crowded.jsonl"}, proposeNamed("k-p")},
+				args:  approveNamed("k-p"),
+			},
+			want{0, "^k-p\tv1\tapproved\treviewer\nfolder\t[0-9]+ of 70000 chars\t6 items\t.*\n$", `^$`},
 		},
 		{
 			"unknown flag fails",
