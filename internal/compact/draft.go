@@ -115,6 +115,25 @@ func (it Item) knowledge(items, excluded knowledge.Set, author string) (knowledg
 	}, nil
 }
 
+// Refusals the model can fix by writing another draft
+// Store failures and refusals about the folder itself are returned at once
+type refusals []error
+
+var fixable = refusals{
+	knowledge.ErrCompactionInvalid, knowledge.ErrCompactionOverlap, knowledge.ErrCompactionVeto,
+	knowledge.ErrKindUnknown, knowledge.ErrContentRequired, knowledge.ErrParagraphOnly,
+	knowledge.ErrVetoKind, knowledge.ErrVetoInvalid, knowledge.ErrVetoExample,
+}
+
+func (rs refusals) has(err error) bool {
+	for _, r := range rs {
+		if errors.Is(err, r) {
+			return true
+		}
+	}
+	return false
+}
+
 // One model call writes the draft and code proposes it
 // A refusal of the code checks is sent back once with its text like record sends a review back once
 // The second refusal is returned as it is
@@ -132,8 +151,7 @@ func (c *Compactor) Draft(ctx context.Context, client llm.Client, f Folder, mode
 		return knowledge.Compaction{}, err
 	}
 	proposed, _, err := c.propose(ctx, f, d, author)
-	if !errors.Is(err, knowledge.ErrCompactionInvalid) && !errors.Is(err, knowledge.ErrCompactionOverlap) &&
-		!errors.Is(err, knowledge.ErrCompactionVeto) {
+	if !fixable.has(err) {
 		return proposed, err
 	}
 	if d, err = c.complete(ctx, client, redraftPrompt(prompt, d, err), model); err != nil {

@@ -240,6 +240,7 @@ func TestDraft(t *testing.T) {
 		err    error
 	}
 	answer := `{"items":[{"kind":"meaning","content":"lag and basis","metrics":["conversion_count"],"from":["a","b"]}]}`
+	empty := `{"items":[{"kind":"meaning","content":"","metrics":["conversion_count"],"from":["a","b"]}]}`
 	overlap := `{"items":[{"id":"a","kind":"meaning","content":"lag","from":["a"]},` +
 		`{"id":"b","kind":"meaning","content":"basis","from":["b"]}]}`
 	tcs := []struct {
@@ -255,6 +256,11 @@ func TestDraft(t *testing.T) {
 		{
 			"a refused draft is sent back once and the fix is proposed",
 			args{anchor: "a", outputs: []string{overlap, answer}},
+			want{[]string{"k-generated"}, 2, 1, nil},
+		},
+		{
+			"a draft refused for its content is sent back once and the fix is proposed",
+			args{anchor: "a", outputs: []string{empty, answer}},
 			want{[]string{"k-generated"}, 2, 1, nil},
 		},
 		{
