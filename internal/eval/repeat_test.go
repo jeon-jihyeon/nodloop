@@ -211,9 +211,9 @@ func TestRepeatedReport(t *testing.T) {
 			assert.Equal(t, tc.want.repeats, repeats)
 			require.Len(t, rep.Stability, 2)
 			got := rep.Stability[1]
-			assert.Equal(t, tc.want.mean, got.Mean)
-			assert.Equal(t, tc.want.lowest, got.Min)
-			assert.Equal(t, tc.want.highest, got.Max)
+			assert.Equal(t, tc.want.mean, got.StatusAccuracyMean)
+			assert.Equal(t, tc.want.lowest, got.StatusAccuracyMin)
+			assert.Equal(t, tc.want.highest, got.StatusAccuracyMax)
 			assert.Equal(t, []eval.EventAgreement{
 				{EventID: "tq-003", Runs: 2, Agreement: tc.want.agreeing},
 				{EventID: "tq-004", Runs: 2, Agreement: tc.want.agreeing},

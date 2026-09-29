@@ -142,15 +142,15 @@ func (e EventAgreement) compare(other EventAgreement) int {
 
 // One condition across the repeats
 type Stability struct {
-	Condition      Condition        `json:"condition"`
-	Runs           int              `json:"runs"`
-	Mean           float64          `json:"status_accuracy_mean"`
-	Min            float64          `json:"status_accuracy_min"`
-	Max            float64          `json:"status_accuracy_max"`
-	MisappliedMean float64          `json:"misapplied_mean"`
-	MisappliedMin  int              `json:"misapplied_min"`
-	MisappliedMax  int              `json:"misapplied_max"`
-	Events         []EventAgreement `json:"events"`
+	Condition          Condition        `json:"condition"`
+	Runs               int              `json:"runs"`
+	StatusAccuracyMean float64          `json:"status_accuracy_mean"`
+	StatusAccuracyMin  float64          `json:"status_accuracy_min"`
+	StatusAccuracyMax  float64          `json:"status_accuracy_max"`
+	MisappliedMean     float64          `json:"misapplied_mean"`
+	MisappliedMin      int              `json:"misapplied_min"`
+	MisappliedMax      int              `json:"misapplied_max"`
+	Events             []EventAgreement `json:"events"`
 }
 
 // Scores every repeat of the session
@@ -240,7 +240,7 @@ type answer struct {
 func (rs runs) stability() []Stability {
 	var out []Stability
 	for _, cond := range allConditions() {
-		s := Stability{Condition: cond, Min: 1}
+		s := Stability{Condition: cond, StatusAccuracyMin: 1}
 		counts := map[string]map[answer]int{}
 		for _, run := range rs {
 			for _, summary := range run.Summaries {
@@ -258,7 +258,7 @@ func (rs runs) stability() []Stability {
 		if s.Runs == 0 {
 			continue
 		}
-		s.Mean /= float64(s.Runs)
+		s.StatusAccuracyMean /= float64(s.Runs)
 		s.MisappliedMean /= float64(s.Runs)
 		for id, answers := range counts {
 			var total, most int
@@ -280,9 +280,9 @@ func (s *Stability) add(summary Summary) {
 		s.MisappliedMin = summary.Misapplications
 	}
 	s.Runs++
-	s.Mean += summary.StatusAccuracy
-	s.Min = min(s.Min, summary.StatusAccuracy)
-	s.Max = max(s.Max, summary.StatusAccuracy)
+	s.StatusAccuracyMean += summary.StatusAccuracy
+	s.StatusAccuracyMin = min(s.StatusAccuracyMin, summary.StatusAccuracy)
+	s.StatusAccuracyMax = max(s.StatusAccuracyMax, summary.StatusAccuracy)
 	s.MisappliedMean += float64(summary.Misapplications)
 	s.MisappliedMin = min(s.MisappliedMin, summary.Misapplications)
 	s.MisappliedMax = max(s.MisappliedMax, summary.Misapplications)
@@ -296,7 +296,8 @@ func (rep Report) repeatTable() string {
 	b.WriteString("Repeated metrics\n\n| condition | runs | status mean | status min | status max | misapplied mean | misapplied min | misapplied max |\n|---|---|---|---|---|---|---|---|\n")
 	for _, s := range rep.Stability {
 		fmt.Fprintf(&b, "| %s | %d | %.3f | %.3f | %.3f | %.3f | %d | %d |\n",
-			s.Condition, s.Runs, s.Mean, s.Min, s.Max, s.MisappliedMean, s.MisappliedMin, s.MisappliedMax)
+			s.Condition, s.Runs, s.StatusAccuracyMean, s.StatusAccuracyMin, s.StatusAccuracyMax,
+			s.MisappliedMean, s.MisappliedMin, s.MisappliedMax)
 	}
 	b.WriteString("\n| condition | event | observed runs | status agreement |\n|---|---|---|---|\n")
 	for _, s := range rep.Stability {
