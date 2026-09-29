@@ -96,10 +96,12 @@ func (s Set) Applicable(changeContext evidence.Context, moved Moved, dims Dims) 
 // Whether some approved item may apply under the change context
 // Metrics and dims are left open so the answer is an upper bound of Applicable
 func (s Set) Covers(changeContext evidence.Context) bool {
-	return slices.ContainsFunc(s.Approved(), func(k Knowledge) bool {
-		return !slices.Contains(k.Exceptions, changeContext) &&
-			(len(k.Scope.ChangeContexts) == 0 || slices.Contains(k.Scope.ChangeContexts, changeContext))
-	})
+	for _, k := range s.Current() {
+		if k.mayApply(changeContext) {
+			return true
+		}
+	}
+	return false
 }
 
 // The approved items one review may carry together with the item

@@ -45,6 +45,27 @@ func TestScopeMatches(t *testing.T) {
 	}
 }
 
+func TestScopeMatchesContext(t *testing.T) {
+	planned := []evidence.Context{evidence.ContextPlannedChange}
+	unknown := []evidence.Context{evidence.ContextUnknown}
+	tcs := []struct {
+		name string
+		args evidence.Scope
+		want bool
+	}{
+		{"an empty scope matches the context", evidence.Scope{}, true},
+		{"a metric scope leaves the context open", evidence.Scope{Metrics: []string{"m"}}, true},
+		{"a context scope holding the context matches", evidence.Scope{ChangeContexts: planned}, true},
+		{"a context scope without the context misses", evidence.Scope{ChangeContexts: unknown}, false},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.want, tc.args.MatchesContext(evidence.ContextPlannedChange))
+		})
+	}
+}
+
 func TestScopeIntersects(t *testing.T) {
 	type args struct {
 		ours, theirs evidence.Scope
