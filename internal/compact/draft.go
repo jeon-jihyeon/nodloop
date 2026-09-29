@@ -153,7 +153,7 @@ func (c *Compactor) Draft(ctx context.Context, client llm.Client, f Folder, mode
 	if !fixable.has(err) {
 		return proposed, err
 	}
-	if d, err = c.complete(ctx, client, redraftPrompt(prompt, d, err), model); err != nil {
+	if d, err = c.complete(ctx, client, d.redraftPrompt(prompt, err), model); err != nil {
 		return knowledge.Compaction{}, err
 	}
 	proposed, _, err = c.propose(ctx, f, d, author)
@@ -173,7 +173,7 @@ func (c *Compactor) complete(ctx context.Context, client llm.Client, prompt, mod
 }
 
 // The prompt of the second call: the first draft and why code refused it
-func redraftPrompt(prompt string, d Draft, refusal error) string {
+func (d Draft) redraftPrompt(prompt string, refusal error) string {
 	previous, _ := json.Marshal(d)
 	var b strings.Builder
 	b.WriteString(prompt)
