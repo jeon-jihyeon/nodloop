@@ -5,7 +5,7 @@ import (
 	"strings"
 )
 
-// The events a procedure or a knowledge item is written for
+// The events named by change context and metric
 // Every set axis must match and an empty axis matches every event
 type Scope struct {
 	ChangeContexts []Context `json:"change_contexts,omitempty" yaml:"change_contexts"`
@@ -61,7 +61,7 @@ func (s Scope) admitsMetrics(metrics []string) bool {
 	return false
 }
 
-// One line for a list and the context text
+// The set axes in words and any event when none is set
 func (s Scope) String() string {
 	var parts []string
 	if len(s.ChangeContexts) > 0 {
