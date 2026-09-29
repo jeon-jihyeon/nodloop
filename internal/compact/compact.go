@@ -112,6 +112,14 @@ func (c *Compactor) Folder(ctx context.Context, anchor string) (Folder, error) {
 	return f, nil
 }
 
+// Approval needs a replay so a folder without an expected status cannot be compacted
+func (f Folder) replayable() error {
+	if len(f.Replay) == 0 {
+		return fmt.Errorf("%w: %s", ErrNothingToReplay, f.Anchor)
+	}
+	return nil
+}
+
 // Proposes the draft as a compaction of the anchor's folder and returns it with the events its replay reviews
 // 1. an item that names an excluded item fails with knowledge ErrParagraphOnly
 // 2. a folder whose events all lack an expectation fails with ErrNothingToReplay because approval needs a replay
@@ -125,8 +133,8 @@ func (c *Compactor) Propose(ctx context.Context, anchor string, d Draft, author 
 }
 
 func (c *Compactor) propose(ctx context.Context, f Folder, d Draft, author string) (knowledge.Compaction, []Expectation, error) {
-	if len(f.Replay) == 0 {
-		return knowledge.Compaction{}, nil, fmt.Errorf("%w: %s", ErrNothingToReplay, f.Anchor)
+	if err := f.replayable(); err != nil {
+		return knowledge.Compaction{}, nil, err
 	}
 	drafts := make([]knowledge.Knowledge, 0, len(d.Items))
 	for _, item := range d.Items {

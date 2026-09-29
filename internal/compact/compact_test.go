@@ -223,6 +223,8 @@ func TestPropose(t *testing.T) {
 
 func TestDraft(t *testing.T) {
 	type args struct {
+		// The folder the draft compacts
+		anchor string
 		// Proposed on the anchor a before the folder is read
 		first []compact.Draft
 		// Model answers in call order
@@ -247,30 +249,35 @@ func TestDraft(t *testing.T) {
 	}{
 		{
 			"a valid draft is proposed after one call",
-			args{outputs: []string{answer}},
+			args{anchor: "a", outputs: []string{answer}},
 			want{[]string{"k-generated"}, 1, 0, nil},
 		},
 		{
 			"a refused draft is sent back once and the fix is proposed",
-			args{outputs: []string{overlap, answer}},
+			args{anchor: "a", outputs: []string{overlap, answer}},
 			want{[]string{"k-generated"}, 2, 1, nil},
 		},
 		{
 			"a second refusal is returned as it is",
-			args{outputs: []string{overlap, overlap}},
+			args{anchor: "a", outputs: []string{overlap, overlap}},
 			want{nil, 2, 1, knowledge.ErrCompactionOverlap},
 		},
-		{"output outside the schema fails", args{outputs: []string{`[]`}}, want{nil, 1, 0, compact.ErrDraftInvalid}},
+		{"output outside the schema fails", args{anchor: "a", outputs: []string{`[]`}}, want{nil, 1, 0, compact.ErrDraftInvalid}},
 		{
 			"a sent back output outside the schema fails",
-			args{outputs: []string{overlap, `[]`}},
+			args{anchor: "a", outputs: []string{overlap, `[]`}},
 			want{nil, 2, 1, compact.ErrDraftInvalid},
 		},
-		{"a model failure is returned", args{outputs: []string{""}, err: assert.AnError}, want{nil, 1, 0, assert.AnError}},
+		{"a model failure is returned", args{anchor: "a", outputs: []string{""}, err: assert.AnError}, want{nil, 1, 0, assert.AnError}},
 		{
 			"a folder with a pending compaction is refused before the model call",
-			args{first: []compact.Draft{merged}},
+			args{anchor: "a", first: []compact.Draft{merged}},
 			want{nil, 0, 0, knowledge.ErrCompactionPending},
+		},
+		{
+			"a folder without an expected status is refused before the model call",
+			args{anchor: "far"},
+			want{nil, 0, 0, compact.ErrNothingToReplay},
 		},
 	}
 	ctx := context.Background()
@@ -284,7 +291,7 @@ func TestDraft(t *testing.T) {
 				_, _, err := c.Propose(ctx, "a", d, "")
 				require.NoError(t, err)
 			}
-			folder, err := c.Folder(ctx, "a")
+			folder, err := c.Folder(ctx, tc.args.anchor)
 			require.NoError(t, err)
 			var prompts []string
 			client := llmmock.NewMockClient(gomock.NewController(t))
