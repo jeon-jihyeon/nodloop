@@ -313,3 +313,27 @@ func TestSetOverlaps(t *testing.T) {
 		})
 	}
 }
+
+func TestSetFind(t *testing.T) {
+	t.Parallel()
+	set := knowledge.Set{{ID: "k-a", Version: 2}, {ID: "k-b", Version: 1}, {ID: "k-a", Version: 1}}
+	type want struct {
+		found   bool
+		version int
+	}
+	tcs := []struct {
+		name string
+		args string
+		want want
+	}{
+		{"the first listed record of the id is found", "k-a", want{true, 2}},
+		{"an unknown id is not found", "k-z", want{false, 0}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			k, found := set.Find(tc.args)
+			assert.Equal(t, tc.want, want{found, k.Version})
+		})
+	}
+}
