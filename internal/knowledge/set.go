@@ -41,18 +41,8 @@ func (s Set) Versions() Set {
 // 3. otherwise the newest candidate
 // Retired and superseded versions are never current
 func (s Set) Current() Set {
-	type key struct {
-		id      string
-		version int
-	}
-	latest := map[key]Knowledge{}
-	for _, k := range s {
-		if _, ok := latest[key{k.ID, k.Version}]; !ok {
-			latest[key{k.ID, k.Version}] = k
-		}
-	}
 	byID := map[string]Knowledge{}
-	for _, k := range latest {
+	for _, k := range s.Versions() {
 		if cur, ok := byID[k.ID]; !ok || k.outranks(cur.Status, cur.Version) {
 			byID[k.ID] = k
 		}
