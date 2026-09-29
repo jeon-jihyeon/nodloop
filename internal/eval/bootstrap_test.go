@@ -38,11 +38,13 @@ func TestReportPairs(t *testing.T) {
 			args{repeats: [][]string{{"repeat:1"}, {"repeat:2"}, {"repeat:3"}}},
 			want{pairs: 6, stability: []eval.Stability{
 				{
-					Condition: eval.ConditionExamples, Runs: 3, Mean: 0.5, Min: 0.5, Max: 0.5,
+					Condition: eval.ConditionExamples, Runs: 3,
+					StatusAccuracyMean: 0.5, StatusAccuracyMin: 0.5, StatusAccuracyMax: 0.5,
 					MisappliedMean: 4, MisappliedMin: 2, MisappliedMax: 6, Events: agreed,
 				},
 				{
-					Condition: eval.ConditionKnowledge, Runs: 3, Mean: 1, Min: 1, Max: 1,
+					Condition: eval.ConditionKnowledge, Runs: 3,
+					StatusAccuracyMean: 1, StatusAccuracyMin: 1, StatusAccuracyMax: 1,
 					MisappliedMean: 4, MisappliedMin: 2, MisappliedMax: 6, Events: agreed,
 				},
 			}},
