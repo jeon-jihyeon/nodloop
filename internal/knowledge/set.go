@@ -117,11 +117,18 @@ func (s Set) Covers(changeContext evidence.Context) bool {
 // Another version of the item never counts because approval replaces it
 func (s Set) folder(item Knowledge) Folder {
 	f := Folder{Chars: utf8.RuneCountInString(item.Text()), Items: Set{}}
+	replayable := 1
 	for _, other := range s.Approved() {
 		if other.ID != item.ID && item.sharesFolder(other) {
 			f.Items = append(f.Items, other)
 			f.Chars += utf8.RuneCountInString(other.Text())
+			if other.Evidence.Replayable() {
+				replayable++
+			}
 		}
+	}
+	if item.Status == StatusApproved && item.Evidence.Replayable() {
+		f.Compactable = replayable
 	}
 	return f
 }
