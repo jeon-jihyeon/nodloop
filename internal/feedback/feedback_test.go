@@ -19,6 +19,7 @@ func TestFeedbackRoundTrip(t *testing.T) {
 		Reason:   "reorder checks",
 		Edited:   json.RawMessage(`{"order":["db","cache"]}`),
 		Reviewer: "author",
+		Audit:    true,
 	}
 	b, err := json.Marshal(in)
 	require.NoError(t, err)
@@ -127,6 +128,24 @@ func TestFeedbackCorrects(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			assert.Equal(t, tc.want, feedback.Feedback{Verdict: tc.args}.Corrects())
+		})
+	}
+}
+
+func TestFeedbackImplicit(t *testing.T) {
+	tcs := []struct {
+		name string
+		args string
+		want bool
+	}{
+		{"session reviewer is implicit", feedback.ReviewerSession, true},
+		{"author reviewer is a person", feedback.ReviewerAuthor, false},
+		{"named reviewer is a person", "jed", false},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.want, feedback.Feedback{Reviewer: tc.args}.Implicit())
 		})
 	}
 }

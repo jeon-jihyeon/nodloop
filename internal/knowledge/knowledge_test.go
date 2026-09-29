@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeon-jihyeon/nodloop/internal/evidence"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge/file"
 	vetofile "github.com/jeon-jihyeon/nodloop/internal/veto/file"
@@ -96,10 +97,57 @@ func TestKnowledgeValidate(t *testing.T) {
 			store, err := file.New(t.TempDir())
 			require.NoError(t, err)
 			l := knowledge.NewLedger(
-				store, vetofile.NewApprovedFile(t.TempDir(), "records"), knowledge.ReviewChars,
-				func() time.Time { return at }, func() string { return "k-new" },
+				store, vetofile.NewApprovedFile(t.TempDir(), "records"),
+				func() time.Time { return at }, func(prefix string) string { return prefix + "new" },
 			)
 			assert.ErrorIs(t, l.Import(ctx, []knowledge.Knowledge{tc.args}), tc.want)
+		})
+	}
+}
+
+func TestKnowledgeFilled(t *testing.T) {
+	filled := knowledge.Knowledge{
+		Scope: knowledge.Scope{Scope: evidence.Scope{
+			ChangeContexts: []evidence.Context{evidence.ContextNoKnownChange}, Metrics: []string{"click_count"},
+		}},
+		Evidence: knowledge.Evidence{FeedbackTraceIDs: []string{"t1"}},
+		Basis:    knowledge.BasisStated,
+	}
+	tcs := []struct {
+		name string
+		args knowledge.Knowledge
+		want knowledge.Knowledge
+	}{
+		{"an empty draft takes every filled field", knowledge.Knowledge{Content: "c"}, func() knowledge.Knowledge {
+			k := filled
+			k.Content = "c"
+			return k
+		}()},
+		{
+			"a set axis replaces the filled one and evidence adds up without repeats",
+			knowledge.Knowledge{
+				Scope: knowledge.Scope{
+					Scope: evidence.Scope{Metrics: []string{"conversion_count"}}, Dims: map[string]string{"platform": "ios"},
+				},
+				Evidence: knowledge.Evidence{FeedbackTraceIDs: []string{"t1", "t2"}, ParagraphIDs: []string{"p#1"}},
+				Basis:    knowledge.BasisVerified,
+			},
+			knowledge.Knowledge{
+				Scope: knowledge.Scope{
+					Scope: evidence.Scope{
+						ChangeContexts: []evidence.Context{evidence.ContextNoKnownChange}, Metrics: []string{"conversion_count"},
+					},
+					Dims: map[string]string{"platform": "ios"},
+				},
+				Evidence: knowledge.Evidence{FeedbackTraceIDs: []string{"t1", "t2"}, ParagraphIDs: []string{"p#1"}},
+				Basis:    knowledge.BasisVerified,
+			},
+		},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.want, tc.args.Filled(filled.Scope, filled.Evidence, filled.Basis))
 		})
 	}
 }

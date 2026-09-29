@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 )
 
@@ -40,27 +41,52 @@ func Open[T any](dir, name string) (File[T], error) {
 }
 
 func (f File[T]) Append(v T) error {
+	return f.append(v, nil)
+}
+
+// Appends only while the file holds exactly the records the caller read in file order
+// The check runs under the lock of the append so no writer slips in between
+// Fails with ErrChanged otherwise so the caller reads again and decides again
+func (f File[T]) AppendIfUnchanged(v T, expected []T) error {
+	return f.append(v, func(data []byte) error {
+		current, err := f.decode(data)
+		if err != nil {
+			return err
+		}
+		if !slices.EqualFunc(current, expected, func(a, b T) bool { return reflect.DeepEqual(a, b) }) {
+			return ErrChanged
+		}
+		return nil
+	})
+}
+
+func (f File[T]) append(v T, check func([]byte) error) error {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return fmt.Errorf("%s: %w", f.name(), err)
 	}
-	file, err := os.OpenFile(f.path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, perms)
+	file, err := os.OpenFile(f.path, os.O_CREATE|os.O_APPEND|os.O_RDWR, perms)
 	if err != nil {
 		return fmt.Errorf("%s: %w", f.name(), err)
 	}
-	if err = errors.Join(f.write(file, append(b, '\n')), file.Close()); err != nil {
+	if err = errors.Join(f.write(file, append(b, '\n'), check), file.Close()); err != nil {
 		return fmt.Errorf("%s: %w", f.name(), err)
 	}
 	return nil
 }
 
-func (f File[T]) write(file *os.File, record []byte) error {
+func (f File[T]) write(file *os.File, record []byte, check func([]byte) error) error {
 	if err := lock(file); err != nil {
 		return err
 	}
 	data, err := os.ReadFile(f.path)
 	if err != nil {
 		return err
+	}
+	if check != nil {
+		if err := check(data); err != nil {
+			return err
+		}
 	}
 	end := bytes.LastIndexByte(data, '\n') + 1
 	if tail := data[end:]; len(tail) > 0 && f.torn(tail) {
@@ -91,6 +117,10 @@ func (f File[T]) All(checks ...func(T) error) ([]T, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", f.name(), err)
 	}
+	return f.decode(data, checks...)
+}
+
+func (f File[T]) decode(data []byte, checks ...func(T) error) ([]T, error) {
 	var all []T
 	line := 0
 	for raw := range bytes.Lines(data) {
@@ -103,11 +133,11 @@ func (f File[T]) All(checks ...func(T) error) ([]T, error) {
 			continue
 		}
 		var v T
-		if err = json.Unmarshal(raw, &v); err != nil {
+		if err := json.Unmarshal(raw, &v); err != nil {
 			return nil, fmt.Errorf("%s line %d: %w", f.name(), line, err)
 		}
 		for _, check := range checks {
-			if err = check(v); err != nil {
+			if err := check(v); err != nil {
 				return nil, fmt.Errorf("%s line %d: %w", f.name(), line, err)
 			}
 		}

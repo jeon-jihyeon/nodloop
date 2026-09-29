@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -50,8 +51,8 @@ func TestLedgerApproved(t *testing.T) {
 	store, err := file.New(t.TempDir())
 	require.NoError(t, err)
 	l := knowledge.NewLedger(
-		store, vetofile.NewApprovedFile(t.TempDir(), "records"), knowledge.ReviewChars,
-		func() time.Time { return at }, func() string { return "k-new" },
+		store, vetofile.NewApprovedFile(t.TempDir(), "records"),
+		func() time.Time { return at }, func(prefix string) string { return prefix + "new" },
 	)
 	require.NoError(t, l.Import(ctx, []knowledge.Knowledge{candidate, approved, other}))
 	for _, tc := range tcs {
@@ -60,6 +61,50 @@ func TestLedgerApproved(t *testing.T) {
 			got, err := l.Approved(ctx, tc.args.id, tc.args.version)
 			assert.ErrorIs(t, err, tc.want.err)
 			assert.Equal(t, tc.want.knowledge, got)
+		})
+	}
+}
+
+func TestLedgerApprovedVersion(t *testing.T) {
+	at := time.Date(2026, 9, 22, 0, 0, 0, 0, time.UTC)
+	first := knowledge.Knowledge{
+		ID: "k1", Version: 1, Kind: knowledge.KindMeaning, Content: "one",
+		Evidence: knowledge.Evidence{ParagraphIDs: []string{"p#1"}}, Basis: knowledge.BasisStated,
+		Status: knowledge.StatusApproved, Approver: "jed", ApprovedAt: at, Author: "author", Time: at,
+	}
+	second := first
+	second.Version = 2
+	candidate := first
+	candidate.Version, candidate.Status = 3, knowledge.StatusCandidate
+	other := candidate
+	other.ID, other.Version = "k2", 1
+	type want struct {
+		version int
+		err     error
+	}
+	tcs := []struct {
+		name string
+		args string
+		want want
+	}{
+		{"the approved version wins over older approvals and a newer candidate", "k1", want{version: 2}},
+		{"an id without an approved version fails", "k2", want{err: knowledge.ErrVersionUnapproved}},
+		{"an unknown id is not found", "nope", want{err: knowledge.ErrNotFound}},
+	}
+	ctx := context.Background()
+	store, err := file.New(t.TempDir())
+	require.NoError(t, err)
+	l := knowledge.NewLedger(
+		store, vetofile.NewApprovedFile(t.TempDir(), "records"),
+		func() time.Time { return at }, func(prefix string) string { return prefix + "new" },
+	)
+	require.NoError(t, l.Import(ctx, []knowledge.Knowledge{first, second, candidate, other}))
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := l.ApprovedVersion(ctx, tc.args)
+			assert.ErrorIs(t, err, tc.want.err)
+			assert.Equal(t, tc.want.version, got)
 		})
 	}
 }
@@ -91,8 +136,8 @@ func TestLedgerHistory(t *testing.T) {
 	store, err := file.New(t.TempDir())
 	require.NoError(t, err)
 	l := knowledge.NewLedger(
-		store, vetofile.NewApprovedFile(t.TempDir(), "records"), knowledge.ReviewChars,
-		func() time.Time { return at }, func() string { return "k-new" },
+		store, vetofile.NewApprovedFile(t.TempDir(), "records"),
+		func() time.Time { return at }, func(prefix string) string { return prefix + "new" },
 	)
 	require.NoError(t, l.Import(ctx, []knowledge.Knowledge{candidate, other, approved}))
 	for _, tc := range tcs {
@@ -132,8 +177,8 @@ func TestLedgerOverlaps(t *testing.T) {
 	store, err := file.New(t.TempDir())
 	require.NoError(t, err)
 	l := knowledge.NewLedger(
-		store, vetofile.NewApprovedFile(t.TempDir(), "records"), knowledge.ReviewChars,
-		func() time.Time { return at }, func() string { return "k-new" },
+		store, vetofile.NewApprovedFile(t.TempDir(), "records"),
+		func() time.Time { return at }, func(prefix string) string { return prefix + "new" },
 	)
 	require.NoError(t, l.Import(ctx, []knowledge.Knowledge{k1, k2, retired}))
 	for _, tc := range tcs {
@@ -151,7 +196,7 @@ func TestLedgerPropose(t *testing.T) {
 	at := now.Add(-time.Hour)
 	draft := knowledge.Knowledge{
 		ID: "k1", Kind: knowledge.KindMeaning, Content: "clicks and conversions use different time bases",
-		Scope:    knowledge.Scope{Metrics: []string{"conversion_count"}},
+		Scope:    knowledge.Scope{Scope: evidence.Scope{Metrics: []string{"conversion_count"}}},
 		Evidence: knowledge.Evidence{ParagraphIDs: []string{"p#1"}}, Author: "author",
 	}
 	proposed := draft
@@ -179,6 +224,10 @@ func TestLedgerPropose(t *testing.T) {
 	neighbour.ID = "k2"
 	empty := draft
 	empty.Content = ""
+	drafted := draft
+	drafted.Drafted = true
+	proposedDrafted := proposed
+	proposedDrafted.Drafted = true
 	none, just := knowledge.Set{}, knowledge.Set{proposed}
 	type args struct {
 		seeds []knowledge.Knowledge
@@ -219,6 +268,11 @@ func TestLedgerPropose(t *testing.T) {
 			want{proposed, knowledge.Set{neighbour}, knowledge.Set{proposed, neighbour}, nil},
 		},
 		{"invalid draft is not appended", args{draft: empty}, want{err: knowledge.ErrContentRequired}},
+		{
+			"content a model drafted stays marked",
+			args{draft: drafted},
+			want{proposedDrafted, none, knowledge.Set{proposedDrafted}, nil},
+		},
 	}
 	ctx := context.Background()
 	for _, tc := range tcs {
@@ -227,8 +281,8 @@ func TestLedgerPropose(t *testing.T) {
 			store, err := file.New(t.TempDir())
 			require.NoError(t, err)
 			l := knowledge.NewLedger(
-				store, vetofile.NewApprovedFile(t.TempDir(), "records"), knowledge.ReviewChars,
-				func() time.Time { return now }, func() string { return "k-new" },
+				store, vetofile.NewApprovedFile(t.TempDir(), "records"),
+				func() time.Time { return now }, func(prefix string) string { return prefix + "new" },
 			)
 			require.NoError(t, l.Import(ctx, tc.args.seeds))
 			got, overlaps, err := l.Propose(ctx, tc.args.draft)
@@ -279,9 +333,13 @@ func TestLedgerApprove(t *testing.T) {
 	judgmentApproved := judgment
 	judgmentApproved.Status, judgmentApproved.Approver, judgmentApproved.ApprovedAt = knowledge.StatusApproved, "jed", now
 	judgmentApproved.Time = now
-	// Its text alone nearly fills the default budget so any other item of its folder overflows it
+	drafted := candidate
+	drafted.Drafted = true
+	draftedApproved := approvedNow
+	draftedApproved.Drafted = true
+	// Its text alone nearly fills ReviewChars in runes so any other item of its folder overflows it
 	large := approved
-	large.ID, large.Content = "k-large", strings.Repeat("x", 3950)
+	large.ID, large.Content = "k-large", strings.Repeat("가", knowledge.ReviewChars-50)
 	type args struct {
 		seeds    []knowledge.Knowledge
 		version  int
@@ -303,6 +361,11 @@ func TestLedgerApprove(t *testing.T) {
 			"candidate is approved under the approver's name",
 			args{[]knowledge.Knowledge{candidate}, 1, "jed"},
 			want{approvedNow, knowledge.Set{approvedNow, candidate}, "", nil},
+		},
+		{
+			"an approved draft keeps its mark",
+			args{[]knowledge.Knowledge{drafted}, 1, "jed"},
+			want{draftedApproved, knowledge.Set{draftedApproved, drafted}, "", nil},
 		},
 		{
 			"approving a judgment with a veto exports it for guard",
@@ -373,8 +436,8 @@ func TestLedgerApprove(t *testing.T) {
 			require.NoError(t, err)
 			home := t.TempDir()
 			l := knowledge.NewLedger(
-				store, vetofile.NewApprovedFile(home, "records"), knowledge.ReviewChars,
-				func() time.Time { return now }, func() string { return "k-new" },
+				store, vetofile.NewApprovedFile(home, "records"),
+				func() time.Time { return now }, func(prefix string) string { return prefix + "new" },
 			)
 			require.NoError(t, l.Import(ctx, tc.args.seeds))
 			got, err := l.Approve(ctx, "k1", tc.args.version, tc.args.approver)
@@ -485,8 +548,8 @@ func TestLedgerRetire(t *testing.T) {
 			require.NoError(t, err)
 			home := t.TempDir()
 			l := knowledge.NewLedger(
-				store, vetofile.NewApprovedFile(home, "records"), knowledge.ReviewChars,
-				func() time.Time { return now }, func() string { return "k-new" },
+				store, vetofile.NewApprovedFile(home, "records"),
+				func() time.Time { return now }, func(prefix string) string { return prefix + "new" },
 			)
 			require.NoError(t, l.Import(ctx, tc.args.seeds))
 			got, err := l.Retire(ctx, "k1", tc.args.version, tc.args.approver)
@@ -565,8 +628,8 @@ func TestLedgerImport(t *testing.T) {
 			require.NoError(t, err)
 			home := t.TempDir()
 			l := knowledge.NewLedger(
-				store, vetofile.NewApprovedFile(home, "records"), knowledge.ReviewChars,
-				func() time.Time { return at }, func() string { return "k-new" },
+				store, vetofile.NewApprovedFile(home, "records"),
+				func() time.Time { return at }, func(prefix string) string { return prefix + "new" },
 			)
 			err = l.Import(ctx, tc.args)
 			assert.ErrorIs(t, err, tc.want.err)
@@ -584,7 +647,7 @@ func TestLedgerImport(t *testing.T) {
 func TestLedgerFailsOnBrokenStore(t *testing.T) {
 	ctx := context.Background()
 	now := func() time.Time { return time.Date(2026, 9, 23, 0, 0, 0, 0, time.UTC) }
-	newID := func() string { return "k-new" }
+	newID := func(prefix string) string { return prefix + "new" }
 	candidate := knowledge.Knowledge{
 		ID: "k1", Version: 1, Kind: knowledge.KindMeaning, Content: "one",
 		Evidence: knowledge.Evidence{ParagraphIDs: []string{"p#1"}}, Basis: knowledge.BasisStated,
@@ -595,13 +658,13 @@ func TestLedgerFailsOnBrokenStore(t *testing.T) {
 	unreadableStore, err := file.New(unreadableDir)
 	require.NoError(t, err)
 	unreadable := knowledge.NewLedger(
-		unreadableStore, vetofile.NewApprovedFile(t.TempDir(), "records"), knowledge.ReviewChars, now, newID,
+		unreadableStore, vetofile.NewApprovedFile(t.TempDir(), "records"), now, newID,
 	)
 	readOnlyDir := t.TempDir()
 	readOnlyStore, err := file.New(readOnlyDir)
 	require.NoError(t, err)
 	readOnly := knowledge.NewLedger(
-		readOnlyStore, vetofile.NewApprovedFile(t.TempDir(), "records"), knowledge.ReviewChars, now, newID,
+		readOnlyStore, vetofile.NewApprovedFile(t.TempDir(), "records"), now, newID,
 	)
 	require.NoError(t, readOnly.Import(ctx, []knowledge.Knowledge{candidate}))
 	require.NoError(t, os.Chmod(filepath.Join(readOnlyDir, "knowledge.jsonl"), 0o400))
@@ -614,11 +677,11 @@ func TestLedgerFailsOnBrokenStore(t *testing.T) {
 	approved := candidate
 	approved.ID, approved.Status, approved.Approver = "k2", knowledge.StatusApproved, "ann"
 	seeder := knowledge.NewLedger(
-		blockedStore, vetofile.NewApprovedFile(t.TempDir(), "records"), knowledge.ReviewChars, now, newID,
+		blockedStore, vetofile.NewApprovedFile(t.TempDir(), "records"), now, newID,
 	)
 	require.NoError(t, seeder.Import(ctx, []knowledge.Knowledge{candidate, approved}))
 	blocked := knowledge.NewLedger(
-		blockedStore, vetofile.NewApprovedFile(blockedHome, "records"), knowledge.ReviewChars, now, newID,
+		blockedStore, vetofile.NewApprovedFile(blockedHome, "records"), now, newID,
 	)
 	approvedNow := candidate
 	approvedNow.Status, approvedNow.Approver = knowledge.StatusApproved, "jed"
@@ -696,6 +759,35 @@ func TestLedgerFailsOnBrokenStore(t *testing.T) {
 			want{nil, file.ErrAppend},
 		},
 		{
+			"propose compaction fails to read",
+			args{unreadable, func(ctx context.Context, l *knowledge.Ledger) (any, error) {
+				return l.ProposeCompaction(ctx, "k1", nil)
+			}},
+			want{knowledge.Compaction{}, file.ErrRead},
+		},
+		{
+			"compaction fails to read",
+			args{unreadable, func(ctx context.Context, l *knowledge.Ledger) (any, error) {
+				return l.Compaction(ctx, "c-x")
+			}},
+			want{knowledge.Compaction{}, file.ErrRead},
+		},
+		{
+			"preview fails to read",
+			args{unreadable, func(ctx context.Context, l *knowledge.Ledger) (any, error) {
+				return l.Preview(ctx, "c-x")
+			}},
+			want{(*knowledge.Preview)(nil), file.ErrRead},
+		},
+		{
+			"approve compaction fails to read",
+			args{unreadable, func(ctx context.Context, l *knowledge.Ledger) (any, error) {
+				replay := knowledge.Replay{Compaction: "c-x", Events: []knowledge.ReplayEvent{{Expected: "hold", Got: "hold"}}}
+				return l.ApproveCompaction(ctx, "c-x", "jed", replay)
+			}},
+			want{knowledge.Compaction{}, file.ErrRead},
+		},
+		{
 			"folder fails to read",
 			args{unreadable, func(ctx context.Context, l *knowledge.Ledger) (any, error) { return l.Folder(ctx, "k1", 1) }},
 			want{knowledge.Folder{}, file.ErrRead},
@@ -762,7 +854,7 @@ func TestLedgerUnknownID(t *testing.T) {
 	require.NoError(t, err)
 	now := func() time.Time { return time.Date(2026, 9, 23, 0, 0, 0, 0, time.UTC) }
 	l := knowledge.NewLedger(
-		store, vetofile.NewApprovedFile(t.TempDir(), "records"), knowledge.ReviewChars, now, func() string { return "k-new" },
+		store, vetofile.NewApprovedFile(t.TempDir(), "records"), now, func(prefix string) string { return prefix + "new" },
 	)
 	type want struct {
 		value any
@@ -793,6 +885,16 @@ func TestLedgerUnknownID(t *testing.T) {
 			func(ctx context.Context, l *knowledge.Ledger) (any, error) { return l.Retire(ctx, "nope", 1, "jed") },
 			want{knowledge.Knowledge{}, knowledge.ErrNotFound},
 		},
+		{
+			"compaction of an unknown id is not found",
+			func(ctx context.Context, l *knowledge.Ledger) (any, error) { return l.Compaction(ctx, "c-none") },
+			want{knowledge.Compaction{}, knowledge.ErrNotFound},
+		},
+		{
+			"preview of an unknown compaction is not found",
+			func(ctx context.Context, l *knowledge.Ledger) (any, error) { return l.Preview(ctx, "c-none") },
+			want{(*knowledge.Preview)(nil), knowledge.ErrNotFound},
+		},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
@@ -807,9 +909,9 @@ func TestLedgerUnknownID(t *testing.T) {
 func TestLedgerFolder(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 9, 27, 0, 0, 0, 0, time.UTC)
-	lag := knowledge.Scope{
+	lag := knowledge.Scope{Scope: evidence.Scope{
 		ChangeContexts: []evidence.Context{evidence.ContextNoKnownChange}, Metrics: []string{"conversion_count"},
-	}
+	}}
 	candidate := knowledge.Knowledge{
 		ID: "k1", Version: 1, Kind: knowledge.KindMeaning, Content: strings.Repeat("x", 60), Scope: lag,
 		Evidence: knowledge.Evidence{ParagraphIDs: []string{"p#1"}}, Basis: knowledge.BasisStated,
@@ -818,7 +920,7 @@ func TestLedgerFolder(t *testing.T) {
 	neighbour := candidate
 	neighbour.ID, neighbour.Status, neighbour.Approver = "k-other", knowledge.StatusApproved, "ann"
 	clicks := neighbour
-	clicks.ID, clicks.Scope = "k-clicks", knowledge.Scope{Metrics: []string{"click_count"}}
+	clicks.ID, clicks.Scope = "k-clicks", knowledge.Scope{Scope: evidence.Scope{Metrics: []string{"click_count"}}}
 	planned := neighbour
 	planned.ID = "k-planned"
 	planned.Scope.ChangeContexts = []evidence.Context{evidence.ContextPlannedChange}
@@ -833,13 +935,24 @@ func TestLedgerFolder(t *testing.T) {
 	longer.Version, longer.Content = 2, strings.Repeat("x", 90)
 	onIOS := candidate
 	onIOS.Scope.Dims = map[string]string{"platform": "ios"}
+	korean := candidate
+	korean.Content = strings.Repeat("가", 60)
+	emoji := candidate
+	emoji.Content = strings.Repeat("🙂", 60)
+	crowd := make([]knowledge.Knowledge, 0, 6)
+	for _, id := range []string{"k-a", "k-b", "k-c", "k-d", "k-e"} {
+		k := neighbour
+		k.ID = id
+		crowd = append(crowd, k)
+	}
 	type args struct {
 		seeds   []knowledge.Knowledge
 		version int
 	}
 	type want struct {
-		folder knowledge.Folder
-		err    error
+		folder  knowledge.Folder
+		crowded bool
+		err     error
 	}
 	tcs := []struct {
 		name string
@@ -849,42 +962,62 @@ func TestLedgerFolder(t *testing.T) {
 		{
 			"an item of the same contexts and metrics shares the folder",
 			args{[]knowledge.Knowledge{neighbour, candidate}, 1},
-			want{knowledge.Folder{Chars: 143 + 148, Budget: 200, Items: knowledge.Set{neighbour}}, nil},
+			want{knowledge.Folder{Chars: 143 + 148, Items: knowledge.Set{neighbour}}, false, nil},
 		},
 		{
 			"an item of other metrics sits in another folder",
 			args{[]knowledge.Knowledge{clicks, candidate}, 1},
-			want{knowledge.Folder{Chars: 143, Budget: 200, Items: knowledge.Set{}}, nil},
+			want{knowledge.Folder{Chars: 143, Items: knowledge.Set{}}, false, nil},
 		},
 		{
 			"an item of other change contexts sits in another folder",
 			args{[]knowledge.Knowledge{planned, candidate}, 1},
-			want{knowledge.Folder{Chars: 143, Budget: 200, Items: knowledge.Set{}}, nil},
+			want{knowledge.Folder{Chars: 143, Items: knowledge.Set{}}, false, nil},
 		},
 		{
 			"an item that excepts every change context of the item never joins it",
 			args{[]knowledge.Knowledge{excepting, candidate}, 1},
-			want{knowledge.Folder{Chars: 143, Budget: 200, Items: knowledge.Set{}}, nil},
+			want{knowledge.Folder{Chars: 143, Items: knowledge.Set{}}, false, nil},
 		},
 		{
 			"an item with an empty scope sits in every folder",
 			args{[]knowledge.Knowledge{everywhere, candidate}, 1},
-			want{knowledge.Folder{Chars: 143 + 98, Budget: 200, Items: knowledge.Set{everywhere}}, nil},
+			want{knowledge.Folder{Chars: 143 + 98, Items: knowledge.Set{everywhere}}, false, nil},
 		},
 		{
 			"a new version is measured by its own text and replaces the approved one",
 			args{[]knowledge.Knowledge{oldVersion, longer}, 2},
-			want{knowledge.Folder{Chars: 173, Budget: 200, Items: knowledge.Set{}}, nil},
+			want{knowledge.Folder{Chars: 173, Items: knowledge.Set{}}, false, nil},
 		},
 		{
 			"dims never split a folder",
 			args{[]knowledge.Knowledge{neighbour, onIOS}, 1},
-			want{knowledge.Folder{Chars: 157 + 148, Budget: 200, Items: knowledge.Set{neighbour}}, nil},
+			want{knowledge.Folder{Chars: 157 + 148, Items: knowledge.Set{neighbour}}, false, nil},
+		},
+		{
+			"korean content counts one char per rune",
+			args{[]knowledge.Knowledge{korean}, 1},
+			want{knowledge.Folder{Chars: 143, Items: knowledge.Set{}}, false, nil},
+		},
+		{
+			"emoji content counts one char per rune",
+			args{[]knowledge.Knowledge{emoji}, 1},
+			want{knowledge.Folder{Chars: 143, Items: knowledge.Set{}}, false, nil},
+		},
+		{
+			"five items with the item are not crowded",
+			args{append(slices.Clone(crowd[:4]), candidate), 1},
+			want{knowledge.Folder{Chars: 143 + 4*144, Items: knowledge.Set(crowd[:4])}, false, nil},
+		},
+		{
+			"six items with the item are crowded",
+			args{append(slices.Clone(crowd), candidate), 1},
+			want{knowledge.Folder{Chars: 143 + 5*144, Items: knowledge.Set(crowd)}, true, nil},
 		},
 		{
 			"an unknown version is not found",
 			args{[]knowledge.Knowledge{candidate}, 9},
-			want{knowledge.Folder{}, knowledge.ErrNotFound},
+			want{knowledge.Folder{}, false, knowledge.ErrNotFound},
 		},
 	}
 	ctx := context.Background()
@@ -894,8 +1027,8 @@ func TestLedgerFolder(t *testing.T) {
 			store, err := file.New(t.TempDir())
 			require.NoError(t, err)
 			l := knowledge.NewLedger(
-				store, vetofile.NewApprovedFile(t.TempDir(), "records"), 200,
-				func() time.Time { return now }, func() string { return "k-new" },
+				store, vetofile.NewApprovedFile(t.TempDir(), "records"),
+				func() time.Time { return now }, func(prefix string) string { return prefix + "new" },
 			)
 			require.NoError(t, l.Import(ctx, tc.args.seeds))
 
@@ -903,6 +1036,7 @@ func TestLedgerFolder(t *testing.T) {
 
 			assert.ErrorIs(t, err, tc.want.err)
 			assert.Equal(t, tc.want.folder, got)
+			assert.Equal(t, tc.want.crowded, got.Crowded())
 		})
 	}
 }

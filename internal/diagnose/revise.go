@@ -46,7 +46,9 @@ func revisePrompt(prompt string, diag Diagnosis, reasons []string) string {
 	b.Write(previous)
 	b.WriteString("\n\n## Revise\n\nReturn the review again with only these defects fixed:\n")
 	for _, r := range reasons {
-		b.WriteString("- " + r + "\n")
+		b.WriteString("- ")
+		b.WriteString(r)
+		b.WriteString("\n")
 	}
 	return b.String()
 }
@@ -54,49 +56,61 @@ func revisePrompt(prompt string, diag Diagnosis, reasons []string) string {
 // Reasons a review must be revised before it is recorded
 // Each reason names one defect the model can fix without new information
 // 1. a Decide paragraph never states a cause
-// 2. a ready_for_review cause keeps a listed paragraph id because the gate holds a cause without one
-// 3. a ready_for_review keeps firstStep as a check
-func (diag Diagnosis) revisions(firstStep string) []string {
+// 2. a ready_for_review cause cites no first step because a first step is a check
+// 3. a ready_for_review cause keeps a listed paragraph id because the gate holds a cause without one
+// 4. a ready_for_review keeps the first step of the lead procedure as a check
+// Any other status loses its causes at the gate so 2 and 3 never cost it a second model call
+func (diag Diagnosis) revisions(firstSteps []string) []string {
 	var out []string
+	ready := diag.Status == evidence.StatusReadyForReview
 	for _, c := range diag.Causes {
 		if i := slices.IndexFunc(c.ParagraphIDs, func(id string) bool { return evidence.ParagraphID(id).IsDecide() }); i >= 0 {
 			out = append(out, fmt.Sprintf("cause %q cites the Decide paragraph %s. A Decide paragraph states no cause", c.Summary, c.ParagraphIDs[i]))
 		}
-		if diag.Status == StatusReadyForReview && len(c.ParagraphIDs) == 0 {
+		if i := slices.IndexFunc(c.ParagraphIDs, func(id string) bool { return slices.Contains(firstSteps, id) }); ready && i >= 0 {
+			out = append(out, fmt.Sprintf("cause %q cites %s, the first step of its procedure. "+
+				"A first step is a check and never states a cause. Cite the paragraph that states the cause", c.Summary, c.ParagraphIDs[i]))
+		}
+		if ready && len(c.ParagraphIDs) == 0 {
 			out = append(out, fmt.Sprintf("cause %q cites no paragraph id from the list. Cite the paragraph that states it or return hold", c.Summary))
 		}
 	}
-	if diag.Status != StatusReadyForReview || firstStep == "" || slices.Contains(diag.Checks.Paragraphs(), firstStep) {
+	lead := diag.leadProcedure()
+	i := slices.IndexFunc(firstSteps, func(id string) bool { return evidence.ParagraphID(id).Procedure() == lead })
+	if !ready || i < 0 || slices.Contains(diag.Checks.Paragraphs(), firstSteps[i]) {
 		return out
 	}
-	return append(out, fmt.Sprintf("check %s is missing. The first step of the lead runbook is always a check", firstStep))
+	return append(out, fmt.Sprintf("check %s is missing. The first step of the lead procedure is always a check", firstSteps[i]))
 }
 
-// The one runbook every cause cites
+// The one procedure every cause cites
 // Empty when the causes cite none or more than one
-func (diag Diagnosis) leadRunbook() string {
-	var runbooks []string
+func (diag Diagnosis) leadProcedure() string {
+	var procedures []string
 	for _, c := range diag.Causes {
 		for _, id := range c.ParagraphIDs {
-			if r := evidence.ParagraphID(id).Runbook(); !slices.Contains(runbooks, r) {
-				runbooks = append(runbooks, r)
+			if r := evidence.ParagraphID(id).Procedure(); !slices.Contains(procedures, r) {
+				procedures = append(procedures, r)
 			}
 		}
 	}
-	if len(runbooks) != 1 {
+	if len(procedures) != 1 {
 		return ""
 	}
-	return runbooks[0]
+	return procedures[0]
 }
 
-// The first section of the runbook after its introduction
-// Empty for an empty runbook
-// A later step a cause cites is not demanded because it may be a finding rather than a check
-func (c Context) firstStep(runbook string) string {
+// The first section after the introduction of every included procedure in paragraph order
+// A procedure without a step has none
+// A later step is not a check by position because it may state a finding
+func (c Context) firstSteps() []string {
+	var procedures, out []string
 	for _, id := range c.ParagraphIDs {
-		if p := evidence.ParagraphID(id); p.Runbook() == runbook && p.IsStep() {
-			return id
+		p := evidence.ParagraphID(id)
+		if p.IsStep() && !slices.Contains(procedures, p.Procedure()) {
+			procedures = append(procedures, p.Procedure())
+			out = append(out, id)
 		}
 	}
-	return ""
+	return out
 }

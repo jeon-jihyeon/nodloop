@@ -5,6 +5,7 @@ import (
 	"maps"
 	"slices"
 	"time"
+	"unicode/utf8"
 
 	"github.com/jeon-jihyeon/nodloop/internal/evidence"
 	"github.com/jeon-jihyeon/nodloop/internal/veto"
@@ -13,6 +14,26 @@ import (
 // Records as the store lists them with the newest first
 // The history behind every question about an id
 type Set []Knowledge
+
+// The first listed record of every id and version
+// That is its newest when the set comes from the store
+// Unlike Current it keeps a candidate beside the approved version of its id
+func (s Set) Versions() Set {
+	type key struct {
+		id      string
+		version int
+	}
+	seen := map[key]bool{}
+	out := Set{}
+	for _, k := range s {
+		ref := key{k.ID, k.Version}
+		if !seen[ref] {
+			out = append(out, k)
+			seen[ref] = true
+		}
+	}
+	return out
+}
 
 // Active record per id
 // 1. the latest record per id and version decides that version's status
@@ -82,26 +103,35 @@ func (s Set) Applicable(changeContext evidence.Context, moved Moved, dims Dims) 
 	return out
 }
 
+// Whether some approved item may apply under the change context
+// Metrics and dims are left open so the answer is an upper bound of Applicable
+func (s Set) Covers(changeContext evidence.Context) bool {
+	return slices.ContainsFunc(s.Approved(), func(k Knowledge) bool {
+		return !slices.Contains(k.Exceptions, changeContext) &&
+			(len(k.Scope.ChangeContexts) == 0 || slices.Contains(k.Scope.ChangeContexts, changeContext))
+	})
+}
+
 // The approved items one review may carry together with the item
 // An upper bound since a review loads only the items whose scope fits its event
 // Another version of the item never counts because approval replaces it
-func (s Set) folder(item Knowledge, budget int) Folder {
-	f := Folder{Chars: len(item.Text()), Budget: budget, Items: Set{}}
+func (s Set) folder(item Knowledge) Folder {
+	f := Folder{Chars: utf8.RuneCountInString(item.Text()), Items: Set{}}
 	for _, other := range s.Approved() {
 		if other.ID != item.ID && item.sharesFolder(other) {
 			f.Items = append(f.Items, other)
-			f.Chars += len(other.Text())
+			f.Chars += utf8.RuneCountInString(other.Text())
 		}
 	}
 	return f
 }
 
-// Current items other than id of the same kind whose scope intersects with scope
+// Current items other than id of the same kind whose scope overlaps scope
 // Listed for a person and never merged
 func (s Set) Overlaps(id string, kind Kind, scope Scope) Set {
 	out := Set{}
 	for _, other := range s.Current() {
-		if other.ID != id && other.Kind == kind && scope.intersects(other.Scope) {
+		if other.ID != id && other.Kind == kind && scope.overlaps(other.Scope) {
 			out = append(out, other)
 		}
 	}
@@ -112,6 +142,8 @@ func (s Set) Overlaps(id string, kind Kind, scope Scope) Set {
 type Filter struct {
 	Kinds    []Kind
 	Statuses []Status
+	// Only the versions stale at this time
+	StaleAt time.Time
 }
 
 func (f Filter) matches(k Knowledge) bool {
@@ -121,7 +153,7 @@ func (f Filter) matches(k Knowledge) bool {
 	if len(f.Statuses) > 0 && !slices.Contains(f.Statuses, k.Status) {
 		return false
 	}
-	return true
+	return f.StaleAt.IsZero() || k.Stale(f.StaleAt)
 }
 
 // Items the filter keeps in their order
@@ -174,13 +206,15 @@ func (s Set) overlapsOf(id string) (Set, error) {
 }
 
 // The draft as the next candidate version of its id
-// Status and approval fields of the draft are dropped so a proposal never arrives approved
+// 1. status and approval fields of the draft are dropped so a proposal never arrives approved
+// 2. compaction fields are dropped so only a compaction proposal marks its candidates
 func (s Set) propose(draft Knowledge, now time.Time) (Knowledge, error) {
 	if draft.Basis == "" {
 		draft.Basis = BasisStated
 	}
 	draft.Version, draft.Status, draft.Time = s.nextVersion(draft.ID), StatusCandidate, now
-	draft.Approver, draft.ApprovedAt, draft.Supersedes = "", time.Time{}, 0
+	draft.Approver, draft.ApprovedAt, draft.ReviewedAt, draft.Supersedes = "", time.Time{}, time.Time{}, 0
+	draft.Compaction, draft.CompactionSize = "", 0
 	if err := draft.validate(); err != nil {
 		return Knowledge{}, err
 	}

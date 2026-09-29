@@ -22,13 +22,14 @@ commands:
   guard check               Load veto files from the current directory and $HOME and report counts or errors
   guard install             Register this binary as a PreToolUse hook in ~/.claude/settings.json (backs up first)
   guard uninstall           Remove the hook registered by guard install
-  setup --demo | --data-dir <dir> [--record-dir <dir>]
-                            Point nodloop at a reference data directory, or unpack the demo set under ~/.nodloop/demo.
+  setup --data-dir <dir> [--record-dir <dir>]
+                            Point nodloop at a reference data directory such as examples/demo of the repository.
                             Records go to ~/.nodloop/records unless --record-dir or NODLOOP_RECORD_DIR names another
   llm probe [--model <m>]   Send a minimal structured-output request through claude -p and print cost
   evidence events           List events from the configured source
   evidence event --id <id>  Print the change context and the series of one event
-  evidence paragraphs       List runbook paragraph ids
+  evidence procedures       List procedures with their scope and paragraph count
+  evidence paragraphs       List procedure paragraph ids
   evidence labels           List ground truth labels. Empty when the data directory has none
   analysis observe --event <id>
                             Print the observations of one event under the policy
@@ -37,9 +38,13 @@ commands:
                             List traces newest first
   trace show <id>           Print one trace as JSON
   trace pending             List context traces that no review recorded
+  queue [--limit <n>] [--audit-rate <share>] [--seed <n>]
+                            Conversation reviews without a verdict in the order to check them, with a random audit share
+  report online [--since <RFC3339>]
+                            Weekly verdict rates and waits, first status against the settled status, knowledge cohorts
   feedback list [--trace <id>] [--verdict <v>] [--reviewer <r>] [--limit <n>]
                             List feedback newest first
-  feedback add --trace <id> --verdict <v> [--reason <r>] [--edited <file>] [--reviewer <r>]
+  feedback add --trace <id> --verdict <v> [--reason <r>] [--edited <file>] [--reviewer <r>] [--audit]
                             Append one feedback record
   feedback outcome --trace <id> --result <r> [--cause <text>] [--note <n>] [--reviewer <r>]
                             Record what a real check found: confirmed, refuted or inconclusive
@@ -48,28 +53,50 @@ commands:
                     [--veto-tool <t> --veto-field <f> --veto-match <re> [--veto-unless <re>] --veto-example <json>]
                             Add a candidate knowledge record and list its overlaps. The author is "author" unless given
                             A judgment with a veto becomes a guard veto once approved
-  knowledge list [--status <s>] [--kind <k>]
-                            Current version per id
+  knowledge propose --from <trace id> --kind <k> [--content <text>] [--model <m>] [the other propose flags]
+                            Fill scope, evidence and basis from a review corrected by edit or reject. Without --content
+                            claude -p drafts one sentence from the correction and the candidate is marked drafted
+  knowledge list [--status <s>] [--kind <k>] [--stale]
+                            Current version per id with a stale column. --status lists every version of that status
   knowledge show <id>       Every record of one id
+  knowledge health          Verdict and outcome counts per knowledge version, retire candidates and review deadlines
+  knowledge audit           References of current items that no longer resolve
+  knowledge reaffirm <id> --approver <name> [--version <n>]
+                            Record that a named person rechecked the approved version. Its review deadline starts again
+  knowledge narrow <id> --version <n> [--author <a>]
+                            Propose the next version without the change contexts where its reviews were refuted
   knowledge overlaps <id>   Current items of the same kind with an intersecting scope
   knowledge approve <id> --version <n> --approver <name>
-                            Refused when its folder may outgrow the review. Retire or replace an item or narrow the scope
+                            Refused when its folder may outgrow the review. Retire or replace an item, narrow the scope
+                            or compact the folder. Says when the folder holds more than five items and a compaction is due
   knowledge retire <id> --version <n> --approver <name>
   knowledge import --file <jsonl>
-                            Append records from a file, such as the demo knowledge
+                            Append records from a file, such as the knowledge.jsonl of a data set
+  knowledge compact <id> [--model <m>] [--author <a>]
+                            Draft through claude -p a smaller set of items that replaces the folder of an item
+                            and propose it. Items that cite only procedure paragraphs are left out
+  knowledge compaction <compaction id>
+                            Print the new and old items and the replay result
+  knowledge replay <compaction id> [--model <m>] [--events <ids>] [--parallel <n>]
+                            Review every event the old items came from again with the new items through claude -p
+  knowledge approve-compaction <compaction id> --approver <name>
+                            Approve the new items and retire the old ones once the replay passed
   knowledge export          Write the approved vetoes again after a failed export
   diagnose --event <id> [--examples <n>] [--knowledge none or selected or all] [--model <m>] [--session <s>] [--tag <t>]
                             Batch review of one event through claude -p. JSON on stdout and the trace id on stderr
   mcp                       Serve the MCP tools on stdio. --list prints the tool names without opening any data
-  eval seed --session <s> [--model <m>] [--events <ids>] [--parallel <n>]
+  eval seed --session <s> [--model <m>] [--events <ids>] [--parallel <n>] [--repeat <n>]
                             Review every seed event so a reviewer can annotate the results
-  eval holdout --session <s> [--model <m>] [--examples <n>] [--conditions <list>] [--events <ids>] [--parallel <n>]
+  eval holdout --session <s> [--model <m>] [--examples <n>] [--conditions <list>] [--events <ids>] [--parallel <n>] [--repeat <n>]
                             Review every holdout event under feedback:off, feedback:on, knowledge:on and knowledge:all
-  eval report --session <s> Print the metrics table and write eval-<s>.json to the record directory
+  eval report --session <s> [--triage]
+                            Print the metrics table with condition pairs and write eval-<s>.json to the record directory
+                            --triage adds how many wrong statuses the top 5 of the queue order hold
   version                   Print the build version
 
 Data commands accept --source, --data-dir and --record-dir. Each overrides the matching NODLOOP_* variable
 analysis, diagnose, eval and mcp read the analyzers from policy.yaml in the data directory and fail without it
+An approved version is stale 90 days after its approval or last reaffirm. Nothing is retired without a named approver
 `
 
 // Set by goreleaser through ldflags
@@ -98,36 +125,33 @@ func run(args []string, getenv func(string) string, stdin io.Reader, stdout io.W
 		fmt.Fprint(stderr, usage)
 		return 1
 	}
-	switch args[0] {
-	case "guard":
-		return runGuard(args[1:], getenv, stdin, stdout, stderr)
-	case "setup":
-		return runSetup(args[1:], getenv, stdout, stderr)
-	case "llm":
-		return runLLM(args[1:], claudeCLI(getenv), time.Now, stdout, stderr)
-	case "evidence":
-		return runEvidence(args[1:], getenv, time.Now, stdout, stderr)
-	case "analysis":
-		return runAnalysis(args[1:], getenv, time.Now, stdout, stderr)
-	case "trace":
-		return runTrace(args[1:], getenv, time.Now, stdout, stderr)
-	case "feedback":
-		return runFeedback(args[1:], getenv, time.Now, stdout, stderr)
-	case "knowledge":
-		return runKnowledge(args[1:], getenv, time.Now, stdout, stderr)
-	case "diagnose":
-		return runDiagnose(args[1:], getenv, claudeCLI(getenv), time.Now, stdout, stderr)
-	case "mcp":
-		return runMCP(args[1:], getenv, time.Now, stdin, stdout, stderr)
-	case "eval":
-		return runEval(args[1:], getenv, claudeCLI(getenv), time.Now, stdout, stderr)
-	case "version":
-		fmt.Fprintln(stdout, buildVersion())
-		return 0
-	default:
+	commands := map[string]func(args []string) int{
+		"evidence": func(args []string) int { return runEvidence(args, getenv, time.Now, stdout, stderr) },
+		"analysis": func(args []string) int { return runAnalysis(args, getenv, time.Now, stdout, stderr) },
+		"trace":    func(args []string) int { return runTrace(args, getenv, time.Now, stdout, stderr) },
+		"feedback": func(args []string) int { return runFeedback(args, getenv, time.Now, stdout, stderr) },
+		"queue":    func(args []string) int { return runQueue(args, getenv, time.Now, stdout, stderr) },
+		"report":   func(args []string) int { return runReport(args, getenv, time.Now, stdout, stderr) },
+		"guard":    func(args []string) int { return runGuard(args, getenv, stdin, stdout, stderr) },
+		"setup":    func(args []string) int { return runSetup(args, getenv, stdout, stderr) },
+		"llm":      func(args []string) int { return runLLM(args, claudeCLI(getenv), time.Now, stdout, stderr) },
+		"knowledge": func(args []string) int {
+			return runKnowledge(args, getenv, claudeCLI(getenv), time.Now, stdout, stderr)
+		},
+		"diagnose": func(args []string) int { return runDiagnose(args, getenv, claudeCLI(getenv), time.Now, stdout, stderr) },
+		"mcp":      func(args []string) int { return runMCP(args, getenv, time.Now, stdin, stdout, stderr) },
+		"eval":     func(args []string) int { return runEval(args, getenv, claudeCLI(getenv), time.Now, stdout, stderr) },
+		"version": func([]string) int {
+			fmt.Fprintln(stdout, buildVersion())
+			return 0
+		},
+	}
+	command, ok := commands[args[0]]
+	if !ok {
 		fmt.Fprintf(stderr, "nodloop: unknown command %q\n\n%s", args[0], usage)
 		return 1
 	}
+	return command(args[1:])
 }
 
 // The model client of every command that calls claude

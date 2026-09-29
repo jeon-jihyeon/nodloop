@@ -17,6 +17,7 @@ import (
 type feedbackFlags struct {
 	traceID, verdict, reviewer, reason, edited, result, cause, note string
 	limit                                                           int
+	audit                                                           bool
 }
 
 func (f *feedbackFlags) bind(fs *flag.FlagSet) {
@@ -29,6 +30,7 @@ func (f *feedbackFlags) bind(fs *flag.FlagSet) {
 	fs.StringVar(&f.result, "result", "", "outcome: confirmed, refuted or inconclusive")
 	fs.StringVar(&f.cause, "cause", "", "outcome: the cause that was confirmed")
 	fs.StringVar(&f.note, "note", "", "outcome: free text")
+	fs.BoolVar(&f.audit, "audit", false, "add: review selected by random audit")
 }
 
 func (f feedbackFlags) filter() feedback.Filter {
@@ -56,7 +58,7 @@ func runFeedback(args []string, getenv func(string) string, now func() time.Time
 	if err != nil {
 		return fail(stderr, "feedback", err)
 	}
-	cmd := feedbackCommand{app: a, out: stdout}
+	cmd := feedbackCommand{app: a, out: stdout, audit: flags.audit}
 	ctx := context.Background()
 	switch args[0] {
 	case "list":
@@ -76,8 +78,9 @@ func runFeedback(args []string, getenv func(string) string, now func() time.Time
 
 // Each action opens only the stores it reads or appends to
 type feedbackCommand struct {
-	app app
-	out io.Writer
+	app   app
+	out   io.Writer
+	audit bool
 }
 
 func (c feedbackCommand) list(ctx context.Context, f feedback.Filter) error {
@@ -113,6 +116,7 @@ func (c feedbackCommand) add(
 	if err != nil {
 		return err
 	}
+	fb.Audit = c.audit
 	if err := c.app.checkReviews(ctx, fb.TraceID); err != nil {
 		return err
 	}

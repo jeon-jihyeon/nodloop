@@ -1,6 +1,6 @@
 <img alt="nodloop" src=".github/logo.svg" width="360">
 
-Runbook-grounded incident reviews inside Claude Code. Your corrections become approved knowledge that feeds the next review.
+Procedure-grounded incident reviews inside Claude Code. Your corrections become approved knowledge that feeds the next review.
 
 [![release](https://img.shields.io/github/v/release/jeon-jihyeon/nodloop?display_name=tag)](https://github.com/jeon-jihyeon/nodloop/releases) [![test](https://img.shields.io/github/actions/workflow/status/jeon-jihyeon/nodloop/test.yml?branch=main&label=test)](https://github.com/jeon-jihyeon/nodloop/actions/workflows/test.yml) [![go report](https://goreportcard.com/badge/github.com/jeon-jihyeon/nodloop)](https://goreportcard.com/report/github.com/jeon-jihyeon/nodloop) ![license](https://img.shields.io/badge/license-MIT-green) ![API key](https://img.shields.io/badge/API%20key-none-lightgrey)
 
@@ -8,21 +8,28 @@ Runbook-grounded incident reviews inside Claude Code. Your corrections become ap
 
 ## Quickstart
 
+Clone the repository for its demo set of 24 synthetic traffic events in `examples/demo`, then install the plugin in Claude Code:
+
+```
+git clone https://github.com/jeon-jihyeon/nodloop
+```
+
 ```
 /plugin marketplace add jeon-jihyeon/nodloop
 /plugin install nodloop@nodloop
 ```
 
-On first run, the plugin downloads its binary and unpacks a demo set of 24 synthetic ad-traffic events. Then run one full loop:
+On first run, the plugin downloads its binary. Start Claude Code in the directory you cloned into, so `./nodloop/examples/demo` resolves. Ask Claude Code to point nodloop at the demo, reconnect the server with `/mcp` when it asks, then run one full loop:
 
 ```
+> set up nodloop with the demo in ./nodloop/examples/demo
 > review event tq-023 with nodloop
 > That is attribution lag. Conversions arrive up to 4 hours after the click, so the newest 4 hours always read low. Record that as feedback and propose it as knowledge.
 > approve it, approver <your name>
 > review event tq-024 with nodloop
 ```
 
-The second review applies the knowledge you approved. When you are done with the demo, ask Claude Code to point nodloop at your own events and runbooks.
+The second review applies the knowledge you approved. When you are done with the demo, point nodloop at your own directory the same way. It needs `events.csv`, `policy.yaml` and your procedures as Markdown files under `procedures/`.
 
 ## How it works
 
@@ -31,9 +38,11 @@ The second review applies the knowledge you approved. When you are done with the
   <img alt="observe, context, select and record on the tool row; feedback, propose and approve on the human row; the loop returns to context" src=".github/loop-light.svg" width="760">
 </picture>
 
-Claude Code writes the review with its own model, so there's no API key to set up. nodloop gives it the numbers, computed from your events by plain code, and the runbook paragraphs it can cite. A cause without a citation puts the review on hold.
+Claude Code writes the review with its own model, so there's no API key to set up. nodloop gives it the numbers, computed from your events by plain code, and the paragraphs of the procedures that fit the event, which it can cite. A cause without a citation gets the review sent back once, and a second miss puts it on hold.
 
-When you correct a review, the correction can become a knowledge item. It's used only after someone approves it, and only on events that match its scope. If approving an item would make the knowledge a review carries outgrow its budget, nodloop refuses and asks you to retire an item, replace one or narrow the scope, instead of cutting text you never see. Reviews, verdicts and knowledge versions are all kept in `~/.nodloop/records`.
+When you correct a review, the correction can become a knowledge item. It's used only after someone approves it, and only on events that match its scope. If approving an item would make the knowledge a review carries outgrow its budget, nodloop refuses and asks you to retire an item, replace one, narrow the scope or compact the folder into fewer items, instead of cutting text you never see.
+
+Knowledge doesn't stay approved forever without a look. When a real check refutes a review, record the outcome and nodloop can propose a narrower version of the knowledge it used. An approved version is flagged as stale 90 days after its approval until someone reaffirms it. Reviews, verdicts and knowledge versions are all kept in `~/.nodloop/records`.
 
 ## Measured
 
@@ -46,27 +55,27 @@ The eval holds out 12 of the 24 demo events and reviews them with Sonnet. With n
 
 | condition | events | status acc | hold acc | citation p | citation r | required checks | first check | knowledge hit | misapplied | revised | mean cost usd |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| seed | 12 | 0.83 | 1.00 | 0.43 | 0.92 | 0.69 | 0.38 | 0.00 | 0 | 0 | 0.0661 |
-| feedback:off | 12 | 0.83 | 1.00 | 0.51 | 0.92 | 0.94 | 0.62 | 0.00 | 0 | 1 | 0.0516 |
-| feedback:on | 12 | 1.00 | 1.00 | 0.71 | 1.00 | 1.00 | 0.62 | 0.00 | 0 | 0 | 0.0434 |
-| knowledge:on | 12 | 1.00 | 1.00 | 0.57 | 1.00 | 0.94 | 0.50 | 1.00 | 0 | 0 | 0.0375 |
-| knowledge:all | 12 | 1.00 | 1.00 | 0.48 | 0.92 | 0.81 | 0.50 | 1.00 | 15 | 0 | 0.0423 |
+| seed | 12 | 0.83 | 1.00 | 0.78 | 0.92 | 1.00 | 0.88 | 0.00 | 0 | 0 | 0.1110 |
+| feedback:off | 12 | 0.83 | 1.00 | 0.83 | 0.92 | 1.00 | 0.88 | 0.00 | 0 | 1 | 0.1143 |
+| feedback:on | 12 | 1.00 | 1.00 | 0.89 | 1.00 | 1.00 | 0.88 | 0.00 | 0 | 0 | 0.0742 |
+| knowledge:on | 12 | 1.00 | 1.00 | 0.83 | 0.92 | 1.00 | 0.88 | 1.00 | 0 | 1 | 0.0941 |
+| knowledge:all | 12 | 1.00 | 1.00 | 0.86 | 0.92 | 1.00 | 1.00 | 1.00 | 15 | 2 | 0.1037 |
 
-Run `nodloop eval seed`, `holdout` and `report` to reproduce the table.
+To reproduce it, run `~/.nodloop/bin/nodloop eval seed --session demo` from the clone, correct the seed reviews with `feedback add`, import the demo knowledge with `knowledge import --file examples/demo/knowledge.jsonl`, then run `eval holdout --session demo` and `eval report --session demo` with the same binary. eval calls the `claude` CLI for every review.
 
 ### Beyond the demo
 
-Nothing in the core knows about ads. The same loop ran on 300 events built from the public [Tennessee Eastman Process data of Rieth et al.](https://doi.org/10.7910/DVN/6C3JR1), a simulated chemical plant with seeded faults. Five runbooks, four planted traps and a scripted reviewer stood in for a plant team, so no human took part. 150 events were seed and 150 held out, all reviewed with Sonnet.
+Nothing in the core knows about the demo's domain. The same loop ran on 300 events built from the public [Tennessee Eastman Process data of Rieth et al.](https://doi.org/10.7910/DVN/6C3JR1), a simulated chemical plant with seeded faults. Five procedures, four planted traps and a scripted reviewer stood in for a plant team, so no human took part. 150 events were seed and 150 held out, all reviewed with Sonnet.
 
 | condition | events | status acc | hold acc | citation p | citation r | required checks | first check | knowledge hit | misapplied | revised | mean cost usd |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| seed | 150 | 0.75 | 0.63 | 0.49 | 0.97 | 0.85 | 0.85 | 0.00 | 0 | 6 | 0.0458 |
-| feedback:off | 150 | 0.74 | 0.60 | 0.48 | 0.95 | 0.85 | 0.85 | 0.00 | 0 | 4 | 0.0454 |
-| feedback:on | 150 | 0.99 | 1.00 | 0.69 | 0.98 | 1.00 | 1.00 | 0.00 | 0 | 2 | 0.0424 |
-| knowledge:on | 150 | 1.00 | 1.00 | 0.55 | 1.00 | 1.00 | 0.98 | 1.00 | 0 | 6 | 0.0253 |
-| knowledge:all | 150 | 0.99 | 1.00 | 0.49 | 0.98 | 0.99 | 0.98 | 1.00 | 548 | 1 | 0.0469 |
+| seed | 150 | 0.76 | 0.60 | 0.77 | 0.98 | 0.87 | 0.86 | 0.00 | 0 | 17 | 0.0819 |
+| feedback:off | 150 | 0.75 | 0.60 | 0.76 | 0.97 | 0.86 | 0.84 | 0.00 | 0 | 17 | 0.0820 |
+| feedback:on | 150 | 0.99 | 1.00 | 0.91 | 0.97 | 0.98 | 0.96 | 0.00 | 0 | 1 | 0.0602 |
+| knowledge:on | 150 | 0.99 | 1.00 | 0.85 | 0.98 | 0.99 | 0.95 | 1.00 | 0 | 10 | 0.0551 |
+| knowledge:all | 150 | 0.99 | 1.00 | 0.88 | 1.00 | 1.00 | 0.92 | 1.00 | 548 | 8 | 0.0785 |
 
-In 36 held-out events a trap decides the status. With no feedback, none of them got it right. With corrections or scoped knowledge, all 36 did, and scoped knowledge never landed on an event outside its scope. Applying every item regardless of scope landed 548 items that don't belong.
+In 36 held-out events a trap decides the status. With no feedback, none of them got it right. With corrections all 36 did, and with scoped knowledge 35 did, which never landed on an event outside its scope. Applying every item regardless of scope landed 548 items that don't belong.
 
 ## Guard
 
@@ -84,12 +93,12 @@ A correction can become a veto too. Propose it as a judgment with a veto, and on
 
 ## Supported
 
-macOS and Linux, or Windows through WSL. It runs as a Claude Code plugin. For Codex, Cursor or another MCP client, install it with `go install github.com/jeon-jihyeon/nodloop/cmd/nodloop@latest` and run `nodloop mcp`.
+macOS and Linux, or Windows through WSL. It runs as a Claude Code plugin. For Codex, Cursor or another MCP client, install it with `go install github.com/jeon-jihyeon/nodloop/cmd/nodloop@latest`, run `nodloop setup --data-dir <dir>` once and serve it with `nodloop mcp`.
 
 ## Limits
 
-Every runbook paragraph goes to the model, so a large set of runbooks means a large context.
+Every procedure whose scope fits the event goes to the model in full, and a procedure without a scope fits every event. A large set of broad procedures means a large context.
 
 ## License
 
-MIT. The nodloop name and logo are not part of the license. Forks must use their own name and logo.
+MIT. The nodloop name and logo are not part of the license. Please use your own name and logo for a fork.

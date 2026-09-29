@@ -15,11 +15,30 @@ import (
 	"github.com/jeon-jihyeon/nodloop/internal/testkit"
 )
 
+func TestShellWord(t *testing.T) {
+	tcs := []struct {
+		name string
+		args string
+		want string
+	}{
+		{"a plain path stays as it is", "/home/u/.nodloop/bin/nodloop", "/home/u/.nodloop/bin/nodloop"},
+		{"a path with a space is quoted", "/Users/u/My Tools/nodloop", "'/Users/u/My Tools/nodloop'"},
+		{"a quote in the path is escaped", "/tmp/it's/nodloop", `'/tmp/it'\''s/nodloop'`},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.want, shellWord(tc.args))
+		})
+	}
+}
+
 func TestRunMCP(t *testing.T) {
 	data := testkit.DemoDir(t)
 	tools := strings.Join(mcp.Tools(), "\n") + "\n"
 	at := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
-	const demoConfig = "{\n  \"file_dir\": \"{home}/.nodloop/demo\"\n}\n"
+	const unset = `^nodloop mcp: ` + envFileDir + ` is not set: run nodloop setup or set the variable\. Run .* setup --data-dir <dir> ` +
+		`and reconnect the nodloop server\n$`
 	type args struct {
 		args []string
 		// Values with the `{home}` and `{records}` placeholders
@@ -59,17 +78,9 @@ func TestRunMCP(t *testing.T) {
 			want{0, `^$`, "", "", os.ErrNotExist, nil},
 		},
 		{
-			"nothing configured unpacks the demo under home",
+			"nothing configured serves every tool with the setup error and writes nothing",
 			args{nil, map[string]string{"HOME": "{home}"}, nil},
-			want{
-				0, `^nodloop mcp: no data configured. Unpacked the demo set to {home}/.nodloop/demo and wrote ` +
-					`{home}/.nodloop/config.json. `, "", demoConfig, nil, nil,
-			},
-		},
-		{
-			"demo setup keeps the record dir variable",
-			args{nil, map[string]string{"HOME": "{home}", envRecordDir: "{records}"}, nil},
-			want{0, `^nodloop mcp: no data configured. Unpacked the demo set`, "", demoConfig, nil, os.ErrNotExist},
+			want{0, unset, "", "", os.ErrNotExist, os.ErrNotExist},
 		},
 		{
 			"broken config is reported and kept",
@@ -77,14 +88,14 @@ func TestRunMCP(t *testing.T) {
 			want{1, `^nodloop mcp: config.json is not valid JSON: `, "", "{broken", nil, os.ErrNotExist},
 		},
 		{
-			"config without a data dir is reported and kept",
+			"config without a data dir is served unconfigured and kept",
 			args{nil, map[string]string{"HOME": "{home}"}, map[string]string{".nodloop/config.json": `{"file_dir":""}`}},
-			want{1, `^nodloop mcp: ` + envFileDir + ` is not set: `, "", `{"file_dir":""}`, nil, os.ErrNotExist},
+			want{0, unset, "", `{"file_dir":""}`, nil, os.ErrNotExist},
 		},
 		{
-			"nothing configured without a home fails",
+			"nothing configured without a home is served unconfigured",
 			args{nil, nil, nil},
-			want{1, "^nodloop mcp: home directory unknown: cannot set up the demo\n$", "", "", os.ErrNotExist, os.ErrNotExist},
+			want{0, unset, "", "", os.ErrNotExist, os.ErrNotExist},
 		},
 		{
 			"record dir that is a file fails",

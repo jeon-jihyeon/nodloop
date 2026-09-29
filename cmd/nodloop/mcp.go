@@ -15,8 +15,8 @@ import (
 	"github.com/jeon-jihyeon/nodloop/internal/mcp"
 )
 
-// On a first run with no config at all the demo set becomes the data and the records keep their default
-// The config is resolved again after the demo config is written since that config is its input
+// Without a data directory the server still starts so the conversation can tell the user how to set one up
+// Every tool of that server answers the setup error while any other config error fails the start
 func runMCP(
 	args []string, getenv func(string) string, now func() time.Time,
 	stdin io.Reader, stdout io.WriteCloser, stderr io.Writer,
@@ -34,18 +34,15 @@ func runMCP(
 		cmd.list()
 		return 0
 	}
-	h := homeDir(getenv("HOME"))
+	ctx := context.Background()
 	a, err := data.app(getenv, now)
-	if errors.Is(err, errDataDirUnset) && !h.configured() {
-		if err := cmd.setupDemo(h); err != nil {
-			return fail(stderr, "mcp", err)
-		}
-		a, err = data.app(getenv, now)
+	switch {
+	case errors.Is(err, errDataDirUnset):
+		err = cmd.serveUnconfigured(ctx, err)
+	case err == nil:
+		err = cmd.serve(ctx, a)
 	}
 	if err != nil {
-		return fail(stderr, "mcp", err)
-	}
-	if err := cmd.serve(context.Background(), a); err != nil {
 		return fail(stderr, "mcp", err)
 	}
 	return 0
@@ -62,24 +59,29 @@ func (c mcpCommand) list() {
 	fmt.Fprintln(c.out, strings.Join(mcp.Tools(), "\n"))
 }
 
-// The demo is unpacked only when no config exists so a broken config is reported and never overwritten
-// The message names this binary for the user to paste
+// The path of this binary as a command in a message names it for the user to paste into a shell
 // nodloop stands in when the OS cannot tell its path
-func (c mcpCommand) setupDemo(h homeDir) error {
-	if h == "" {
-		return fmt.Errorf("%w: cannot set up the demo", errHomeUnknown)
-	}
-	uc, err := h.setupDemo("")
-	if err != nil {
-		return err
-	}
+func executable() string {
 	exe, err := os.Executable()
 	if err != nil {
-		exe = "nodloop"
+		return "nodloop"
 	}
-	fmt.Fprintf(c.log, "nodloop mcp: no data configured. Unpacked the demo set to %s and wrote %s. "+
-		"Run %s setup --data-dir <dir> for your own data\n", uc.DataDir, h.configPath(), exe)
-	return nil
+	return shellWord(exe)
+}
+
+// A path with a space or a quote in single quotes so a shell reads it as one word
+func shellWord(path string) string {
+	if !strings.ContainsAny(path, " \t'\"$`") {
+		return path
+	}
+	return "'" + strings.ReplaceAll(path, "'", `'\''`) + "'"
+}
+
+func (c mcpCommand) serveUnconfigured(ctx context.Context, unset error) error {
+	reason := fmt.Errorf("%w. Run %s setup --data-dir <dir> and reconnect the nodloop server", unset, executable())
+	fmt.Fprintf(c.log, "nodloop mcp: %v\n", reason)
+	s := mcp.NewUnconfigured(reason, buildVersion())
+	return s.ServeTransport(ctx, &sdk.IOTransport{Reader: io.NopCloser(c.stdin), Writer: c.out})
 }
 
 func (c mcpCommand) serve(ctx context.Context, a app) error {

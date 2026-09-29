@@ -35,11 +35,18 @@ func Run(t *testing.T, store knowledge.Store) {
 	for _, k := range []knowledge.Knowledge{candidate, approved, other} {
 		require.NoError(t, store.Append(ctx, k))
 	}
+	listed, err := store.List(ctx)
+	require.NoError(t, err)
+	reaffirmed := approved
+	reaffirmed.Approver, reaffirmed.ReviewedAt, reaffirmed.Time = "z", base.Add(3*time.Second), base.Add(3*time.Second)
+	require.NoError(t, store.AppendIfUnchanged(ctx, reaffirmed, listed), "the records are as listed so the append goes in")
+	require.ErrorIs(t, store.AppendIfUnchanged(ctx, reaffirmed, listed), knowledge.ErrRecordsChanged,
+		"the records changed since they were listed")
 
 	t.Run("list gives every record newest first", func(t *testing.T) {
 		t.Parallel()
 		got, err := store.List(ctx)
 		assert.NoError(t, err)
-		assert.Equal(t, []knowledge.Knowledge{other, approved, candidate}, got)
+		assert.Equal(t, []knowledge.Knowledge{reaffirmed, other, approved, candidate}, got)
 	})
 }

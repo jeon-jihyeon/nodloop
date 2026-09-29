@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -29,6 +30,11 @@ func TestRunEvidence(t *testing.T) {
 		}
 	}
 	at := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
+	// A data dir whose procedure front matter is never closed
+	scoped := t.TempDir()
+	require.NoError(t, os.Mkdir(filepath.Join(scoped, "procedures"), 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(scoped, "procedures", "r.md"), []byte("---\nmetrics: [m]\n# T\n"), 0o600))
+	r := strings.NewReplacer("{empty}", t.TempDir(), "{scoped}", scoped)
 	type args struct {
 		args []string
 		env  map[string]string
@@ -64,6 +70,17 @@ func TestRunEvidence(t *testing.T) {
 			"event unknown fails",
 			args{[]string{"event", "--id", "nope"}, withDir},
 			want{1, "", `^nodloop evidence: event "nope": .*not found\n$`},
+		},
+		{
+			"procedures lists every procedure with its scope and paragraph count",
+			args{[]string{"procedures"}, withDir},
+			want{0, "data-integrity-hold\tany event\tparagraphs=4\nmetric-anomaly-investigation\tany event\tparagraphs=5\n" +
+				"outcome-rate-degradation\tany event\tparagraphs=5\nsegment-concentration-review\tany event\tparagraphs=5\n", `^$`},
+		},
+		{
+			"procedures names the file whose front matter does not parse",
+			args{[]string{"procedures", "--data-dir", "{scoped}"}, nil},
+			want{1, "", `^nodloop evidence: r\.md: evidence: malformed data: front matter is not closed\n$`},
 		},
 		{
 			"paragraphs lists every paragraph id",
@@ -110,7 +127,6 @@ func TestRunEvidence(t *testing.T) {
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			r := strings.NewReplacer("{empty}", t.TempDir())
 			args := make([]string, 0, len(tc.args.args))
 			for _, a := range tc.args.args {
 				args = append(args, r.Replace(a))

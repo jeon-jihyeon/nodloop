@@ -112,3 +112,45 @@ func TestOutcomeFilterMatches(t *testing.T) {
 		})
 	}
 }
+
+func TestOutcomeImplicit(t *testing.T) {
+	tcs := []struct {
+		name string
+		args string
+		want bool
+	}{
+		{"session reviewer is implicit", feedback.ReviewerSession, true},
+		{"author reviewer is a person", feedback.ReviewerAuthor, false},
+		{"named reviewer is a person", "jed", false},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.want, feedback.Outcome{Reviewer: tc.args}.Implicit())
+		})
+	}
+}
+
+func TestOutcomesLatest(t *testing.T) {
+	base := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
+	confirmed := feedback.Outcome{TraceID: "t1", Time: base.Add(time.Hour), Result: feedback.ResultConfirmed}
+	refuted := feedback.Outcome{TraceID: "t1", Time: base, Result: feedback.ResultRefuted}
+	other := feedback.Outcome{TraceID: "t2", Time: base, Result: feedback.ResultRefuted}
+	sameTime := feedback.Outcome{TraceID: "t2", Time: base, Result: feedback.ResultInconclusive}
+	tcs := []struct {
+		name string
+		args feedback.Outcomes
+		want feedback.Outcomes
+	}{
+		{"no outcomes give nothing", nil, nil},
+		{"newest outcome wins when listed first", feedback.Outcomes{confirmed, other, refuted}, feedback.Outcomes{confirmed, other}},
+		{"newest outcome wins when listed last", feedback.Outcomes{refuted, other, confirmed}, feedback.Outcomes{confirmed, other}},
+		{"tie in time keeps the outcome listed first", feedback.Outcomes{other, sameTime}, feedback.Outcomes{other}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.want, tc.args.Latest())
+		})
+	}
+}

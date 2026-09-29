@@ -3,19 +3,24 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/mock/gomock"
 
 	"github.com/jeon-jihyeon/nodloop/internal/diagnose"
+	"github.com/jeon-jihyeon/nodloop/internal/evidence"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
+	knowledgefile "github.com/jeon-jihyeon/nodloop/internal/knowledge/file"
+	"github.com/jeon-jihyeon/nodloop/internal/llm"
+	"github.com/jeon-jihyeon/nodloop/internal/llm/llmmock"
 	"github.com/jeon-jihyeon/nodloop/internal/testkit"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
 	tracefile "github.com/jeon-jihyeon/nodloop/internal/trace/file"
@@ -59,11 +64,17 @@ func TestRunKnowledge(t *testing.T) {
 			"--evidence-paragraph", "p#1", "--veto-tool", "Bash", "--veto-field", "command", "--veto-match", `sed\s+-i`,
 			"--veto-example", `{"command":"ls"}`,
 		}
-		approveSed = []string{"approve", "k-sed", "--version", "1", "--approver", "reviewer"}
-		retireSed  = []string{"retire", "k-sed", "--version", "1", "--approver", "reviewer"}
-		hooked     = `{"hooks":{"PreToolUse":[{"matcher":"*","hooks":[{"type":"command","command":"/bin/nodloop guard"}]}]}}`
-		vetoes     = "vetoes\t1 approved in .*/\\.claude/nodloop/vetoes\\.approved\\.[0-9a-f]+\\.yaml\t"
-		unhooked   = "guard hook not installed\\. Run nodloop guard install to enforce them\n"
+		approveSed   = []string{"approve", "k-sed", "--version", "1", "--approver", "reviewer"}
+		proposeLarge = append([]string{"propose", "--id", "k-large", "--content", strings.Repeat("x", knowledge.ReviewChars)}, agg...)
+		proposeNamed = func(id string) []string {
+			return append([]string{"propose", "--id", id, "--content", "item " + id}, agg...)
+		}
+		approveNamed = func(id string) []string { return []string{"approve", id, "--version", "1", "--approver", "reviewer"} }
+		retireSed    = []string{"retire", "k-sed", "--version", "1", "--approver", "reviewer"}
+		hooked       = `{"hooks":{"PreToolUse":[{"matcher":"*","hooks":[{"type":"command","command":"/bin/nodloop guard"}]}]}}`
+		vetoes       = "vetoes\t1 approved in .*/\\.claude/nodloop/vetoes\\.approved\\.[0-9a-f]+\\.yaml\t"
+		unhooked     = "guard hook not installed\\. Run nodloop guard install to enforce them\n"
+		folder       = "folder\t[0-9]+ of 70000 chars\t1 items\tno other item\n"
 	)
 	type args struct {
 		// Commands that must succeed before the one under test
@@ -98,7 +109,7 @@ func TestRunKnowledge(t *testing.T) {
 		{
 			"propose adds a candidate",
 			args{args: proposeAgg},
-			want{0, "^k-agg\tv1\tcandidate\nfolder\t[0-9]+ of 4000 chars\tno other item\n$", `^$`},
+			want{0, "^k-agg\tv1\tcandidate\nfolder\t[0-9]+ of 70000 chars\t[0-9]+ items\tno other item\n$", `^$`},
 		},
 		{
 			"propose without an id generates one",
@@ -106,24 +117,24 @@ func TestRunKnowledge(t *testing.T) {
 				setup: nil,
 				args:  []string{"propose", "--kind", "meaning", "--content", "time bases differ", "--evidence-paragraph", "p#1"},
 			},
-			want{0, "^k-[0-9a-f]+\tv1\tcandidate\nfolder\t[0-9]+ of 4000 chars\tno other item\n$", `^$`},
+			want{0, "^k-[0-9a-f]+\tv1\tcandidate\nfolder\t[0-9]+ of 70000 chars\t[0-9]+ items\tno other item\n$", `^$`},
 		},
 		{
 			"propose lists overlaps",
 			args{setup: [][]string{proposeAgg}, args: proposeAgg2},
 			want{
-				0, "^k-agg2\tv1\tcandidate\noverlaps\tk-agg\tv1\tcandidate\nfolder\t[0-9]+ of 4000 chars\tno other item\n$", `^$`,
+				0, "^k-agg2\tv1\tcandidate\noverlaps\tk-agg\tv1\tcandidate\nfolder\t[0-9]+ of 70000 chars\t[0-9]+ items\tno other item\n$", `^$`,
 			},
 		},
 		{
 			"propose of a known id adds the next version",
 			args{setup: [][]string{proposeAgg}, args: proposeAggV2},
-			want{0, "^k-agg\tv2\tcandidate\nfolder\t[0-9]+ of 4000 chars\tno other item\n$", `^$`},
+			want{0, "^k-agg\tv2\tcandidate\nfolder\t[0-9]+ of 70000 chars\t[0-9]+ items\tno other item\n$", `^$`},
 		},
 		{
 			"propose takes the trace as feedback evidence",
 			args{args: append(checkTracking, "--trace", "d1", "--scope-context", "launch", "--exception", "other")},
-			want{0, "^k-t\tv1\tcandidate\nfolder\t[0-9]+ of 4000 chars\tno other item\n$", `^$`},
+			want{0, "^k-t\tv1\tcandidate\nfolder\t[0-9]+ of 70000 chars\t[0-9]+ items\tno other item\n$", `^$`},
 		},
 		{
 			"propose with an unknown trace fails",
@@ -143,7 +154,7 @@ func TestRunKnowledge(t *testing.T) {
 		{
 			"approve names the approver",
 			args{setup: [][]string{proposeAgg}, args: approveAgg},
-			want{0, "^k-agg\tv1\tapproved\treviewer\n$", `^$`},
+			want{0, "^k-agg\tv1\tapproved\treviewer\n" + folder + "$", `^$`},
 		},
 		{
 			"approve twice fails",
@@ -153,12 +164,12 @@ func TestRunKnowledge(t *testing.T) {
 		{
 			"approve of the second version",
 			args{setup: [][]string{proposeAgg, approveAgg, proposeAggV2}, args: approveAggV2},
-			want{0, "^k-agg\tv2\tapproved\treviewer\n$", `^$`},
+			want{0, "^k-agg\tv2\tapproved\treviewer\n" + folder + "$", `^$`},
 		},
 		{
 			"list shows only the current version",
 			args{setup: secondVersion, args: []string{"list"}},
-			want{0, "^k-agg\tv2\tapproved\tmeaning\ttime bases differ by an hour\n$", `^$`},
+			want{0, "^k-agg\tv2\tapproved\tmeaning\ttime bases differ by an hour\tstale=false\n$", `^$`},
 		},
 		{
 			"list filters by status and kind",
@@ -166,7 +177,7 @@ func TestRunKnowledge(t *testing.T) {
 				setup: [][]string{proposeAgg, approveAgg, proposeAgg2},
 				args:  []string{"list", "--status", "candidate", "--kind", "meaning"},
 			},
-			want{0, "^k-agg2\tv1\tcandidate\tmeaning\ta second item\n$", `^$`},
+			want{0, "^k-agg2\tv1\tcandidate\tmeaning\ta second item\tstale=false\n$", `^$`},
 		},
 		{
 			"show keeps the superseded first version",
@@ -262,7 +273,7 @@ func TestRunKnowledge(t *testing.T) {
 			want{
 				0,
 				"^k-sed\tv1\tcandidate\nveto\tBash\tcommand matches sed\\\\s\\+-i unless \"\"\n" +
-					"folder\t[0-9]+ of 4000 chars\tno other item\n$",
+					"folder\t[0-9]+ of 70000 chars\t[0-9]+ items\tno other item\n$",
 				`^$`,
 			},
 		},
@@ -279,7 +290,7 @@ func TestRunKnowledge(t *testing.T) {
 		{
 			"approve of a veto says the guard hook is not installed",
 			args{setup: [][]string{proposeSed}, args: approveSed, home: "{home}"},
-			want{0, "^k-sed\tv1\tapproved\treviewer\n" + vetoes + unhooked + "$", `^$`},
+			want{0, "^k-sed\tv1\tapproved\treviewer\n" + vetoes + unhooked + folder + "$", `^$`},
 		},
 		{
 			"approve of a veto says the guard hook is installed",
@@ -287,7 +298,7 @@ func TestRunKnowledge(t *testing.T) {
 				setup: [][]string{proposeSed}, args: approveSed, home: "{home}",
 				files: map[string]string{".claude/settings.json": hooked},
 			},
-			want{0, "^k-sed\tv1\tapproved\treviewer\n" + vetoes + "guard hook installed\n$", `^$`},
+			want{0, "^k-sed\tv1\tapproved\treviewer\n" + vetoes + "guard hook installed\n" + folder + "$", `^$`},
 		},
 		{
 			"approve of a veto with a broken settings file says the hook state is unknown",
@@ -310,7 +321,7 @@ func TestRunKnowledge(t *testing.T) {
 		{
 			"approve of a veto without a home says it was not exported",
 			args{setup: [][]string{proposeSed}, args: approveSed},
-			want{0, "^k-sed\tv1\tapproved\treviewer\nvetoes\tnot exported because the home directory is unknown\n$", `^$`},
+			want{0, "^k-sed\tv1\tapproved\treviewer\nvetoes\tnot exported because the home directory is unknown\n" + folder + "$", `^$`},
 		},
 		{
 			"approve of a veto whose export fails prints the approval and the error",
@@ -329,26 +340,41 @@ func TestRunKnowledge(t *testing.T) {
 			want{0, "^" + vetoes + unhooked + "$", `^$`},
 		},
 		{
-			"approve of an item whose folder may outgrow the knowledge cap of the policy is refused",
+			"approve of an item whose folder may outgrow the review is refused",
 			args{
-				setup:  [][]string{proposeAgg, approveAgg, proposeAgg2},
-				args:   []string{"approve", "k-agg2", "--version", "1", "--approver", "reviewer"},
-				policy: "limits:\n  knowledge_chars: 100\n",
+				setup: [][]string{proposeAgg, approveAgg, proposeLarge},
+				args:  []string{"approve", "k-large", "--version", "1", "--approver", "reviewer"},
 			},
 			want{
 				1, `^$`,
-				`^nodloop knowledge: knowledge: folder may outgrow the review: 137 of 100 chars with k-agg v1 70 chars\n$`,
+				`^nodloop knowledge: knowledge: folder may outgrow the review: 70125 of 70000 chars with k-agg v1 70 chars\n$`,
 			},
 		},
 		{
 			"a broken analyzer in the policy never blocks a knowledge command",
 			args{setup: [][]string{proposeAgg2}, args: []string{"list"}, policy: "version: v\nanalyzers:\n  - rule: nope\n"},
-			want{0, "^k-agg2\tv1\tcandidate\tmeaning\ta second item\n$", `^$`},
+			want{0, "^k-agg2\tv1\tcandidate\tmeaning\ta second item\tstale=false\n$", `^$`},
 		},
 		{
-			"a broken limits section fails",
-			args{args: []string{"list"}, policy: "limits: ["},
-			want{1, `^$`, `^nodloop knowledge: ` + regexp.QuoteMeta(diagnose.ErrBadLimits.Error())},
+			"a broken policy never stops a knowledge command",
+			args{setup: [][]string{proposeAgg2}, args: []string{"list"}, policy: "limits: ["},
+			want{0, "^k-agg2\tv1\tcandidate\tmeaning\ta second item\tstale=false\n$", `^$`},
+		},
+		{
+			"approve prints the folder and says when a compaction is due",
+			args{
+				setup: [][]string{
+					proposeAgg, approveAgg, proposeAgg2, {"approve", "k-agg2", "--version", "1", "--approver", "reviewer"},
+					proposeNamed("k-a3"), approveNamed("k-a3"), proposeNamed("k-a4"), approveNamed("k-a4"),
+					proposeNamed("k-a5"), approveNamed("k-a5"), proposeNamed("k-a6"),
+				},
+				args: approveNamed("k-a6"),
+			},
+			want{
+				0, "^k-a6\tv1\tapproved\treviewer\nfolder\t[0-9]+ of 70000 chars\t6 items\t.*\n" +
+					"compaction due\tthe folder holds more than 5 approved items\\. Run nodloop knowledge compact k-a6\n$",
+				`^$`,
+			},
 		},
 		{
 			"unknown flag fails",
@@ -386,16 +412,133 @@ func TestRunKnowledge(t *testing.T) {
 			now := testkit.Open(t).Clock.Now
 			var stderr bytes.Buffer
 			for _, args := range tc.args.setup {
-				code := runKnowledge(args, getenv, now, io.Discard, &stderr)
+				code := runKnowledge(args, getenv, nil, now, io.Discard, &stderr)
 				require.Equal(t, 0, code, "%s: stderr = %s", strings.Join(args, " "), stderr.String())
 			}
 			var stdout bytes.Buffer
 
-			got := runKnowledge(tc.args.args, getenv, now, &stdout, &stderr)
+			got := runKnowledge(tc.args.args, getenv, nil, now, &stdout, &stderr)
 
 			assert.Equal(t, tc.want.code, got)
 			assert.Regexp(t, tc.want.stdout, stdout.String())
 			assert.Regexp(t, tc.want.stderr, stderr.String())
+		})
+	}
+}
+
+// A batch review of tq-005 is corrected and proposed as knowledge from its trace
+// The model answers the review and the content draft and each row checks the candidate the ledger holds
+func TestRunKnowledgeFrom(t *testing.T) {
+	review := `{"status":"ready_for_review","observations":[],"causes":[{"summary":"low quality traffic","paragraph_ids":` +
+		`["metric-anomaly-investigation#Metric anomaly investigation/Check the segment#1"]}],"checks":[` +
+		`{"step":"s","purpose":"p","paragraph_ids":["metric-anomaly-investigation#Metric anomaly investigation/Confirm the signal#1"]}],` +
+		`"open_questions":[]}`
+	edited := filepath.Join(t.TempDir(), "edited.json")
+	require.NoError(t, os.WriteFile(edited, []byte(`{"status":"no_action","observations":[],"causes":[],"checks":[],"open_questions":[]}`), 0o600))
+	ctx := context.Background()
+	st := testkit.Open(t)
+	ev, err := st.Source.Event(ctx, "tq-005")
+	require.NoError(t, err)
+	obs, err := testkit.Policy(t).Analyze(ev)
+	require.NoError(t, err)
+	type args struct {
+		verdict []string
+		propose []string
+	}
+	type want struct {
+		code           int
+		stdout, stderr string
+		// The candidates as stored without their id and time and evidence
+		stored []knowledge.Knowledge
+	}
+	filled := func(metrics []string, content string, drafted bool) knowledge.Knowledge {
+		return knowledge.Knowledge{
+			Version: 1, Kind: knowledge.KindMeaning, Content: content, Basis: knowledge.BasisStated,
+			Scope: knowledge.Scope{Scope: evidence.Scope{
+				ChangeContexts: []evidence.Context{evidence.ContextNoKnownChange}, Metrics: metrics,
+			}},
+			Status: knowledge.StatusCandidate, Author: "author", Drafted: drafted,
+		}
+	}
+	candidate := "^k-[0-9a-f]+\tv1\tcandidate\nfolder\t[0-9]+ of 70000 chars\t1 items\tno other item\n"
+	drafting := gomock.Cond(func(r llm.Request) bool { return r.System == diagnose.DraftRules && r.Model == "haiku" })
+	drafted := llm.Response{Output: json.RawMessage(`{"content":"Clicks that never convert are no incident."}`), CostUSD: 0.0012}
+	tcs := []struct {
+		name string
+		args args
+		// Model calls beyond the review
+		init func(client *llmmock.MockClient)
+		want want
+	}{
+		{
+			"content given fills scope and evidence without a model call",
+			args{[]string{"--verdict", "reject"}, []string{"--kind", "meaning", "--content", "clicks without conversions"}},
+			func(*llmmock.MockClient) {},
+			want{0, candidate + "$", `^$`, []knowledge.Knowledge{filled(obs.Moved(), "clicks without conversions", false)}},
+		},
+		{
+			"content left out is drafted by the model and marked",
+			args{[]string{"--verdict", "edit", "--edited", edited}, []string{"--kind", "meaning", "--model", "haiku"}},
+			func(client *llmmock.MockClient) {
+				client.EXPECT().Complete(gomock.Any(), drafting).Return(drafted, nil)
+			},
+			want{
+				0, candidate + "drafted\t0.0012 usd\tClicks that never convert are no incident\\.\n$", `^$`,
+				[]knowledge.Knowledge{filled(obs.Moved(), "Clicks that never convert are no incident.", true)},
+			},
+		},
+		{
+			"a scope metric given replaces the filled metrics",
+			args{
+				[]string{"--verdict", "reject"},
+				[]string{"--kind", "meaning", "--content", "c", "--scope-metric", "conversion_count"},
+			},
+			func(*llmmock.MockClient) {},
+			want{0, candidate + "$", `^$`, []knowledge.Knowledge{filled([]string{"conversion_count"}, "c", false)}},
+		},
+		{
+			"an approved review is no correction",
+			args{[]string{"--verdict", "approve"}, []string{"--kind", "meaning", "--content", "c"}},
+			func(*llmmock.MockClient) {},
+			want{1, `^$`, `^nodloop knowledge: ` + diagnose.ErrNotCorrected.Error(), []knowledge.Knowledge{}},
+		},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			records, home := t.TempDir(), t.TempDir()
+			getenv := func(k string) string {
+				return map[string]string{envFileDir: testkit.DemoDir(t), envRecordDir: records, "HOME": home}[k]
+			}
+			client := llmmock.NewMockClient(gomock.NewController(t))
+			reviewing := gomock.Cond(func(r llm.Request) bool { return r.System == diagnose.Rules })
+			client.EXPECT().Complete(gomock.Any(), reviewing).Return(llm.Response{Output: json.RawMessage(review)}, nil).AnyTimes()
+			tc.init(client)
+			now := testkit.Open(t).Clock.Now
+			var stderr bytes.Buffer
+			require.Equal(t, 0, runDiagnose([]string{"--event", "tq-005", "--knowledge", "none"}, getenv, client, now, io.Discard, &stderr), stderr.String())
+			traceID := strings.TrimSpace(strings.TrimPrefix(stderr.String(), "trace "))
+			stderr.Reset()
+			verdict := append([]string{"add", "--trace", traceID, "--reason", "clicks without conversions"}, tc.args.verdict...)
+			require.Equal(t, 0, runFeedback(verdict, getenv, now, io.Discard, &stderr), stderr.String())
+			var stdout bytes.Buffer
+
+			got := runKnowledge(append([]string{"propose", "--from", traceID}, tc.args.propose...), getenv, client, now, &stdout, &stderr)
+
+			store, err := knowledgefile.New(records)
+			require.NoError(t, err)
+			all, err := store.List(ctx)
+			require.NoError(t, err)
+			stored := make([]knowledge.Knowledge, 0, len(all))
+			for _, k := range all {
+				assert.Equal(t, knowledge.Evidence{FeedbackTraceIDs: []string{traceID}}, k.Evidence)
+				k.ID, k.Time, k.Evidence = "", time.Time{}, knowledge.Evidence{}
+				stored = append(stored, k)
+			}
+			assert.Equal(t, tc.want.code, got)
+			assert.Regexp(t, tc.want.stdout, stdout.String())
+			assert.Regexp(t, tc.want.stderr, stderr.String())
+			assert.Equal(t, tc.want.stored, stored)
 		})
 	}
 }
@@ -428,7 +571,7 @@ func TestApprovedVetoBlocksTheCall(t *testing.T) {
 				},
 				{"approve", "k-sed", "--version", "1", "--approver", "reviewer"},
 			} {
-				require.Equal(t, 0, runKnowledge(args, getenv, now, io.Discard, &stderr), stderr.String())
+				require.Equal(t, 0, runKnowledge(args, getenv, nil, now, io.Discard, &stderr), stderr.String())
 			}
 			input := `{"tool_name":"Bash","cwd":"` + t.TempDir() + `","tool_input":` + tc.args + `}`
 

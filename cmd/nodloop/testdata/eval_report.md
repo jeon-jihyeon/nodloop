@@ -13,3 +13,30 @@ Against feedback:off
 | feedback:on | - | - | - |
 | knowledge:on | - | - | - |
 | knowledge:all | - | - | - |
+
+| reference | condition | paired events | fixed | regressed | exact McNemar p |
+|---|---|---|---|---|---|
+| feedback:off | feedback:on | 12 | 0 | 0 | 1.0000 |
+| feedback:off | knowledge:on | 12 | 0 | 0 | 1.0000 |
+| feedback:off | knowledge:all | 12 | 0 | 0 | 1.0000 |
+| feedback:on | knowledge:on | 12 | 0 | 0 | 1.0000 |
+| feedback:on | knowledge:all | 12 | 0 | 0 | 1.0000 |
+| knowledge:on | knowledge:all | 12 | 0 | 0 | 1.0000 |
+
+Paired event-cluster percentile bootstrap: 95% interval, 10000 resamples, seed 0
+Each event is one cluster; repeated reviews do not increase independent event count.
+
+| reference | condition | metric | events | pairs | difference | lower | upper |
+|---|---|---|---|---|---|---|---|
+| feedback:off | feedback:on | status_accuracy | 12 | 12 | 0.000 | 0.000 | 0.000 |
+| feedback:off | feedback:on | misapplied | 12 | 12 | 0.000 | 0.000 | 0.000 |
+| feedback:off | knowledge:on | status_accuracy | 12 | 12 | 0.000 | 0.000 | 0.000 |
+| feedback:off | knowledge:on | misapplied | 12 | 12 | 0.000 | 0.000 | 0.000 |
+| feedback:off | knowledge:all | status_accuracy | 12 | 12 | 0.000 | 0.000 | 0.000 |
+| feedback:off | knowledge:all | misapplied | 12 | 12 | 0.000 | 0.000 | 0.000 |
+| feedback:on | knowledge:on | status_accuracy | 12 | 12 | 0.000 | 0.000 | 0.000 |
+| feedback:on | knowledge:on | misapplied | 12 | 12 | 0.000 | 0.000 | 0.000 |
+| feedback:on | knowledge:all | status_accuracy | 12 | 12 | 0.000 | 0.000 | 0.000 |
+| feedback:on | knowledge:all | misapplied | 12 | 12 | 0.000 | 0.000 | 0.000 |
+| knowledge:on | knowledge:all | status_accuracy | 12 | 12 | 0.000 | 0.000 | 0.000 |
+| knowledge:on | knowledge:all | misapplied | 12 | 12 | 0.000 | 0.000 | 0.000 |

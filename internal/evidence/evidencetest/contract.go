@@ -16,7 +16,7 @@ import (
 type Store interface {
 	Events(ctx context.Context) ([]evidence.EventRef, error)
 	Event(ctx context.Context, id string) (evidence.Event, error)
-	Paragraphs(ctx context.Context) ([]evidence.Paragraph, error)
+	Procedures(ctx context.Context) (evidence.Procedures, error)
 	Labels(ctx context.Context) ([]evidence.Label, error)
 }
 
@@ -63,22 +63,22 @@ func Run(t *testing.T, src Store, seed Seed) {
 
 	t.Run("paragraphs", func(t *testing.T) {
 		t.Parallel()
-		first, err := src.Paragraphs(ctx)
+		first, err := src.Procedures(ctx)
 		require.NoError(t, err)
-		second, err := src.Paragraphs(ctx)
+		second, err := src.Procedures(ctx)
 		require.NoError(t, err)
-		require.NotEmpty(t, first)
-		assert.Equal(t, paragraphs(first).ids(), paragraphs(second).ids(), "ids changed between runs")
-		assert.Contains(t, paragraphs(first).ids(), seed.ParagraphID)
+		require.NotEmpty(t, first.Paragraphs())
+		assert.Equal(t, paragraphs(first.Paragraphs()).ids(), paragraphs(second.Paragraphs()).ids(), "ids changed between runs")
+		assert.Contains(t, paragraphs(first.Paragraphs()).ids(), seed.ParagraphID)
 	})
 
 	t.Run("labels_cite_existing_paragraphs", func(t *testing.T) {
 		t.Parallel()
 		labels, err := src.Labels(ctx)
 		require.NoError(t, err)
-		all, err := src.Paragraphs(ctx)
+		all, err := src.Procedures(ctx)
 		require.NoError(t, err)
-		known := paragraphs(all).ids()
+		known := paragraphs(all.Paragraphs()).ids()
 		labeled := func(l evidence.Label) bool { return l.EventID == seed.LabeledEventID }
 		assert.True(t, slices.ContainsFunc(labels, labeled), "label for %s missing", seed.LabeledEventID)
 		for _, l := range labels {

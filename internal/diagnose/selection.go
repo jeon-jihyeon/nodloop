@@ -120,10 +120,12 @@ func (e appliedExample) dropped() bool {
 // Stored as the select trace Input
 // Holds no float and no map so encoding never fails
 type selectInput struct {
-	Selector  Selector           `json:"mode"`
-	Knowledge []AppliedKnowledge `json:"knowledge"`
-	Examples  []appliedExample   `json:"examples"`
-	Omitted   bool               `json:"omitted"`
+	Selector     Selector           `json:"mode"`
+	Knowledge    []AppliedKnowledge `json:"knowledge"`
+	Examples     []appliedExample   `json:"examples"`
+	Omitted      bool               `json:"omitted"`
+	Chars        sectionChars       `json:"chars"`
+	OmittedChars sectionChars       `json:"omitted_chars"`
 }
 
 // Knowledge that reached the model whole or cut
@@ -191,7 +193,7 @@ func (d *Diagnoser) Select(ctx context.Context, pendingID string, choices Choice
 	if err != nil {
 		return Selection{}, err
 	}
-	selected, sel := d.limits.fit(SelectByClaude, items, examples)
+	selected, sel := fit(SelectByClaude, items, examples)
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if err := d.ensureOpen(ctx, pendingID); err != nil {
@@ -261,7 +263,7 @@ func (c Context) leadingExamples(count int) []Choice {
 func (d *Diagnoser) loadKnowledge(ctx context.Context, refs []knowledgeRef) ([]chosenKnowledge, error) {
 	var items []chosenKnowledge
 	for _, ref := range refs {
-		k, err := d.ledger.Approved(ctx, ref.id, ref.version)
+		k, err := d.knowledge.Approved(ctx, ref.id, ref.version)
 		if err != nil {
 			return nil, err
 		}
@@ -272,7 +274,7 @@ func (d *Diagnoser) loadKnowledge(ctx context.Context, refs []knowledgeRef) ([]c
 
 // Every approved item regardless of scope
 func (d *Diagnoser) approvedKnowledge(ctx context.Context) ([]chosenKnowledge, error) {
-	all, err := d.ledger.All(ctx)
+	all, err := d.knowledge.All(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -302,7 +304,7 @@ func (d *Diagnoser) recordSelection(ctx context.Context, c Context, selected sel
 }
 
 // An example exists to carry the correction
-// 1. the verdict and reason lead and are never cut
+// 1. the verdict and reason and what the correction changed lead and are never cut
 // 2. the corrected review is the body so it fits whole before any original review gets a character
 // 3. the original review is the tail and gets only what the corrections leave
 func (e example) render(n int) block {
@@ -311,11 +313,33 @@ func (e example) render(n int) block {
 	if e.Reason != "" {
 		fmt.Fprintf(&lead, "Reason: %s\n", e.Reason)
 	}
+	lead.WriteString(e.change())
 	var body string
 	if len(e.Edited) > 0 {
 		body = fmt.Sprintf("Corrected: %s\n", e.Edited)
 	}
 	return block{lead: lead.String(), body: body, tail: fmt.Sprintf("Original review: %s\n", e.Original)}
+}
+
+// The lines of the lead that say what the correction changed
+// 1. empty when the original or the edited review does not decode so a hand edited record still renders
+// 2. empty for an approval given after the context offered the example because it changed nothing
+func (e example) change() string {
+	var original Diagnosis
+	if json.Unmarshal(e.Original, &original) != nil {
+		return ""
+	}
+	switch e.Verdict {
+	case feedback.VerdictReject:
+		return original.changeTo(nil)
+	case feedback.VerdictEdit:
+		var corrected Diagnosis
+		if json.Unmarshal(e.Edited, &corrected) != nil {
+			return ""
+		}
+		return original.changeTo(&corrected)
+	}
+	return ""
 }
 
 // Newest select trace of a context that has no diagnose trace yet
@@ -356,16 +380,16 @@ func (d *Diagnoser) joinExample(ctx context.Context, traceID string) (example, e
 func (d *Diagnoser) knowledgeCandidates(
 	ctx context.Context, changeContext evidence.Context, moved []string, dims map[string]map[string]struct{},
 ) ([]KnowledgeCandidate, bool, error) {
-	all, err := d.ledger.All(ctx)
+	all, err := d.knowledge.All(ctx)
 	if err != nil {
 		return nil, false, err
 	}
 	applicable := all.Applicable(changeContext, moved, dims)
 	var out []KnowledgeCandidate
-	for _, k := range applicable[:min(len(applicable), d.limits.Candidates)] {
+	for _, k := range applicable[:min(len(applicable), candidates)] {
 		out = append(out, KnowledgeCandidate{ID: k.ID, Version: k.Version, Kind: k.Kind, Head: headline(k.Content), Scope: k.Scope})
 	}
-	return out, len(applicable) > d.limits.Candidates, nil
+	return out, len(applicable) > candidates, nil
 }
 
 // Short list of past corrections that could inform this review
@@ -406,7 +430,7 @@ func (d *Diagnoser) exampleCandidates(
 		if json.Unmarshal(tr.Input, &in) != nil || !in.matches(changeContext, metrics) {
 			continue
 		}
-		if len(out) == d.limits.Candidates {
+		if len(out) == candidates {
 			return out, true, nil
 		}
 		out = append(out, ExampleCandidate{TraceID: verdict.TraceID, Verdict: verdict.Verdict, Head: headline(verdict.Reason)})

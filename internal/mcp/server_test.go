@@ -3,7 +3,10 @@ package mcp_test
 import (
 	"context"
 	"encoding/json"
+	"maps"
 	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -11,14 +14,18 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeon-jihyeon/nodloop/internal/compact"
 	"github.com/jeon-jihyeon/nodloop/internal/diagnose"
 	"github.com/jeon-jihyeon/nodloop/internal/evidence"
 	evidencefile "github.com/jeon-jihyeon/nodloop/internal/evidence/file"
 	"github.com/jeon-jihyeon/nodloop/internal/feedback"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
+	knowledgefile "github.com/jeon-jihyeon/nodloop/internal/knowledge/file"
+	"github.com/jeon-jihyeon/nodloop/internal/loop"
 	"github.com/jeon-jihyeon/nodloop/internal/mcp"
 	"github.com/jeon-jihyeon/nodloop/internal/testkit"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
+	vetofile "github.com/jeon-jihyeon/nodloop/internal/veto/file"
 )
 
 const (
@@ -28,17 +35,27 @@ const (
 	relatedEvent   = "tq-011"
 	unrelatedEvent = "tq-003"
 	knownSegment   = "metric-anomaly-investigation#Metric anomaly investigation/Check the segment#1"
-	// A review that cites the runbook paragraphs of every context and passes the gate
+	// A review that cites the procedure paragraphs of every context and passes the gate
 	reviewFile = "testdata/review.json"
 )
+
+// The server over the stores as the composition root builds it
+// A test that needs another source or ledger replaces it in its copy of the stores
+func connect(t *testing.T, st testkit.Stores, exe string) testkit.Client {
+	t.Helper()
+	policy := testkit.Policy(t)
+	diagnoser := diagnose.New(st.Source, policy, nil, st.Traces, st.Feedback, st.Ledger, st.Clock.Now)
+	compactor := compact.New(st.Source, st.Ledger, st.Traces, st.Feedback, st.Replays)
+	srv := mcp.New(
+		st.Source, policy, diagnoser, st.Traces, st.Feedback, st.Outcomes, st.Ledger, compactor, st.Clock.Now, "test", exe,
+	)
+	return testkit.Connect(t, srv.ServeTransport)
+}
 
 func TestServerTools(t *testing.T) {
 	t.Parallel()
 	st := testkit.Open(t)
-	policy := testkit.Policy(t)
-	diagnoser := diagnose.New(st.Source, policy, diagnose.Limits{}, nil, st.Traces, st.Feedback, st.Ledger, st.Clock.Now)
-	srv := mcp.New(st.Source, policy, diagnoser, st.Traces, st.Feedback, st.Outcomes, st.Ledger, st.Clock.Now, "test")
-	c := testkit.Connect(t, srv.ServeTransport)
+	c := connect(t, st, "nodloop")
 
 	assert.ElementsMatch(t, mcp.Tools(), c.Tools(t))
 }
@@ -46,10 +63,7 @@ func TestServerTools(t *testing.T) {
 func TestServerEvents(t *testing.T) {
 	t.Parallel()
 	st := testkit.Open(t)
-	policy := testkit.Policy(t)
-	diagnoser := diagnose.New(st.Source, policy, diagnose.Limits{}, nil, st.Traces, st.Feedback, st.Ledger, st.Clock.Now)
-	srv := mcp.New(st.Source, policy, diagnoser, st.Traces, st.Feedback, st.Outcomes, st.Ledger, st.Clock.Now, "test")
-	c := testkit.Connect(t, srv.ServeTransport)
+	c := connect(t, st, "nodloop")
 	want, err := os.ReadFile("testdata/events.json")
 	require.NoError(t, err)
 
@@ -62,10 +76,7 @@ func TestServerEvents(t *testing.T) {
 func TestServerObserve(t *testing.T) {
 	t.Parallel()
 	st := testkit.Open(t)
-	policy := testkit.Policy(t)
-	diagnoser := diagnose.New(st.Source, policy, diagnose.Limits{}, nil, st.Traces, st.Feedback, st.Ledger, st.Clock.Now)
-	srv := mcp.New(st.Source, policy, diagnoser, st.Traces, st.Feedback, st.Outcomes, st.Ledger, st.Clock.Now, "test")
-	c := testkit.Connect(t, srv.ServeTransport)
+	c := connect(t, st, "nodloop")
 	tcs := []struct {
 		name string
 		args string
@@ -98,10 +109,7 @@ func TestServerObserve(t *testing.T) {
 func TestServerContext(t *testing.T) {
 	t.Parallel()
 	st := testkit.Open(t)
-	policy := testkit.Policy(t)
-	diagnoser := diagnose.New(st.Source, policy, diagnose.Limits{}, nil, st.Traces, st.Feedback, st.Ledger, st.Clock.Now)
-	srv := mcp.New(st.Source, policy, diagnoser, st.Traces, st.Feedback, st.Outcomes, st.Ledger, st.Clock.Now, "test")
-	c := testkit.Connect(t, srv.ServeTransport)
+	c := connect(t, st, "nodloop")
 
 	var got struct {
 		PendingID           string                        `json:"pending_id"`
@@ -130,10 +138,7 @@ func TestServerOffers(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	st := testkit.Open(t)
-	policy := testkit.Policy(t)
-	diagnoser := diagnose.New(st.Source, policy, diagnose.Limits{}, nil, st.Traces, st.Feedback, st.Ledger, st.Clock.Now)
-	srv := mcp.New(st.Source, policy, diagnoser, st.Traces, st.Feedback, st.Outcomes, st.Ledger, st.Clock.Now, "test")
-	c := testkit.Connect(t, srv.ServeTransport)
+	c := connect(t, st, "nodloop")
 	b, err := os.ReadFile(reviewFile)
 	require.NoError(t, err)
 	review := json.RawMessage(b)
@@ -150,7 +155,7 @@ func TestServerOffers(t *testing.T) {
 		"trace_id": reviewed.TraceID, "verdict": feedback.VerdictReject, "reason": "measurement changed first",
 	}
 	require.NoError(t, c.Run(t, "feedback", rejection))
-	scope := knowledge.Scope{ChangeContexts: []evidence.Context{evidence.ContextPlannedChange}}
+	scope := knowledge.Scope{Scope: evidence.Scope{ChangeContexts: []evidence.Context{evidence.ContextPlannedChange}}}
 	require.NoError(t, c.Run(t, "propose", map[string]any{
 		"id": "k-tracking", "kind": knowledge.KindJudgment, "content": "after a planned change check tracking first",
 		"change_contexts": scope.ChangeContexts, "trace_ids": []string{reviewed.TraceID},
@@ -211,16 +216,13 @@ func TestServerOffers(t *testing.T) {
 func TestServerRecordSendsBack(t *testing.T) {
 	t.Parallel()
 	st := testkit.Open(t)
-	policy := testkit.Policy(t)
-	diagnoser := diagnose.New(st.Source, policy, diagnose.Limits{}, nil, st.Traces, st.Feedback, st.Ledger, st.Clock.Now)
-	srv := mcp.New(st.Source, policy, diagnoser, st.Traces, st.Feedback, st.Outcomes, st.Ledger, st.Clock.Now, "test")
-	c := testkit.Connect(t, srv.ServeTransport)
+	c := connect(t, st, "nodloop")
 	var opened struct {
 		PendingID string `json:"pending_id"`
 	}
 	require.NoError(t, c.Call(t, "context", map[string]any{"event_id": spikeEvent}, &opened))
 	incomplete := diagnose.Diagnosis{
-		Status:        diagnose.StatusReadyForReview,
+		Status:        evidence.StatusReadyForReview,
 		Observations:  []string{"clicks up"},
 		Causes:        []diagnose.Cause{{Summary: "low quality traffic", ParagraphIDs: []string{knownSegment}}},
 		Checks:        []diagnose.Check{{Step: "s", Purpose: "p", ParagraphIDs: []string{knownSegment}}},
@@ -249,10 +251,7 @@ func TestServerRecordSendsBack(t *testing.T) {
 func TestServerRecord(t *testing.T) {
 	t.Parallel()
 	st := testkit.Open(t)
-	policy := testkit.Policy(t)
-	diagnoser := diagnose.New(st.Source, policy, diagnose.Limits{}, nil, st.Traces, st.Feedback, st.Ledger, st.Clock.Now)
-	srv := mcp.New(st.Source, policy, diagnoser, st.Traces, st.Feedback, st.Outcomes, st.Ledger, st.Clock.Now, "test")
-	c := testkit.Connect(t, srv.ServeTransport)
+	c := connect(t, st, "nodloop")
 	b, err := os.ReadFile(reviewFile)
 	require.NoError(t, err)
 	var review diagnose.Diagnosis
@@ -298,10 +297,7 @@ func TestServerFeedback(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	st := testkit.Open(t)
-	policy := testkit.Policy(t)
-	diagnoser := diagnose.New(st.Source, policy, diagnose.Limits{}, nil, st.Traces, st.Feedback, st.Ledger, st.Clock.Now)
-	srv := mcp.New(st.Source, policy, diagnoser, st.Traces, st.Feedback, st.Outcomes, st.Ledger, st.Clock.Now, "test")
-	c := testkit.Connect(t, srv.ServeTransport)
+	c := connect(t, st, "nodloop")
 	b, err := os.ReadFile(reviewFile)
 	require.NoError(t, err)
 	review := json.RawMessage(b)
@@ -328,7 +324,7 @@ func TestServerFeedback(t *testing.T) {
 			name: "an edit stores the corrected review in full",
 			args: args{verdict: feedback.VerdictEdit, reason: "it was a launch", edited: edited},
 			want: feedback.Feedback{
-				Verdict: feedback.VerdictEdit, Reason: "it was a launch", Edited: edited, Reviewer: feedback.DefaultReviewer,
+				Verdict: feedback.VerdictEdit, Reason: "it was a launch", Edited: edited, Reviewer: feedback.ReviewerAuthor,
 			},
 		},
 		{
@@ -372,10 +368,7 @@ func TestServerOutcome(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	st := testkit.Open(t)
-	policy := testkit.Policy(t)
-	diagnoser := diagnose.New(st.Source, policy, diagnose.Limits{}, nil, st.Traces, st.Feedback, st.Ledger, st.Clock.Now)
-	srv := mcp.New(st.Source, policy, diagnoser, st.Traces, st.Feedback, st.Outcomes, st.Ledger, st.Clock.Now, "test")
-	c := testkit.Connect(t, srv.ServeTransport)
+	c := connect(t, st, "nodloop")
 	b, err := os.ReadFile(reviewFile)
 	require.NoError(t, err)
 	review := json.RawMessage(b)
@@ -399,14 +392,14 @@ func TestServerOutcome(t *testing.T) {
 			name: "a confirmed check stores the confirmed cause",
 			args: args{result: feedback.ResultConfirmed, confirmedCause: "campaign launch"},
 			want: feedback.Outcome{
-				Result: feedback.ResultConfirmed, ConfirmedCause: "campaign launch", Reviewer: feedback.DefaultReviewer,
+				Result: feedback.ResultConfirmed, ConfirmedCause: "campaign launch", Reviewer: feedback.ReviewerAuthor,
 			},
 		},
 		{
 			name: "an inconclusive check stores its note",
 			args: args{result: feedback.ResultInconclusive, note: "logs expired"},
 			want: feedback.Outcome{
-				Result: feedback.ResultInconclusive, Note: "logs expired", Reviewer: feedback.DefaultReviewer,
+				Result: feedback.ResultInconclusive, Note: "logs expired", Reviewer: feedback.ReviewerAuthor,
 			},
 		},
 		{
@@ -450,10 +443,7 @@ func TestServerProposeAndApprove(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	st := testkit.Open(t)
-	policy := testkit.Policy(t)
-	diagnoser := diagnose.New(st.Source, policy, diagnose.Limits{}, nil, st.Traces, st.Feedback, st.Ledger, st.Clock.Now)
-	srv := mcp.New(st.Source, policy, diagnoser, st.Traces, st.Feedback, st.Outcomes, st.Ledger, st.Clock.Now, "test")
-	c := testkit.Connect(t, srv.ServeTransport)
+	c := connect(t, st, "nodloop")
 	b, err := os.ReadFile(reviewFile)
 	require.NoError(t, err)
 	review := json.RawMessage(b)
@@ -487,6 +477,7 @@ func TestServerProposeAndApprove(t *testing.T) {
 		Overlaps []knowledge.Knowledge `json:"overlaps"`
 		Folder   folder                `json:"folder"`
 		Veto     *knowledge.Veto       `json:"veto"`
+		Drafted  bool                  `json:"drafted"`
 	}
 	type approval struct {
 		ID       string           `json:"id"`
@@ -516,7 +507,7 @@ func TestServerProposeAndApprove(t *testing.T) {
 			want: want{
 				proposed: proposal{
 					ID: "k-tracking", Version: 1, Status: knowledge.StatusCandidate, Overlaps: []knowledge.Knowledge{},
-					Folder: folder{Chars: 120, Budget: 4000, Items: []string{}},
+					Folder: folder{Chars: 120, Budget: knowledge.ReviewChars, Items: []string{}}, Drafted: true,
 				},
 				approved: approval{ID: "k-tracking", Version: 1, Status: knowledge.StatusApproved, Approver: "reviewer"},
 				author:   "claude",
@@ -528,7 +519,7 @@ func TestServerProposeAndApprove(t *testing.T) {
 			want: want{
 				proposed: proposal{
 					ID: "k-meaning", Version: 1, Status: knowledge.StatusCandidate, Overlaps: []knowledge.Knowledge{},
-					Folder: folder{Chars: 117, Budget: 4000, Items: []string{}},
+					Folder: folder{Chars: 117, Budget: knowledge.ReviewChars, Items: []string{}}, Drafted: true,
 				},
 				approved: approval{ID: "k-meaning", Version: 1, Status: knowledge.StatusApproved, Approver: "reviewer"},
 				author:   "user",
@@ -544,7 +535,7 @@ func TestServerProposeAndApprove(t *testing.T) {
 			want: want{
 				proposed: proposal{
 					ID: "k-no-sed", Version: 1, Status: knowledge.StatusCandidate, Overlaps: []knowledge.Knowledge{},
-					Folder: folder{Chars: 116, Budget: 4000, Items: []string{}}, Veto: sed,
+					Folder: folder{Chars: 116, Budget: knowledge.ReviewChars, Items: []string{}}, Veto: sed, Drafted: true,
 				},
 				approved: approval{
 					ID: "k-no-sed", Version: 1, Status: knowledge.StatusApproved, Approver: "reviewer", Veto: true,
@@ -556,7 +547,7 @@ func TestServerProposeAndApprove(t *testing.T) {
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			scope := knowledge.Scope{Metrics: []string{tc.args.metric}, Dims: map[string]string{"platform": "ios"}}
+			scope := knowledge.Scope{Scope: evidence.Scope{Metrics: []string{tc.args.metric}}, Dims: map[string]string{"platform": "ios"}}
 			in := map[string]any{
 				"id": tc.args.id, "kind": tc.args.kind, "content": "after a planned change check tracking first",
 				"metrics": scope.Metrics, "dims": scope.Dims, "trace_ids": []string{reviewed.TraceID},
@@ -576,8 +567,139 @@ func TestServerProposeAndApprove(t *testing.T) {
 				ID: tc.args.id, Version: 1, Kind: tc.args.kind, Content: "after a planned change check tracking first",
 				Scope: scope, Evidence: knowledge.Evidence{FeedbackTraceIDs: []string{reviewed.TraceID}},
 				Basis: knowledge.BasisStated, Status: knowledge.StatusApproved, Approver: "reviewer",
-				ApprovedAt: stored.ApprovedAt, Time: stored.Time, Author: tc.want.author, Veto: tc.want.proposed.Veto,
+				ApprovedAt: stored.ApprovedAt, Time: stored.Time, Author: tc.want.author, Veto: tc.want.proposed.Veto, Drafted: true,
 			}, stored)
+		})
+	}
+}
+
+// A proposal from a corrected review takes its scope and evidence from code and its content from the conversation
+// The planned event moved conversion_count under a planned change
+func TestServerProposeFrom(t *testing.T) {
+	type args struct {
+		verdict feedback.Verdict
+		edited  json.RawMessage
+		// Scope fields sent beside from
+		metrics []string
+	}
+	cleared := json.RawMessage(`{"status":"no_action","observations":[],"causes":[],"checks":[],"open_questions":[]}`)
+	tcs := []struct {
+		name string
+		args args
+		want []string
+	}{
+		{
+			"an edited review fills scope and evidence",
+			args{verdict: feedback.VerdictEdit, edited: cleared},
+			[]string{"conversion_count"},
+		},
+		{
+			"a metric sent beside from replaces the filled metrics",
+			args{verdict: feedback.VerdictReject, metrics: []string{"click_count"}},
+			[]string{"click_count"},
+		},
+	}
+	ctx := context.Background()
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			st := testkit.Open(t)
+			c := connect(t, st, "nodloop")
+			b, err := os.ReadFile(reviewFile)
+			require.NoError(t, err)
+			var opened struct {
+				PendingID string `json:"pending_id"`
+			}
+			require.NoError(t, c.Call(t, "context", map[string]any{"event_id": plannedEvent}, &opened))
+			var reviewed struct {
+				TraceID string `json:"trace_id"`
+			}
+			recordInput := map[string]any{"pending_id": opened.PendingID, "diagnosis": json.RawMessage(b)}
+			require.NoError(t, c.Call(t, "record", recordInput, &reviewed))
+			require.NoError(t, c.Run(t, "feedback", map[string]any{
+				"trace_id": reviewed.TraceID, "verdict": tc.args.verdict, "reason": "planned tracking change", "edited": tc.args.edited,
+			}))
+			in := map[string]any{
+				"kind": knowledge.KindMeaning, "content": "a planned tracking change moves the counts", "from": reviewed.TraceID,
+				"metrics": tc.args.metrics,
+			}
+			var proposed struct {
+				ID      string          `json:"id"`
+				Scope   knowledge.Scope `json:"scope"`
+				Drafted bool            `json:"drafted"`
+			}
+
+			require.NoError(t, c.Call(t, "propose", in, &proposed))
+
+			stored, err := st.Ledger.History(ctx, proposed.ID)
+			require.NoError(t, err)
+			require.Len(t, stored, 1)
+			planned := []evidence.Context{evidence.ContextPlannedChange}
+			assert.Equal(t, knowledge.Scope{Scope: evidence.Scope{ChangeContexts: planned, Metrics: tc.want}}, proposed.Scope)
+			assert.True(t, proposed.Drafted)
+			assert.Equal(t, knowledge.Evidence{FeedbackTraceIDs: []string{reviewed.TraceID}}, stored[0].Evidence)
+			assert.Equal(t, knowledge.BasisStated, stored[0].Basis)
+		})
+	}
+}
+
+// Once the approval is recorded a later failure rides on the answer because approving again would fail
+// The flaky store lets approve read the records and export the vetoes and fails the folder read after them
+func TestServerApproveKeepsTheApproval(t *testing.T) {
+	type args struct {
+		// Files under the veto home keyed by relative path
+		// A file named .claude blocks the veto export
+		files map[string]string
+	}
+	type want struct {
+		keys   []string
+		status knowledge.Status
+	}
+	tcs := []struct {
+		name string
+		args args
+		want want
+	}{
+		{
+			"a failed folder read answers the approval and the folder error",
+			args{},
+			want{[]string{"id", "version", "status", "approver", "veto", "folder_error"}, knowledge.StatusApproved},
+		},
+		{
+			"a failed veto export and folder read answer the approval and both errors",
+			args{map[string]string{".claude": ""}},
+			want{[]string{"id", "version", "status", "approver", "veto", "veto_export_error", "folder_error"}, knowledge.StatusApproved},
+		},
+	}
+	ctx := context.Background()
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			st := testkit.Open(t)
+			dir, home := t.TempDir(), t.TempDir()
+			for rel, content := range tc.args.files {
+				require.NoError(t, os.WriteFile(filepath.Join(home, rel), []byte(content), 0o600))
+			}
+			items, err := knowledgefile.New(dir)
+			require.NoError(t, err)
+			require.NoError(t, items.Append(ctx, knowledge.Knowledge{
+				ID: "k-lag", Version: 1, Kind: knowledge.KindMeaning, Content: "conversions lag clicks",
+				Evidence: knowledge.Evidence{ParagraphIDs: []string{knownSegment}}, Basis: knowledge.BasisStated,
+				Status: knowledge.StatusCandidate, Author: "author", Time: st.Clock.Now(),
+			}))
+			flaky := &testkit.FlakyKnowledge{Store: items, Reads: testkit.Reads{Allowed: 2, Err: assert.AnError}}
+			st.Ledger = knowledge.NewLedger(flaky, vetofile.NewApprovedFile(home, dir), st.Clock.Now, func(p string) string { return p })
+			c := connect(t, st, "nodloop")
+			var got map[string]any
+
+			require.NoError(t, c.Call(t, "approve", map[string]any{"id": "k-lag", "version": 1, "approver": "jed"}, &got))
+
+			all, err := items.List(ctx)
+			require.NoError(t, err)
+			require.NotEmpty(t, all)
+			assert.ElementsMatch(t, tc.want.keys, slices.Collect(maps.Keys(got)))
+			assert.Equal(t, string(tc.want.status), got["status"])
+			assert.Equal(t, tc.want.status, all[0].Status)
 		})
 	}
 }
@@ -586,47 +708,58 @@ func TestServerProposeAndApprove(t *testing.T) {
 func TestServerProposeFolder(t *testing.T) {
 	t.Parallel()
 	st := testkit.Open(t)
-	policy := testkit.Policy(t)
-	diagnoser := diagnose.New(st.Source, policy, diagnose.Limits{}, nil, st.Traces, st.Feedback, st.Ledger, st.Clock.Now)
-	srv := mcp.New(st.Source, policy, diagnoser, st.Traces, st.Feedback, st.Outcomes, st.Ledger, st.Clock.Now, "test")
-	c := testkit.Connect(t, srv.ServeTransport)
+	c := connect(t, st, "nodloop")
 	type folder struct {
-		Chars  int      `json:"chars"`
-		Budget int      `json:"budget"`
-		Full   bool     `json:"full"`
-		Items  []string `json:"items"`
+		Chars         int      `json:"chars"`
+		Budget        int      `json:"budget"`
+		Full          bool     `json:"full"`
+		Items         []string `json:"items"`
+		CompactionDue bool     `json:"compaction_due"`
 	}
-	var answer struct {
-		Folder folder `json:"folder"`
+	// A fresh answer per call so a decoded list never shares an earlier one
+	call := func(tool string, in map[string]any) (folder, error) {
+		var answer struct {
+			Folder folder `json:"folder"`
+		}
+		err := c.Call(t, tool, in, &answer)
+		return answer.Folder, err
 	}
 	scope := []string{"conversion_count"}
-	first := map[string]any{
-		"id": "k-first", "kind": "meaning", "content": "clicks count once per session", "metrics": scope,
-		"paragraph_ids": []string{"p#1"},
+	item := func(id, content string) map[string]any {
+		return map[string]any{"id": id, "kind": "meaning", "content": content, "metrics": scope, "paragraph_ids": []string{"p#1"}}
 	}
-	require.NoError(t, c.Call(t, "propose", first, &answer))
-	require.NoError(t, c.Call(t, "approve", map[string]any{"id": "k-first", "version": 1, "approver": "jed"}, &answer))
+	approve := func(id string) map[string]any { return map[string]any{"id": id, "version": 1, "approver": "jed"} }
+	_, err := call("propose", item("k-first", "clicks count once per session"))
+	require.NoError(t, err)
+	first, err := call("approve", approve("k-first"))
+	require.NoError(t, err)
 
-	next := map[string]any{
-		"id": "k-second", "kind": "meaning", "content": "conversions arrive late", "metrics": scope,
-		"paragraph_ids": []string{"p#1"},
-	}
-	require.NoError(t, c.Call(t, "propose", next, &answer))
-	second := answer.Folder
+	second, err := call("propose", item("k-second", "conversions arrive late"))
+	require.NoError(t, err)
 	// Its text alone nearly fills the budget so the folder with k-first overflows it
-	large := map[string]any{
-		"id": "k-large", "kind": "meaning", "content": strings.Repeat("x", 3950), "metrics": scope,
-		"paragraph_ids": []string{"p#1"},
+	full, err := call("propose", item("k-large", strings.Repeat("x", knowledge.ReviewChars-50)))
+	require.NoError(t, err)
+	_, refused := call("approve", approve("k-large"))
+	// Five approved items in the folder and a sixth makes a compaction due
+	var fifth folder
+	for _, id := range []string{"k-b", "k-c", "k-d", "k-e"} {
+		_, err = call("propose", item(id, "item "+id))
+		require.NoError(t, err)
+		fifth, err = call("approve", approve(id))
+		require.NoError(t, err)
 	}
-	require.NoError(t, c.Call(t, "propose", large, &answer))
-	full := answer.Folder
-	err := c.Call(t, "approve", map[string]any{"id": "k-large", "version": 1, "approver": "jed"}, &answer)
+	sixth, err := call("approve", approve("k-second"))
+	require.NoError(t, err)
 
-	assert.Equal(t, folder{Chars: 163, Budget: 4000, Items: []string{"k-first"}}, second)
-	assert.Equal(t, folder{Chars: 4089, Budget: 4000, Full: true, Items: []string{"k-first"}}, full)
-	assert.ErrorIs(t, err, testkit.ErrTool)
-	assert.EqualError(t, err, testkit.ErrTool.Error()+
-		": knowledge: folder may outgrow the review: 4089 of 4000 chars with k-first v1 84 chars")
+	assert.Equal(t, folder{Chars: 84, Budget: knowledge.ReviewChars, Items: []string{}}, first)
+	assert.Equal(t, folder{Chars: 163, Budget: knowledge.ReviewChars, Items: []string{"k-first"}}, second)
+	assert.Equal(t, folder{Chars: 70089, Budget: knowledge.ReviewChars, Full: true, Items: []string{"k-first"}}, full)
+	assert.ErrorIs(t, refused, testkit.ErrTool)
+	assert.EqualError(t, refused, testkit.ErrTool.Error()+
+		": knowledge: folder may outgrow the review: 70089 of 70000 chars with k-first v1 84 chars")
+	assert.False(t, fifth.CompactionDue)
+	assert.Equal(t, []string{"k-b", "k-c", "k-d", "k-e", "k-first"}, sixth.Items)
+	assert.True(t, sixth.CompactionDue)
 }
 
 // The answers are captured from the demo data and from a fixture event with more rows than the limit
@@ -668,10 +801,8 @@ func TestServerDetail(t *testing.T) {
 			st := testkit.Open(t)
 			src, err := evidencefile.New(tc.args.dir)
 			require.NoError(t, err)
-			policy := testkit.Policy(t)
-			diagnoser := diagnose.New(src, policy, diagnose.Limits{}, nil, st.Traces, st.Feedback, st.Ledger, st.Clock.Now)
-			srv := mcp.New(src, policy, diagnoser, st.Traces, st.Feedback, st.Outcomes, st.Ledger, st.Clock.Now, "test")
-			c := testkit.Connect(t, srv.ServeTransport)
+			st.Source = src
+			c := connect(t, st, "nodloop")
 			want, err := os.ReadFile(tc.want)
 			require.NoError(t, err)
 
@@ -687,10 +818,7 @@ func TestServerPending(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	st := testkit.Open(t)
-	policy := testkit.Policy(t)
-	diagnoser := diagnose.New(st.Source, policy, diagnose.Limits{}, nil, st.Traces, st.Feedback, st.Ledger, st.Clock.Now)
-	srv := mcp.New(st.Source, policy, diagnoser, st.Traces, st.Feedback, st.Outcomes, st.Ledger, st.Clock.Now, "test")
-	c := testkit.Connect(t, srv.ServeTransport)
+	c := connect(t, st, "nodloop")
 	b, err := os.ReadFile(reviewFile)
 	require.NoError(t, err)
 	review := json.RawMessage(b)
@@ -723,10 +851,7 @@ func TestServerPending(t *testing.T) {
 func TestServerRefusals(t *testing.T) {
 	t.Parallel()
 	st := testkit.Open(t)
-	policy := testkit.Policy(t)
-	diagnoser := diagnose.New(st.Source, policy, diagnose.Limits{}, nil, st.Traces, st.Feedback, st.Ledger, st.Clock.Now)
-	srv := mcp.New(st.Source, policy, diagnoser, st.Traces, st.Feedback, st.Outcomes, st.Ledger, st.Clock.Now, "test")
-	c := testkit.Connect(t, srv.ServeTransport)
+	c := connect(t, st, "nodloop")
 	b, err := os.ReadFile(reviewFile)
 	require.NoError(t, err)
 	review := json.RawMessage(b)
@@ -743,6 +868,7 @@ func TestServerRefusals(t *testing.T) {
 		"trace_ids": []string{reviewed.TraceID},
 	}
 	require.NoError(t, c.Run(t, "propose", proposal))
+	require.NoError(t, c.Run(t, "feedback", map[string]any{"trace_id": reviewed.TraceID, "verdict": feedback.VerdictApprove}))
 	var fresh struct {
 		PendingID string `json:"pending_id"`
 	}
@@ -836,9 +962,26 @@ func TestServerRefusals(t *testing.T) {
 			want: knowledge.ErrContentRequired.Error(),
 		},
 		{
+			name: "propose refuses from a review that was approved and never corrected",
+			args: args{tool: "propose", input: map[string]any{
+				"kind": knowledge.KindMeaning, "content": "a planned tracking change moves the counts", "from": reviewed.TraceID,
+			}},
+			want: diagnose.ErrNotCorrected.Error(),
+		},
+		{
 			name: "approve refuses a missing approver name",
 			args: args{tool: "approve", input: map[string]any{"id": "k-tracking", "version": 1, "approver": ""}},
 			want: knowledge.ErrApproverRequired.Error(),
+		},
+		{
+			name: "reaffirm refuses a missing approver name",
+			args: args{tool: "reaffirm", input: map[string]any{"id": "k-tracking", "version": 1, "approver": ""}},
+			want: knowledge.ErrApproverRequired.Error(),
+		},
+		{
+			name: "queue refuses an audit rate above one",
+			args: args{tool: "queue", input: map[string]any{"audit_rate": 2}},
+			want: loop.ErrQueueOptions.Error(),
 		},
 		{
 			name: "detail refuses a start that is not RFC3339",

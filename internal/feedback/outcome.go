@@ -44,7 +44,7 @@ func NewOutcome(traceID string, result Result, confirmedCause, note, reviewer st
 		return Outcome{}, fmt.Errorf("%w: %s", ErrCauseUnexpected, result)
 	}
 	if reviewer == "" {
-		reviewer = DefaultReviewer
+		reviewer = ReviewerAuthor
 	}
 	return Outcome{
 		TraceID: traceID, Time: now.UTC(), Result: result, ConfirmedCause: confirmedCause, Note: note,
@@ -60,3 +60,19 @@ type OutcomeFilter struct {
 func (f OutcomeFilter) Matches(o Outcome) bool {
 	return f.TraceID == "" || o.TraceID == f.TraceID
 }
+
+// Whether a session recorded the outcome instead of a person
+func (o Outcome) Implicit() bool {
+	return o.Reviewer == ReviewerSession
+}
+
+func (o Outcome) trace() string {
+	return o.TraceID
+}
+
+func (o Outcome) at() time.Time {
+	return o.Time
+}
+
+// Outcomes in the order the store lists them
+type Outcomes = listing[Outcome]

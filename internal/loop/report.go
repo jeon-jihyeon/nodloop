@@ -1,0 +1,218 @@
+package loop
+
+import (
+	"encoding/json"
+	"slices"
+	"time"
+
+	"github.com/jeon-jihyeon/nodloop/internal/diagnose"
+	"github.com/jeon-jihyeon/nodloop/internal/evidence"
+	"github.com/jeon-jihyeon/nodloop/internal/feedback"
+)
+
+// How the conversation reviews fare with a person read from the records alone
+type Report struct {
+	Since time.Time `json:"since"`
+	// Weeks from Monday UTC by the time of the verdict in time order
+	Weeks     []Week    `json:"weeks"`
+	Agreement Agreement `json:"agreement"`
+	// Verdicts recorded before their review and left out of the waits
+	InvalidWaits     int    `json:"invalid_waits"`
+	KnowledgeApplied Cohort `json:"knowledge_applied"`
+	WithoutKnowledge Cohort `json:"without_knowledge"`
+}
+
+type Week struct {
+	Start    time.Time `json:"start"`
+	Verdicts Verdicts  `json:"verdicts"`
+	// The verdicts on random audit samples of the queue
+	Audit Verdicts `json:"audit"`
+	// Seconds from the review to its verdict
+	// A wait for the verdict and not the working time of the person
+	MedianWaitSeconds *float64 `json:"median_wait_seconds"`
+}
+
+type Verdicts struct {
+	Total       int      `json:"total"`
+	Approve     int      `json:"approve"`
+	Edit        int      `json:"edit"`
+	Reject      int      `json:"reject"`
+	ApproveRate *float64 `json:"approve_rate"`
+	EditRate    *float64 `json:"edit_rate"`
+	RejectRate  *float64 `json:"reject_rate"`
+}
+
+func (v *Verdicts) add(verdict feedback.Verdict) {
+	v.Total++
+	switch verdict {
+	case feedback.VerdictApprove:
+		v.Approve++
+	case feedback.VerdictEdit:
+		v.Edit++
+	case feedback.VerdictReject:
+		v.Reject++
+	}
+	v.ApproveRate, v.EditRate, v.RejectRate = share(v.Approve, v.Total), share(v.Edit, v.Total), share(v.Reject, v.Total)
+}
+
+type Outcomes struct {
+	Total            int      `json:"total"`
+	Confirmed        int      `json:"confirmed"`
+	Refuted          int      `json:"refuted"`
+	Inconclusive     int      `json:"inconclusive"`
+	ConfirmedRate    *float64 `json:"confirmed_rate"`
+	RefutedRate      *float64 `json:"refuted_rate"`
+	InconclusiveRate *float64 `json:"inconclusive_rate"`
+}
+
+func (o *Outcomes) add(result feedback.Result) {
+	o.Total++
+	switch result {
+	case feedback.ResultConfirmed:
+		o.Confirmed++
+	case feedback.ResultRefuted:
+		o.Refuted++
+	case feedback.ResultInconclusive:
+		o.Inconclusive++
+	}
+	o.ConfirmedRate, o.RefutedRate = share(o.Confirmed, o.Total), share(o.Refuted, o.Total)
+	o.InconclusiveRate = share(o.Inconclusive, o.Total)
+}
+
+// The reviews that applied knowledge or none
+type Cohort struct {
+	Verdicts Verdicts `json:"verdicts"`
+	Outcomes Outcomes `json:"outcomes"`
+}
+
+// The status of the first submission against the status the person settled on
+// Approve settles on the recorded status and edit on the corrected one
+type Agreement struct {
+	Samples int      `json:"samples"`
+	Matches int      `json:"matches"`
+	Rate    *float64 `json:"rate"`
+	// Counts by first status then by final status
+	Confusion map[evidence.Status]map[evidence.Status]int `json:"confusion"`
+	// Rejects and edits whose corrected review has no readable status
+	Excluded int `json:"excluded"`
+}
+
+func (a *Agreement) observe(first, final evidence.Status) {
+	if a.Confusion[first] == nil {
+		a.Confusion[first] = map[evidence.Status]int{}
+	}
+	a.Confusion[first][final]++
+	a.Samples++
+	if first == final {
+		a.Matches++
+	}
+	a.Rate = share(a.Matches, a.Samples)
+}
+
+// Nil when there is nothing to share
+func share(part, total int) *float64 {
+	if total == 0 {
+		return nil
+	}
+	v := float64(part) / float64(total)
+	return &v
+}
+
+// Every human verdict and outcome from since on
+func (h *History) Report(since time.Time) Report {
+	rep := Report{
+		Since: since, Weeks: []Week{},
+		Agreement: Agreement{Confusion: map[evidence.Status]map[evidence.Status]int{}},
+	}
+	weeks := map[time.Time]*Week{}
+	waits := map[time.Time]durations{}
+	for _, r := range h.reviews {
+		cohort := &rep.WithoutKnowledge
+		if len(r.applied()) > 0 {
+			cohort = &rep.KnowledgeApplied
+		}
+		if o, ok := h.outcomes[r.trace.ID]; ok && !o.Time.Before(since) {
+			cohort.Outcomes.add(o.Result)
+		}
+		fb, ok := h.verdicts[r.trace.ID]
+		if !ok || fb.Time.Before(since) {
+			continue
+		}
+		cohort.Verdicts.add(fb.Verdict)
+		h.agree(&rep.Agreement, r, fb)
+		start := weekOf(fb.Time)
+		if weeks[start] == nil {
+			weeks[start] = &Week{Start: start}
+		}
+		weeks[start].Verdicts.add(fb.Verdict)
+		if fb.Audit {
+			weeks[start].Audit.add(fb.Verdict)
+		}
+		if fb.Time.Before(r.trace.Time) {
+			rep.InvalidWaits++
+			continue
+		}
+		waits[start] = append(waits[start], fb.Time.Sub(r.trace.Time))
+	}
+	for start, week := range weeks {
+		week.MedianWaitSeconds = waits[start].medianSeconds()
+		rep.Weeks = append(rep.Weeks, *week)
+	}
+	slices.SortFunc(rep.Weeks, Week.compare)
+	return rep
+}
+
+// Orders weeks by start
+func (w Week) compare(other Week) int {
+	return w.Start.Compare(other.Start)
+}
+
+// A review without a settled status counts as excluded
+func (h *History) agree(a *Agreement, r review, fb feedback.Feedback) {
+	final, ok := r.settled(fb)
+	if !ok {
+		a.Excluded++
+		return
+	}
+	a.observe(h.firstStatus(r), final)
+}
+
+// The status the person settled on with the verdict
+// A reject settles on none and an edit only when the corrected review reads with a known status
+func (r review) settled(fb feedback.Feedback) (evidence.Status, bool) {
+	switch fb.Verdict {
+	case feedback.VerdictApprove:
+		return r.Diagnosis.Status, true
+	case feedback.VerdictEdit:
+		var edited diagnose.Diagnosis
+		if json.Unmarshal(fb.Edited, &edited) != nil || !edited.Status.Valid() {
+			return "", false
+		}
+		return edited.Status, true
+	default:
+		return "", false
+	}
+}
+
+// Monday 00:00 UTC of the week that holds t
+func weekOf(t time.Time) time.Time {
+	t = t.UTC()
+	day := time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC)
+	return day.AddDate(0, 0, -((int(day.Weekday()) + 6) % 7))
+}
+
+type durations []time.Duration
+
+// Nil without a sample
+func (ds durations) medianSeconds() *float64 {
+	if len(ds) == 0 {
+		return nil
+	}
+	sorted := slices.Sorted(slices.Values(ds))
+	mid := len(sorted) / 2
+	m := sorted[mid].Seconds()
+	if len(sorted)%2 == 0 {
+		m = (sorted[mid-1] + sorted[mid]).Seconds() / 2
+	}
+	return &m
+}

@@ -16,7 +16,7 @@ import (
 )
 
 func TestSourceContract(t *testing.T) {
-	src, err := file.New("testdata")
+	src, err := file.New(filepath.Join("..", "..", "..", "examples", "demo"))
 	require.NoError(t, err)
 	evidencetest.Run(t, src, evidencetest.Seed{
 		EventID:        "tq-005",

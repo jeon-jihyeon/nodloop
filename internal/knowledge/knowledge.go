@@ -83,21 +83,39 @@ type Knowledge struct {
 	Basis    Basis    `json:"basis"`
 	Status   Status   `json:"status"`
 	// Required once the status leaves candidate
+	// The person who approved or retired or last reaffirmed the version
 	Approver   string    `json:"approver,omitempty"`
 	ApprovedAt time.Time `json:"approved_at,omitzero"`
+	// Set by a reaffirm on an approved record
+	ReviewedAt time.Time `json:"reviewed_at,omitzero"`
 	// Previous version of the same id
 	Supersedes int `json:"supersedes,omitempty"`
 	// When this record set its status
 	// Every status change is a new record so this is not the creation time of the version
 	Time   time.Time `json:"time"`
 	Author string    `json:"author"`
+	// A model wrote the content from a correction and no person rewrote it
+	// Kept through approval so an approved item still shows where its text came from
+	Drafted bool `json:"drafted,omitempty"`
 	// A tool call the judgment forbids
 	// Approval exports it as a guard veto whose id is the knowledge id and whose reason is the content
 	Veto *Veto `json:"veto,omitempty"`
+	// The compaction that appended this record
+	Compaction string `json:"compaction,omitempty"`
+	// Drafts of the compaction proposal on each of its candidates
+	// Fewer candidates than this mean the proposal was cut between two appends
+	CompactionSize int `json:"compaction_size,omitempty"`
 }
 
-// Characters of approved knowledge one review carries unless the policy sets another cap
-const ReviewChars = 4000
+// Runes of approved knowledge one review carries
+// 1. the smallest supported model context is 200 thousand tokens or about 700 thousand characters at 3.5 characters per token
+// 2. knowledge gets one tenth because the rest of the window carries what nodloop does not control
+// A safety cap and not a tuning knob since the compaction trigger keeps folders far smaller
+const ReviewChars = 70_000
+
+// Approved items a folder holds before it is crowded
+// Two crowded folders on one event fill the candidate list so above this the cut falls by id order and not by relevance
+const FolderItems = 5
 
 // Folders are measured with the text a review sees so the budget and the review cap count the same characters
 func (k Knowledge) Text() string {
@@ -189,12 +207,33 @@ func (k Knowledge) changed(status Status, approver string, now time.Time) Knowle
 	return k
 }
 
+// The draft over the fields code filled from a correction
+// 1. a scope axis the draft sets replaces the filled one so a person can widen or narrow it
+// 2. evidence adds up with the filled references first
+// 3. basis falls back to the filled one
+func (k Knowledge) Filled(scope Scope, ev Evidence, basis Basis) Knowledge {
+	if len(k.Scope.ChangeContexts) == 0 {
+		k.Scope.ChangeContexts = scope.ChangeContexts
+	}
+	if len(k.Scope.Metrics) == 0 {
+		k.Scope.Metrics = scope.Metrics
+	}
+	if len(k.Scope.Dims) == 0 {
+		k.Scope.Dims = scope.Dims
+	}
+	k.Evidence = ev.union(k.Evidence)
+	if k.Basis == "" {
+		k.Basis = basis
+	}
+	return k
+}
+
 // Whether one review may carry both items
 // 1. their change contexts and metrics intersect
 // 2. neither excepts every change context the other is scoped to
 // Dims split nothing because one review often carries several dims
 func (k Knowledge) sharesFolder(other Knowledge) bool {
-	return k.Scope.sharesFolder(other.Scope) && !k.excepts(other.Scope.ChangeContexts) &&
+	return k.Scope.Intersects(other.Scope.Scope) && !k.excepts(other.Scope.ChangeContexts) &&
 		!other.excepts(k.Scope.ChangeContexts)
 }
 
@@ -215,7 +254,7 @@ func (k Knowledge) applies(changeContext evidence.Context, moved Moved, dims Dim
 	if k.Status != StatusApproved || slices.Contains(k.Exceptions, changeContext) {
 		return false
 	}
-	return k.Scope.matches(changeContext, moved, dims)
+	return k.Scope.admits(changeContext, moved, dims)
 }
 
 // Whether this version stands in for the id instead of the current one with status and version
@@ -235,6 +274,8 @@ type Evidence struct {
 	FeedbackTraceIDs []string `json:"feedback_trace_ids,omitempty"`
 	OutcomeTraceIDs  []string `json:"outcome_trace_ids,omitempty"`
 	ParagraphIDs     []string `json:"paragraph_ids,omitempty"`
+	// The old versions a compacted item replaces
+	Knowledge []Ref `json:"knowledge,omitempty"`
 }
 
 // Every trace id the evidence names
@@ -243,5 +284,5 @@ func (e Evidence) TraceIDs() []string {
 }
 
 func (e Evidence) empty() bool {
-	return len(e.FeedbackTraceIDs) == 0 && len(e.OutcomeTraceIDs) == 0 && len(e.ParagraphIDs) == 0
+	return len(e.FeedbackTraceIDs) == 0 && len(e.OutcomeTraceIDs) == 0 && len(e.ParagraphIDs) == 0 && len(e.Knowledge) == 0
 }

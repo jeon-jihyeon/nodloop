@@ -12,6 +12,7 @@ import (
 	"slices"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/jeon-jihyeon/nodloop/internal/analysis"
 	"github.com/jeon-jihyeon/nodloop/internal/evidence"
@@ -19,14 +20,6 @@ import (
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	"github.com/jeon-jihyeon/nodloop/internal/llm"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
-)
-
-type Status string
-
-const (
-	StatusNoAction       Status = "no_action"
-	StatusReadyForReview Status = "ready_for_review"
-	StatusHold           Status = "hold"
 )
 
 // Who writes the review
@@ -41,14 +34,14 @@ func (m Mode) valid() bool {
 	return m == ModeInteractive || m == ModeBatch
 }
 
-const promptVersion = "diagnose/v9"
+const promptVersion = "diagnose/v12"
 
 // Trace tag when the citation gate turned a review into a hold
 const TagGateHold = "gate:hold"
 
 // Strings and lists of strings only so encoding never fails
 type Diagnosis struct {
-	Status Status `json:"status"`
+	Status evidence.Status `json:"status"`
 	// Observation summaries the review relies on
 	// Copied so the trace is self contained
 	Observations []string `json:"observations"`
@@ -133,7 +126,11 @@ type Context struct {
 	ChangeContext evidence.Context
 	Session       Session
 	Observations  analysis.Observations
-	ParagraphIDs  []string
+	// Slugs of the procedures whose scope fits the event in file name order
+	Procedures   []string
+	ParagraphIDs []string
+	// Runes of the procedure paragraph section of Text
+	ProcedureChars int
 	// Each list stops at the candidate cap
 	KnowledgeCandidates []KnowledgeCandidate
 	ExampleCandidates   []ExampleCandidate
@@ -169,10 +166,12 @@ type Result struct {
 
 // Stored as the context trace Input
 type contextInput struct {
-	Mode          Mode     `json:"mode"`
-	PolicyVersion string   `json:"policy_version"`
-	PromptVersion string   `json:"prompt_version"`
-	ParagraphIDs  []string `json:"paragraph_ids"`
+	Mode           Mode     `json:"mode"`
+	PolicyVersion  string   `json:"policy_version"`
+	PromptVersion  string   `json:"prompt_version"`
+	Procedures     []string `json:"procedures"`
+	ParagraphIDs   []string `json:"paragraph_ids"`
+	ProcedureChars int      `json:"procedure_chars"`
 }
 
 // Stored as the context trace Output
@@ -206,7 +205,10 @@ func (c Context) runTrace(name trace.Name, now time.Time, run modelRun) trace.Tr
 func (c Context) trace(now time.Time) (trace.Trace, error) {
 	tr := c.newTrace(trace.NameContext, now)
 	var err error
-	in := contextInput{Mode: c.Mode, PolicyVersion: c.PolicyVersion, PromptVersion: c.PromptVersion, ParagraphIDs: c.ParagraphIDs}
+	in := contextInput{
+		Mode: c.Mode, PolicyVersion: c.PolicyVersion, PromptVersion: c.PromptVersion, Procedures: c.Procedures,
+		ParagraphIDs: c.ParagraphIDs, ProcedureChars: c.ProcedureChars,
+	}
 	if tr.Input, err = json.Marshal(in); err != nil {
 		return trace.Trace{}, err
 	}
@@ -242,8 +244,8 @@ func contextFrom(tr trace.Trace) (Context, error) {
 	return Context{
 		PendingID: tr.ID, EventID: tr.Subject, Mode: in.Mode, PolicyVersion: in.PolicyVersion, PromptVersion: in.PromptVersion,
 		ChangeContext: out.ChangeContext, Session: Session{ID: tr.SessionID, Tags: tr.Tags}, Observations: out.Observations,
-		ParagraphIDs: in.ParagraphIDs, KnowledgeCandidates: out.KnowledgeCandidates, ExampleCandidates: out.ExampleCandidates,
-		CandidatesOmitted: out.CandidatesOmitted,
+		Procedures: in.Procedures, ParagraphIDs: in.ParagraphIDs, ProcedureChars: in.ProcedureChars,
+		KnowledgeCandidates: out.KnowledgeCandidates, ExampleCandidates: out.ExampleCandidates, CandidatesOmitted: out.CandidatesOmitted,
 	}, nil
 }
 
@@ -258,11 +260,16 @@ type recordInput struct {
 	ChangeContext evidence.Context `json:"change_context"`
 	Metrics       []string         `json:"metrics"`
 	Selector      Selector         `json:"select_mode,omitempty"`
+	// Copied from the context trace
+	Procedures []string `json:"procedures"`
 	// Copied from the select trace with their sizes so eval reads one record
 	Knowledge []AppliedKnowledge `json:"knowledge"`
 	Examples  []appliedExample   `json:"examples"`
 	// Set when the select cut an item at a cap
 	Omitted bool `json:"omitted"`
+	// Runes of each section as sent and the runes the caps left out
+	Chars        promptChars  `json:"chars"`
+	OmittedChars sectionChars `json:"omitted_chars"`
 	// Paragraph ids the review cited that the context did not list
 	UnknownIDs []string `json:"unknown_ids,omitempty"`
 }
@@ -281,9 +288,10 @@ func (c Context) diagnoseTrace(now time.Time, selected *selectInput, run modelRu
 	tr := c.runTrace(trace.NameDiagnose, now, run)
 	in := recordInput{
 		Mode: c.Mode, PolicyVersion: c.PolicyVersion, PromptVersion: c.PromptVersion, ChangeContext: c.ChangeContext,
-		Metrics: c.Observations.Metrics(), Selector: selected.Selector, Knowledge: selected.givenKnowledge(),
+		Metrics: c.Observations.Metrics(), Selector: selected.Selector, Procedures: c.Procedures, Knowledge: selected.givenKnowledge(),
 		Examples: slices.DeleteFunc(append([]appliedExample{}, selected.Examples...), appliedExample.dropped), Omitted: selected.Omitted,
-		UnknownIDs: unknownIDs,
+		Chars:        promptChars{Procedures: c.ProcedureChars, sectionChars: selected.Chars},
+		OmittedChars: selected.OmittedChars, UnknownIDs: unknownIDs,
 	}
 	tr.Input, _ = json.Marshal(in)
 	return tr
@@ -292,7 +300,14 @@ func (c Context) diagnoseTrace(now time.Time, selected *selectInput, run modelRu
 // The reference data a review reads
 type Source interface {
 	Event(ctx context.Context, id string) (evidence.Event, error)
-	Paragraphs(ctx context.Context) ([]evidence.Paragraph, error)
+	Procedures(ctx context.Context) (evidence.Procedures, error)
+}
+
+// The approved knowledge a review may carry
+// The ledger in a review and the preview of a compaction in its replay
+type KnowledgeSource interface {
+	All(ctx context.Context) (knowledge.Set, error)
+	Approved(ctx context.Context, id string, version int) (knowledge.Knowledge, error)
 }
 
 // What a review writes and reads back
@@ -314,24 +329,21 @@ type FeedbackStore interface {
 // The guard holds within one process only
 // The revise and appendReview and openSelect methods expect their caller to hold mu
 type Diagnoser struct {
-	src      Source
-	policy   analysis.Policy
-	client   llm.Client
-	traces   TraceStore
-	feedback FeedbackStore
-	ledger   *knowledge.Ledger
-	limits   Limits
-	now      func() time.Time
-	mu       sync.Mutex
+	src       Source
+	policy    analysis.Policy
+	client    llm.Client
+	traces    TraceStore
+	feedback  FeedbackStore
+	knowledge KnowledgeSource
+	now       func() time.Time
+	mu        sync.Mutex
 }
 
 func New(
-	src Source, policy analysis.Policy, limits Limits, client llm.Client, traces TraceStore, verdicts FeedbackStore,
-	ledger *knowledge.Ledger, now func() time.Time,
+	src Source, policy analysis.Policy, client llm.Client, traces TraceStore, verdicts FeedbackStore,
+	knowledgeSrc KnowledgeSource, now func() time.Time,
 ) *Diagnoser {
-	return &Diagnoser{
-		src: src, policy: policy, client: client, traces: traces, feedback: verdicts, ledger: ledger, limits: limits.withDefaults(), now: now,
-	}
+	return &Diagnoser{src: src, policy: policy, client: client, traces: traces, feedback: verdicts, knowledge: knowledgeSrc, now: now}
 }
 
 // Builds the context and records it
@@ -349,7 +361,7 @@ func (d *Diagnoser) prepare(ctx context.Context, eventID string, mode Mode, sess
 	if err != nil {
 		return Context{}, err
 	}
-	paragraphs, err := d.src.Paragraphs(ctx)
+	procedures, err := d.src.Procedures(ctx)
 	if err != nil {
 		return Context{}, err
 	}
@@ -357,12 +369,13 @@ func (d *Diagnoser) prepare(ctx context.Context, eventID string, mode Mode, sess
 	if err != nil {
 		return Context{}, err
 	}
+	included := procedures.Applicable(ev.ChangeContext, obs.Metrics())
+	paragraphs := procedureParagraphs(included.Paragraphs())
+	section := paragraphs.render()
 	c := Context{
 		EventID: eventID, Mode: mode, PolicyVersion: d.policy.Version, PromptVersion: promptVersion, ChangeContext: ev.ChangeContext,
-		Session: session, Observations: obs, ParagraphIDs: make([]string, 0, len(paragraphs)),
-	}
-	for _, p := range paragraphs {
-		c.ParagraphIDs = append(c.ParagraphIDs, string(p.ID))
+		Session: session, Observations: obs, Procedures: included.Slugs(), ParagraphIDs: paragraphs.ids(),
+		ProcedureChars: utf8.RuneCountInString(section),
 	}
 	var examplesOmitted, knowledgeOmitted bool
 	excluded = slices.Concat([]string{eventID}, excluded)
@@ -373,7 +386,7 @@ func (d *Diagnoser) prepare(ctx context.Context, eventID string, mode Mode, sess
 		return Context{}, err
 	}
 	c.CandidatesOmitted = examplesOmitted || knowledgeOmitted
-	c.Text = c.render(paragraphs)
+	c.Text = c.render() + section
 	tr, err := c.trace(d.now())
 	if err != nil {
 		return Context{}, err
@@ -412,7 +425,7 @@ func (d *Diagnoser) Record(ctx context.Context, pendingID string, diag Diagnosis
 		return Result{}, fmt.Errorf("%w: %s", ErrNotSelected, c.PendingID)
 	}
 	cited := diag.cited(c.citable())
-	res, err := d.revise(ctx, c, diag, cited.revisions(c.firstStep(cited.leadRunbook())), modelRun{})
+	res, err := d.revise(ctx, c, diag, cited.revisions(c.firstSteps()), modelRun{})
 	if err != nil || len(res.Revisions) > 0 {
 		return res, err
 	}
@@ -538,7 +551,7 @@ func (d *Diagnoser) batchSelection(ctx context.Context, c Context, mode Knowledg
 	if err != nil {
 		return selectInput{}, Selection{}, err
 	}
-	selected, sel := d.limits.fit(SelectByCode, items, chosen)
+	selected, sel := fit(SelectByCode, items, chosen)
 	if err := d.recordSelection(ctx, c, selected); err != nil {
 		return selectInput{}, Selection{}, err
 	}
@@ -554,13 +567,19 @@ func (d *Diagnoser) review(ctx context.Context, c Context, prompt, model string)
 		return Diagnosis{}, run, err
 	}
 	cited := diag.cited(c.citable())
-	d.mu.Lock()
-	res, err := d.revise(ctx, c, diag, cited.revisions(c.firstStep(cited.leadRunbook())), run)
-	d.mu.Unlock()
+	res, err := d.sendBack(ctx, c, diag, cited.revisions(c.firstSteps()), run)
 	if err != nil || len(res.Revisions) == 0 {
 		return diag, run, err
 	}
 	return d.complete(ctx, revisePrompt(prompt, diag, res.Revisions), model)
+}
+
+// The revise of the batch path under mu
+// The deferred unlock frees mu when a store panics so the other reviews of RunAll never block on it
+func (d *Diagnoser) sendBack(ctx context.Context, c Context, diag Diagnosis, reasons []string, run modelRun) (Result, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.revise(ctx, c, diag, reasons, run)
 }
 
 // One model call and its decoded review

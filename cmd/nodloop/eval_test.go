@@ -14,6 +14,7 @@ import (
 	"go.uber.org/mock/gomock"
 
 	"github.com/jeon-jihyeon/nodloop/internal/diagnose"
+	"github.com/jeon-jihyeon/nodloop/internal/evidence"
 	"github.com/jeon-jihyeon/nodloop/internal/llm"
 	"github.com/jeon-jihyeon/nodloop/internal/llm/llmmock"
 	"github.com/jeon-jihyeon/nodloop/internal/testkit"
@@ -21,7 +22,7 @@ import (
 
 func TestRunEval(t *testing.T) {
 	hold, err := json.Marshal(diagnose.Diagnosis{
-		Status: diagnose.StatusHold, Observations: []string{}, Causes: []diagnose.Cause{}, Checks: []diagnose.Check{},
+		Status: evidence.StatusHold, Observations: []string{}, Causes: []diagnose.Cause{}, Checks: []diagnose.Check{},
 		OpenQuestions: []string{}, HoldReasons: []string{"always hold"},
 	})
 	require.NoError(t, err)
@@ -53,6 +54,46 @@ func TestRunEval(t *testing.T) {
 		args args
 		want want
 	}{
+		{
+			"same repeat count reruns selected events",
+			args{[][]string{{"holdout", "--session", "t", "--events", "tq-003,tq-004", "--repeat", "3"}},
+				[]string{"holdout", "--session", "t", "--events", "tq-003", "--conditions", "feedback:off", "--repeat", "3"}},
+			want{0, "holdout traces 3\n", `^(tq-003\tfeedback:off,repeat:[123]\t.*\n){3}$`, os.ErrNotExist},
+		},
+		{
+			"repeated holdout follows seed in the same session",
+			args{[][]string{{"seed", "--session", "t", "--events", "tq-001", "--repeat", "2"}},
+				[]string{"holdout", "--session", "t", "--events", "tq-003", "--conditions", "feedback:off", "--repeat", "3"}},
+			want{0, "holdout traces 3\n", `^(tq-003\tfeedback:off,repeat:[123]\t.*\n){3}$`, os.ErrNotExist},
+		},
+		{
+			"holdout repeats independent reviews",
+			args{nil, []string{"holdout", "--session", "t", "--events", "tq-003",
+				"--conditions", "feedback:off", "--repeat", "3"}},
+			want{0, "holdout traces 3\n", `^(tq-003\tfeedback:off,repeat:[123]\t.*\n){3}$`, os.ErrNotExist},
+		},
+		{
+			"repeat zero runs once without a repeat tag",
+			args{nil, []string{"holdout", "--session", "t", "--events", "tq-003", "--conditions", "feedback:off", "--repeat", "0"}},
+			want{0, "holdout traces 1\n", `^tq-003\tfeedback:off\t.*\n$`, os.ErrNotExist},
+		},
+		{
+			"repeat negative fails",
+			args{nil, []string{"holdout", "--session", "t", "--repeat", "-2"}},
+			want{1, "", `^nodloop eval: eval: repeat must not be negative: -2\n$`, os.ErrNotExist},
+		},
+		{
+			"repeated session cannot be reused",
+			args{[][]string{{"holdout", "--session", "t", "--events", "tq-003", "--repeat", "2"}},
+				[]string{"holdout", "--session", "t", "--events", "tq-003"}},
+			want{1, "", `^nodloop eval: eval: the session already holds reviews with a different repeat setting: \S+\n$`, os.ErrNotExist},
+		},
+		{
+			"repeated evaluation cannot use an existing session",
+			args{[][]string{{"holdout", "--session", "t", "--events", "tq-003"}},
+				[]string{"holdout", "--session", "t", "--events", "tq-003", "--repeat", "2"}},
+			want{1, "", `^nodloop eval: eval: the session already holds reviews with a different repeat setting: \S+\n$`, os.ErrNotExist},
+		},
 		{
 			"seed reviews every seed event",
 			args{nil, []string{"seed", "--session", "t"}},
@@ -101,7 +142,7 @@ func TestRunEval(t *testing.T) {
 		{
 			"negative parallel fails",
 			args{nil, []string{"seed", "--session", "t", "--parallel", "-1"}},
-			want{1, "", `^nodloop eval: eval: negative parallel`, os.ErrNotExist},
+			want{1, "", `^nodloop eval: diagnose: negative parallel`, os.ErrNotExist},
 		},
 		{
 			"record dir that is a file fails",

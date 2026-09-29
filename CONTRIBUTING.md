@@ -10,11 +10,11 @@ Go 1.25 or newer, and the `claude` CLI on PATH for the commands that call a mode
 git clone https://github.com/jeon-jihyeon/nodloop
 cd nodloop
 go install ./cmd/nodloop
-nodloop setup --demo
+nodloop setup --data-dir examples/demo
 nodloop evidence events
 ```
 
-The last command lists the 24 demo events, which means the binary, the demo data and the record directory are all in place.
+The last command lists the 24 demo events of `examples/demo`, which means the binary and the demo data are in place. `go run ./internal/demo` writes its events, contexts, labels, policy and knowledge files again.
 
 ## Checks
 
@@ -41,8 +41,9 @@ Use haiku while iterating. The numbers in README.md come from `nodloop eval` on 
 | Layer | Packages | Rule |
 |---|---|---|
 | Domain | `evidence`, `feedback`, `trace`, `llm`, `veto`, `settings`, `jsonl` | No imports from the layers above |
-| Application | `analysis`, `knowledge`, `diagnose`, `eval` | Imports domain only |
-| Infra | the `file` subpackages over `jsonl.File[T]` | Implements the stores. Application code never imports one outside its tests |
+| Core | `analysis`, `knowledge`, `diagnose` | Imports domain and the core below it. Never a file store |
+| Application | `eval`, `compact`, `loop` | Build on the core. `compact` and `loop` never import `eval`, and only `eval`, `mcp` and `cmd/nodloop` import `loop` |
+| Infra | the `file` subpackages | Implements the stores and the veto and settings files. Application code never imports one outside its tests |
 | Controllers | `cmd/nodloop`, `mcp`, `guard` | `cmd/nodloop` is the composition root and the only reader of the process environment |
 | Test harness | `testkit` | File stores in a temp directory, the demo source and a fake clock |
 
@@ -61,7 +62,7 @@ depguard enforces the direction. If a change needs an import that the linter rej
 ## Pull requests
 
 - One change per pull request. Keep refactors and behavior changes apart
-- Commit messages follow the Go style `package: what changed`, for example `knowledge: sort dims in Scope.String`
+- Commit messages follow `type: what changed` with `feat`, `fix`, `docs`, `refactor`, `test` or `chore`, for example `fix: send back a cause without a listed paragraph before the gate holds it`
 - Say in the description what you ran. A pull request that touches a review prompt or a store format links the trace or the eval report that shows the effect
 - New tools, commands and flags come with a line in the usage text and, when they change the plugin, in the skill template in `internal/diagnose/gen/main.go` followed by `go generate ./...`
 

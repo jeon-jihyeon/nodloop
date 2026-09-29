@@ -65,8 +65,10 @@ func (f *FlakyFeedback) List(ctx context.Context, filter feedback.Filter) ([]fee
 // The demo source and one temp record dir behind every store
 // The ledger runs on the clock
 type Stores struct {
-	Source   *evidencefile.Source
-	Traces   *tracefile.Store
+	Source *evidencefile.Source
+	Traces *tracefile.Store
+	// Compaction replays in the same record dir
+	Replays  *tracefile.Store
 	Feedback *feedbackfile.Store
 	Outcomes *feedbackfile.OutcomeStore
 	Ledger   *knowledge.Ledger
@@ -80,6 +82,8 @@ func Open(t *testing.T) Stores {
 	dir := t.TempDir()
 	traces, err := tracefile.New(dir)
 	require.NoError(t, err)
+	replays, err := tracefile.NewReplays(dir)
+	require.NoError(t, err)
 	verdicts, err := feedbackfile.New(dir)
 	require.NoError(t, err)
 	outcomes, err := feedbackfile.NewOutcomeStore(dir)
@@ -89,21 +93,20 @@ func Open(t *testing.T) Stores {
 	// Later than every record in the demo data
 	clock := &Clock{now: time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)}
 	ledger := knowledge.NewLedger(
-		items, vetofile.NewApprovedFile(t.TempDir(), dir), knowledge.ReviewChars,
-		clock.Now, func() string { return "k-generated" },
+		items, vetofile.NewApprovedFile(t.TempDir(), dir), clock.Now, func(prefix string) string { return prefix + "generated" },
 	)
 	return Stores{
-		Source: src, Traces: traces, Feedback: verdicts, Outcomes: outcomes, Ledger: ledger, Clock: clock,
+		Source: src, Traces: traces, Replays: replays, Feedback: verdicts, Outcomes: outcomes, Ledger: ledger, Clock: clock,
 	}
 }
 
-// The demo data set checked in next to the evidence file source
+// The demo data set published under examples
 // Resolved from this file so a test in any package finds it
 func DemoDir(t *testing.T) string {
 	t.Helper()
 	_, self, _, ok := runtime.Caller(0)
 	require.True(t, ok, "caller unknown")
-	return filepath.Join(filepath.Dir(self), "..", "evidence", "file", "testdata")
+	return filepath.Join(filepath.Dir(self), "..", "..", "examples", "demo")
 }
 
 // The policy of the demo data set

@@ -8,8 +8,12 @@ import (
 	"time"
 )
 
-// Reviewer when the caller names none
-const DefaultReviewer = "author"
+const (
+	// Reviewer when the caller names none
+	ReviewerAuthor = "author"
+	// Reviewer of a record mined from a Claude Code session and not given by a person
+	ReviewerSession = "session"
+)
 
 type Verdict string
 
@@ -39,6 +43,8 @@ type Feedback struct {
 	// author for the project author
 	// session for implicit feedback
 	Reviewer string `json:"reviewer"`
+	// Set when the review was a random audit sample of the queue
+	Audit bool `json:"audit,omitempty"`
 }
 
 // The reviewer defaults to author
@@ -62,7 +68,7 @@ func New(
 		return Feedback{}, ErrEditedInvalid
 	}
 	if reviewer == "" {
-		reviewer = DefaultReviewer
+		reviewer = ReviewerAuthor
 	}
 	return Feedback{
 		TraceID: traceID, Time: now.UTC(), Verdict: verdict, Reason: reason, Edited: edited, Reviewer: reviewer,
@@ -72,6 +78,11 @@ func New(
 // Whether the verdict says the review was wrong so it can teach the next one
 func (f Feedback) Corrects() bool {
 	return f.Verdict == VerdictEdit || f.Verdict == VerdictReject
+}
+
+// Whether a session gave the verdict instead of a person
+func (f Feedback) Implicit() bool {
+	return f.Reviewer == ReviewerSession
 }
 
 // Empty fields mean all
@@ -96,28 +107,43 @@ func (f Filter) Matches(fb Feedback) bool {
 	return true
 }
 
+func (f Feedback) trace() string {
+	return f.TraceID
+}
+
+func (f Feedback) at() time.Time {
+	return f.Time
+}
+
 // Records in the order the store lists them
-type Records []Feedback
+type Records = listing[Feedback]
+
+// A record that a later record on the same trace replaces
+type stamped interface {
+	trace() string
+	at() time.Time
+}
+
+// Records or outcomes in the order the store lists them
+type listing[T stamped] []T
 
 // Newest record per trace id in the order the input has them
-// A trace later approved stops being an edit or reject example
-// On a tie in Time the record listed first wins
-// That is the later append when the input comes newest first from a store
-func (rs Records) Latest() Records {
-	latest := map[string]Feedback{}
-	var order []string
-	for _, r := range rs {
-		cur, ok := latest[r.TraceID]
-		if !ok {
-			order = append(order, r.TraceID)
+// 1. a trace later approved stops being an edit or reject example
+// 2. a later check replaces an earlier outcome
+// 3. on a tie in time the record listed first wins
+// 4. that is the later append when the input comes newest first from a store
+func (l listing[T]) Latest() listing[T] {
+	index := map[string]int{}
+	var out listing[T]
+	for _, r := range l {
+		i, ok := index[r.trace()]
+		switch {
+		case !ok:
+			index[r.trace()] = len(out)
+			out = append(out, r)
+		case r.at().After(out[i].at()):
+			out[i] = r
 		}
-		if !ok || r.Time.After(cur.Time) {
-			latest[r.TraceID] = r
-		}
-	}
-	var out Records
-	for _, id := range order {
-		out = append(out, latest[id])
 	}
 	return out
 }

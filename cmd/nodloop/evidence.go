@@ -40,6 +40,8 @@ func runEvidence(args []string, getenv func(string) string, now func() time.Time
 		err = cmd.events(ctx)
 	case "event":
 		err = cmd.event(ctx, *eventID)
+	case "procedures":
+		err = cmd.procedures(ctx)
 	case "paragraphs":
 		err = cmd.paragraphs(ctx)
 	case "labels":
@@ -86,12 +88,24 @@ func (c evidenceCommand) event(ctx context.Context, id string) error {
 	return nil
 }
 
-func (c evidenceCommand) paragraphs(ctx context.Context) error {
-	ps, err := c.src.Paragraphs(ctx)
+// One line per procedure with its scope and paragraph count
+func (c evidenceCommand) procedures(ctx context.Context) error {
+	procedures, err := c.src.Procedures(ctx)
 	if err != nil {
 		return err
 	}
-	for _, p := range ps {
+	for _, p := range procedures {
+		fmt.Fprintf(c.out, "%s\t%s\tparagraphs=%d\n", p.Slug, p.Scope, len(p.Paragraphs))
+	}
+	return nil
+}
+
+func (c evidenceCommand) paragraphs(ctx context.Context) error {
+	procedures, err := c.src.Procedures(ctx)
+	if err != nil {
+		return err
+	}
+	for _, p := range procedures.Paragraphs() {
 		fmt.Fprintln(c.out, p.ID)
 	}
 	return nil

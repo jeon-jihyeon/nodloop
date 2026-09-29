@@ -36,17 +36,8 @@ func TestRunSetup(t *testing.T) {
 		want want
 	}{
 		{
-			"demo unpacks the data set and points the config at it",
-			args{[]string{"--demo"}, "{home}"},
-			want{
-				0, "data {home}/.nodloop/demo\nconfig {home}/.nodloop/config.json\n" +
-					"demo events tq-001 to tq-024. Try: review event tq-023\n",
-				`^$`, config{dataDir: "{home}/.nodloop/demo", recordDir: "{home}/.nodloop/records", home: "{home}"}, nil,
-			},
-		},
-		{
 			"data dir and record dir are stored absolute",
-			args{[]string{"--data-dir", "../../internal/evidence/file/testdata", "--record-dir", "records"}, "{home}"},
+			args{[]string{"--data-dir", "../../examples/demo", "--record-dir", "records"}, "{home}"},
 			want{
 				0, "data {demo}\nconfig {home}/.nodloop/config.json\n", `^$`,
 				config{dataDir: "{demo}", recordDir: "{cwd}/records", home: "{home}"}, nil,
@@ -65,12 +56,17 @@ func TestRunSetup(t *testing.T) {
 		{
 			"no flags fail",
 			args{nil, "{home}"},
-			want{1, "", "^nodloop setup: --data-dir or --demo is required\n\nusage:", config{}, errDataDirUnset},
+			want{1, "", "^nodloop setup: --data-dir is required\n\nusage:", config{}, errDataDirUnset},
 		},
 		{
 			"unknown home fails",
-			args{[]string{"--demo"}, ""},
+			args{[]string{"--data-dir", "{demo}"}, ""},
 			want{1, "", "^nodloop setup: home directory unknown: HOME is not set\n$", config{}, errDataDirUnset},
+		},
+		{
+			"the removed demo flag is unknown",
+			args{[]string{"--demo"}, "{home}"},
+			want{1, "", "^flag provided but not defined: -demo\n", config{}, errDataDirUnset},
 		},
 		{
 			"unknown flag fails",

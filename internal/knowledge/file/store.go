@@ -3,6 +3,7 @@ package file
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 
@@ -29,6 +30,21 @@ func (s *Store) Append(_ context.Context, k knowledge.Knowledge) error {
 		return fmt.Errorf("%w: %w", ErrAppend, err)
 	}
 	return nil
+}
+
+// The expected records come newest first as List gives them and the file holds them oldest first
+// A conflict surfaces as knowledge ErrRecordsChanged and not as a failed append so a caller can tell the two apart
+func (s *Store) AppendIfUnchanged(_ context.Context, k knowledge.Knowledge, expected []knowledge.Knowledge) error {
+	ordered := slices.Clone(expected)
+	slices.Reverse(ordered)
+	err := s.file.AppendIfUnchanged(k, ordered)
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, jsonl.ErrChanged):
+		return fmt.Errorf("%w: %w", knowledge.ErrRecordsChanged, err)
+	}
+	return fmt.Errorf("%w: %w", ErrAppend, err)
 }
 
 func (s *Store) List(_ context.Context) ([]knowledge.Knowledge, error) {

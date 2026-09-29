@@ -13,9 +13,12 @@ import (
 	"slices"
 	"time"
 
+	"github.com/jeon-jihyeon/nodloop/internal/diagnose"
+	"github.com/jeon-jihyeon/nodloop/internal/evidence"
 	"github.com/jeon-jihyeon/nodloop/internal/feedback"
 	"github.com/jeon-jihyeon/nodloop/internal/jsonl"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
+	"github.com/jeon-jihyeon/nodloop/internal/llm"
 	settingsfile "github.com/jeon-jihyeon/nodloop/internal/settings/file"
 )
 
@@ -23,26 +26,31 @@ import (
 // Each action reads the ones it needs
 type knowledgeFlags struct {
 	id, kind, content, basis, approver, author, status, traceID, file  string
-	version                                                            int
+	from                                                               string
+	version, parallel                                                  int
 	contexts, metrics, exceptions, paragraphs, feedbackIDs, outcomeIDs listFlag
 	vetoTool, vetoField, vetoMatch, vetoUnless, vetoExample            string
+	model                                                              string
+	events                                                             idList
+	stale                                                              bool
 }
 
 func (f *knowledgeFlags) bind(fs *flag.FlagSet) {
+	fs.BoolVar(&f.stale, "stale", false, "list: only the approved versions past their review deadline")
 	fs.StringVar(&f.id, "id", "", "knowledge id. propose generates one when empty")
 	fs.IntVar(&f.version, "version", 0, "version for approve and retire")
 	fs.StringVar(&f.kind, "kind", "", "meaning or judgment")
 	fs.StringVar(&f.content, "content", "", "the knowledge in one or a few sentences")
 	fs.StringVar(&f.basis, "basis", string(knowledge.BasisStated), "stated or verified")
 	fs.StringVar(&f.approver, "approver", "", "name of the person approving or retiring")
-	fs.StringVar(&f.author, "author", feedback.DefaultReviewer, "who proposed")
+	fs.StringVar(&f.author, "author", feedback.ReviewerAuthor, "who proposed")
 	fs.StringVar(&f.status, "status", "", "list: candidate, approved, retired or superseded")
 	fs.StringVar(&f.traceID, "trace", "", "propose: the diagnose trace whose feedback is the evidence")
 	fs.StringVar(&f.file, "file", "", "import: a jsonl file of knowledge records")
 	fs.Var(&f.contexts, "scope-context", "change context the item applies to. Repeatable")
 	fs.Var(&f.metrics, "scope-metric", "metric the item applies to. Repeatable")
 	fs.Var(&f.exceptions, "exception", "change context or event type where it must not apply. Repeatable")
-	fs.Var(&f.paragraphs, "evidence-paragraph", "runbook paragraph id. Repeatable")
+	fs.Var(&f.paragraphs, "evidence-paragraph", "procedure paragraph id. Repeatable")
 	fs.Var(&f.feedbackIDs, "evidence-feedback", "diagnose trace id whose feedback supports it. Repeatable")
 	fs.Var(&f.outcomeIDs, "evidence-outcome", "diagnose trace id whose outcome supports it. Repeatable")
 	fs.StringVar(&f.vetoTool, "veto-tool", "",
@@ -52,6 +60,11 @@ func (f *knowledgeFlags) bind(fs *flag.FlagSet) {
 	fs.StringVar(&f.vetoUnless, "veto-unless", "", "propose: RE2 regexp that lets the call through")
 	fs.StringVar(&f.vetoExample, "veto-example", "",
 		`propose: a tool_input JSON object the veto must block such as {"command":"sed -i s/a/b/ f"}`)
+	fs.StringVar(&f.from, "from", "",
+		"propose: the diagnose trace of a review corrected by edit or reject. Scope, evidence and basis come from it")
+	fs.StringVar(&f.model, "model", "", "compact, replay and propose --from: model alias or name. Empty means the llm default")
+	fs.Var(&f.events, "events", "replay: comma separated event ids to replay again. Empty means every replay event")
+	fs.IntVar(&f.parallel, "parallel", 0, "replay: reviews in flight at once. 0 means 4")
 }
 
 // The candidate the propose flags describe
@@ -68,7 +81,7 @@ func (f knowledgeFlags) draft() (knowledge.Knowledge, error) {
 		ID:         f.id,
 		Kind:       knowledge.Kind(f.kind),
 		Content:    f.content,
-		Scope:      knowledge.Scope{ChangeContexts: f.contexts.contexts(), Metrics: f.metrics},
+		Scope:      knowledge.Scope{Scope: evidence.Scope{ChangeContexts: f.contexts.contexts(), Metrics: f.metrics}},
 		Exceptions: f.exceptions.contexts(),
 		Evidence:   knowledge.Evidence{FeedbackTraceIDs: feedbackIDs, OutcomeTraceIDs: f.outcomeIDs, ParagraphIDs: f.paragraphs},
 		Basis:      knowledge.Basis(f.basis),
@@ -93,7 +106,8 @@ func (f knowledgeFlags) veto() (*knowledge.Veto, error) {
 	}, nil
 }
 
-func (f knowledgeFlags) filter() knowledge.Filter {
+// `--stale` keeps the versions stale at now
+func (f knowledgeFlags) filter(now time.Time) knowledge.Filter {
 	var out knowledge.Filter
 	if f.status != "" {
 		out.Statuses = []knowledge.Status{knowledge.Status(f.status)}
@@ -101,10 +115,15 @@ func (f knowledgeFlags) filter() knowledge.Filter {
 	if f.kind != "" {
 		out.Kinds = []knowledge.Kind{knowledge.Kind(f.kind)}
 	}
+	if f.stale {
+		out.StaleAt = now
+	}
 	return out
 }
 
-func runKnowledge(args []string, getenv func(string) string, now func() time.Time, stdout, stderr io.Writer) int {
+func runKnowledge(
+	args []string, getenv func(string) string, client llm.Client, now func() time.Time, stdout, stderr io.Writer,
+) int {
 	if len(args) == 0 {
 		return fail(stderr, "knowledge", errNoAction)
 	}
@@ -122,39 +141,57 @@ func runKnowledge(args []string, getenv func(string) string, now func() time.Tim
 	if err != nil {
 		return fail(stderr, "knowledge", err)
 	}
-	ledger, err := a.ledger()
-	if err != nil {
-		return fail(stderr, "knowledge", err)
-	}
-	cmd := knowledgeCommand{
-		app: a, ledger: ledger, vetoPath: a.vetoFile(a.cfg.recordDir).Path(), settingsPath: a.cfg.home.settingsPath(),
-		out: stdout,
-	}
 	ctx := context.Background()
-	switch args[0] {
-	case "propose":
-		err = cmd.propose(ctx, flags)
-	case "list":
-		err = cmd.list(ctx, flags.filter())
-	case "show":
-		err = cmd.show(ctx, id)
-	case "overlaps":
-		err = cmd.overlaps(ctx, id)
-	case "approve":
-		err = cmd.transition(ctx, "approve", ledger.Approve, id, flags.version, flags.approver)
-	case "retire":
-		err = cmd.transition(ctx, "retire", ledger.Retire, id, flags.version, flags.approver)
-	case "import":
-		err = cmd.importFile(ctx, flags.file)
-	case "export":
-		err = cmd.export(ctx)
+	switch {
+	case slices.Contains([]string{"compact", "compaction", "replay", "approve-compaction"}, args[0]):
+		err = flags.runCompaction(ctx, args[0], id, a, client, stdout, stderr)
+	case args[0] == "propose":
+		err = flags.runPropose(ctx, a, client, stdout)
 	default:
-		err = fmt.Errorf("%w %q", errUnknownAction, args[0])
+		err = flags.runRecords(ctx, args[0], id, a, stdout)
 	}
 	if err != nil {
 		return fail(stderr, "knowledge", err)
 	}
 	return 0
+}
+
+// The actions over the knowledge records and the records they cite and never the policy
+func (f knowledgeFlags) runRecords(ctx context.Context, action, id string, a app, stdout io.Writer) error {
+	ledger, err := a.ledger()
+	if err != nil {
+		return err
+	}
+	cmd := a.knowledgeCommand(ledger, stdout)
+	switch action {
+	case "list":
+		return cmd.list(ctx, f.filter(a.now()))
+	case "health":
+		return cmd.health(ctx)
+	case "audit":
+		return cmd.audit(ctx)
+	case "reaffirm":
+		return cmd.reaffirm(ctx, id, f.version, f.approver)
+	case "narrow":
+		return cmd.narrow(ctx, id, f.version, f.author)
+	case "show":
+		return cmd.show(ctx, id)
+	case "overlaps":
+		return cmd.overlaps(ctx, id)
+	case "approve":
+		if err := cmd.transition(ctx, "approve", ledger.Approve, id, f.version, f.approver); err != nil {
+			return err
+		}
+		return cmd.folder(ctx, id, f.version)
+	case "retire":
+		return cmd.transition(ctx, "retire", ledger.Retire, id, f.version, f.approver)
+	case "import":
+		return cmd.importFile(ctx, f.file)
+	case "export":
+		return cmd.export(ctx)
+	default:
+		return fmt.Errorf("%w %q", errUnknownAction, action)
+	}
 }
 
 type knowledgeCommand struct {
@@ -167,13 +204,62 @@ type knowledgeCommand struct {
 	out          io.Writer
 }
 
-// Prints the candidate and its veto and the folder it would join so the person sees both before approving
-func (c knowledgeCommand) propose(ctx context.Context, flags knowledgeFlags) error {
-	draft, err := flags.draft()
+func (a app) knowledgeCommand(ledger *knowledge.Ledger, out io.Writer) knowledgeCommand {
+	return knowledgeCommand{
+		app: a, ledger: ledger, vetoPath: a.vetoFile(a.cfg.recordDir).Path(), settingsPath: a.cfg.home.settingsPath(), out: out,
+	}
+}
+
+// A proposal from the flags alone reads the records only
+// One filled from a corrected review reads the review through the diagnoser and so opens the whole pipeline
+func (f knowledgeFlags) runPropose(ctx context.Context, a app, client llm.Client, stdout io.Writer) error {
+	draft, err := f.draft()
 	if err != nil {
 		return err
 	}
-	if err = c.app.checkReviews(ctx, draft.Evidence.TraceIDs()...); err != nil {
+	if f.from == "" {
+		ledger, err := a.ledger()
+		if err != nil {
+			return err
+		}
+		return a.knowledgeCommand(ledger, stdout).propose(ctx, draft)
+	}
+	p, err := a.pipeline()
+	if err != nil {
+		return err
+	}
+	return a.knowledgeCommand(p.ledger, stdout).proposeFrom(ctx, p.diagnoser(client), f.from, draft, f.model)
+}
+
+// Code fills scope and evidence and basis from the correction and the fields of the draft replace or add to them
+// Without content one model call drafts it and the candidate says so
+func (c knowledgeCommand) proposeFrom(
+	ctx context.Context, d *diagnose.Diagnoser, from string, draft knowledge.Knowledge, model string,
+) error {
+	correction, err := d.Correction(ctx, from)
+	if err != nil {
+		return err
+	}
+	p := correction.Proposal()
+	draft = draft.Filled(p.Scope, p.Evidence, p.Basis)
+	if draft.Content != "" {
+		return c.propose(ctx, draft)
+	}
+	written, err := d.DraftContent(ctx, correction, model)
+	if err != nil {
+		return err
+	}
+	draft.Content, draft.Drafted = written.Content, true
+	if err := c.propose(ctx, draft); err != nil {
+		return err
+	}
+	fmt.Fprintf(c.out, "drafted\t%.4f usd\t%s\n", written.CostUSD, written.Content)
+	return nil
+}
+
+// Prints the candidate and its veto and the folder it would join so the person sees both before approving
+func (c knowledgeCommand) propose(ctx context.Context, draft knowledge.Knowledge) error {
+	if err := c.app.checkReviews(ctx, draft.Evidence.TraceIDs()...); err != nil {
 		return err
 	}
 	k, overlaps, err := c.ledger.Propose(ctx, draft)
@@ -189,21 +275,37 @@ func (c knowledgeCommand) propose(ctx context.Context, flags knowledgeFlags) err
 			fmt.Fprintf(c.out, "veto\t%s\t%s matches %s unless %q\n", k.Veto.Tool, w.Field, w.Match, w.Unless)
 		}
 	}
-	folder, err := c.ledger.Folder(ctx, k.ID, k.Version)
+	return c.folder(ctx, k.ID, k.Version)
+}
+
+// The folder a version joins with its size and a line when a compaction is due
+func (c knowledgeCommand) folder(ctx context.Context, id string, version int) error {
+	f, err := c.ledger.Folder(ctx, id, version)
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(c.out, "folder\t%d of %d chars\t%s\n", folder.Chars, folder.Budget, folder)
+	fmt.Fprintf(c.out, "folder\t%d of %d chars\t%d items\t%s\n", f.Chars, knowledge.ReviewChars, len(f.Items)+1, f)
+	if f.Crowded() {
+		fmt.Fprintf(c.out, "compaction due\tthe folder holds more than %d approved items. Run nodloop knowledge compact %s\n",
+			knowledge.FolderItems, id)
+	}
 	return nil
 }
 
+// The current version per id or every version of a named status so a narrowed candidate shows beside its approved version
+// The last column says whether the version is past its review deadline
 func (c knowledgeCommand) list(ctx context.Context, f knowledge.Filter) error {
 	all, err := c.ledger.All(ctx)
 	if err != nil {
 		return err
 	}
-	for _, k := range all.Current().Matching(f) {
-		fmt.Fprintf(c.out, "%s\tv%d\t%s\t%s\t%s\n", k.ID, k.Version, k.Status, k.Kind, k.Content)
+	now := c.app.now()
+	items := all.Current()
+	if len(f.Statuses) > 0 {
+		items = all.Versions()
+	}
+	for _, k := range items.Matching(f) {
+		fmt.Fprintf(c.out, "%s\tv%d\t%s\t%s\t%s\tstale=%t\n", k.ID, k.Version, k.Status, k.Kind, k.Content, k.Stale(now))
 	}
 	return nil
 }
@@ -261,10 +363,12 @@ func (c knowledgeCommand) transition(
 		return err
 	}
 	after, err := c.ledger.All(ctx)
-	if err != nil || reflect.DeepEqual(before.Vetoes(), after.Vetoes()) {
+	if err != nil {
 		return err
 	}
-	c.vetoLine(len(after.Vetoes()))
+	if !reflect.DeepEqual(before.Vetoes(), after.Vetoes()) {
+		c.vetoLine(len(after.Vetoes()))
+	}
 	return nil
 }
 
@@ -300,7 +404,7 @@ func (c knowledgeCommand) vetoLine(count int) {
 }
 
 // Appends the records of a jsonl file as they are
-// The demo knowledge arrives this way
+// The seed knowledge of a data set arrives this way
 func (c knowledgeCommand) importFile(ctx context.Context, path string) error {
 	if path == "" {
 		return fmt.Errorf("--file %w", errRequired)

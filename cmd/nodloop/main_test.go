@@ -77,7 +77,7 @@ func TestRun(t *testing.T) {
 		{
 			"setup without a data dir fails",
 			args{[]string{"setup"}, nil},
-			want{1, "", `^nodloop setup: --data-dir or --demo is required\n\nusage:`},
+			want{1, "", `^nodloop setup: --data-dir is required\n\nusage:`},
 		},
 		{
 			"evidence without an action fails",

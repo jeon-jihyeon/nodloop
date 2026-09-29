@@ -53,9 +53,14 @@ func TestLoadPolicy(t *testing.T) {
 			}}},
 		},
 		{
-			name: "limits section is left to diagnose and still loads",
+			name: "a limits section is refused because the review caps are internal",
 			args: "version: v1\nlimits:\n  knowledge_chars: 100\n  example_chars: 200\n  candidates: 3\n",
-			want: want{policy: analysis.Policy{Version: "v1"}},
+			want: want{err: analysis.ErrLimitsSection},
+		},
+		{
+			name: "an empty limits section is refused too",
+			args: "version: v1\nlimits:\n",
+			want: want{err: analysis.ErrLimitsSection},
 		},
 		{
 			name: "broken yaml is malformed",

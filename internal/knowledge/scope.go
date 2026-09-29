@@ -8,10 +8,11 @@ import (
 	"github.com/jeon-jihyeon/nodloop/internal/evidence"
 )
 
+// The procedure scope with the dims a knowledge item may also name
+// JSON keys stay change_contexts and metrics and dims
 type Scope struct {
-	ChangeContexts []evidence.Context `json:"change_contexts,omitempty"`
-	Metrics        []string           `json:"metrics,omitempty"`
-	Dims           map[string]string  `json:"dims,omitempty"`
+	evidence.Scope
+	Dims map[string]string `json:"dims,omitempty"`
 }
 
 // Metrics an observation flagged on the event
@@ -26,11 +27,9 @@ func (d Dims) has(key, value string) bool {
 	return ok
 }
 
-func (s Scope) matches(changeContext evidence.Context, moved Moved, dims Dims) bool {
-	if len(s.ChangeContexts) > 0 && !slices.Contains(s.ChangeContexts, changeContext) {
-		return false
-	}
-	if len(s.Metrics) > 0 && !sharesValue(s.Metrics, moved) {
+// Whether the event fits the procedure scope and carries every dim value the scope names
+func (s Scope) admits(changeContext evidence.Context, moved Moved, dims Dims) bool {
+	if !s.Matches(changeContext, moved) {
 		return false
 	}
 	for key, value := range s.Dims {
@@ -41,47 +40,22 @@ func (s Scope) matches(changeContext evidence.Context, moved Moved, dims Dims) b
 	return true
 }
 
-// Two scopes intersect when every set axis shares a value or is empty on either side
+// Two scopes overlap when every set axis shares a value or is empty on either side
 // Each dimension key is an axis of its own
-func (s Scope) intersects(other Scope) bool {
+func (s Scope) overlaps(other Scope) bool {
 	for key, value := range s.Dims {
 		if theirs, ok := other.Dims[key]; ok && theirs != value {
 			return false
 		}
 	}
-	return s.sharesFolder(other)
-}
-
-// Whether the change contexts and the metrics intersect
-func (s Scope) sharesFolder(other Scope) bool {
-	contexts := len(s.ChangeContexts) == 0 || len(other.ChangeContexts) == 0 ||
-		sharesValue(s.ChangeContexts, other.ChangeContexts)
-	metrics := len(s.Metrics) == 0 || len(other.Metrics) == 0 || sharesValue(s.Metrics, other.Metrics)
-	return contexts && metrics
-}
-
-// Whether a value of ours is also one of theirs
-func sharesValue[S ~[]E, E comparable](ours []E, theirs S) bool {
-	for _, v := range ours {
-		if slices.Contains(theirs, v) {
-			return true
-		}
-	}
-	return false
+	return s.Intersects(other.Scope)
 }
 
 // One line for a candidate list and the context text
 func (s Scope) String() string {
 	var parts []string
-	if len(s.ChangeContexts) > 0 {
-		contexts := make([]string, 0, len(s.ChangeContexts))
-		for _, c := range s.ChangeContexts {
-			contexts = append(contexts, string(c))
-		}
-		parts = append(parts, "change contexts "+strings.Join(contexts, " or "))
-	}
-	if len(s.Metrics) > 0 {
-		parts = append(parts, "metrics "+strings.Join(s.Metrics, " or "))
+	if !s.Empty() {
+		parts = append(parts, s.Scope.String())
 	}
 	for _, k := range slices.Sorted(maps.Keys(s.Dims)) {
 		parts = append(parts, k+"="+s.Dims[k])
