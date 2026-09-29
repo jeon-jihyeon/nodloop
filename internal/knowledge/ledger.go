@@ -146,7 +146,7 @@ func (l *Ledger) Approve(ctx context.Context, id string, version int, approver s
 	if err != nil {
 		return Knowledge{}, err
 	}
-	if from.Compaction != "" {
+	if from.Status == StatusCandidate && from.Compaction != "" {
 		return Knowledge{}, fmt.Errorf("%w: approve compaction %s with a passing replay", ErrCompactionInvalid, from.Compaction)
 	}
 	to, superseded, err := history.approve(id, version, approver, l.now().UTC())
