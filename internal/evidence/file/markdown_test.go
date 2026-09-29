@@ -149,6 +149,11 @@ func TestSourceProceduresFolder(t *testing.T) {
 			args{files: map[string]string{"procedures": "file"}},
 			want{err: syscall.ENOTDIR},
 		},
+		{
+			"a folder named like a procedure returns its error",
+			args{folders: []string{"procedures/folder.md"}},
+			want{err: syscall.EISDIR},
+		},
 	}
 	ctx := context.Background()
 	for _, tc := range tcs {
@@ -170,38 +175,6 @@ func TestSourceProceduresFolder(t *testing.T) {
 			}
 			assert.ErrorIs(t, err, tc.want.err)
 			assert.Equal(t, tc.want.texts, texts)
-		})
-	}
-}
-
-func TestSourceProceduresFailsOnUnreadableFiles(t *testing.T) {
-	type args struct {
-		folders []string
-		files   []string
-	}
-	tcs := []struct {
-		name string
-		args args
-		want error
-	}{
-		{"folder named like a procedure fails", args{folders: []string{"procedures/folder.md"}}, syscall.EISDIR},
-		{"procedures path that is a file fails", args{files: []string{"procedures"}}, syscall.ENOTDIR},
-	}
-	for _, tc := range tcs {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			dir := t.TempDir()
-			for _, folder := range tc.args.folders {
-				require.NoError(t, os.MkdirAll(filepath.Join(dir, folder), 0o700))
-			}
-			for _, name := range tc.args.files {
-				require.NoError(t, os.WriteFile(filepath.Join(dir, name), nil, 0o600))
-			}
-			src, err := file.New(dir)
-			require.NoError(t, err)
-			got, err := src.Procedures(context.Background())
-			assert.ErrorIs(t, err, tc.want)
-			assert.Nil(t, got)
 		})
 	}
 }
