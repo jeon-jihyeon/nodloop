@@ -18,21 +18,7 @@ import (
 	"github.com/jeon-jihyeon/nodloop/internal/llm/llmmock"
 	"github.com/jeon-jihyeon/nodloop/internal/testkit"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
-	tracefile "github.com/jeon-jihyeon/nodloop/internal/trace/file"
 )
-
-// Panics on the append of a revise trace
-// The revise runs under the record lock so the panic lands where a held lock would block every later review
-type panickingTraces struct {
-	*tracefile.Store
-}
-
-func (p panickingTraces) Append(ctx context.Context, tr trace.Trace) error {
-	if tr.Name == trace.NameRevise {
-		panic("store failed")
-	}
-	return p.Store.Append(ctx, tr)
-}
 
 // The pool rules eval and compaction replays share
 // Every job runs under the replay tag so the log reads its session tags
@@ -126,8 +112,10 @@ func TestRunAll(t *testing.T) {
 					return noAction, tc.args.failures[event]
 				}).AnyTimes()
 			at := s.Clock.Now()
+			// The revise runs under the record lock so the panic lands where a held lock would block every later review
+			traces := testkit.PanickingTraces{Store: s.Traces, Name: trace.NameRevise}
 			d := diagnose.New(
-				s.Source, testkit.Policy(t), client, panickingTraces{s.Traces}, s.Feedback, s.Ledger,
+				s.Source, testkit.Policy(t), client, traces, s.Feedback, s.Ledger,
 				func() time.Time { return at },
 			)
 			var jobs []diagnose.Job
