@@ -19,7 +19,12 @@ func (s Scope) Empty() bool {
 
 // The change context matches by membership and the metrics by one shared value
 func (s Scope) Matches(changeContext Context, metrics []string) bool {
-	return s.admitsContexts([]Context{changeContext}) && s.admitsMetrics(metrics)
+	return s.MatchesContext(changeContext) && s.admitsMetrics(metrics)
+}
+
+// Whether some event of the change context may match whatever metrics it carries
+func (s Scope) MatchesContext(changeContext Context) bool {
+	return s.admitsContexts([]Context{changeContext})
 }
 
 // Whether one event could match both scopes
