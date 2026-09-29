@@ -37,14 +37,28 @@ func (s Scope) Intersects(other Scope) bool {
 
 // Whether the context axis is unset or holds one of the contexts
 func (s Scope) admitsContexts(contexts []Context) bool {
-	return len(s.ChangeContexts) == 0 ||
-		slices.ContainsFunc(s.ChangeContexts, func(c Context) bool { return slices.Contains(contexts, c) })
+	if len(s.ChangeContexts) == 0 {
+		return true
+	}
+	for _, c := range contexts {
+		if slices.Contains(s.ChangeContexts, c) {
+			return true
+		}
+	}
+	return false
 }
 
 // Whether the metric axis is unset or holds one of the metrics
 func (s Scope) admitsMetrics(metrics []string) bool {
-	return len(s.Metrics) == 0 ||
-		slices.ContainsFunc(s.Metrics, func(m string) bool { return slices.Contains(metrics, m) })
+	if len(s.Metrics) == 0 {
+		return true
+	}
+	for _, m := range metrics {
+		if slices.Contains(s.Metrics, m) {
+			return true
+		}
+	}
+	return false
 }
 
 // One line for a list and the context text

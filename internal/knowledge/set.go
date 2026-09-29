@@ -274,6 +274,16 @@ func (s Set) nextVersion(id string) int {
 	return n + 1
 }
 
+// The first listed record of id
+func (s Set) Find(id string) (Knowledge, bool) {
+	for _, k := range s {
+		if k.ID == id {
+			return k, true
+		}
+	}
+	return Knowledge{}, false
+}
+
 func (s Set) latest(id string, version int) (Knowledge, error) {
 	for _, k := range s {
 		if k.ID == id && k.Version == version {

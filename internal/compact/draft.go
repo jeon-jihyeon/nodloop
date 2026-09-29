@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"slices"
 	"strings"
 
 	"github.com/jeon-jihyeon/nodloop/internal/evidence"
@@ -97,12 +96,12 @@ type Item struct {
 func (it Item) knowledge(items, excluded knowledge.Set, author string) (knowledge.Knowledge, error) {
 	refs := make([]knowledge.Ref, 0, len(it.From))
 	for _, id := range it.From {
-		if slices.ContainsFunc(excluded, func(k knowledge.Knowledge) bool { return k.ID == id }) {
+		if _, ok := excluded.Find(id); ok {
 			return knowledge.Knowledge{}, fmt.Errorf("%w: %s", knowledge.ErrParagraphOnly, id)
 		}
 		ref := knowledge.Ref{ID: id}
-		if i := slices.IndexFunc(items, func(k knowledge.Knowledge) bool { return k.ID == id }); i >= 0 {
-			ref.Version = items[i].Version
+		if k, ok := items.Find(id); ok {
+			ref.Version = k.Version
 		}
 		refs = append(refs, ref)
 	}

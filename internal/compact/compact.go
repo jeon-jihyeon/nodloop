@@ -259,21 +259,35 @@ func (rs reviews) newest(eventID string) review {
 	return out
 }
 
+// Labels of the source in source order
+type labelSet []evidence.Label
+
+// The status the first label of the event expects
+func (ls labelSet) expected(event string) (evidence.Status, bool) {
+	for _, l := range ls {
+		if l.EventID == event {
+			return l.Expected, true
+		}
+	}
+	return "", false
+}
+
 // The expected status of every evidence event and the events without one
 // 1. the label of the event when the data set has one
 // 2. otherwise the latest verdict on the newest evidence trace: edit gives the corrected status and approve the recorded one
 // 3. otherwise none because a reject or an outcome says what was wrong and not what is right
 func (c *Compactor) expectations(ctx context.Context, rs reviews) ([]Expectation, []string, error) {
-	labels, err := c.src.Labels(ctx)
+	all, err := c.src.Labels(ctx)
 	if err != nil {
 		return nil, nil, err
 	}
+	labels := labelSet(all)
 	expected := []Expectation{}
 	unverifiable := []string{}
 	for _, event := range rs.events() {
 		newest := rs.newest(event)
-		if i := slices.IndexFunc(labels, func(l evidence.Label) bool { return l.EventID == event }); i >= 0 {
-			expected = append(expected, Expectation{EventID: event, Expected: labels[i].Expected, Origin: OriginLabel, TraceID: newest.trace.ID})
+		if status, ok := labels.expected(event); ok {
+			expected = append(expected, Expectation{EventID: event, Expected: status, Origin: OriginLabel, TraceID: newest.trace.ID})
 			continue
 		}
 		if e, ok := newest.expectation(); ok {

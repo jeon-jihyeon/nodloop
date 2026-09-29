@@ -60,27 +60,36 @@ func revisePrompt(prompt string, diag Diagnosis, reasons []string) string {
 // 3. a ready_for_review cause keeps a listed paragraph id because the gate holds a cause without one
 // 4. a ready_for_review keeps the first step of the lead procedure as a check
 // Any other status loses its causes at the gate so 2 and 3 never cost it a second model call
-func (diag Diagnosis) revisions(firstSteps []string) []string {
+func (diag Diagnosis) revisions(firstSteps steps) []string {
 	var out []string
 	ready := diag.Status == evidence.StatusReadyForReview
 	for _, c := range diag.Causes {
-		if i := slices.IndexFunc(c.ParagraphIDs, func(id string) bool { return evidence.ParagraphID(id).IsDecide() }); i >= 0 {
-			out = append(out, fmt.Sprintf("cause %q cites the Decide paragraph %s. A Decide paragraph states no cause", c.Summary, c.ParagraphIDs[i]))
+		if id, ok := c.cites(evidence.ParagraphID.IsDecide); ok {
+			out = append(out, fmt.Sprintf("cause %q cites the Decide paragraph %s. A Decide paragraph states no cause", c.Summary, id))
 		}
-		if i := slices.IndexFunc(c.ParagraphIDs, func(id string) bool { return slices.Contains(firstSteps, id) }); ready && i >= 0 {
+		if id, ok := c.cites(firstSteps.has); ready && ok {
 			out = append(out, fmt.Sprintf("cause %q cites %s, the first step of its procedure. "+
-				"A first step is a check and never states a cause. Cite the paragraph that states the cause", c.Summary, c.ParagraphIDs[i]))
+				"A first step is a check and never states a cause. Cite the paragraph that states the cause", c.Summary, id))
 		}
 		if ready && len(c.ParagraphIDs) == 0 {
 			out = append(out, fmt.Sprintf("cause %q cites no paragraph id from the list. Cite the paragraph that states it or return hold", c.Summary))
 		}
 	}
-	lead := diag.leadProcedure()
-	i := slices.IndexFunc(firstSteps, func(id string) bool { return evidence.ParagraphID(id).Procedure() == lead })
-	if !ready || i < 0 || slices.Contains(diag.Checks.Paragraphs(), firstSteps[i]) {
+	step, ok := firstSteps.of(diag.leadProcedure())
+	if !ready || !ok || slices.Contains(diag.Checks.Paragraphs(), step) {
 		return out
 	}
-	return append(out, fmt.Sprintf("check %s is missing. The first step of the lead procedure is always a check", firstSteps[i]))
+	return append(out, fmt.Sprintf("check %s is missing. The first step of the lead procedure is always a check", step))
+}
+
+// The first paragraph id the cause cites that the predicate holds for
+func (c Cause) cites(holds func(evidence.ParagraphID) bool) (string, bool) {
+	for _, id := range c.ParagraphIDs {
+		if holds(evidence.ParagraphID(id)) {
+			return id, true
+		}
+	}
+	return "", false
 }
 
 // The one procedure every cause cites
@@ -100,11 +109,29 @@ func (diag Diagnosis) leadProcedure() string {
 	return procedures[0]
 }
 
+// Paragraph ids of first steps in paragraph order
+type steps []string
+
+func (s steps) has(id evidence.ParagraphID) bool {
+	return slices.Contains(s, string(id))
+}
+
+// The first step of the procedure
+func (s steps) of(procedure string) (string, bool) {
+	for _, id := range s {
+		if evidence.ParagraphID(id).Procedure() == procedure {
+			return id, true
+		}
+	}
+	return "", false
+}
+
 // The first section after the introduction of every included procedure in paragraph order
 // A procedure without a step has none
 // A later step is not a check by position because it may state a finding
-func (c Context) firstSteps() []string {
-	var procedures, out []string
+func (c Context) firstSteps() steps {
+	var procedures []string
+	var out steps
 	for _, id := range c.ParagraphIDs {
 		p := evidence.ParagraphID(id)
 		if p.IsStep() && !slices.Contains(procedures, p.Procedure()) {
