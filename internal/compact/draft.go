@@ -118,10 +118,13 @@ func (it Item) knowledge(items, excluded knowledge.Set, author string) (knowledg
 // One model call writes the draft and code proposes it
 // A refusal of the code checks is sent back once with its text like record sends a review back once
 // The second refusal is returned as it is
-// A folder with a pending compaction is refused before the model call because the ledger would refuse the draft
+// A folder with a pending compaction or nothing to replay is refused before the model call because its draft would be refused
 func (c *Compactor) Draft(ctx context.Context, client llm.Client, f Folder, model, author string) (knowledge.Compaction, error) {
 	if f.Pending != "" {
 		return knowledge.Compaction{}, fmt.Errorf("%w: %s", knowledge.ErrCompactionPending, f.Pending)
+	}
+	if err := f.replayable(); err != nil {
+		return knowledge.Compaction{}, err
 	}
 	prompt := f.String()
 	d, err := c.complete(ctx, client, prompt, model)
