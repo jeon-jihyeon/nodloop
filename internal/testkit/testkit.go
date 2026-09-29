@@ -18,6 +18,7 @@ import (
 	feedbackfile "github.com/jeon-jihyeon/nodloop/internal/feedback/file"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	knowledgefile "github.com/jeon-jihyeon/nodloop/internal/knowledge/file"
+	"github.com/jeon-jihyeon/nodloop/internal/trace"
 	tracefile "github.com/jeon-jihyeon/nodloop/internal/trace/file"
 	vetofile "github.com/jeon-jihyeon/nodloop/internal/veto/file"
 )
@@ -60,6 +61,20 @@ func (f *FlakyFeedback) List(ctx context.Context, filter feedback.Filter) ([]fee
 		return nil, err
 	}
 	return f.Store.List(ctx, filter)
+}
+
+// Panics on the append of a trace of Name
+// A test proves that a panic under a held lock never blocks a later call
+type PanickingTraces struct {
+	*tracefile.Store
+	Name trace.Name
+}
+
+func (p PanickingTraces) Append(ctx context.Context, tr trace.Trace) error {
+	if tr.Name == p.Name {
+		panic("store failed")
+	}
+	return p.Store.Append(ctx, tr)
 }
 
 // The demo source and one temp record dir behind every store
