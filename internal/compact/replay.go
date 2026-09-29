@@ -93,7 +93,7 @@ func (c *Compactor) Result(ctx context.Context, id string) (knowledge.Replay, er
 		var review struct {
 			Status evidence.Status `json:"status"`
 		}
-		if i := slices.IndexFunc(replays, func(tr trace.Trace) bool { return tr.Subject == e.EventID }); i >= 0 {
+		if i := slices.IndexFunc(replays, trace.Filter{Subject: e.EventID}.Matches); i >= 0 {
 			event.TraceID = replays[i].ID
 			if replays[i].Error == "" && json.Unmarshal(replays[i].Output, &review) == nil {
 				event.Got = review.Status
