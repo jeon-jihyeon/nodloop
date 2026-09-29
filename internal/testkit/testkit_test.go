@@ -96,6 +96,32 @@ func TestFlakyKnowledgeList(t *testing.T) {
 	}
 }
 
+// A trace of another name is stored and a trace of the name panics before it is stored
+func TestPanickingTracesAppend(t *testing.T) {
+	tcs := []struct {
+		name   string
+		args   trace.Name
+		panics assert.PanicAssertionFunc
+		want   int
+	}{
+		{"a trace of another name is stored", trace.NameDiagnose, assert.NotPanics, 1},
+		{"a trace of the name panics", trace.NameRevise, assert.Panics, 0},
+	}
+	ctx := context.Background()
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			st := testkit.Open(t)
+			traces := testkit.PanickingTraces{Store: st.Traces, Name: trace.NameRevise}
+			tr := trace.Trace{ID: "t-1", Name: tc.args, Time: st.Clock.Now()}
+			tc.panics(t, func() { _ = traces.Append(ctx, tr) })
+			stored, err := st.Traces.List(ctx, trace.Filter{})
+			require.NoError(t, err)
+			assert.Len(t, stored, tc.want)
+		})
+	}
+}
+
 // Two reads show which of them the allowed count lets through
 func TestFlakyFeedbackList(t *testing.T) {
 	type want struct {
