@@ -284,7 +284,7 @@ func (c knowledgeCommand) folder(ctx context.Context, id string, version int) er
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(c.out, "folder\t%d of %d chars\t%d items\t%s\n", f.Chars, knowledge.ReviewChars, len(f.Items)+1, f)
+	fmt.Fprintf(c.out, "folder\t%d of %d chars\t%d items\t%s\n", f.Chars, knowledge.ReviewChars, f.Size(), f)
 	if f.Crowded() {
 		fmt.Fprintf(c.out, "compaction due\tthe folder holds more than %d approved items an event can replay. "+
 			"Run nodloop knowledge compact %s\n",

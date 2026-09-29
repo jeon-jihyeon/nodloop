@@ -8,6 +8,24 @@ import (
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 )
 
+func TestFolderSize(t *testing.T) {
+	t.Parallel()
+	tcs := []struct {
+		name string
+		args knowledge.Set
+		want int
+	}{
+		{"a folder of the item alone holds one item", knowledge.Set{}, 1},
+		{"a folder counts the item beside its other items", knowledge.Set{{ID: "k-a"}, {ID: "k-b"}}, 3},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.want, knowledge.Folder{Items: tc.args}.Size())
+		})
+	}
+}
+
 func TestFolderFull(t *testing.T) {
 	t.Parallel()
 	tcs := []struct {
