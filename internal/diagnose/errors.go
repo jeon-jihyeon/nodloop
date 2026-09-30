@@ -21,6 +21,8 @@ var (
 	// 1. an example candidate whose trace carries no feedback
 	// 2. a correction asked of a review with no verdict a person gave
 	ErrNoFeedback = errors.New("diagnose: no feedback on trace")
+	// An edited review whose keys or status or paragraph ids a later review could not follow
+	ErrEditInvalid = errors.New("diagnose: the edited review does not fit the review it corrects")
 	// A correction was asked of a review whose latest human verdict approves it
 	ErrNotCorrected = errors.New("diagnose: the latest verdict on the review is not an edit or reject")
 	// Run on a Diagnoser built for the conversation without a model client

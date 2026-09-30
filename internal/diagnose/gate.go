@@ -44,6 +44,7 @@ func (c citable) unknown(diag Diagnosis) []string {
 // The review with unknown and repeated ids dropped and each cause cut to its first causeCitations ids
 // Checks and causes are cloned first because their backing arrays belong to the caller
 // Revisions and the gate both judge this review so what is sent back and what is recorded agree
+// The cut drops the later ids silently so an edited review that overflows it is refused before it becomes an example
 func (diag Diagnosis) cited(known citable) Diagnosis {
 	diag.Checks = slices.Clone(diag.Checks)
 	for i := range diag.Checks {
@@ -55,6 +56,17 @@ func (diag Diagnosis) cited(known citable) Diagnosis {
 		diag.Causes[i].ParagraphIDs = ids[:min(len(ids), causeCitations)]
 	}
 	return diag
+}
+
+// Summaries of the causes whose known ids outnumber causeCitations in citation order
+func (diag Diagnosis) overCited(known citable) []string {
+	var out []string
+	for _, c := range diag.Causes {
+		if len(known.keep(c.ParagraphIDs)) > causeCitations {
+			out = append(out, c.Summary)
+		}
+	}
+	return out
 }
 
 // Forces hold when the cited review cannot stand

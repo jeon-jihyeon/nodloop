@@ -1,6 +1,7 @@
 package diagnose
 
 import (
+	"bytes"
 	"cmp"
 	"context"
 	"encoding/json"
@@ -12,6 +13,7 @@ import (
 	"github.com/jeon-jihyeon/nodloop/internal/feedback"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	"github.com/jeon-jihyeon/nodloop/internal/llm"
+	"github.com/jeon-jihyeon/nodloop/internal/trace"
 )
 
 // The system prompt of the content draft of a knowledge candidate
@@ -95,6 +97,55 @@ func (d *Diagnoser) Correction(ctx context.Context, traceID string) (Correction,
 		return Correction{}, fmt.Errorf("%w: edited review of %s: %w", ErrMalformed, traceID, err)
 	}
 	return out, nil
+}
+
+// Refuses an edited review that a later review would get as an example it cannot follow
+// Fails with ErrEditInvalid naming
+// 1. a key the review does not hold such as a misspelled one
+// 2. a status outside the valid set
+// 3. a paragraph id the current procedures that apply to the event do not list
+// 4. a cause citing more than causeCitations ids because a later review keeps only the first ones
+// 5. a review the gate would hold on the first steps of those procedures so a later review that follows it is held too
+// built is the context trace the corrected review was built on and gives the change context and the observations
+// current holds the procedures of the data set as a later review reads them
+// A later review of the event lists only what applies now so an id the built context listed but a heading rename or a scope change removed is refused
+// A runbook written after the review is cited by its current id when its scope fits the event
+// The observations stored in built stand in for the policy so a broken policy never stops a verdict
+// A partial hold or no_action without citations passes so a correction of the status alone stays short
+func CheckEdit(built trace.Trace, current evidence.Procedures, edited json.RawMessage) error {
+	c, err := contextFrom(built)
+	if err != nil {
+		return err
+	}
+	next := c.withProcedures(current)
+	dec := json.NewDecoder(bytes.NewReader(edited))
+	dec.DisallowUnknownFields()
+	var diag Diagnosis
+	if err := dec.Decode(&diag); err != nil {
+		return fmt.Errorf("%w: %w", ErrEditInvalid, err)
+	}
+	if !diag.Status.Valid() {
+		return fmt.Errorf("%w: status %q is not %s, %s or %s", ErrEditInvalid, diag.Status,
+			evidence.StatusNoAction, evidence.StatusReadyForReview, evidence.StatusHold)
+	}
+	known := next.citable()
+	if unknown := known.unknown(diag); len(unknown) > 0 {
+		return fmt.Errorf("%w: paragraph ids the procedures that apply to event %s do not list now: %s. "+
+			"The procedures may have changed since the review so cite the id the paragraph has now or drop the id. "+
+			"Procedures that apply: %s", ErrEditInvalid, c.EventID, strings.Join(unknown, ", "),
+			cmp.Or(strings.Join(next.Procedures, ", "), "none"))
+	}
+	if over := diag.overCited(known); len(over) > 0 {
+		return fmt.Errorf("%w: causes cite more than %d paragraph ids: %s. A later review keeps only the first %d "+
+			"in citation order. Keep for each cause the paragraphs that state it", ErrEditInvalid, causeCitations,
+			strings.Join(over, "; "), causeCitations)
+	}
+	if gated, forced := diag.cited(known).gate(next.firstSteps()); forced {
+		return fmt.Errorf("%w: the gate would hold a review that follows it: %s. A ready_for_review cites for each cause "+
+			"a paragraph that states it and never a first step or a Decide paragraph alone. A no_action carries no cause",
+			ErrEditInvalid, gated.HoldReasons[len(gated.HoldReasons)-1])
+	}
+	return nil
 }
 
 // The fields of a knowledge candidate that code fills from the correction

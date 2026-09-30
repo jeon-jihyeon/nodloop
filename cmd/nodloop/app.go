@@ -73,6 +73,15 @@ func (a app) source() (*evidencefile.Source, error) {
 	return evidencefile.New(a.cfg.dataDir)
 }
 
+// Reads the procedures folder alone and never the policy or the events
+func (a app) procedures(ctx context.Context) (evidence.Procedures, error) {
+	src, err := a.source()
+	if err != nil {
+		return nil, err
+	}
+	return src.Procedures(ctx)
+}
+
 // `policy.yaml` in the reference directory
 // The data set owns its analyzers so a directory without the file cannot be analyzed
 func (a app) policy() (analysis.Policy, error) {
