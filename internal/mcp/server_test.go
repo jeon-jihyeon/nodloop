@@ -817,7 +817,8 @@ func TestServerProposeFrom(t *testing.T) {
 }
 
 // Once the approval is recorded a later failure rides on the answer because approving again would fail
-// The flaky store lets approve read the records and export the vetoes and fails the folder read after them
+// Approve decides under the store lock without a List so the flaky store lets the veto export read the records
+// and fails the folder read after them
 func TestServerApproveKeepsTheApproval(t *testing.T) {
 	type args struct {
 		// Files under the veto home keyed by relative path
@@ -860,7 +861,7 @@ func TestServerApproveKeepsTheApproval(t *testing.T) {
 				Evidence: knowledge.Evidence{ParagraphIDs: []string{knownSegment}}, Basis: knowledge.BasisStated,
 				Status: knowledge.StatusCandidate, Author: "author", Time: st.Clock.Now(),
 			}))
-			flaky := &testkit.FlakyKnowledge{Store: items, Reads: testkit.Reads{Allowed: 2, Err: assert.AnError}}
+			flaky := &testkit.FlakyKnowledge{Store: items, Reads: testkit.Reads{Allowed: 1, Err: assert.AnError}}
 			st.Ledger = knowledge.NewLedger(flaky, vetofile.NewApprovedFile(home, dir), st.Clock.Now, func(p string) string { return p })
 			c := connect(t, st, "nodloop", "")
 			var got map[string]any

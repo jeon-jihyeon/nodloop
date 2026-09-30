@@ -2,6 +2,7 @@ package knowledge_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -160,7 +161,8 @@ func TestLedgerReaffirm(t *testing.T) {
 	}
 }
 
-// Another write lands between the read of the reaffirm and its append
+// Another ledger on the same records writes at the same moment as the reaffirm
+// Each decides on the records the other left so the order never reopens a closed version
 func TestLedgerReaffirmConcurrentWrite(t *testing.T) {
 	now := time.Date(2026, 9, 28, 0, 0, 0, 0, time.UTC)
 	item := knowledge.Knowledge{
@@ -168,62 +170,53 @@ func TestLedgerReaffirmConcurrentWrite(t *testing.T) {
 		Evidence: knowledge.Evidence{ParagraphIDs: []string{"p"}}, Basis: knowledge.BasisStated,
 		Status: knowledge.StatusApproved, Author: "author", Approver: "first", Time: now,
 	}
-	retired := item
-	retired.Status, retired.Approver = knowledge.StatusRetired, "other"
-	reaffirmed := item
-	reaffirmed.Approver, reaffirmed.ReviewedAt = "other", now
 	type want struct {
 		approved int
 		status   knowledge.Status
-		approver string
 	}
 	tcs := []struct {
 		name string
-		// The record the other write appends
-		args knowledge.Knowledge
+		// The other write
+		args func(ctx context.Context, l *knowledge.Ledger) error
 		want want
 	}{
-		{"a concurrent retire keeps the version closed", retired, want{0, knowledge.StatusRetired, "other"}},
-		{"a concurrent reaffirm by another person stands", reaffirmed, want{1, knowledge.StatusApproved, "other"}},
+		{"a concurrent retire keeps the version closed", func(ctx context.Context, l *knowledge.Ledger) error {
+			_, err := l.Retire(ctx, "item", 1, "other")
+			return err
+		}, want{0, knowledge.StatusRetired}},
+		{"a concurrent reaffirm by another person stands", func(ctx context.Context, l *knowledge.Ledger) error {
+			_, err := l.Reaffirm(ctx, "item", 1, "other")
+			return err
+		}, want{1, knowledge.StatusApproved}},
 	}
 	ctx := context.Background()
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			dir := t.TempDir()
-			store, err := knowledgefile.New(dir)
-			require.NoError(t, err)
-			other, err := knowledgefile.New(dir)
-			require.NoError(t, err)
 			sink := vetofile.NewApprovedFile(t.TempDir(), dir)
-			id := func(prefix string) string { return prefix + "item" }
-			first := knowledge.NewLedger(store, sink, func() time.Time { return now }, id)
-			require.NoError(t, testkit.Err(first.Import(ctx, []knowledge.Knowledge{item})))
-			read, landed := make(chan struct{}), make(chan struct{})
-			second := knowledge.NewLedger(other, sink, func() time.Time {
-				close(read)
-				<-landed
-				return now.Add(time.Second)
-			}, id)
-			result := make(chan error, 1)
+			open := func() *knowledge.Ledger {
+				store, err := knowledgefile.New(dir)
+				require.NoError(t, err)
+				return knowledge.NewLedger(store, sink, func() time.Time { return now }, func(p string) string { return p })
+			}
+			require.NoError(t, testkit.Err(open().Import(ctx, []knowledge.Knowledge{item})))
+			first, second := open(), open()
+			start, reaffirmed := make(chan struct{}), make(chan error, 1)
 			go func() {
+				<-start
 				_, err := second.Reaffirm(ctx, "item", 1, "approver")
-				result <- err
+				reaffirmed <- err
 			}()
-			<-read
-			err = testkit.Err(first.Import(ctx, []knowledge.Knowledge{tc.args}))
-			close(landed)
-			require.NoError(t, err)
+			close(start)
+			require.NoError(t, tc.args(ctx, first))
+			reaffirmErr := <-reaffirmed
 
-			reaffirmErr := <-result
 			all, err := first.All(ctx)
 			require.NoError(t, err)
-
-			assert.ErrorIs(t, reaffirmErr, knowledge.ErrRecordsChanged)
+			assert.True(t, reaffirmErr == nil || errors.Is(reaffirmErr, knowledge.ErrVersionUnapproved))
 			assert.Len(t, all.Approved(), tc.want.approved)
-			assert.Len(t, all, 2)
-			assert.Equal(t, tc.want.status, all[0].Status)
-			assert.Equal(t, tc.want.approver, all[0].Approver)
+			assert.Equal(t, tc.want.status, all[0].Status, "the newest record")
 		})
 	}
 }

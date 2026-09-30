@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"reflect"
 	"slices"
 )
 
@@ -44,41 +43,35 @@ func Open[T any](dir, name string) (File[T], error) {
 }
 
 func (f File[T]) Append(v T) error {
-	return f.append(v, nil)
+	return f.append(func([]byte) ([]T, error) { return []T{v}, nil })
 }
 
-// Appends only while the file holds exactly the records the caller read in file order
-// The check runs under the lock of the append so no writer slips in between
-// Fails with ErrChanged otherwise so the caller reads again and decides again
-func (f File[T]) AppendIfUnchanged(v T, expected []T) error {
-	return f.append(v, func(data []byte) error {
+// Appends the records decide returns for the records the file holds in file order
+// 1. decide runs once under the lock of the append so no writer slips in between
+// 2. the records go out in one write so a reader sees all of them or none
+// 3. an error or no record from decide writes nothing
+func (f File[T]) AppendDecided(decide func(current []T) ([]T, error)) error {
+	return f.append(func(data []byte) ([]T, error) {
 		current, err := f.decode(data)
 		if err != nil {
-			return err
+			return nil, err
 		}
-		if !slices.EqualFunc(current, expected, func(a, b T) bool { return reflect.DeepEqual(a, b) }) {
-			return ErrChanged
-		}
-		return nil
+		return decide(current)
 	})
 }
 
-func (f File[T]) append(v T, check func([]byte) error) error {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return fmt.Errorf("%s: %w", f.name(), err)
-	}
+func (f File[T]) append(decide func(data []byte) ([]T, error)) error {
 	file, err := os.OpenFile(f.path, os.O_CREATE|os.O_APPEND|os.O_RDWR, perms)
 	if err != nil {
 		return fmt.Errorf("%s: %w", f.name(), err)
 	}
-	if err = errors.Join(f.write(file, append(b, '\n'), check), file.Close()); err != nil {
+	if err = errors.Join(f.write(file, decide), file.Close()); err != nil {
 		return fmt.Errorf("%s: %w", f.name(), err)
 	}
 	return nil
 }
 
-func (f File[T]) write(file *os.File, record []byte, check func([]byte) error) error {
+func (f File[T]) write(file *os.File, decide func(data []byte) ([]T, error)) error {
 	if err := lock(file); err != nil {
 		return err
 	}
@@ -86,10 +79,20 @@ func (f File[T]) write(file *os.File, record []byte, check func([]byte) error) e
 	if err != nil {
 		return err
 	}
-	if check != nil {
-		if err := check(data); err != nil {
+	vs, err := decide(data)
+	if err != nil {
+		return err
+	}
+	var record []byte
+	for _, v := range vs {
+		b, err := json.Marshal(v)
+		if err != nil {
 			return err
 		}
+		record = append(append(record, b...), '\n')
+	}
+	if len(record) == 0 {
+		return nil
 	}
 	end := bytes.LastIndexByte(data, '\n') + 1
 	if tail := data[end:]; len(tail) > 0 && f.torn(tail) {

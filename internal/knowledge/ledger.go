@@ -18,11 +18,10 @@ const (
 // Append only
 // A status change is a new record with the same id and version
 type Store interface {
-	Append(ctx context.Context, k Knowledge) error
-	// Appends only while the store holds exactly the expected records
-	// The expected records come newest first as List gives them
-	// Fails with ErrRecordsChanged otherwise
-	AppendIfUnchanged(ctx context.Context, k Knowledge, expected []Knowledge) error
+	// Appends in one write the records decide returns for every record newest first
+	// 1. decide runs once while no other writer can append so it decides on the records as they are then
+	// 2. a refusal of decide comes back as it is and nothing is written
+	AppendDecided(ctx context.Context, decide func(all Set) ([]Knowledge, error)) error
 	// Every record newest first
 	List(ctx context.Context) ([]Knowledge, error)
 }
@@ -33,12 +32,14 @@ type VetoSink interface {
 	Write(specs []veto.Spec) error
 }
 
-// Every write appends a new record and none edits an earlier one
+// Every write appends new records and none edits an earlier one
 // 1. a proposal is always a candidate
 // 2. approve and retire need an approver and follow the allowed status changes
 // 3. the clock is read here in UTC and every record of one call carries that time
 // 4. approve and retire and import end by handing the approved vetoes to the sink
 // 5. approve refuses an item whose folder may outgrow ReviewChars or ReviewItems and import never checks it
+// 6. every write decides under the store lock on the records as they are then
+// So two writers at once never both pass a check that only one of them may pass and neither refuses the other
 // A failed hand off returns ErrVetoExport after the records are appended so the caller knows the status changed
 type Ledger struct {
 	store  Store
@@ -113,79 +114,84 @@ func (l *Ledger) ApprovedVersion(ctx context.Context, id string) (int, error) {
 // Appends a candidate with the next version of its id and returns it with the items it overlaps
 // A draft without an id gets a generated one
 func (l *Ledger) Propose(ctx context.Context, draft Knowledge) (Knowledge, Set, error) {
-	all, err := l.All(ctx)
-	if err != nil {
-		return Knowledge{}, nil, err
-	}
 	if draft.ID == "" {
 		draft.ID = l.newID(itemPrefix)
 	}
-	k, err := all.propose(draft, l.now().UTC())
-	if err != nil {
-		return Knowledge{}, nil, err
-	}
-	if err = l.store.Append(ctx, k); err != nil {
-		return Knowledge{}, nil, err
-	}
-	return k, all.Overlaps(k.ID, k.Kind, k.Scope), nil
+	return l.appendCandidate(ctx, func(all Set, now time.Time) (Knowledge, error) {
+		return all.propose(draft, now)
+	})
 }
 
-// The approved record is appended before the superseded one
-// A failure between the two leaves two approved versions and Current still picks the newer
-func (l *Ledger) Approve(ctx context.Context, id string, version int, approver string) (Knowledge, error) {
-	all, err := l.All(ctx)
-	if err != nil {
-		return Knowledge{}, err
-	}
-	records, err := all.approval(id, version, approver, l.now().UTC())
-	if err != nil {
-		return Knowledge{}, err
-	}
-	to := records[0]
-	if f := all.folder(to); f.Full() {
-		return Knowledge{}, fmt.Errorf("%w: %s with %s", ErrFolderFull, f.load(), f)
-	}
-	for _, k := range records {
-		if err = l.store.Append(ctx, k); err != nil {
-			return Knowledge{}, err
+// Appends the candidate decided on the records under the store lock with the items it overlaps then
+func (l *Ledger) appendCandidate(ctx context.Context, decide func(all Set, now time.Time) (Knowledge, error)) (Knowledge, Set, error) {
+	var k Knowledge
+	var overlaps Set
+	err := l.store.AppendDecided(ctx, func(all Set) ([]Knowledge, error) {
+		var err error
+		if k, err = decide(all, l.now().UTC()); err != nil {
+			return nil, err
 		}
+		overlaps = all.Overlaps(k.ID, k.Kind, k.Scope)
+		return []Knowledge{k}, nil
+	})
+	if err != nil {
+		return Knowledge{}, nil, err
+	}
+	return k, overlaps, nil
+}
+
+// The approved record and the superseded one land in one write
+func (l *Ledger) Approve(ctx context.Context, id string, version int, approver string) (Knowledge, error) {
+	var to Knowledge
+	err := l.store.AppendDecided(ctx, func(all Set) ([]Knowledge, error) {
+		records, err := all.approval(id, version, approver, l.now().UTC())
+		if err != nil {
+			return nil, err
+		}
+		to = records[0]
+		if f := all.folder(to); f.Full() {
+			return nil, fmt.Errorf("%w: %s with %s", ErrFolderFull, f.load(), f)
+		}
+		return records, nil
+	})
+	if err != nil {
+		return Knowledge{}, err
 	}
 	return to, l.exportVetoes(ctx, to)
 }
 
 func (l *Ledger) Retire(ctx context.Context, id string, version int, approver string) (Knowledge, error) {
-	history, err := l.History(ctx, id)
+	var to Knowledge
+	err := l.store.AppendDecided(ctx, func(all Set) ([]Knowledge, error) {
+		history, err := all.historyOf(id)
+		if err != nil {
+			return nil, err
+		}
+		if to, err = history.retire(id, version, approver, l.now().UTC()); err != nil {
+			return nil, err
+		}
+		return []Knowledge{to}, nil
+	})
 	if err != nil {
-		return Knowledge{}, err
-	}
-	to, err := history.retire(id, version, approver, l.now().UTC())
-	if err != nil {
-		return Knowledge{}, err
-	}
-	if err = l.store.Append(ctx, to); err != nil {
 		return Knowledge{}, err
 	}
 	return to, l.exportVetoes(ctx, to)
 }
 
-// Appends the records of a file that the ledger does not hold yet and returns them
+// Appends in one write the records of a file that the ledger does not hold yet and returns them
 // 1. every record is checked before any lands so a bad file lands nothing
 // 2. a record the ledger already holds is skipped so importing one file again changes nothing
 // 3. a record older than the recorded history of its version fails with ErrImportStale
 // The records land as they are without the status change checks because a data set brings its seed this way
 func (l *Ledger) Import(ctx context.Context, records []Knowledge) (Set, error) {
-	all, err := l.All(ctx)
+	var fresh Set
+	err := l.store.AppendDecided(ctx, func(all Set) ([]Knowledge, error) {
+		var err error
+		fresh, err = all.importable(records)
+		return fresh, err
+	})
 	if err != nil {
 		return nil, err
-	}
-	fresh, err := all.importable(records)
-	if err != nil {
-		return nil, err
-	}
-	for _, k := range fresh {
-		if err := l.store.Append(ctx, k); err != nil {
-			return nil, err
-		}
 	}
 	if err := l.ExportVetoes(ctx); err != nil {
 		return fresh, fmt.Errorf("%w: %d records imported: %w", ErrVetoExport, len(fresh), err)
@@ -216,34 +222,31 @@ func (l *Ledger) exportVetoes(ctx context.Context, changed Knowledge) error {
 // 2. each draft names the old versions it replaces in its evidence knowledge refs
 // 3. a draft without an id gets a generated one
 func (l *Ledger) ProposeCompaction(ctx context.Context, anchor string, drafts []Knowledge) (Compaction, error) {
-	all, err := l.All(ctx)
-	if err != nil {
-		return Compaction{}, err
-	}
-	old, err := all.Compactable(anchor)
-	if err != nil {
-		return Compaction{}, err
-	}
-	if pending := all.PendingCompaction(old.Items); pending != "" {
-		return Compaction{}, fmt.Errorf("%w: %s", ErrCompactionPending, pending)
-	}
 	drafts = slices.Clone(drafts)
 	for i := range drafts {
 		if drafts[i].ID == "" {
 			drafts[i].ID = l.newID(itemPrefix)
 		}
 	}
-	id := l.newID(compactionPrefix)
-	items, err := all.compact(id, old.Items, drafts, l.now().UTC())
+	c := Compaction{ID: l.newID(compactionPrefix)}
+	err := l.store.AppendDecided(ctx, func(all Set) ([]Knowledge, error) {
+		old, err := all.Compactable(anchor)
+		if err != nil {
+			return nil, err
+		}
+		if pending := all.PendingCompaction(old.Items); pending != "" {
+			return nil, fmt.Errorf("%w: %s", ErrCompactionPending, pending)
+		}
+		if c.Items, err = all.compact(c.ID, old.Items, drafts, l.now().UTC()); err != nil {
+			return nil, err
+		}
+		c.Replaced = old.Items
+		return c.Items, nil
+	})
 	if err != nil {
 		return Compaction{}, err
 	}
-	for _, k := range items {
-		if err := l.store.Append(ctx, k); err != nil {
-			return Compaction{}, err
-		}
-	}
-	return Compaction{ID: id, Items: items, Replaced: old.Items}, nil
+	return c, nil
 }
 
 func (l *Ledger) Compaction(ctx context.Context, id string) (Compaction, error) {
@@ -274,37 +277,34 @@ func (l *Ledger) Preview(ctx context.Context, id string) (*Preview, error) {
 
 // Approves the new items of a compaction and retires the old ones on behalf of a named person
 // 1. refused unless the replay names this compaction and passed
-// 2. the approved records come before the superseded and retired ones so a failure between them never leaves a gap
-// 3. a second call appends only the records still missing
+// 2. the approved and superseded and retired records land in one write
+// 3. a second call appends only the records still missing such as those of a legacy call cut between two appends
 // 4. vetoes are exported once after the records
 func (l *Ledger) ApproveCompaction(ctx context.Context, id, approver string, replay Replay) (Compaction, error) {
 	if replay.Compaction != id || !replay.Passed() {
 		return Compaction{}, fmt.Errorf("%w: %s", ErrReplayNotPassed, id)
 	}
-	all, err := l.All(ctx)
-	if err != nil {
-		return Compaction{}, err
-	}
-	c, err := all.compaction(id)
-	if err != nil {
-		return Compaction{}, err
-	}
-	if approver == "" {
-		return Compaction{}, fmt.Errorf("%w: compaction %s needs one", ErrApproverRequired, id)
-	}
-	records, after, err := all.approveCompaction(c, approver, l.now().UTC())
-	if err != nil {
-		return Compaction{}, err
-	}
-	for _, k := range c.Items {
-		if f := after.folder(k); f.Full() {
-			return Compaction{}, fmt.Errorf("%w: %s %s with %s", ErrFolderFull, k.ID, f.load(), f)
+	err := l.store.AppendDecided(ctx, func(all Set) ([]Knowledge, error) {
+		c, err := all.compaction(id)
+		if err != nil {
+			return nil, err
 		}
-	}
-	for _, k := range records {
-		if err := l.store.Append(ctx, k); err != nil {
-			return Compaction{}, err
+		if approver == "" {
+			return nil, fmt.Errorf("%w: compaction %s needs one", ErrApproverRequired, id)
 		}
+		records, after, err := all.approveCompaction(c, approver, l.now().UTC())
+		if err != nil {
+			return nil, err
+		}
+		for _, k := range c.Items {
+			if f := after.folder(k); f.Full() {
+				return nil, fmt.Errorf("%w: %s %s with %s", ErrFolderFull, k.ID, f.load(), f)
+			}
+		}
+		return records, nil
+	})
+	if err != nil {
+		return Compaction{}, err
 	}
 	approved, err := l.Compaction(ctx, id)
 	if err != nil {

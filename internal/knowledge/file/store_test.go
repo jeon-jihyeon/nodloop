@@ -97,44 +97,83 @@ func TestStoreList(t *testing.T) {
 	}
 }
 
-func TestStoreAppendIfUnchangedConcurrent(t *testing.T) {
+func TestStoreAppendDecided(t *testing.T) {
+	blocked := t.TempDir()
+	require.NoError(t, os.Mkdir(filepath.Join(blocked, "knowledge.jsonl"), 0o700))
+	type args struct {
+		dir     string
+		refusal error
+	}
+	type want struct {
+		err       error
+		notAppend bool
+	}
 	tcs := []struct {
-		name  string
-		seeds []knowledge.Knowledge
+		name string
+		args args
+		want want
 	}{
-		{"empty snapshot", nil},
-		{"newest first snapshot", []knowledge.Knowledge{{ID: "old"}, {ID: "new"}}},
+		{"a refusal comes back without ErrAppend", args{t.TempDir(), knowledge.ErrNotFound}, want{knowledge.ErrNotFound, true}},
+		{"directory in place of the file fails with ErrAppend", args{blocked, nil}, want{file.ErrAppend, false}},
 	}
 	ctx := context.Background()
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			dir := t.TempDir()
-			first, err := file.New(dir)
+			store, err := file.New(tc.args.dir)
 			require.NoError(t, err)
-			second, err := file.New(dir)
+			err = store.AppendDecided(ctx, func(knowledge.Set) ([]knowledge.Knowledge, error) {
+				return []knowledge.Knowledge{{ID: "a"}}, tc.args.refusal
+			})
+			assert.ErrorIs(t, err, tc.want.err)
+			assert.Equal(t, tc.want.notAppend, !errors.Is(err, file.ErrAppend))
+		})
+	}
+}
+
+func TestStoreAppendDecidedConcurrent(t *testing.T) {
+	tcs := []struct {
+		name  string
+		seeds []knowledge.Knowledge
+	}{
+		{"empty store", nil},
+		{"seeded store", []knowledge.Knowledge{{ID: "old"}, {ID: "new"}}},
+	}
+	ctx := context.Background()
+	// Enough stores on one file to collide on the lock while the test stays fast
+	const writers = 8
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			seed, err := file.New(dir)
 			require.NoError(t, err)
 			for _, item := range tc.seeds {
-				require.NoError(t, first.Append(ctx, item))
+				require.NoError(t, seed.Append(ctx, item))
 			}
-			expected, err := first.List(ctx)
-			require.NoError(t, err)
-			start, results := make(chan struct{}), make(chan error, 2)
-			for i, store := range []*file.Store{first, second} {
+			start, results := make(chan struct{}), make(chan error, writers)
+			for i := range writers {
+				store, err := file.New(dir)
+				require.NoError(t, err)
 				go func() {
 					<-start
-					results <- store.AppendIfUnchanged(ctx, knowledge.Knowledge{ID: "winner", Version: i}, expected)
+					results <- store.AppendDecided(ctx, func(all knowledge.Set) ([]knowledge.Knowledge, error) {
+						if _, ok := all.Find("winner"); ok {
+							return nil, knowledge.ErrTransitionInvalid
+						}
+						return []knowledge.Knowledge{{ID: "winner", Version: i}}, nil
+					})
 				}()
 			}
 			close(start)
 			counts := map[bool]int{}
-			for range 2 {
+			for range writers {
 				err := <-results
-				assert.True(t, err == nil || errors.Is(err, knowledge.ErrRecordsChanged))
+				assert.True(t, err == nil || errors.Is(err, knowledge.ErrTransitionInvalid))
 				counts[err == nil]++
 			}
-			assert.Equal(t, map[bool]int{true: 1, false: 1}, counts)
-			got, err := first.List(ctx)
+			assert.Equal(t, map[bool]int{true: 1, false: writers - 1}, counts, "only one writer finds no winner")
+			got, err := seed.List(ctx)
 			assert.NoError(t, err)
 			assert.Len(t, got, len(tc.seeds)+1)
 		})

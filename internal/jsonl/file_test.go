@@ -161,39 +161,94 @@ func TestFileAppendConcurrentWritersKeepEveryRecord(t *testing.T) {
 	assert.ElementsMatch(t, want, got)
 }
 
-func TestFileAppendIfUnchanged(t *testing.T) {
+func TestFileAppendDecided(t *testing.T) {
 	type args struct {
-		content  string
-		expected []row
+		content string
+		records []row
+		err     error
 	}
 	type want struct {
-		rows []row
-		err  error
+		// The records decide was handed
+		seen    []row
+		content string
+		err     error
 	}
+	b := []row{{"b", 1}}
 	tcs := []struct {
 		name string
 		args args
 		want want
 	}{
-		{"nil snapshot", args{"", nil}, want{[]row{{"b", 1}}, nil}},
-		{"empty snapshot", args{"", []row{}}, want{[]row{{"b", 1}}, nil}},
-		{"matching snapshot", args{"{\"id\":\"a\"}\n", []row{{"a", 0}}}, want{[]row{{"a", 0}, {"b", 1}}, nil}},
-		{"changed snapshot", args{"{\"id\":\"a\"}\n", nil}, want{[]row{{"a", 0}}, jsonl.ErrChanged}},
-		{"torn tail", args{"{\"id\":\"a\"}\n{", []row{{"a", 0}}}, want{[]row{{"a", 0}, {"b", 1}}, nil}},
+		{"empty file hands no record", args{"", b, nil}, want{nil, "{\"id\":\"b\",\"n\":1}\n", nil}},
+		{
+			"records another writer appended are handed over",
+			args{"{\"id\":\"a\",\"n\":0}\n", b, nil},
+			want{[]row{{"a", 0}}, "{\"id\":\"a\",\"n\":0}\n{\"id\":\"b\",\"n\":1}\n", nil},
+		},
+		{
+			"torn tail is never handed over and is cut",
+			args{"{\"id\":\"a\",\"n\":0}\n{", b, nil},
+			want{[]row{{"a", 0}}, "{\"id\":\"a\",\"n\":0}\n{\"id\":\"b\",\"n\":1}\n", nil},
+		},
+		{
+			"several records land together",
+			args{"{\"id\":\"a\",\"n\":0}", []row{{"b", 1}, {"c", 2}}, nil},
+			want{[]row{{"a", 0}}, "{\"id\":\"a\",\"n\":0}\n{\"id\":\"b\",\"n\":1}\n{\"id\":\"c\",\"n\":2}\n", nil},
+		},
+		{
+			"a refusal writes nothing and comes back",
+			args{"{\"id\":\"a\",\"n\":0}\n{", b, assert.AnError},
+			want{[]row{{"a", 0}}, "{\"id\":\"a\",\"n\":0}\n{", assert.AnError},
+		},
+		{
+			"no record writes nothing",
+			args{"{\"id\":\"a\",\"n\":0}\n{", nil, nil},
+			want{[]row{{"a", 0}}, "{\"id\":\"a\",\"n\":0}\n{", nil},
+		},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			dir := t.TempDir()
-			require.NoError(t, os.WriteFile(filepath.Join(dir, "rows.jsonl"), []byte(tc.args.content), 0o600))
+			path := filepath.Join(dir, "rows.jsonl")
+			require.NoError(t, os.WriteFile(path, []byte(tc.args.content), 0o600))
 			f, err := jsonl.Open[row](dir, "rows.jsonl")
 			require.NoError(t, err)
-			assert.ErrorIs(t, f.AppendIfUnchanged(row{"b", 1}, tc.args.expected), tc.want.err)
-			got, err := f.All()
-			assert.NoError(t, err)
-			assert.Equal(t, tc.want.rows, got)
+			var seen []row
+			err = f.AppendDecided(func(current []row) ([]row, error) {
+				seen = current
+				return tc.args.records, tc.args.err
+			})
+			assert.ErrorIs(t, err, tc.want.err)
+			assert.Equal(t, tc.want.seen, seen)
+			got, err := os.ReadFile(path)
+			require.NoError(t, err)
+			assert.Equal(t, tc.want.content, string(got))
 		})
 	}
+}
+
+func TestFileAppendDecidedConcurrentWritersSeeEachOther(t *testing.T) {
+	f, err := jsonl.Open[row](t.TempDir(), "rows.jsonl")
+	require.NoError(t, err)
+	// Enough writers to collide on the flock while the test stays fast
+	const writers = 16
+	var wg sync.WaitGroup
+	for range writers {
+		wg.Go(func() {
+			assert.NoError(t, f.AppendDecided(func(current []row) ([]row, error) {
+				return []row{{ID: "w", N: len(current)}}, nil
+			}))
+		})
+	}
+	wg.Wait()
+	got, err := f.All()
+	assert.NoError(t, err)
+	want := make([]row, 0, writers)
+	for i := range writers {
+		want = append(want, row{ID: "w", N: i})
+	}
+	assert.Equal(t, want, got, "each writer counts every record before its own")
 }
 
 func TestFileAppendFailsOnUnencodableValue(t *testing.T) {

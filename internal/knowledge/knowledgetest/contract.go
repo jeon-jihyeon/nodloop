@@ -12,8 +12,15 @@ import (
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 )
 
+// The store as the suite drives it
+// Append seeds the records that the ledger itself only ever writes through AppendDecided
+type Store interface {
+	knowledge.Store
+	Append(ctx context.Context, k knowledge.Knowledge) error
+}
+
 // Runs against an empty store
-func Run(t *testing.T, store knowledge.Store) {
+func Run(t *testing.T, store Store) {
 	t.Helper()
 	ctx := context.Background()
 	empty, err := store.List(ctx)
@@ -39,14 +46,22 @@ func Run(t *testing.T, store knowledge.Store) {
 	require.NoError(t, err)
 	reaffirmed := approved
 	reaffirmed.Approver, reaffirmed.ReviewedAt, reaffirmed.Time = "z", base.Add(3*time.Second), base.Add(3*time.Second)
-	require.NoError(t, store.AppendIfUnchanged(ctx, reaffirmed, listed), "the records are as listed so the append goes in")
-	require.ErrorIs(t, store.AppendIfUnchanged(ctx, reaffirmed, listed), knowledge.ErrRecordsChanged,
-		"the records changed since they were listed")
+	retired := other
+	retired.Status, retired.Approver, retired.Time = knowledge.StatusRetired, "z", base.Add(3*time.Second)
+	var seen knowledge.Set
+	require.NoError(t, store.AppendDecided(ctx, func(all knowledge.Set) ([]knowledge.Knowledge, error) {
+		seen = all
+		return []knowledge.Knowledge{reaffirmed, retired}, nil
+	}), "the batch goes in")
+	require.Equal(t, knowledge.Set(listed), seen, "decide gets the records as List gives them")
+	require.ErrorIs(t, store.AppendDecided(ctx, func(knowledge.Set) ([]knowledge.Knowledge, error) {
+		return nil, knowledge.ErrNotFound
+	}), knowledge.ErrNotFound, "a refusal comes back as it is and nothing goes in")
 
 	t.Run("list gives every record newest first", func(t *testing.T) {
 		t.Parallel()
 		got, err := store.List(ctx)
 		assert.NoError(t, err)
-		assert.Equal(t, []knowledge.Knowledge{reaffirmed, other, approved, candidate}, got)
+		assert.Equal(t, []knowledge.Knowledge{retired, reaffirmed, other, approved, candidate}, got)
 	})
 }

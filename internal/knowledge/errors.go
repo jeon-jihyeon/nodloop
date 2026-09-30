@@ -30,7 +30,6 @@ var (
 	ErrReplayNotPassed      = errors.New("knowledge: the replay of the compaction has not passed")
 	ErrNarrowInvalid        = errors.New("knowledge: narrowing needs a refuted change context")
 	ErrNarrowExhausted      = errors.New("knowledge: narrowing would leave no change context of the version")
-	ErrRecordsChanged       = errors.New("knowledge: records changed since they were read")
 	ErrScopeInvalid         = errors.New("knowledge: scope names no event")
 	ErrScopeUnobserved      = errors.New("knowledge: scope names a value no event of the data set carries")
 	ErrCandidateOutdated    = errors.New("knowledge: candidate was not built from the approved version it would replace")
