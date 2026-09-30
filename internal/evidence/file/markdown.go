@@ -16,9 +16,10 @@ import (
 const frontMatterFence = "---"
 
 // The scope from the front matter and the paragraphs of the rest
-// The front matter is stripped before the split so a file with and without it has the same paragraph ids
+// 1. the front matter is stripped before the split so a file with and without it has the same paragraph ids
+// 2. a byte order mark is dropped because it would hide the opening fence and the first heading
 func parseProcedure(fileName, content string) (evidence.Procedure, error) {
-	scope, body, err := frontMatter(content)
+	scope, body, err := frontMatter(strings.TrimPrefix(content, byteOrderMark))
 	if err != nil {
 		return evidence.Procedure{}, fmt.Errorf("%s: %w", fileName, err)
 	}

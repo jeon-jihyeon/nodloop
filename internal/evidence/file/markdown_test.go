@@ -81,6 +81,11 @@ func TestSourceProceduresParagraphs(t *testing.T) {
 			want: want{},
 		},
 		{
+			name: "a byte order mark before the first heading keeps the heading",
+			args: args{procedures: map[string]string{"r.md": "\uFEFF# T\n\nbody\n"}},
+			want: want{paragraphs: []evidence.Paragraph{{ID: "r#T#1", File: "r.md", Path: []string{"T"}, Text: "body"}}},
+		},
+		{
 			name: "data directory with glob characters still reads its procedures",
 			args: args{dir: "data[1]*?", procedures: map[string]string{"r.md": "# T\n\nbody\n"}},
 			want: want{paragraphs: []evidence.Paragraph{{ID: "r#T#1", File: "r.md", Path: []string{"T"}, Text: "body"}}},
