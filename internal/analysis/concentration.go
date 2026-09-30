@@ -15,6 +15,7 @@ import (
 // 3. series without the group dimension cannot be attributed and are ignored
 // 4. adequacy is judged on the baseline points of every group together because shares are relative
 // 5. the summary ends with the total per point in time because a share alone cannot tell redistribution from growth
+// 6. a group whose own level change makes less than half of its share delta is marked diluted and keeps its summary
 func (spec RuleSpec) concentrationChange(eventID string, all series) []Observation {
 	var out []Observation
 	for _, metric := range spec.Metrics {
@@ -57,6 +58,7 @@ func (spec RuleSpec) concentrationOf(eventID, metric string, all series) []Obser
 		obs.Adequate = true
 		obs.Change = delta
 		obs.Severity = spec.severity(delta)
+		obs.Detail.Diluted = g.diluted(name, delta)
 		obs.Summary = fmt.Sprintf("%s: window share %s against baseline %s, delta %s, peak %s at %s, total window mean %s against baseline %s",
 			title, formatNumber(obs.Current), formatNumber(obs.Baseline), formatNumber(delta), formatNumber(g.peaks[name].Value),
 			g.peaks[name].Time.UTC().Format(time.RFC3339), formatNumber(windowMean), formatNumber(baselineMean))
@@ -129,6 +131,23 @@ func (g groups) inadequacy() string {
 // Summaries read it only once inadequacy is empty
 func (g groups) totalMeans() (baseline, window float64) {
 	return g.baselineTotal / float64(g.baselinePoints.times()), g.windowTotal / float64(g.windowPoints.times())
+}
+
+// Whether the other groups made most of the share delta of the group
+// 1. its own share is its level change over the baseline total as if the total held still
+// 2. the rest of the delta is what the total change of the other groups made
+// 3. the group is diluted when its own share in the direction of the delta is under half of it
+// Levels are means per point in time with the divisors of totalMeans so the group and the total compare
+// A trade at a flat total gives an own share equal to the delta so neither side is ever diluted
+func (g groups) diluted(name string, delta float64) bool {
+	total, _ := g.totalMeans()
+	level := g.baseline[name] / float64(g.baselinePoints.times())
+	now := g.window[name] / float64(g.windowPoints.times())
+	own := (now - level) / total
+	if delta < 0 {
+		own = -own
+	}
+	return own < math.Abs(delta)/2
 }
 
 // Baseline share and window share of one group

@@ -80,7 +80,7 @@ func TestAnalyzeConcentrationChange(t *testing.T) {
 				{
 					Rule: analysis.RuleConcentration, Target: b, Metric: "click_count", Window: windowOf(12),
 					Current: 0.25, Baseline: 0.5, Change: -0.25, Severity: 0.25 / (2 * threshold), Adequate: true,
-					Detail: analysis.Detail{PeakTime: t0.Add(24 * time.Hour), PeakValue: 100, Samples: 60}, Ref: ref,
+					Detail: analysis.Detail{PeakTime: t0.Add(24 * time.Hour), PeakValue: 100, Samples: 60, Diluted: true}, Ref: ref,
 					Summary: "click_count source=b: window share 0.25 against baseline 0.5, delta -0.25, " +
 						"peak 100 at 2026-09-23T00:00:00Z, total window mean 400 against baseline 200",
 				},
@@ -105,7 +105,7 @@ func TestAnalyzeConcentrationChange(t *testing.T) {
 				{
 					Rule: analysis.RuleConcentration, Target: b, Metric: "conversion_count", Window: windowOf(12),
 					Current: 0.25, Baseline: 0.5, Change: -0.25, Severity: 0.25 / (2 * threshold), Adequate: true,
-					Detail: analysis.Detail{PeakTime: t0.Add(24 * time.Hour), PeakValue: 100, Samples: 60}, Ref: ref,
+					Detail: analysis.Detail{PeakTime: t0.Add(24 * time.Hour), PeakValue: 100, Samples: 60, Diluted: true}, Ref: ref,
 					Summary: "conversion_count source=b: window share 0.25 against baseline 0.5, delta -0.25, " +
 						"peak 100 at 2026-09-23T00:00:00Z, total window mean 400 against baseline 200",
 				},
@@ -146,7 +146,7 @@ func TestAnalyzeConcentrationChange(t *testing.T) {
 				{
 					Rule: analysis.RuleConcentration, Target: b, Metric: "click_count", Window: windowOf(12),
 					Current: losingShare, Baseline: 0.5, Change: losingShare - 0.5, Severity: 1, Adequate: true,
-					Detail: analysis.Detail{PeakTime: t0.Add(24 * time.Hour), PeakValue: 100, Samples: 60}, Ref: ref,
+					Detail: analysis.Detail{PeakTime: t0.Add(24 * time.Hour), PeakValue: 100, Samples: 60, Diluted: true}, Ref: ref,
 					Summary: "click_count source=b: window share 0.4762 against baseline 0.5, delta -0.0238, " +
 						"peak 100 at 2026-09-23T00:00:00Z, total window mean 210 against baseline 200",
 				},
@@ -171,7 +171,7 @@ func TestAnalyzeConcentrationChange(t *testing.T) {
 					Rule: analysis.RuleConcentration, Target: b, Metric: "click_count", Window: windowOf(12),
 					Current: 0.25, Baseline: lateLosing, Change: 0.25 - lateLosing,
 					Severity: (lateLosing - 0.25) / (2 * threshold), Adequate: true,
-					Detail: analysis.Detail{PeakTime: t0.Add(24 * time.Hour), PeakValue: 100, Samples: 54}, Ref: ref,
+					Detail: analysis.Detail{PeakTime: t0.Add(24 * time.Hour), PeakValue: 100, Samples: 54, Diluted: true}, Ref: ref,
 					Summary: "click_count source=b: window share 0.25 against baseline 0.4286, delta -0.1786, " +
 						"peak 100 at 2026-09-23T00:00:00Z, total window mean 400 against baseline 175",
 				},
@@ -276,6 +276,98 @@ func TestAnalyzeConcentrationChange(t *testing.T) {
 			got, err := analysis.Policy{Version: "t", Analyzers: []analysis.RuleSpec{tc.args.spec}}.Analyze(ev)
 			assert.NoError(t, err)
 			assert.Equal(t, tc.want, got)
+		})
+	}
+}
+
+// Which groups of an adequate share shift only the other groups moved
+func TestAnalyzeConcentrationDiluted(t *testing.T) {
+	t0 := time.Date(2026, 9, 22, 0, 0, 0, 0, time.UTC)
+	spec := analysis.RuleSpec{
+		Rule: analysis.RuleConcentration, Metrics: []string{"click_count"}, GroupBy: "source",
+		Baseline: 24, Window: 6, Threshold: 0.15, MinSamples: 12,
+	}
+	// A group at one level per hour in the baseline and another in the window
+	group := func(source string, baseline, window float64) []evidence.Point {
+		values := slices.Concat(slices.Repeat([]float64{baseline}, 24), slices.Repeat([]float64{window}, 6))
+		points := make([]evidence.Point, len(values))
+		for i, v := range values {
+			points[i] = evidence.Point{
+				Time: t0.Add(time.Duration(i) * time.Hour), Metric: "click_count", Value: v, Dims: map[string]string{"source": source},
+			}
+		}
+		return points
+	}
+	tcs := []struct {
+		name string
+		args []evidence.Point
+		// Whether each group with an adequate observation is diluted
+		want map[string]bool
+	}{
+		{
+			"a spike on one group dilutes the flat group only",
+			slices.Concat(group("a", 100, 300), group("b", 100, 100)),
+			map[string]bool{"a": false, "b": true},
+		},
+		{
+			"a redistribution at a constant total leaves both groups undiluted",
+			slices.Concat(group("a", 100, 200), group("b", 100, 0)),
+			map[string]bool{"a": false, "b": false},
+		},
+		{
+			"a group that vanished while the total grew is not diluted",
+			slices.Concat(group("a", 30, 200), group("b", 30, 30), group("c", 40, 0)),
+			map[string]bool{"a": false, "b": true, "c": false},
+		},
+		{
+			"a group that fell by sixty percent while the total grew is not diluted",
+			slices.Concat(group("a", 30, 200), group("b", 30, 30), group("c", 40, 16)),
+			map[string]bool{"a": false, "b": true, "c": false},
+		},
+		{
+			"a new group is not diluted and the flat groups it took share from are",
+			slices.Concat(group("a", 100, 100), group("b", 100, 100), group("c", 0, 100)),
+			map[string]bool{"a": true, "b": true, "c": false},
+		},
+		{
+			"a symmetric trade leaves both groups undiluted",
+			slices.Concat(group("a", 100, 150), group("b", 100, 50)),
+			map[string]bool{"a": false, "b": false},
+		},
+		{
+			"a trade from an even split to 65 and 35 at a flat total leaves both groups undiluted",
+			slices.Concat(group("a", 50, 65), group("b", 50, 35)),
+			map[string]bool{"a": false, "b": false},
+		},
+		{
+			"a trade from an even split to 90 and 10 at a flat total leaves both groups undiluted",
+			slices.Concat(group("a", 50, 90), group("b", 50, 10)),
+			map[string]bool{"a": false, "b": false},
+		},
+		{
+			"a group whose level rose while its share fell is diluted",
+			slices.Concat(group("a", 100, 120), group("b", 100, 300)),
+			map[string]bool{"a": true, "b": false},
+		},
+		{
+			"a halved group that lost share is not diluted and the flat group that gained is",
+			slices.Concat(group("a", 100, 50), group("b", 100, 100)),
+			map[string]bool{"a": false, "b": true},
+		},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ev := evidence.Event{ID: "e1", ChangeContext: evidence.ContextNoKnownChange, Points: tc.args}
+			got, err := analysis.Policy{Version: "t", Analyzers: []analysis.RuleSpec{spec}}.Analyze(ev)
+			assert.NoError(t, err)
+			diluted := map[string]bool{}
+			for _, o := range got {
+				if o.Adequate {
+					diluted[o.Target["source"]] = o.Detail.Diluted
+				}
+			}
+			assert.Equal(t, tc.want, diluted)
 		})
 	}
 }

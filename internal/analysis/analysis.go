@@ -121,6 +121,10 @@ type Detail struct {
 	// Rate of the newest Recent window points
 	// Zero when the spec has no Recent
 	RecentRate float64 `json:"recent_rate,omitempty"`
+	// concentration_change only
+	// 1. its own level change at a fixed total makes less than half of its share delta
+	// 2. the rest of the delta comes from the total that the other groups moved
+	Diluted bool `json:"diluted,omitempty"`
 }
 
 // What the analyzers reported for one event
@@ -154,15 +158,34 @@ func (obs Observations) Metrics() []string {
 	return out
 }
 
+// Whether the observation reports a movement of its metric
+// A coverage gap is not a movement of the metric
+func (o Observation) moved() bool {
+	return o.Adequate && o.Rule != RuleCoverage
+}
+
 // Metrics whose value moved in an adequate observation
-// Coverage observations are excluded because a gap is not a movement of the metric
+// A diluted group still counts because the other groups of its metric moved
 func (obs Observations) Moved() []string {
 	var out []string
 	for _, o := range obs {
-		if !o.Adequate || o.Rule == RuleCoverage || slices.Contains(out, o.Metric) {
-			continue
+		if o.moved() && !slices.Contains(out, o.Metric) {
+			out = append(out, o.Metric)
 		}
-		out = append(out, o.Metric)
+	}
+	return out
+}
+
+// Moved series with the dimension values each observation targets
+// 1. a concentration target names only its group dimension
+// 2. a diluted group is left out because only the other groups moved it
+// So it drops from the group value axis while its metric stays in Moved
+func (obs Observations) MovedSeries() []evidence.SeriesRef {
+	var out []evidence.SeriesRef
+	for _, o := range obs {
+		if o.moved() && !o.Detail.Diluted {
+			out = append(out, evidence.SeriesRef{Metric: o.Metric, Dims: o.Target})
+		}
 	}
 	return out
 }
