@@ -16,7 +16,7 @@ import (
 
 func TestDiscover(t *testing.T) {
 	project, user, empty, broken, directory := t.TempDir(), t.TempDir(), t.TempDir(), t.TempDir(), t.TempDir()
-	approved, blocked := t.TempDir(), t.TempDir()
+	approved, blocked, partial := t.TempDir(), t.TempDir(), t.TempDir()
 	approvedPath := file.NewApprovedFile(approved, "/records").Path()
 	contents := map[string]string{
 		filepath.Join(project, file.RelPath): "vetoes:\n  - id: shared\n    tool: Bash\n" +
@@ -36,6 +36,11 @@ func TestDiscover(t *testing.T) {
 		require.NoError(t, err)
 		sources[path] = file.Source{Path: path, Vetoes: vetoes}
 	}
+	partialPath := filepath.Join(partial, file.RelPath)
+	require.NoError(t, os.MkdirAll(filepath.Dir(partialPath), 0o755))
+	require.NoError(t, os.WriteFile(partialPath, []byte(contents[filepath.Join(project, file.RelPath)]+
+		"  - id: shared\n    tool: Bash\n    when: [{field: command, match: x}]\n    reason: again\n"), 0o644))
+	partialMsg := partialPath + ": vetoes[1] (shared): duplicate id"
 	require.NoError(t, os.MkdirAll(filepath.Join(broken, filepath.Dir(file.RelPath)), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(broken, file.RelPath), []byte("vetoes: ["), 0o644))
 	require.NoError(t, os.MkdirAll(filepath.Join(directory, file.RelPath), 0o755))
@@ -88,6 +93,14 @@ func TestDiscover(t *testing.T) {
 			want{file.Sources{sources[filepath.Join(project, file.RelPath)]}, nil, "<nil>"},
 		},
 		{"missing files are left out", args{empty, empty}, want{nil, nil, "<nil>"}},
+		{
+			"file with a broken entry still applies its valid entries",
+			args{partial, ""},
+			want{
+				file.Sources{{Path: partialPath, Vetoes: sources[filepath.Join(project, file.RelPath)].Vetoes}},
+				veto.ErrIDDuplicate, partialMsg,
+			},
+		},
 		{"parse error names the path", args{empty, broken}, want{nil, veto.ErrYAMLInvalid, parseMsg}},
 		{"directory in place of the file fails to read", args{directory, ""}, want{nil, file.ErrRead, readMsg}},
 		{
