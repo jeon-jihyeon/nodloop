@@ -454,7 +454,7 @@ func (s *Server) outcome(ctx context.Context, _ *sdk.CallToolRequest, in outcome
 }
 
 type proposeInput struct {
-	ID             string             `json:"id,omitempty" jsonschema:"stable kebab case id. A new version when it exists. Generated when empty"`
+	ID             string             `json:"id,omitempty" jsonschema:"stable kebab case id. A new version when it exists and it keeps nothing of the approved one so restate its scope. Generated when empty"`
 	Kind           knowledge.Kind     `json:"kind" jsonschema:"meaning or judgment"`
 	Content        string             `json:"content" jsonschema:"the knowledge in one or a few sentences with units, conditions and exceptions kept"`
 	ChangeContexts []evidence.Context `json:"change_contexts,omitempty" jsonschema:"scope: change contexts it applies to"`
