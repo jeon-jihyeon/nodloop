@@ -1,6 +1,7 @@
 package knowledge
 
 import (
+	"fmt"
 	"maps"
 	"slices"
 	"strings"
@@ -22,7 +23,7 @@ type Moved []string
 // Dimension values the event carries keyed by dimension name
 type Dims map[string]map[string]struct{}
 
-func (d Dims) has(key, value string) bool {
+func (d Dims) Has(key, value string) bool {
 	_, ok := d[key][value]
 	return ok
 }
@@ -33,11 +34,31 @@ func (s Scope) admits(changeContext evidence.Context, moved Moved, dims Dims) bo
 		return false
 	}
 	for key, value := range s.Dims {
-		if !dims.has(key, value) {
+		if !dims.Has(key, value) {
 			return false
 		}
 	}
 	return true
+}
+
+// Fails with ErrScopeUnobserved naming each metric and each dim value that no event carries
+// An item scoped to one of them could never apply
+func (s Scope) Observed(metrics []string, dims Dims) error {
+	var missing []string
+	for _, m := range s.Metrics {
+		if !slices.Contains(metrics, m) {
+			missing = append(missing, "metric "+m)
+		}
+	}
+	for _, key := range slices.Sorted(maps.Keys(s.Dims)) {
+		if !dims.Has(key, s.Dims[key]) {
+			missing = append(missing, "dim "+key+"="+s.Dims[key])
+		}
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	return fmt.Errorf("%w: %s", ErrScopeUnobserved, strings.Join(missing, ", "))
 }
 
 // Two scopes overlap when every set axis shares a value or is empty on either side

@@ -1,4 +1,4 @@
-// Package compact replaces the approved items of one crowded knowledge folder with fewer items that lose nothing the old ones fixed
+// Package compact replaces the approved items of one crowded knowledge folder so each review carries fewer items that lose nothing the old ones fixed
 package compact
 
 import (
@@ -75,9 +75,11 @@ type OutcomeStore interface {
 	List(ctx context.Context, traceID string) ([]feedback.Outcome, error)
 }
 
-// The labels that give an event its expected status first
+// The labels that give an event its expected status first and the metrics and dims a new item may be scoped to
 type Source interface {
 	Labels(ctx context.Context) ([]evidence.Label, error)
+	Metrics(ctx context.Context) ([]string, error)
+	Dims(ctx context.Context) (map[string]map[string]struct{}, error)
 }
 
 // Drafts and proposes and replays and approves a compaction through the ledger
@@ -161,11 +163,32 @@ func (c *Compactor) propose(ctx context.Context, f Folder, d Draft, author strin
 		}
 		drafts = append(drafts, k)
 	}
+	if err := c.observed(ctx, drafts); err != nil {
+		return knowledge.Compaction{}, nil, err
+	}
 	proposed, err := c.ledger.ProposeCompaction(ctx, f.Anchor, drafts)
 	if err != nil {
 		return knowledge.Compaction{}, nil, err
 	}
 	return proposed, f.Replay, nil
+}
+
+// Fails naming the draft whose scope names a metric or dim value no event carries
+func (c *Compactor) observed(ctx context.Context, drafts []knowledge.Knowledge) error {
+	metrics, err := c.src.Metrics(ctx)
+	if err != nil {
+		return err
+	}
+	dims, err := c.src.Dims(ctx)
+	if err != nil {
+		return err
+	}
+	for i, k := range drafts {
+		if err := k.Scope.Observed(metrics, dims); err != nil {
+			return fmt.Errorf("draft %d: %w", i+1, err)
+		}
+	}
+	return nil
 }
 
 // Approves the compaction on behalf of a named person once its replay passed

@@ -2,6 +2,8 @@ package knowledge_test
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -67,6 +69,41 @@ func TestScopeJSON(t *testing.T) {
 
 			assert.NoError(t, err)
 			assert.Equal(t, lines[tc.args], string(got))
+		})
+	}
+}
+
+func TestScopeObserved(t *testing.T) {
+	metrics := []string{"click_count", "conversion_count"}
+	dims := knowledge.Dims{"source": {"source-a": {}}}
+	tcs := []struct {
+		name string
+		args knowledge.Scope
+		want error
+	}{
+		{"an empty scope names nothing to check", knowledge.Scope{}, nil},
+		{
+			"a metric and a dim value the events carry pass",
+			knowledge.Scope{Scope: evidence.Scope{Metrics: []string{"click_count"}}, Dims: map[string]string{"source": "source-a"}},
+			nil,
+		},
+		{
+			"a metric no event carries is named",
+			knowledge.Scope{Scope: evidence.Scope{Metrics: []string{"conversions"}}},
+			fmt.Errorf("%w: metric conversions", knowledge.ErrScopeUnobserved),
+		},
+		{
+			"a dim value and a dim key no event carries are named in key order",
+			knowledge.Scope{Dims: map[string]string{"source": "source_a", "platform": "ios"}},
+			fmt.Errorf("%w: dim platform=ios, dim source=source_a", knowledge.ErrScopeUnobserved),
+		},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			err := tc.args.Observed(metrics, dims)
+			assert.ErrorIs(t, err, errors.Unwrap(tc.want))
+			assert.Equal(t, fmt.Sprint(tc.want), fmt.Sprint(err))
 		})
 	}
 }

@@ -63,3 +63,40 @@ func TestSourceMetrics(t *testing.T) {
 		})
 	}
 }
+
+func TestSourceDims(t *testing.T) {
+	const header = "event_id,timestamp,source,metric,value\n"
+	type want struct {
+		dims map[string]map[string]struct{}
+		err  error
+	}
+	tcs := []struct {
+		name string
+		args map[string]string
+		want want
+	}{
+		{"values of every event under their dimension", map[string]string{"events.csv": header +
+			"a,2026-09-28T00:00:00Z,source-a,requests,1\n" +
+			"b,2026-09-28T00:00:00Z,source-b,requests,1\n" +
+			"b,2026-09-28T00:01:00Z,source-a,requests,1\n"},
+			want{dims: map[string]map[string]struct{}{"source": {"source-a": {}, "source-b": {}}}}},
+		{"events without dims carry none", map[string]string{"events.csv": "event_id,timestamp,metric,value\n" +
+			"a,2026-09-28T00:00:00Z,requests,1\n"}, want{dims: map[string]map[string]struct{}{}}},
+		{"missing events", nil, want{err: os.ErrNotExist}},
+	}
+	ctx := context.Background()
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			for name, content := range tc.args {
+				require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte(content), 0o600))
+			}
+			source, err := file.New(dir)
+			require.NoError(t, err)
+			dims, err := source.Dims(ctx)
+			assert.ErrorIs(t, err, tc.want.err)
+			assert.Equal(t, tc.want.dims, dims)
+		})
+	}
+}
