@@ -338,16 +338,26 @@ func (s *Server) context(ctx context.Context, _ *sdk.CallToolRequest, in eventIn
 	if err != nil {
 		return nil, nil, err
 	}
-	return nil, map[string]any{
-		"pending_id":           c.PendingID,
-		"procedures":           c.Procedures,
-		"rules":                diagnose.Rules,
-		"schema":               json.RawMessage(diagnose.Schema),
-		"context":              c.Text,
-		"knowledge_candidates": c.KnowledgeCandidates,
-		"example_candidates":   c.ExampleCandidates,
-		"candidates_omitted":   c.CandidatesOmitted,
+	return nil, contextAnswer{
+		PendingID: c.PendingID, CandidatesOmitted: c.CandidatesOmitted, Procedures: c.Procedures,
+		Schema: json.RawMessage(diagnose.Schema), Rules: diagnose.Rules, KnowledgeCandidates: c.KnowledgeCandidates,
+		ExampleCandidates: c.ExampleCandidates, Context: c.Text,
 	}, nil
+}
+
+// Fields in the order a partial read of an offloaded answer meets them
+// 1. the pending id and the schema lead because the review needs both and the skill text holds neither
+// 2. the rules follow because the skill text already holds them
+// 3. the context text is last because it holds the bulk
+type contextAnswer struct {
+	PendingID           string                        `json:"pending_id"`
+	CandidatesOmitted   bool                          `json:"candidates_omitted"`
+	Procedures          []string                      `json:"procedures"`
+	Schema              json.RawMessage               `json:"schema"`
+	Rules               string                        `json:"rules"`
+	KnowledgeCandidates []diagnose.KnowledgeCandidate `json:"knowledge_candidates"`
+	ExampleCandidates   []diagnose.ExampleCandidate   `json:"example_candidates"`
+	Context             string                        `json:"context"`
 }
 
 type selectInput struct {
