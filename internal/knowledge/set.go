@@ -502,3 +502,48 @@ func (s Set) before(version int) []Ref {
 	}
 	return out
 }
+
+// Whether ref takes over the outcome of a review that applied the versions in applied under the change context
+// 1. the review applied a version a compaction merged into ref and never ref itself
+// 2. ref still reaches the change context of the review
+// 3. neither ref nor a merged version cites the review as outcome evidence
+// A narrowing cites the refuted reviews it answers so they stop counting against the version
+// A compaction restates the facts of the versions it merged so their open outcomes stay with the fact
+func (s Set) Inherits(ref Ref, traceID string, applied []Ref, changeContext evidence.Context) bool {
+	k, err := s.latest(ref.ID, ref.Version)
+	if err != nil || slices.Contains(applied, ref) || !k.reaches(changeContext) {
+		return false
+	}
+	merged := s.merged(ref)
+	if !slices.ContainsFunc(applied, func(r Ref) bool { return slices.Contains(merged, r) }) {
+		return false
+	}
+	for _, r := range append(merged, ref) {
+		if cited, err := s.latest(r.ID, r.Version); err == nil && slices.Contains(cited.Evidence.OutcomeTraceIDs, traceID) {
+			return false
+		}
+	}
+	return true
+}
+
+// Versions a compaction merged into ref and in turn the versions those merged
+// Only a record a compaction proposed replaces the versions it names
+// A new item that cites another item as evidence replaces nothing
+func (s Set) merged(ref Ref) []Ref {
+	var out []Ref
+	next := []Ref{ref}
+	for len(next) > 0 {
+		k, err := s.latest(next[0].ID, next[0].Version)
+		next = next[1:]
+		if err != nil || k.Compaction == "" {
+			continue
+		}
+		for _, parent := range k.Evidence.Knowledge {
+			if parent != ref && !slices.Contains(out, parent) {
+				out = append(out, parent)
+				next = append(next, parent)
+			}
+		}
+	}
+	return out
+}
