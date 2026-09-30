@@ -894,3 +894,81 @@ func TestLedgerCandidateOfCompactedVersion(t *testing.T) {
 		})
 	}
 }
+
+// One unscoped meaning g and one replayable meaning per change context
+// Each review carries g and the item of its change context only
+func perContextSeeds(at time.Time) []knowledge.Knowledge {
+	base := knowledge.Knowledge{
+		Version: 1, Kind: knowledge.KindMeaning, Basis: knowledge.BasisStated,
+		Status: knowledge.StatusApproved, Approver: "ann", ApprovedAt: at, Author: "author", Time: at,
+	}
+	g := base
+	g.ID, g.Content, g.Evidence = "g", "general fact", knowledge.Evidence{FeedbackTraceIDs: []string{"t-g"}}
+	out := []knowledge.Knowledge{g}
+	for _, c := range evidence.Contexts() {
+		k := base
+		k.ID, k.Content = string(c), string(c)+" fact"
+		k.Scope = knowledge.Scope{Scope: evidence.Scope{ChangeContexts: []evidence.Context{c}}}
+		k.Evidence = knowledge.Evidence{FeedbackTraceIDs: []string{"t-" + string(c)}}
+		out = append(out, k)
+	}
+	return out
+}
+
+// Crowding counts the items one review carries and never the union of every change context the anchor spans
+func TestLedgerFolderCrowdedPerChangeContext(t *testing.T) {
+	at := time.Date(2026, 9, 28, 0, 0, 0, 0, time.UTC)
+	quiet := []evidence.Context{evidence.ContextNoKnownChange}
+	planned := []evidence.Context{evidence.ContextPlannedChange}
+	item := func(id string, contexts []evidence.Context) knowledge.Knowledge {
+		return knowledge.Knowledge{
+			ID: id, Version: 1, Kind: knowledge.KindMeaning, Content: id + " fact",
+			Scope:    knowledge.Scope{Scope: evidence.Scope{ChangeContexts: contexts}},
+			Evidence: knowledge.Evidence{FeedbackTraceIDs: []string{"t-" + id}}, Basis: knowledge.BasisStated,
+			Status: knowledge.StatusApproved, Approver: "ann", ApprovedAt: at, Author: "author", Time: at,
+		}
+	}
+	unscoped := []knowledge.Knowledge{item("g", nil)}
+	split := []knowledge.Knowledge{item("g", nil)}
+	for i := range 5 {
+		unscoped = append(unscoped, item(fmt.Sprintf("u%d", i), nil))
+	}
+	for i := range 3 {
+		split = append(split, item(fmt.Sprintf("q%d", i), quiet), item(fmt.Sprintf("p%d", i), planned))
+	}
+	type want struct {
+		compactable int
+		crowded     bool
+	}
+	tcs := []struct {
+		name string
+		args []knowledge.Knowledge
+		want want
+	}{
+		{"an unscoped item beside one item per change context is not crowded", perContextSeeds(at), want{2, false}},
+		{"six unscoped items are crowded", unscoped, want{6, true}},
+		{
+			"an unscoped item beside three items in each of two change contexts counts itself in both and is not crowded",
+			split, want{4, false},
+		},
+	}
+	ctx := context.Background()
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			l, _ := newTestLedger(t, t.TempDir(), at)
+			require.NoError(t, testkit.Err(l.Import(ctx, tc.args)))
+			all, err := l.All(ctx)
+			require.NoError(t, err)
+			compactable, err := all.Compactable("g")
+			require.NoError(t, err)
+
+			got, err := l.Folder(ctx, "g", 1)
+
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, want{got.Compactable, got.Crowded()})
+			assert.Equal(t, tc.want.crowded, compactable.Crowded())
+			assert.Len(t, compactable.Items, len(tc.args), "a compaction still covers the union")
+		})
+	}
+}

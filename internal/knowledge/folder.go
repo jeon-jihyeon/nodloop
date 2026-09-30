@@ -10,8 +10,8 @@ import (
 
 // The approved knowledge a review may carry together with one item
 // 1. full when its text passes ReviewChars or its items pass ReviewItems and a review would be cut
-// 2. crowded when a compaction anchored at the item would cover more than FolderItems items
-// An event carries one change context so the caps hold the heaviest change context the item reaches
+// 2. crowded when one review would carry more than FolderItems items a compaction anchored at the item covers
+// An event carries one change context so the caps and the crowding hold the heaviest change context the item reaches
 // and never the union of every change context it spans
 type Folder struct {
 	// Runes of the item text and the texts of Carried
@@ -21,7 +21,7 @@ type Folder struct {
 	// The change context the item reaches whose review carries the most
 	// Empty when the item reaches no change context
 	Context evidence.Context
-	// Items a compaction anchored at the item would cover
+	// Replayable approved items the heaviest review carries with the item counting the item
 	// Zero unless the item is approved and an event can replay it because only such an anchor can be compacted
 	Compactable int
 }
