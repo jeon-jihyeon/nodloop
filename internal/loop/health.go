@@ -3,6 +3,7 @@ package loop
 import (
 	"cmp"
 	"fmt"
+	"maps"
 	"slices"
 	"time"
 
@@ -95,11 +96,11 @@ type Issue struct {
 // 1. evidence trace ids must name a diagnose trace with feedback or with an outcome in any mode since seed knowledge cites batch reviews
 // 2. paragraph ids must be paragraphs of the procedures
 // 3. knowledge refs must name a recorded version
-// 4. scope change contexts and exceptions must be valid and scope metrics must be observed in some event
+// 4. scope change contexts and exceptions must be valid and scope metrics and dim values must be observed in some event
 // 5. exceptions must leave some change context of the scope or the item never applies
-func (h *History) BrokenReferences(procedures evidence.Procedures, metrics []string) []Issue {
+func (h *History) BrokenReferences(procedures evidence.Procedures, metrics []string, dims knowledge.Dims) []Issue {
 	refs := references{feedback: h.withFeedback, outcomes: h.withOutcome, paragraphs: map[string]bool{},
-		versions: map[knowledge.Ref]bool{}, metrics: metrics}
+		versions: map[knowledge.Ref]bool{}, metrics: metrics, dims: dims}
 	for _, p := range procedures.Paragraphs() {
 		refs.paragraphs[string(p.ID)] = true
 	}
@@ -118,6 +119,7 @@ type references struct {
 	feedback, outcomes, paragraphs map[string]bool
 	versions                       map[knowledge.Ref]bool
 	metrics                        []string
+	dims                           knowledge.Dims
 }
 
 // One issue per broken reference of the item in field order
@@ -144,6 +146,9 @@ func (refs references) issues(k knowledge.Knowledge) []Issue {
 	found.check("exceptions", fmt.Sprint(k.Exceptions), !k.Excluded())
 	for _, m := range k.Scope.Metrics {
 		found.check("metrics", m, slices.Contains(refs.metrics, m))
+	}
+	for _, key := range slices.Sorted(maps.Keys(k.Scope.Dims)) {
+		found.check("dims", key+"="+k.Scope.Dims[key], refs.dims.Has(key, k.Scope.Dims[key]))
 	}
 	return found.list
 }

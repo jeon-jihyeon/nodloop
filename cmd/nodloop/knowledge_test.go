@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -92,6 +93,9 @@ func TestRunKnowledge(t *testing.T) {
 		files map[string]string
 		// Content of `policy.yaml` in the data dir
 		policy string
+		// Content of `events.csv` in the data dir
+		// Empty means one conversion_count row
+		events string
 	}
 	type want struct {
 		code int
@@ -149,6 +153,24 @@ func TestRunKnowledge(t *testing.T) {
 			"propose with exceptions over its only change context fails",
 			args{args: append(slices.Clone(proposeAgg), "--scope-context", "no_known_change", "--exception", "no_known_change")},
 			want{1, `^$`, `^nodloop knowledge: knowledge: scope names no event: the exceptions \[no_known_change\] cover`},
+		},
+		{
+			"propose with a metric no event carries fails",
+			args{args: []string{
+				"propose", "--id", "k-m", "--kind", "meaning", "--content", "c", "--scope-metric", "conversions",
+				"--evidence-paragraph", "p#1",
+			}},
+			want{1, `^$`, `^nodloop knowledge: knowledge: scope names a value no event of the data set carries: metric conversions\n`},
+		},
+		{
+			"propose without a scope metric never reads the events",
+			args{args: []string{"propose", "--id", "k-e", "--kind", "meaning", "--content", "c", "--evidence-paragraph", "p#1"}, events: "nope\n"},
+			want{0, "^k-e\tv1\tcandidate\nscope\tany event\n" + folder + "$", `^$`},
+		},
+		{
+			"propose with a scope metric reads the events",
+			args{args: proposeAgg, events: "nope\n"},
+			want{1, `^$`, `^nodloop knowledge: .+`},
 		},
 		{
 			"propose with an unknown trace fails",
@@ -481,6 +503,9 @@ func TestRunKnowledge(t *testing.T) {
 			home := strings.NewReplacer("{home}", dir).Replace(tc.args.home)
 			data := t.TempDir()
 			require.NoError(t, os.WriteFile(filepath.Join(data, "policy.yaml"), []byte(tc.args.policy), 0o600))
+			// Propose checks scope metrics against the events
+			events := cmp.Or(tc.args.events, "event_id,timestamp,metric,value\ne1,2026-09-22T00:00:00Z,conversion_count,1\n")
+			require.NoError(t, os.WriteFile(filepath.Join(data, "events.csv"), []byte(events), 0o600))
 			getenv := func(k string) string {
 				return map[string]string{envFileDir: data, envRecordDir: records, "HOME": home}[k]
 			}

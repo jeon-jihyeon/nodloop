@@ -264,8 +264,12 @@ func (c knowledgeCommand) proposeFrom(
 }
 
 // Prints the candidate and its scope and its veto and the folder it would join so the person sees how wide it reaches before approving
+// A scope metric or dim that no event carries fails before anything is appended
 func (c knowledgeCommand) propose(ctx context.Context, draft knowledge.Knowledge) error {
 	if err := c.app.checkReviews(ctx, draft.Evidence.TraceIDs()...); err != nil {
+		return err
+	}
+	if err := c.observed(ctx, draft.Scope); err != nil {
 		return err
 	}
 	k, overlaps, err := c.ledger.Propose(ctx, draft)
@@ -282,6 +286,26 @@ func (c knowledgeCommand) propose(ctx context.Context, draft knowledge.Knowledge
 		}
 	}
 	return c.folder(ctx, k.ID, k.Version)
+}
+
+// A scope without metrics and dims names no value of the data set so the events are never read
+func (c knowledgeCommand) observed(ctx context.Context, scope knowledge.Scope) error {
+	if len(scope.Metrics) == 0 && len(scope.Dims) == 0 {
+		return nil
+	}
+	src, err := c.app.source()
+	if err != nil {
+		return err
+	}
+	metrics, err := src.Metrics(ctx)
+	if err != nil {
+		return err
+	}
+	dims, err := src.Dims(ctx)
+	if err != nil {
+		return err
+	}
+	return scope.Observed(metrics, dims)
 }
 
 // The folder a version joins with its size
