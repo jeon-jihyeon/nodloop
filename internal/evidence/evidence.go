@@ -56,11 +56,15 @@ const (
 	StatusHold           Status = "hold"             // no procedure covers the cause or the data cannot be trusted
 )
 
-var validStatuses = map[Status]struct{}{StatusNoAction: {}, StatusReadyForReview: {}, StatusHold: {}}
+var statuses = []Status{StatusNoAction, StatusReadyForReview, StatusHold}
 
 func (s Status) Valid() bool {
-	_, ok := validStatuses[s]
-	return ok
+	return slices.Contains(statuses, s)
+}
+
+// Every review status in a fixed order
+func Statuses() []Status {
+	return slices.Clone(statuses)
 }
 
 type EventRef struct {
