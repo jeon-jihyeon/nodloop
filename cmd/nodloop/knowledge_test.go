@@ -396,7 +396,7 @@ func TestRunKnowledge(t *testing.T) {
 			},
 			want{
 				0, "^k-r6\tv1\tapproved\treviewer\nfolder\t[0-9]+ of 70000 chars\t6 of 10 items in [a-z_ ]+\t.*\n" +
-					"compaction due\tthe folder holds more than 5 approved items an event can replay\\. " +
+					"compaction due\ta review of one change context carries more than 5 approved items an event can replay\\. " +
 					"Run nodloop knowledge compact k-r6\n$",
 				`^$`,
 			},

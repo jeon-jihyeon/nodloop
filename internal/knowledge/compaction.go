@@ -115,6 +115,30 @@ func (s Set) compactable(anchor Knowledge) Compactable {
 	return out
 }
 
+// The most items one review of a change context the anchor reaches carries
+// Crowding counts one review and never the union because an event carries one change context
+func (c Compactable) heaviest() int {
+	n := 0
+	for _, changeContext := range evidence.Contexts() {
+		if !c.Items[0].reaches(changeContext) {
+			continue
+		}
+		carried := 0
+		for _, k := range c.Items {
+			if k.reaches(changeContext) {
+				carried++
+			}
+		}
+		n = max(n, carried)
+	}
+	return n
+}
+
+// Whether one review carries more than FolderItems of the items
+func (c Compactable) Crowded() bool {
+	return c.heaviest() > FolderItems
+}
+
 // The candidates of a compaction of old built from the drafts
 // Checks in order
 // 1. at least two old items and one draft
