@@ -15,8 +15,6 @@ import (
 )
 
 func TestRunGuard(t *testing.T) {
-	exe, err := os.Executable()
-	require.NoError(t, err)
 	valid, err := os.ReadFile("testdata/valid.yaml")
 	require.NoError(t, err)
 	sed, err := os.ReadFile("testdata/bash_sed.json")
@@ -27,8 +25,10 @@ func TestRunGuard(t *testing.T) {
 		installed = `{"hooks":{"PreToolUse":[{"matcher":"*",` +
 			`"hooks":[{"type":"command","command":"{exe} guard","timeout":5}]}]}}`
 		written = "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n" +
-			"            \"command\": \"{exe} guard\",\n            \"timeout\": 5,\n            \"type\": \"command\"\n" +
+			"            \"command\": \"{hooked} guard\",\n            \"timeout\": 5,\n            \"type\": \"command\"\n" +
 			"          }\n        ],\n        \"matcher\": \"*\"\n      }\n    ]\n  }\n}\n"
+		stale = `{"hooks":{"PreToolUse":[{"matcher":"Bash",` +
+			`"hooks":[{"type":"command","command":"{home}/.nodloop/bin/v0.4.1/nodloop guard","timeout":5}]}]}}`
 	)
 	type args struct {
 		args  []string
@@ -37,6 +37,11 @@ func TestRunGuard(t *testing.T) {
 		home string
 		// Content of settings.json before the run
 		settings string
+		// The running binary with `{home}` for the temp home
+		// Empty means `{exe}` which is a file under the temp home
+		exe string
+		// Whether the stable link under the home points at the running binary
+		stable bool
 	}
 	type want struct {
 		code   int
@@ -51,20 +56,20 @@ func TestRunGuard(t *testing.T) {
 		args args
 		want want
 	}{
-		{"hook passes a plain call", args{nil, plain, "{home}", "{}"}, want{0, "", `^$`, "{}"}},
+		{"hook passes a plain call", args{stdin: plain, home: "{home}", settings: "{}"}, want{0, "", `^$`, "{}"}},
 		{
 			"hook blocks through the user vetoes",
-			args{nil, sed, "{home}", "{}"},
+			args{stdin: sed, home: "{home}", settings: "{}"},
 			want{2, "", `^nodloop guard: Bash call blocked by veto no-sed-inplace\n`, "{}"},
 		},
 		{
 			"hook blocks through the vetoes flag",
-			args{[]string{"--vetoes", "testdata/valid.yaml"}, sed, "", "{}"},
+			args{args: []string{"--vetoes", "testdata/valid.yaml"}, stdin: sed, settings: "{}"},
 			want{2, "", `^nodloop guard: Bash call blocked by veto no-sed-inplace\n`, "{}"},
 		},
 		{
 			"hook fails on a missing veto file",
-			args{[]string{"--vetoes", "nope.yaml"}, sed, "{home}", "{}"},
+			args{args: []string{"--vetoes", "nope.yaml"}, stdin: sed, home: "{home}", settings: "{}"},
 			want{
 				1, "",
 				`^nodloop guard: failed to load vetoes, skipped: nope.yaml: failed to read veto file: open nope.yaml: no such file`,
@@ -73,12 +78,12 @@ func TestRunGuard(t *testing.T) {
 		},
 		{
 			"hook fails on a veto file whose only entry is broken",
-			args{[]string{"--vetoes", "testdata/invalid_regex.yaml"}, sed, "{home}", "{}"},
+			args{args: []string{"--vetoes", "testdata/invalid_regex.yaml"}, stdin: sed, home: "{home}", settings: "{}"},
 			want{1, "", `^nodloop guard: failed to load vetoes, skipped: testdata/invalid_regex.yaml: vetoes\[0\] \(bad-regex\)`, "{}"},
 		},
 		{
 			"hook blocks through the valid entries of a file with a broken entry",
-			args{[]string{"--vetoes", "testdata/partial.yaml"}, sed, "{home}", "{}"},
+			args{args: []string{"--vetoes", "testdata/partial.yaml"}, stdin: sed, home: "{home}", settings: "{}"},
 			want{
 				2, "",
 				`^nodloop guard: failed to load vetoes, skipped: testdata/partial.yaml: vetoes\[1\] \(bad-regex\).*\n` +
@@ -88,52 +93,77 @@ func TestRunGuard(t *testing.T) {
 		},
 		{
 			"hook fails on an unknown flag",
-			args{[]string{"--nope"}, nil, "{home}", "{}"},
+			args{args: []string{"--nope"}, home: "{home}", settings: "{}"},
 			want{1, "", `^flag provided but not defined: -nope\n`, "{}"},
 		},
 		{
-			"check lists the user vetoes",
-			args{[]string{"check"}, nil, "{home}", "{}"},
+			"check lists the user vetoes and the hook state",
+			args{args: []string{"check"}, home: "{home}", settings: "{}"},
 			want{0, "{home}/{rel}: 2 vetoes\nmerged: 2 vetoes\nguard hook not installed. Run nodloop guard install to enforce them\n", `^$`, "{}"},
 		},
 		{
 			"install registers the absolute executable",
-			args{[]string{"install"}, nil, "{home}", "{}"},
-			want{0, "installed PreToolUse hook for {exe} in {path}\n", `^$`, written},
+			args{args: []string{"install"}, home: "{home}", settings: "{}"},
+			want{0, "installed PreToolUse hook for {exe} in {path}\n", `^$`, strings.ReplaceAll(written, "{hooked}", "{exe}")},
+		},
+		{
+			"install registers the stable link that points at the running binary",
+			args{args: []string{"install"}, home: "{home}", settings: "{}", stable: true},
+			want{0, "installed PreToolUse hook for {link} in {path}\n", `^$`, strings.ReplaceAll(written, "{hooked}", "{link}")},
+		},
+		{
+			"install replaces a hook of another version on Bash alone",
+			args{args: []string{"install"}, home: "{home}", settings: stale},
+			want{0, "installed PreToolUse hook for {exe} in {path}\n", `^$`, strings.ReplaceAll(written, "{hooked}", "{exe}")},
+		},
+		{
+			"install moves a stale versioned hook to the stable link",
+			args{args: []string{"install"}, home: "{home}", settings: strings.ReplaceAll(installed, "{exe}", "{home}/.nodloop/bin/v0.4.1/nodloop"), stable: true},
+			want{0, "installed PreToolUse hook for {link} in {path}\n", `^$`, strings.ReplaceAll(written, "{hooked}", "{link}")},
+		},
+		{
+			"install after the move changes nothing",
+			args{args: []string{"install"}, home: "{home}", settings: strings.ReplaceAll(installed, "{exe}", "{link}"), stable: true},
+			want{0, "already installed in {path}\n", `^$`, strings.ReplaceAll(installed, "{exe}", "{link}")},
+		},
+		{
+			"install refuses a go run build",
+			args{args: []string{"install"}, home: "{home}", settings: "{}", exe: "{home}/go-build123/b001/exe/nodloop"},
+			want{1, "", `^nodloop guard install: the executable is a temporary go build\. .*/go-build123/b001/exe/nodloop\n$`, "{}"},
 		},
 		{
 			"install twice changes nothing",
-			args{[]string{"install"}, nil, "{home}", installed},
+			args{args: []string{"install"}, home: "{home}", settings: installed},
 			want{0, "already installed in {path}\n", `^$`, installed},
 		},
 		{
 			"uninstall removes the hook",
-			args{[]string{"uninstall"}, nil, "{home}", installed},
+			args{args: []string{"uninstall"}, home: "{home}", settings: installed},
 			want{0, "removed PreToolUse hook from {path}\n", `^$`, "{}\n"},
 		},
 		{
 			"uninstall without the hook changes nothing",
-			args{[]string{"uninstall"}, nil, "{home}", "{}"},
+			args{args: []string{"uninstall"}, home: "{home}", settings: "{}"},
 			want{0, "not installed in {path}\n", `^$`, "{}"},
 		},
 		{
 			"install fails on broken settings",
-			args{[]string{"install"}, nil, "{home}", "{broken"},
+			args{args: []string{"install"}, home: "{home}", settings: "{broken"},
 			want{1, "", `^nodloop guard install: .*settings.json`, "{broken"},
 		},
 		{
 			"uninstall fails on broken settings",
-			args{[]string{"uninstall"}, nil, "{home}", "{broken"},
+			args{args: []string{"uninstall"}, home: "{home}", settings: "{broken"},
 			want{1, "", `^nodloop guard uninstall: .*settings.json`, "{broken"},
 		},
 		{
 			"install with an unknown home fails",
-			args{[]string{"install"}, nil, "", "{}"},
+			args{args: []string{"install"}, settings: "{}"},
 			want{1, "", "^nodloop guard install: home directory unknown: cannot locate settings.json\n$", "{}"},
 		},
 		{
 			"uninstall with an unknown home fails",
-			args{[]string{"uninstall"}, nil, "", "{}"},
+			args{args: []string{"uninstall"}, settings: "{}"},
 			want{1, "", "^nodloop guard uninstall: home directory unknown: cannot locate settings.json\n$", "{}"},
 		},
 	}
@@ -142,15 +172,35 @@ func TestRunGuard(t *testing.T) {
 			t.Parallel()
 			home := t.TempDir()
 			path := filepath.Join(home, ".claude", "settings.json")
-			r := strings.NewReplacer("{home}", home, "{path}", path, "{exe}", exe, "{rel}", vetofile.RelPath)
+			exe := filepath.Join(home, "opt", "nodloop")
+			link := filepath.Join(home, ".nodloop", "bin", "nodloop")
+			r := strings.NewReplacer(
+				"{home}", home, "{path}", path, "{exe}", exe, "{link}", link, "{rel}", vetofile.RelPath,
+			)
 			vetoes := filepath.Join(home, vetofile.RelPath)
 			require.NoError(t, os.MkdirAll(filepath.Dir(vetoes), 0o755))
 			require.NoError(t, os.WriteFile(vetoes, valid, 0o644))
+			args := make([]string, len(tc.args.args))
+			for i, arg := range tc.args.args {
+				args[i] = r.Replace(arg)
+			}
 			require.NoError(t, os.WriteFile(path, []byte(r.Replace(tc.args.settings)), 0o600))
+			require.NoError(t, os.MkdirAll(filepath.Dir(exe), 0o755))
+			require.NoError(t, os.WriteFile(exe, nil, 0o700))
+			if tc.args.stable {
+				require.NoError(t, os.MkdirAll(filepath.Dir(link), 0o755))
+				require.NoError(t, os.Symlink(exe, link))
+			}
+			running := r.Replace(tc.args.exe)
+			if running == "" {
+				running = exe
+			}
+			executable := func() (string, error) { return running, nil }
 			getenv := func(k string) string { return map[string]string{"HOME": r.Replace(tc.args.home)}[k] }
 			var stdout, stderr bytes.Buffer
 
-			got := runGuard(tc.args.args, getenv, bytes.NewReader(tc.args.stdin), &stdout, &stderr)
+			stdin := strings.NewReader(r.Replace(string(tc.args.stdin)))
+			got := runGuard(args, getenv, executable, stdin, &stdout, &stderr)
 
 			assert.Equal(t, tc.want.code, got)
 			assert.Equal(t, r.Replace(tc.want.stdout), stdout.String())
