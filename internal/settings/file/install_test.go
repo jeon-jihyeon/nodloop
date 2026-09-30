@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeon-jihyeon/nodloop/internal/atomicfile"
 	"github.com/jeon-jihyeon/nodloop/internal/settings"
 	"github.com/jeon-jihyeon/nodloop/internal/settings/file"
 )
@@ -108,7 +109,7 @@ func TestInstall(t *testing.T) {
 			info, err := os.Stat(path)
 			require.NoError(t, err)
 			assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
-			temps, err := filepath.Glob(filepath.Join(dir, ".settings-*.json"))
+			temps, err := filepath.Glob(filepath.Join(dir, ".settings.json-*"))
 			require.NoError(t, err)
 			assert.Empty(t, temps)
 		})
@@ -261,6 +262,67 @@ func TestInstalled(t *testing.T) {
 
 			assert.ErrorIs(t, err, tc.want.err)
 			assert.Equal(t, tc.want.installed, got)
+		})
+	}
+}
+
+// A settings.json kept in a dotfiles directory and linked into place
+func TestEditThroughASymlink(t *testing.T) {
+	const exe = "/Users/me/go/bin/nodloop"
+	b, err := os.ReadFile(filepath.Join("testdata", "installed.json"))
+	require.NoError(t, err)
+	installed := string(b)
+	b, err = os.ReadFile(filepath.Join("testdata", "removed.json"))
+	require.NoError(t, err)
+	removed := string(b)
+	install := func(path string) (bool, error) { return file.Install(path, exe) }
+	type args struct {
+		// Empty leaves the link dangling
+		target string
+		run    func(path string) (bool, error)
+	}
+	type want struct {
+		changed bool
+		err     error
+		// What the target holds after the run
+		target string
+		// What the backup beside the link holds
+		backup string
+	}
+	tcs := []struct {
+		name string
+		args args
+		want want
+	}{
+		{"install writes through the link", args{removed, install}, want{true, nil, installed, removed}},
+		{"uninstall writes through the link", args{installed, file.Uninstall}, want{true, nil, removed, installed}},
+		{"a dangling link fails and stays", args{"", install}, want{false, atomicfile.ErrLinkDangling, "", ""}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			home, dotfiles := t.TempDir(), t.TempDir()
+			target := filepath.Join(dotfiles, "settings.json")
+			if tc.args.target != "" {
+				require.NoError(t, os.WriteFile(target, []byte(tc.args.target), 0o600))
+			}
+			link := filepath.Join(home, "settings.json")
+			require.NoError(t, os.Symlink(target, link))
+
+			changed, err := tc.args.run(link)
+
+			assert.ErrorIs(t, err, tc.want.err)
+			assert.Equal(t, tc.want.changed, changed)
+			info, err := os.Lstat(link)
+			require.NoError(t, err)
+			assert.Equal(t, os.ModeSymlink, info.Mode().Type(), "the link stays a link")
+			got, _ := os.ReadFile(target)
+			assert.Equal(t, tc.want.target, string(got))
+			backup, _ := os.ReadFile(link + ".bak")
+			assert.Equal(t, tc.want.backup, string(backup))
+			stray, err := filepath.Glob(filepath.Join(dotfiles, "*.bak"))
+			require.NoError(t, err)
+			assert.Empty(t, stray, "no backup lands in the dotfiles")
 		})
 	}
 }
