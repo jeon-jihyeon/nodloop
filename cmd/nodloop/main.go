@@ -68,6 +68,7 @@ commands:
                             Record that a named person rechecked the approved version. Its review deadline starts again
   knowledge narrow <id> --version <n> [--author <a>]
                             Propose the next version without the change contexts where its reviews were refuted
+                            Fails naming the retire command when every change context of the version was refuted
   knowledge overlaps <id>   Current items of the same kind with an intersecting scope
   knowledge approve <id> --version <n> --approver <name>
                             Refused when its folder may outgrow the review. Retire or replace an item, narrow the scope

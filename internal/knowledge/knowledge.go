@@ -263,6 +263,15 @@ func (k Knowledge) excepts(contexts []evidence.Context) bool {
 	return true
 }
 
+// Whether the exceptions leave no change context the item could apply to
+// An item scoped to no change context may apply to every one
+func (k Knowledge) Excluded() bool {
+	if len(k.Scope.ChangeContexts) == 0 {
+		return k.excepts(evidence.Contexts())
+	}
+	return k.excepts(k.Scope.ChangeContexts)
+}
+
 func (k Knowledge) applies(changeContext evidence.Context, moved Moved, dims Dims) bool {
 	return k.mayApply(changeContext) && k.Scope.admits(changeContext, moved, dims)
 }

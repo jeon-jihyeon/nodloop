@@ -3,11 +3,13 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"time"
 
+	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	"github.com/jeon-jihyeon/nodloop/internal/loop"
 )
 
@@ -92,6 +94,11 @@ func (c knowledgeCommand) narrow(ctx context.Context, id string, version int, au
 		return err
 	}
 	k, overlaps, err := c.ledger.Narrow(ctx, id, version, h.RefutedContexts(id, version), h.RefutedTraces(id, version), author)
+	if errors.Is(err, knowledge.ErrNarrowExhausted) {
+		return fmt.Errorf("%w. Narrowing cannot help because every change context of the version was refuted. "+
+			"Keep the version or retire it by name with nodloop knowledge retire %s --version %d --approver <name>",
+			err, id, version)
+	}
 	if err != nil {
 		return err
 	}
