@@ -118,6 +118,34 @@ func TestSourceEvent(t *testing.T) {
 			want: want{err: evidence.ErrMalformed, text: `events.csv line 2 column value: not a finite number "-Infinity"`},
 		},
 		{
+			name: "a repeated point with the same value loads once",
+			args: args{files: map[string]string{"events.csv": events + "e,2026-09-22T10:00:00Z,m,1\n"}, id: "e"},
+			want: want{event: evidence.Event{ID: "e", ChangeContext: evidence.ContextUnknown, Points: point}},
+		},
+		{
+			name: "the same instant spelled with an offset is the same point",
+			args: args{files: map[string]string{"events.csv": events + "e,2026-09-22T19:00:00+09:00,m,1\n"}, id: "e"},
+			want: want{event: evidence.Event{ID: "e", ChangeContext: evidence.ContextUnknown, Points: point}},
+		},
+		{
+			name: "a repeated point with another value names both lines",
+			args: args{files: map[string]string{"events.csv": events + "e,2026-09-22T19:00:00+09:00,m,2\n"}, id: "e"},
+			want: want{err: evidence.ErrMalformed, text: `events.csv line 3 repeats line 2 with another value: event "e" series "m"`},
+		},
+		{
+			name: "the same instant in another series or event is a point of its own",
+			args: args{files: map[string]string{"events.csv": "event_id,timestamp,metric,value,source\n" +
+				"e,2026-09-22T10:00:00Z,m,1,a\n" +
+				"e,2026-09-22T10:00:00Z,m,1,b\n" +
+				"e,2026-09-22T10:00:00Z,n,1,a\n" +
+				"f,2026-09-22T10:00:00Z,m,1,a\n"}, id: "e"},
+			want: want{event: evidence.Event{ID: "e", ChangeContext: evidence.ContextUnknown, Points: []evidence.Point{
+				{Time: at, Metric: "m", Value: 1, Dims: map[string]string{"source": "a"}},
+				{Time: at, Metric: "m", Value: 1, Dims: map[string]string{"source": "b"}},
+				{Time: at, Metric: "n", Value: 1, Dims: map[string]string{"source": "a"}},
+			}}},
+		},
+		{
 			name: "a byte order mark before the header is dropped",
 			args: args{files: map[string]string{"events.csv": "\uFEFF" + events}, id: "e"},
 			want: want{event: evidence.Event{ID: "e", ChangeContext: evidence.ContextUnknown, Points: point}},
