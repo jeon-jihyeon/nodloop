@@ -11,6 +11,8 @@ var (
 	ErrNotOffered = errors.New("diagnose: id was not offered as a candidate")
 	// A pending id that names a trace of another kind
 	ErrNotContext = errors.New("diagnose: not a context trace")
+	// Select and Record refuse a context the batch path built because only that path closes it
+	ErrBatchContext = errors.New("diagnose: context belongs to the batch path")
 	// The model answered outside the schema
 	ErrBadOutput = errors.New("diagnose: output does not match the schema")
 	// A context or select trace whose recorded JSON no longer decodes

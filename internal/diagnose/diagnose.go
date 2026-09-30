@@ -409,12 +409,53 @@ func (d *Diagnoser) pending(ctx context.Context, pendingID string) (Context, err
 	return contextFrom(tr)
 }
 
+// The context a conversation may select for and record
+// A batch context left open by an interrupted nodloop diagnose or eval run is refused
+// A review written for it would keep the session and condition tags of the run and count in its score
+// The error names both reruns because the context does not tell which command built it
+func (d *Diagnoser) conversation(ctx context.Context, pendingID string) (Context, error) {
+	c, err := d.pending(ctx, pendingID)
+	if err != nil {
+		return Context{}, err
+	}
+	if c.Mode == ModeInteractive {
+		return c, nil
+	}
+	session := ""
+	if c.Session.ID != "" {
+		session = fmt.Sprintf(" in session %s", c.Session.ID)
+	}
+	return Context{}, fmt.Errorf("%w: %s of %s%s so run the batch command that built it again for the event: "+
+		"nodloop diagnose --event %s or nodloop eval seed or holdout of that session with --events %s",
+		ErrBatchContext, pendingID, c.EventID, session, c.EventID, c.EventID)
+}
+
+// Contexts a conversation built and never recorded
+// A context that no longer decodes fails the list instead of dropping out of it
+func (d *Diagnoser) Pending(ctx context.Context) (trace.Traces, error) {
+	all, err := d.traces.List(ctx, trace.Filter{})
+	if err != nil {
+		return nil, err
+	}
+	var out trace.Traces
+	for _, tr := range all.Pending() {
+		c, err := contextFrom(tr)
+		if err != nil {
+			return nil, err
+		}
+		if c.Mode == ModeInteractive {
+			out = append(out, tr)
+		}
+	}
+	return out, nil
+}
+
 // Validates a review against its context and records it
-// 1. the pending id must name a context trace without a diagnose trace
+// 1. the pending id must name a context trace of the conversation without a diagnose trace
 // 2. a context that offered candidates must have a select trace
 // 3. the gate runs before the trace is written so Output is always gated
 func (d *Diagnoser) Record(ctx context.Context, pendingID string, diag Diagnosis) (Result, error) {
-	c, err := d.pending(ctx, pendingID)
+	c, err := d.conversation(ctx, pendingID)
 	if err != nil {
 		return Result{}, err
 	}

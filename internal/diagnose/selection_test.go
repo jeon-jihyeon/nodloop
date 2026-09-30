@@ -189,7 +189,7 @@ func TestPrepareCandidates(t *testing.T) {
 			}
 			ids := map[string]string{"gone": "gone"}
 			for _, event := range tc.args.reviews {
-				c, err := d.Prepare(ctx, event, diagnose.ModeBatch, diagnose.Session{})
+				c, err := d.Prepare(ctx, event, diagnose.ModeInteractive, diagnose.Session{})
 				require.NoError(t, err)
 				_, err = d.Select(ctx, c.PendingID, diagnose.Choices{})
 				require.NoError(t, err)
@@ -512,6 +512,16 @@ func TestSelect(t *testing.T) {
 			args: args{pending: "no-such-id"},
 			want: want{err: trace.ErrNotFound},
 		},
+		{
+			name: "refuses a context the batch path left open",
+			args: args{pending: "batch", choices: diagnose.Choices{Knowledge: []diagnose.Choice{{ID: "k-agg"}}}},
+			want: want{err: diagnose.ErrBatchContext},
+		},
+	}
+	// Left open by an interrupted batch run
+	batch := trace.Trace{
+		ID: "batch", Name: trace.NameContext, SessionID: "s1", Subject: "tq-008", Tags: []string{"feedback:off"},
+		Input: json.RawMessage(`{"mode":"batch"}`), Output: json.RawMessage(`{"knowledge_candidates":[{"id":"k-agg","version":1}]}`),
 	}
 	drafts := []knowledge.Knowledge{
 		{
@@ -538,9 +548,10 @@ func TestSelect(t *testing.T) {
 				_, err = s.Ledger.Approve(ctx, k.ID, 1, "author")
 				require.NoError(t, err)
 			}
-			ids := map[string]string{"no-such-id": "no-such-id", "k-agg": "k-agg", "k-other": "k-other"}
+			ids := map[string]string{"no-such-id": "no-such-id", "k-agg": "k-agg", "k-other": "k-other", "batch": batch.ID}
+			require.NoError(t, s.Traces.Append(ctx, batch))
 			for _, event := range tc.args.reviews {
-				c, err := d.Prepare(ctx, event, diagnose.ModeBatch, diagnose.Session{})
+				c, err := d.Prepare(ctx, event, diagnose.ModeInteractive, diagnose.Session{})
 				require.NoError(t, err)
 				_, err = d.Select(ctx, c.PendingID, diagnose.Choices{})
 				require.NoError(t, err)
