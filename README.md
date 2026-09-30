@@ -87,7 +87,7 @@ curl -fsSL --create-dirs https://raw.githubusercontent.com/jeon-jihyeon/nodloop/
 ~/.nodloop/bin/nodloop guard check
 ```
 
-`guard install` backs up `~/.claude/settings.json` before adding the hook, and `guard uninstall` removes it.
+`guard install` backs up `~/.claude/settings.json` before adding the hook, and `guard uninstall` removes it. A `.claude/nodloop/vetoes.yaml` applies anywhere below its directory. The guard looks for one from the working directory up to the nearest directory holding `.git`, or up to home when there is none and only in the working directory outside both, and the nearer file wins on the same id.
 
 A correction can become a veto too. Propose it as a judgment with a veto, and once someone approves it, nodloop writes it to an approved veto file under `~/.claude/nodloop` and the guard blocks that call from then on. Retiring the knowledge removes the veto, and a veto you write by hand wins over an approved one with the same id.
 
