@@ -14,4 +14,7 @@ var (
 	ErrSeedConditions   = errors.New("eval: conditions apply to holdout only")
 	ErrHoldoutFeedback  = errors.New("eval: holdout trace has feedback")
 	ErrHoldoutKnowledge = errors.New("eval: knowledge cites a holdout trace")
+	// A condition whose reviews would carry nothing and repeat the baseline at full cost
+	ErrNoCorrections       = errors.New("eval: no edit or reject verdict on a review outside the holdout half")
+	ErrNoApprovedKnowledge = errors.New("eval: no approved knowledge")
 )

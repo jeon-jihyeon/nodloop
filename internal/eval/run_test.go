@@ -352,11 +352,64 @@ func TestHoldout(t *testing.T) {
 		},
 		{
 			"every holdout condition runs by default in report order",
-			args{opts: eval.RunOptions{SessionID: "s", Events: []string{"tq-003"}}},
+			args{
+				opts:      eval.RunOptions{SessionID: "s", Events: []string{"tq-003"}, Examples: 3},
+				feedback:  []feedback.Feedback{{TraceID: "t0", Verdict: feedback.VerdictReject}},
+				knowledge: leak("t0"),
+			},
 			want{reviews: []review{
 				{"tq-003", []string{"feedback:off"}}, {"tq-003", []string{"feedback:on"}},
 				{"tq-003", []string{"knowledge:on"}}, {"tq-003", []string{"knowledge:all"}},
 			}},
+		},
+		{
+			"feedback:on without a correction is refused before any review",
+			args{
+				opts:      eval.RunOptions{SessionID: "s", Events: []string{"tq-003"}, Examples: 3},
+				knowledge: leak("t0"),
+			},
+			want{err: eval.ErrNoCorrections},
+		},
+		{
+			"an approval is no correction",
+			args{
+				opts: eval.RunOptions{
+					SessionID: "s", Events: []string{"tq-003"}, Examples: 3, Conditions: []eval.Condition{eval.ConditionExamples},
+				},
+				feedback: []feedback.Feedback{{TraceID: "t0", Verdict: feedback.VerdictApprove}},
+			},
+			want{err: eval.ErrNoCorrections},
+		},
+		{
+			"a correction on a failed review is no example",
+			args{
+				opts: eval.RunOptions{
+					SessionID: "s", Events: []string{"tq-003"}, Examples: 3, Conditions: []eval.Condition{eval.ConditionExamples},
+				},
+				feedback: []feedback.Feedback{{TraceID: "t2", Verdict: feedback.VerdictEdit}},
+			},
+			want{err: eval.ErrNoCorrections},
+		},
+		{
+			"feedback:on with examples off runs without a correction",
+			args{opts: eval.RunOptions{SessionID: "s", Events: []string{"tq-003"}, Conditions: []eval.Condition{eval.ConditionExamples}}},
+			want{reviews: []review{{"tq-003", []string{"feedback:on"}}}},
+		},
+		{
+			"knowledge:on without approved knowledge is refused before any review",
+			args{opts: eval.RunOptions{SessionID: "s", Events: []string{"tq-003"}, Conditions: []eval.Condition{eval.ConditionKnowledge}}},
+			want{err: eval.ErrNoApprovedKnowledge},
+		},
+		{
+			"knowledge:all without approved knowledge is refused before any review",
+			args{
+				opts: eval.RunOptions{
+					SessionID: "s", Events: []string{"tq-003"}, Examples: 3,
+					Conditions: []eval.Condition{eval.ConditionExamples, eval.ConditionKnowledgeAll},
+				},
+				feedback: []feedback.Feedback{{TraceID: "t0", Verdict: feedback.VerdictReject}},
+			},
+			want{err: eval.ErrNoApprovedKnowledge},
 		},
 		{
 			"a seed event in a holdout run is refused",
@@ -439,6 +492,15 @@ func TestHoldout(t *testing.T) {
 				ID: "t1", Name: trace.NameDiagnose, SessionID: "s", Subject: "tq-003", Tags: []string{"feedback:off"},
 			}
 			require.NoError(t, s.Traces.Append(ctx, held))
+			corrected := trace.Trace{
+				ID: "t0", Name: trace.NameDiagnose, SessionID: "prior", Subject: "tq-001", Tags: []string{"seed"},
+				Output: noAction.Output,
+			}
+			require.NoError(t, s.Traces.Append(ctx, corrected))
+			failed := trace.Trace{
+				ID: "t2", Name: trace.NameDiagnose, SessionID: "prior", Subject: "tq-002", Tags: []string{"seed"}, Error: "timeout",
+			}
+			require.NoError(t, s.Traces.Append(ctx, failed))
 			for _, fb := range tc.args.feedback {
 				require.NoError(t, s.Feedback.Append(ctx, fb))
 			}

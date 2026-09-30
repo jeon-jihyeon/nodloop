@@ -3,8 +3,8 @@
 | seed | 12 | 0.17 | 1.00 | 0.17 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0 | 0 | 0 | 0 | 0 | 0:0:0 | - | - | 0.0100 | 0 | 0 | 0 | 0 |
 | feedback:off | 12 | 0.17 | 1.00 | 0.17 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0 | 0 | 0 | 0 | 0 | 0:0:0 | - | - | 0.0100 | 0 | 0 | 0 | 0 |
 | feedback:on | 12 | 0.17 | 1.00 | 0.17 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0 | 0 | 0 | 0 | 0 | 0:0:0 | - | - | 0.0100 | 0 | 0 | 0 | 0 |
-| knowledge:on | 12 | 0.17 | 1.00 | 0.17 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0 | 0 | 0 | 0 | 0 | 0:0:0 | - | - | 0.0100 | 0 | 0 | 0 | 0 |
-| knowledge:all | 12 | 0.17 | 1.00 | 0.17 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0 | 0 | 0 | 0 | 0 | 0:0:0 | - | - | 0.0100 | 0 | 0 | 0 | 0 |
+| knowledge:on | 12 | 0.17 | 1.00 | 0.17 | 0.00 | 0.00 | 0.00 | 0.00 | 1.00 | 0 | 0 | 0 | 0 | 0 | 0:0:0 | - | - | 0.0100 | 0 | 0 | 0 | 0 |
+| knowledge:all | 12 | 0.17 | 1.00 | 0.17 | 0.00 | 0.00 | 0.00 | 0.00 | 1.00 | 15 | 0 | 0 | 0 | 0 | 0:0:0 | - | - | 0.0100 | 0 | 0 | 0 | 0 |
 
 Against feedback:off
 
@@ -33,10 +33,10 @@ Each event is one cluster; repeated reviews do not increase independent event co
 | feedback:off | knowledge:on | status_accuracy | 12 | 12 | 0.000 | 0.000 | 0.000 |
 | feedback:off | knowledge:on | misapplied | 12 | 12 | 0.000 | 0.000 | 0.000 |
 | feedback:off | knowledge:all | status_accuracy | 12 | 12 | 0.000 | 0.000 | 0.000 |
-| feedback:off | knowledge:all | misapplied | 12 | 12 | 0.000 | 0.000 | 0.000 |
+| feedback:off | knowledge:all | misapplied | 12 | 12 | 1.250 | 0.917 | 1.583 |
 | feedback:on | knowledge:on | status_accuracy | 12 | 12 | 0.000 | 0.000 | 0.000 |
 | feedback:on | knowledge:on | misapplied | 12 | 12 | 0.000 | 0.000 | 0.000 |
 | feedback:on | knowledge:all | status_accuracy | 12 | 12 | 0.000 | 0.000 | 0.000 |
-| feedback:on | knowledge:all | misapplied | 12 | 12 | 0.000 | 0.000 | 0.000 |
+| feedback:on | knowledge:all | misapplied | 12 | 12 | 1.250 | 0.917 | 1.583 |
 | knowledge:on | knowledge:all | status_accuracy | 12 | 12 | 0.000 | 0.000 | 0.000 |
-| knowledge:on | knowledge:all | misapplied | 12 | 12 | 0.000 | 0.000 | 0.000 |
+| knowledge:on | knowledge:all | misapplied | 12 | 12 | 1.250 | 0.917 | 1.583 |
