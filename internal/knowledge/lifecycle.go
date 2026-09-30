@@ -59,8 +59,9 @@ func (l *Ledger) Reaffirm(ctx context.Context, id string, version int, approver 
 // 1. a scoped item drops the contexts from its change contexts and an unscoped item takes them as exceptions
 // 2. the refuted reviews join the outcome evidence
 // 3. the candidate is approved like any new version so the approval supersedes the refuted one
-// Fails with ErrNarrowInvalid when no context is given or none would be left
-// That case is for a retire by a named person
+// 1. fails with ErrNarrowInvalid when no context is given
+// 2. fails with ErrNarrowExhausted when no change context of the version would be left
+// The second case is for keeping the version or for a retire by a named person
 func (l *Ledger) Narrow(
 	ctx context.Context, id string, version int, contexts []evidence.Context, traceIDs []string, author string,
 ) (Knowledge, Set, error) {
@@ -104,8 +105,8 @@ func (k Knowledge) narrowed(contexts []evidence.Context) (Knowledge, error) {
 		k.Scope.ChangeContexts = slices.DeleteFunc(slices.Clone(k.Scope.ChangeContexts), func(c evidence.Context) bool {
 			return slices.Contains(contexts, c)
 		})
-		if len(k.Scope.ChangeContexts) == 0 {
-			return Knowledge{}, fmt.Errorf("%w: no change context would be left", ErrNarrowInvalid)
+		if len(k.Scope.ChangeContexts) == 0 || k.Excluded() {
+			return Knowledge{}, fmt.Errorf("%w: %s v%d has none left without %v", ErrNarrowExhausted, k.ID, k.Version, contexts)
 		}
 		return k, nil
 	}
@@ -115,8 +116,8 @@ func (k Knowledge) narrowed(contexts []evidence.Context) (Knowledge, error) {
 			k.Exceptions = append(k.Exceptions, c)
 		}
 	}
-	if k.excepts(evidence.Contexts()) {
-		return Knowledge{}, fmt.Errorf("%w: every change context would be an exception", ErrNarrowInvalid)
+	if k.Excluded() {
+		return Knowledge{}, fmt.Errorf("%w: %s v%d would except every change context", ErrNarrowExhausted, k.ID, k.Version)
 	}
 	return k, nil
 }
