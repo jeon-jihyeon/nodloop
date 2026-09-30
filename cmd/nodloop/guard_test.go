@@ -168,7 +168,8 @@ func TestGuardCommandCheck(t *testing.T) {
 	broken, err := os.ReadFile("testdata/invalid_regex.yaml")
 	require.NoError(t, err)
 	type args struct {
-		// Veto file content keyed by the `{cwd}` or `{home}` placeholder
+		// Veto file content keyed by the `{cwd}` or `{parent}` or `{home}` placeholder
+		// `{parent}` is the parent directory of the cwd
 		files map[string][]byte
 	}
 	type want struct {
@@ -184,7 +185,17 @@ func TestGuardCommandCheck(t *testing.T) {
 		{
 			"no file reports where it looked",
 			args{nil},
-			want{"no veto file found (looked for {rel} under {cwd} and {home})\n", nil},
+			want{"no veto file found (looked for {rel} from {cwd} up to its project root and under {home})\n", nil},
+		},
+		{
+			"project file in a parent of the cwd is listed",
+			args{map[string][]byte{"{parent}": valid}},
+			want{"{parent}/{rel}: 2 vetoes\nmerged: 2 vetoes\n", nil},
+		},
+		{
+			"project files of the cwd and a parent are both listed nearest first",
+			args{map[string][]byte{"{cwd}": valid, "{parent}": valid}},
+			want{"{cwd}/{rel}: 2 vetoes\n{parent}/{rel}: 2 vetoes\nmerged: 2 vetoes\n", nil},
 		},
 		{
 			"both files list their counts and the merge",
@@ -215,8 +226,12 @@ func TestGuardCommandCheck(t *testing.T) {
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			cwd, home := t.TempDir(), t.TempDir()
-			r := strings.NewReplacer("{cwd}", cwd, "{home}", home, "{rel}", vetofile.RelPath)
+			parent, home := t.TempDir(), t.TempDir()
+			cwd := filepath.Join(parent, "sub")
+			// The parent is the project root so the walk reads it
+			require.NoError(t, os.MkdirAll(filepath.Join(parent, ".git"), 0o755))
+			require.NoError(t, os.MkdirAll(cwd, 0o755))
+			r := strings.NewReplacer("{cwd}", cwd, "{parent}", parent, "{home}", home, "{rel}", vetofile.RelPath)
 			for base, content := range tc.args.files {
 				path := filepath.Join(r.Replace(base), vetofile.RelPath)
 				require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))

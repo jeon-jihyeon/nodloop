@@ -17,8 +17,8 @@ const usage = `usage: nodloop <command>
 
 commands:
   guard [--vetoes <path>]   PreToolUse hook. Reads hook input from stdin and blocks calls that match a veto.
-                            Without --vetoes, loads .claude/nodloop/vetoes.yaml from the hook cwd and from $HOME
-                            and then every approved veto file under $HOME/.claude/nodloop
+                            Without --vetoes, loads .claude/nodloop/vetoes.yaml from the hook cwd or its nearest parent
+                            that has one and from $HOME and then every approved veto file under $HOME/.claude/nodloop
   guard check               Load veto files from the current directory and $HOME and report counts or errors
   guard install             Register this binary as a PreToolUse hook in ~/.claude/settings.json (backs up first)
   guard uninstall           Remove the hook registered by guard install

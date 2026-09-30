@@ -17,6 +17,31 @@ import (
 func TestDiscover(t *testing.T) {
 	project, user, empty, broken, directory := t.TempDir(), t.TempDir(), t.TempDir(), t.TempDir(), t.TempDir()
 	approved, blocked, partial := t.TempDir(), t.TempDir(), t.TempDir()
+	// A project whose file sits two levels above the cwd and a nested project inside it
+	outer := t.TempDir()
+	below := filepath.Join(outer, "internal", "x")
+	nested := filepath.Join(outer, "nested")
+	override := filepath.Join(outer, "override")
+	cracked := filepath.Join(outer, "cracked")
+	// A home that is an ancestor of the cwd and is itself under version control
+	homeAbove := t.TempDir()
+	underHome := filepath.Join(homeAbove, "work", "repo")
+	// A shared directory outside home without .git above the cwd
+	stray := t.TempDir()
+	scratch := filepath.Join(stray, "someone", "scratch")
+	// A repository inside a directory that has a veto file of its own
+	parent := t.TempDir()
+	repo := filepath.Join(parent, "repo")
+	worktree := filepath.Join(parent, "worktree")
+	// A project under home whose file is not valid YAML
+	homeRepo := t.TempDir()
+	homeBrokenPath := filepath.Join(homeRepo, "repo", file.RelPath)
+	for _, d := range []string{
+		below, underHome, scratch, filepath.Join(repo, "sub"), filepath.Join(outer, ".git"), filepath.Join(broken, ".git"),
+		filepath.Join(homeAbove, ".git"), filepath.Join(repo, ".git"), filepath.Dir(homeBrokenPath),
+	} {
+		require.NoError(t, os.MkdirAll(d, 0o755))
+	}
 	approvedPath := file.NewApprovedFile(approved, "/records").Path()
 	contents := map[string]string{
 		filepath.Join(project, file.RelPath): "vetoes:\n  - id: shared\n    tool: Bash\n" +
@@ -27,6 +52,20 @@ func TestDiscover(t *testing.T) {
 			"    when: [{field: command, match: u}]\n    reason: user\n",
 		approvedPath: "vetoes:\n  - id: shared\n    tool: Bash\n" +
 			"    when: [{field: command, match: a}]\n    reason: approved\n",
+		filepath.Join(outer, file.RelPath): "vetoes:\n  - id: outer\n    tool: Bash\n" +
+			"    when: [{field: command, match: o}]\n    reason: outer\n",
+		filepath.Join(nested, file.RelPath): "vetoes:\n  - id: nested\n    tool: Bash\n" +
+			"    when: [{field: command, match: n}]\n    reason: nested\n",
+		filepath.Join(override, file.RelPath): "vetoes:\n  - id: outer\n    tool: Bash\n" +
+			"    when: [{field: command, match: v}]\n    reason: override\n",
+		filepath.Join(homeAbove, file.RelPath): "vetoes:\n  - id: user\n    tool: Bash\n" +
+			"    when: [{field: command, match: u}]\n    reason: user\n",
+		filepath.Join(parent, file.RelPath): "vetoes:\n  - id: parent\n    tool: Bash\n" +
+			"    when: [{field: command, match: p}]\n    reason: parent\n",
+		filepath.Join(repo, file.RelPath): "vetoes:\n  - id: repo\n    tool: Bash\n" +
+			"    when: [{field: command, match: r}]\n    reason: repo\n",
+		filepath.Join(worktree, file.RelPath): "vetoes:\n  - id: worktree\n    tool: Bash\n" +
+			"    when: [{field: command, match: w}]\n    reason: worktree\n",
 	}
 	sources := map[string]file.Source{}
 	for path, content := range contents {
@@ -36,6 +75,13 @@ func TestDiscover(t *testing.T) {
 		require.NoError(t, err)
 		sources[path] = file.Source{Path: path, Vetoes: vetoes}
 	}
+	require.NoError(t, os.WriteFile(filepath.Join(worktree, ".git"), []byte("gitdir: /elsewhere\n"), 0o644))
+	strayPath := filepath.Join(stray, file.RelPath)
+	require.NoError(t, os.MkdirAll(filepath.Dir(strayPath), 0o755))
+	require.NoError(t, os.WriteFile(strayPath, []byte("vetoes: ["), 0o644))
+	require.NoError(t, os.WriteFile(homeBrokenPath, []byte("vetoes: ["), 0o644))
+	homeBrokenMsg := homeBrokenPath +
+		": failed to parse yaml: yaml: line 1: did not find expected node content"
 	partialPath := filepath.Join(partial, file.RelPath)
 	require.NoError(t, os.MkdirAll(filepath.Dir(partialPath), 0o755))
 	require.NoError(t, os.WriteFile(partialPath, []byte(contents[filepath.Join(project, file.RelPath)]+
@@ -43,6 +89,11 @@ func TestDiscover(t *testing.T) {
 	partialMsg := partialPath + ": vetoes[1] (shared): duplicate id"
 	require.NoError(t, os.MkdirAll(filepath.Join(broken, filepath.Dir(file.RelPath)), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(broken, file.RelPath), []byte("vetoes: ["), 0o644))
+	crackedPath := filepath.Join(cracked, file.RelPath)
+	require.NoError(t, os.MkdirAll(filepath.Dir(crackedPath), 0o755))
+	require.NoError(t, os.WriteFile(crackedPath, []byte("vetoes: ["), 0o644))
+	crackedMsg := crackedPath +
+		": failed to parse yaml: yaml: line 1: did not find expected node content"
 	require.NoError(t, os.MkdirAll(filepath.Join(directory, file.RelPath), 0o755))
 	// A file where the veto directory belongs so neither the user file nor the approved files can be read
 	require.NoError(t, os.MkdirAll(filepath.Join(blocked, ".claude"), 0o755))
@@ -94,6 +145,47 @@ func TestDiscover(t *testing.T) {
 		},
 		{"missing files are left out", args{empty, empty}, want{nil, nil, "<nil>"}},
 		{
+			"project file two levels above the cwd applies",
+			args{below, empty},
+			want{file.Sources{sources[filepath.Join(outer, file.RelPath)]}, nil, "<nil>"},
+		},
+		{
+			"nested project file stacks before the outer one",
+			args{nested, empty},
+			want{
+				file.Sources{sources[filepath.Join(nested, file.RelPath)], sources[filepath.Join(outer, file.RelPath)]},
+				nil, "<nil>",
+			},
+		},
+		{
+			"nested project file reusing an outer id comes first so it wins",
+			args{override, empty},
+			want{
+				file.Sources{sources[filepath.Join(override, file.RelPath)], sources[filepath.Join(outer, file.RelPath)]},
+				nil, "<nil>",
+			},
+		},
+		{
+			"broken nested project file is reported and the outer one still loads",
+			args{cracked, empty},
+			want{file.Sources{sources[filepath.Join(outer, file.RelPath)]}, veto.ErrYAMLInvalid, crackedMsg},
+		},
+		{
+			"user file above the cwd loads once as the user file",
+			args{underHome, homeAbove},
+			want{file.Sources{sources[filepath.Join(homeAbove, file.RelPath)]}, nil, "<nil>"},
+		},
+		{
+			"cwd equal to home loads the user file once",
+			args{homeAbove, homeAbove},
+			want{file.Sources{sources[filepath.Join(homeAbove, file.RelPath)]}, nil, "<nil>"},
+		},
+		{
+			"broken file in an ancestor is reported with its path",
+			args{filepath.Join(broken, "sub"), empty},
+			want{nil, veto.ErrYAMLInvalid, parseMsg},
+		},
+		{
 			"file with a broken entry still applies its valid entries",
 			args{partial, ""},
 			want{
@@ -117,6 +209,26 @@ func TestDiscover(t *testing.T) {
 			"both broken files are reported together",
 			args{broken, directory},
 			want{nil, syscall.EISDIR, parseMsg + "\n" + readMsg},
+		},
+		{
+			"cwd outside home without .git reads no file of a parent",
+			args{scratch, empty},
+			want{nil, nil, "<nil>"},
+		},
+		{
+			"walk stops at the directory holding .git",
+			args{filepath.Join(repo, "sub"), empty},
+			want{file.Sources{sources[filepath.Join(repo, file.RelPath)]}, nil, "<nil>"},
+		},
+		{
+			"walk stops at a .git file of a worktree",
+			args{worktree, empty},
+			want{file.Sources{sources[filepath.Join(worktree, file.RelPath)]}, nil, "<nil>"},
+		},
+		{
+			"broken project file under home names its path",
+			args{filepath.Join(homeRepo, "repo"), homeRepo},
+			want{nil, veto.ErrYAMLInvalid, homeBrokenMsg},
 		},
 	}
 	for _, tc := range tcs {

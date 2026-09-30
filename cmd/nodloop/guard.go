@@ -82,7 +82,8 @@ func (c guardCommand) discover(cwd string) (veto.Vetoes, error) {
 func (c guardCommand) check(cwd string) error {
 	sources, err := vetofile.Discover(cwd, string(c.home))
 	if len(sources) == 0 && err == nil {
-		fmt.Fprintf(c.out, "no veto file found (looked for %s under %s and %s)\n", vetofile.RelPath, cwd, c.home)
+		fmt.Fprintf(c.out, "no veto file found (looked for %s from %s up to its project root and under %s)\n",
+			vetofile.RelPath, cwd, c.home)
 		return nil
 	}
 	for _, s := range sources {
