@@ -238,8 +238,7 @@ func (s Set) checkVetoes(items Set) error {
 			continue
 		}
 		kept := slices.ContainsFunc(items, func(k Knowledge) bool {
-			return k.Veto != nil && slices.Contains(k.Evidence.Knowledge, Ref{old.ID, old.Version}) &&
-				k.Veto.preserves(k.ID, k.Content, *old.Veto)
+			return slices.Contains(k.Evidence.Knowledge, Ref{old.ID, old.Version}) && k.keepsVeto(*old.Veto)
 		})
 		if !kept {
 			return fmt.Errorf("%w: the veto of %s v%d", ErrCompactionVeto, old.ID, old.Version)
