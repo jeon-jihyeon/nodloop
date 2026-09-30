@@ -197,7 +197,7 @@ func (d *Diagnoser) Select(ctx context.Context, pendingID string, choices Choice
 	if err != nil {
 		return Selection{}, err
 	}
-	selected, sel := fit(SelectByClaude, items, examples)
+	selected, sel := fit(SelectByClaude, items, examples, c.citable())
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if err := d.ensureOpen(ctx, pendingID); err != nil {
@@ -312,13 +312,15 @@ func (d *Diagnoser) recordSelection(ctx context.Context, c Context, selected sel
 // 1. the verdict and reason and what the correction changed lead and are never cut
 // 2. the corrected review is the body so it fits whole before any original review gets a character
 // 3. the original review is the tail and gets only what the corrections leave
-func (e example) render(n int) block {
+// known holds the paragraph ids the review under way may cite
+func (e example) render(n int, known citable) block {
 	var lead strings.Builder
 	fmt.Fprintf(&lead, "\n### Example %d\n\nVerdict: %s\n", n, e.Verdict)
 	if e.Reason != "" {
 		fmt.Fprintf(&lead, "Reason: %s\n", e.Reason)
 	}
 	lead.WriteString(e.change())
+	lead.WriteString(e.unlisted(known))
 	var body string
 	if len(e.Edited) > 0 {
 		body = fmt.Sprintf("Corrected: %s\n", e.Edited)
@@ -345,6 +347,27 @@ func (e example) change() string {
 		return original.changeTo(&corrected)
 	}
 	return ""
+}
+
+// The lead line naming the paragraphs a corrected review cites that the review under way cannot cite
+// Such an id comes from a procedure changed after the correction or one that applies to the other event only
+// The correction is kept as written and the line points the review to the listed paragraph
+// 1. empty for a reject because its original review is the one not to follow
+// 2. empty when the edited review does not decode so a hand edited record still renders
+func (e example) unlisted(known citable) string {
+	if e.Verdict != feedback.VerdictEdit {
+		return ""
+	}
+	var corrected Diagnosis
+	if json.Unmarshal(e.Edited, &corrected) != nil {
+		return ""
+	}
+	ids := known.unknown(corrected)
+	if len(ids) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("Paragraphs this review does not list: %s. "+
+		"Follow the correction through the listed paragraph that states the same finding\n", strings.Join(ids, ", "))
 }
 
 // Newest select trace of a context that has no diagnose trace yet

@@ -620,7 +620,7 @@ func (d *Diagnoser) batchSelection(ctx context.Context, c Context, mode Knowledg
 	if err != nil {
 		return selectInput{}, Selection{}, err
 	}
-	selected, sel := fit(SelectByCode, items, chosen)
+	selected, sel := fit(SelectByCode, items, chosen, c.citable())
 	if err := d.recordSelection(ctx, c, selected); err != nil {
 		return selectInput{}, Selection{}, err
 	}
