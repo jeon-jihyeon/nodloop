@@ -358,6 +358,10 @@ func TestLedgerApprove(t *testing.T) {
 	// Its text alone nearly fills ReviewChars in runes so any other item of its folder overflows it
 	large := approved
 	large.ID, large.Content = "k-large", strings.Repeat("가", knowledge.ReviewChars-50)
+	largeClicks := large
+	largeClicks.Scope = knowledge.Scope{Scope: evidence.Scope{Metrics: []string{"click_count"}}}
+	conversions := candidate
+	conversions.Scope = knowledge.Scope{Scope: evidence.Scope{Metrics: []string{"conversion_count"}}}
 	// v2 and v3 were proposed from v1 and v2 was approved after them
 	proposedAt, v2ApprovedAt := at.Add(time.Minute), at.Add(2*time.Minute)
 	v2 := candidate
@@ -451,6 +455,11 @@ func TestLedgerApprove(t *testing.T) {
 			"an item whose folder may outgrow the review is refused and nothing is appended",
 			args{[]knowledge.Knowledge{large, candidate}, 1, "jed"},
 			want{history: knowledge.Set{candidate}, err: knowledge.ErrFolderFull},
+		},
+		{
+			"an item of another metric still fills the folder because one event may move both",
+			args{[]knowledge.Knowledge{largeClicks, conversions}, 1, "jed"},
+			want{history: knowledge.Set{conversions}, err: knowledge.ErrFolderFull},
 		},
 		{
 			"a candidate built from a version the approved one replaced is refused",

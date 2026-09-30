@@ -13,10 +13,10 @@ import (
 )
 
 // The system prompt of the CLI draft and part of the compaction answer so both paths see one contract
-const Rules = `You compact the approved knowledge items of one folder into fewer items.
+const Rules = `You compact the approved knowledge items of one folder so each review carries fewer items.
 1. Write the smallest set of new items that keeps every fact and every rule the old items state. Keep units, conditions and exceptions.
 2. Every new item names in from the ids of the old items it replaces. Every old item is named by at least one new item.
-3. No two new items of the same kind may share a folder. Items share a folder when their change contexts and metrics intersect, an empty list intersecting everything. Split two items of one kind by change context or metric, or by exceptions that cover every change context of the other. Dims never split a folder.
+3. No two new items of the same kind may share a folder. Items share a folder when their change contexts intersect, their metrics share one, an empty list sharing everything, and no dim key holds a different value on each. Split two items of one kind by change context, by exceptions that cover every change context of the other, by metrics with none in common, such as click_count and conversion_count, or by one dim key with a different value on each, such as topic shopping and topic sports. Folder size still counts every metric and dim together because one event may move several metrics.
 4. A new item may keep the id of one old item it replaces and becomes its next version. Otherwise leave the id empty.
 5. An old judgment with a veto is replaced by a judgment with a veto that still blocks the old example.
 6. Never contradict a correction. The corrections say what the reviewer fixed and the replay events must still reach their expected status.
