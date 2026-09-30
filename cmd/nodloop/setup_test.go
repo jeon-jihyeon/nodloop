@@ -222,6 +222,28 @@ func TestRunSetup(t *testing.T) {
 			},
 		},
 		{
+			"data dir whose export lost a metric the policy reads fails",
+			args{[]string{"--data-dir", "{lost}"}, "{home}", "", "", false, ""},
+			want{
+				1, "", `^nodloop setup: analysis: policy names a metric or dimension no event carries: ` +
+					`proportion_control reads metric "conversion_count"\n$`,
+				config{}, errDataDirUnset,
+			},
+		},
+		{
+			"data dir with a policy that does not parse fails",
+			args{[]string{"--data-dir", "{badpolicy}"}, "{home}", "", "", false, ""},
+			want{1, "", "^nodloop setup: analysis: policy is not valid yaml: ", config{}, errDataDirUnset},
+		},
+		{
+			"data dir with a policy that names a metric no event carries fails",
+			args{[]string{"--data-dir", "{typo}"}, "{home}", "", "", false, ""},
+			want{
+				1, "", `^nodloop setup: analysis: policy names a metric or dimension no event carries: zscore reads metric "clicks"\n$`,
+				config{}, errDataDirUnset,
+			},
+		},
+		{
 			"data dir without events fails",
 			args{[]string{"--data-dir", "{empty}"}, "{home}", "", "", false, ""},
 			want{1, "", "^nodloop setup: no events.csv: {empty}\n$", config{}, errDataDirUnset},
@@ -281,8 +303,16 @@ func TestRunSetup(t *testing.T) {
 			}
 			require.NoError(t, os.MkdirAll(filepath.Join(nested, "procedures", "team"), 0o700))
 			require.NoError(t, os.WriteFile(filepath.Join(nested, "procedures", "team", "a.md"), nil, 0o600))
-			demo, own := testkit.DemoDir(t), filepath.Join(t.TempDir(), "own")
+			demo, own, badPolicy := testkit.DemoDir(t), filepath.Join(t.TempDir(), "own"), filepath.Join(t.TempDir(), "bad")
 			require.NoError(t, os.CopyFS(own, os.DirFS(demo)))
+			require.NoError(t, os.CopyFS(badPolicy, os.DirFS(demo)))
+			require.NoError(t, os.WriteFile(filepath.Join(badPolicy, "policy.yaml"), []byte("version: v1\n  bad: [\n"), 0o600))
+			typo := filepath.Join(t.TempDir(), "typo")
+			require.NoError(t, os.CopyFS(typo, os.DirFS(demo)))
+			demoPolicy, err := os.ReadFile(filepath.Join(demo, "policy.yaml"))
+			require.NoError(t, err)
+			misspelled := strings.Replace(string(demoPolicy), "[click_count]", "[clicks]", 1)
+			require.NoError(t, os.WriteFile(filepath.Join(typo, "policy.yaml"), []byte(misspelled), 0o600))
 			archived := filepath.Join(t.TempDir(), "archived")
 			require.NoError(t, os.CopyFS(archived, os.DirFS(demo)))
 			require.NoError(t, os.MkdirAll(filepath.Join(archived, "procedures", "archive"), 0o700))
@@ -304,8 +334,8 @@ func TestRunSetup(t *testing.T) {
 			r := strings.NewReplacer(
 				"{demolink}", demoLink, "{sharedlink}", sharedLink,
 				"{home}", t.TempDir(), "{empty}", t.TempDir(), "{events}", events, "{policy}", policy, "{nested}", nested,
-				"{demo}", demo, "{own}", own, "{shared}", shared, "{team}", t.TempDir(), "{cwd}", cwd,
-				"{archived}", archived, "{private}", private,
+				"{demo}", demo, "{own}", own, "{badpolicy}", badPolicy, "{shared}", shared, "{team}", t.TempDir(), "{cwd}", cwd,
+				"{archived}", archived, "{typo}", typo, "{private}", private, "{lost}", lostMetricDir(t, "conversion_count"),
 			)
 			args := make([]string, 0, len(tc.args.args))
 			for _, a := range tc.args.args {

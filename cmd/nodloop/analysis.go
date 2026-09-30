@@ -7,8 +7,6 @@ import (
 	"fmt"
 	"io"
 	"time"
-
-	"github.com/jeon-jihyeon/nodloop/internal/analysis"
 )
 
 func runAnalysis(args []string, getenv func(string) string, now func() time.Time, stdout, stderr io.Writer) int {
@@ -27,11 +25,7 @@ func runAnalysis(args []string, getenv func(string) string, now func() time.Time
 	if err != nil {
 		return fail(stderr, "analysis", err)
 	}
-	policy, err := a.policy()
-	if err != nil {
-		return fail(stderr, "analysis", err)
-	}
-	cmd := analysisCommand{app: a, policy: policy, out: stdout}
+	cmd := analysisCommand{app: a, out: stdout}
 	switch args[0] {
 	case "policy":
 		err = cmd.print()
@@ -48,13 +42,16 @@ func runAnalysis(args []string, getenv func(string) string, now func() time.Time
 
 // The source is opened only for observe so policy prints without reading the data directory
 type analysisCommand struct {
-	app    app
-	policy analysis.Policy
-	out    io.Writer
+	app app
+	out io.Writer
 }
 
 func (c analysisCommand) print() error {
-	b, err := json.MarshalIndent(c.policy, "", "  ")
+	policy, err := c.app.policy()
+	if err != nil {
+		return err
+	}
+	b, err := json.MarshalIndent(policy, "", "  ")
 	if err != nil {
 		return err
 	}
@@ -70,11 +67,15 @@ func (c analysisCommand) observe(ctx context.Context, eventID string) error {
 	if err != nil {
 		return err
 	}
+	policy, err := c.app.observedPolicy(ctx, src)
+	if err != nil {
+		return err
+	}
 	ev, err := src.Event(ctx, eventID)
 	if err != nil {
 		return err
 	}
-	obs, err := c.policy.Analyze(ev)
+	obs, err := policy.Analyze(ev)
 	if err != nil {
 		return err
 	}

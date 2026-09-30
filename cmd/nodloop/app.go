@@ -6,8 +6,10 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -82,6 +84,24 @@ func (a app) policy() (analysis.Policy, error) {
 		return analysis.Policy{}, err
 	}
 	return analysis.LoadPolicy(b)
+}
+
+// The policy bound to the metrics and dimensions the events carry
+// A name no event carries never fails here because a running server must still review an export that lost a metric
+func (a app) observedPolicy(ctx context.Context, src *evidencefile.Source) (analysis.Policy, error) {
+	policy, err := a.policy()
+	if err != nil {
+		return analysis.Policy{}, err
+	}
+	metrics, err := src.Metrics(ctx)
+	if err != nil {
+		return analysis.Policy{}, err
+	}
+	dims, err := src.Dims(ctx)
+	if err != nil {
+		return analysis.Policy{}, err
+	}
+	return policy.Observed(metrics, slices.Collect(maps.Keys(dims))), nil
 }
 
 func (a app) makeRecordDir() (string, error) {
@@ -185,7 +205,7 @@ func (a app) pipeline() (pipeline, error) {
 	if err != nil {
 		return pipeline{}, err
 	}
-	policy, err := a.policy()
+	policy, err := a.observedPolicy(context.Background(), src)
 	if err != nil {
 		return pipeline{}, err
 	}

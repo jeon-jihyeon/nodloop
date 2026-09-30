@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"testing"
 	"time"
 
@@ -23,6 +24,11 @@ func TestRunAnalysis(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(filepath.Join(onlyPolicy, "policy.yaml"), demo, 0o600))
 	empty := t.TempDir()
+	typo := filepath.Join(t.TempDir(), "typo")
+	require.NoError(t, os.CopyFS(typo, os.DirFS(data)))
+	misspelled := strings.Replace(string(demo), "group_by: source", "group_by: sources", 1)
+	require.NoError(t, os.WriteFile(filepath.Join(typo, "policy.yaml"), []byte(misspelled), 0o600))
+	lost := lostMetricDir(t, "conversion_count")
 	getenv := func(k string) string {
 		return map[string]string{envFileDir: data}[k]
 	}
@@ -74,7 +80,24 @@ func TestRunAnalysis(t *testing.T) {
 		{
 			"observe without the data dir fails",
 			[]string{"observe", "--event", "tq-001", "--data-dir", "/nonexistent"},
-			want{1, `^$`, `^nodloop analysis: no policy.yaml: /nonexistent\n$`},
+			want{1, `^$`, `^nodloop analysis: evidence file source: stat /nonexistent: `},
+		},
+		{
+			"observe reports a dimension no event carries",
+			[]string{"observe", "--event", "tq-001", "--data-dir", typo},
+			want{0, "^concentration_change\tclick_count\tseverity=0.00\tadequate=false\t" +
+				"click_count: no event of the data set carries dimension sources to group by\n$", `^$`},
+		},
+		{
+			"observe reports a metric the export lost for every rule that reads it",
+			[]string{"observe", "--event", "tq-017", "--data-dir", lost},
+			want{0, "(?s)proportion_control\tconversion_count\tseverity=0.00\tadequate=false\tconversion_count: no event of the data set" +
+				".*coverage_rule\tconversion_count\tseverity=0.00\tadequate=false\tconversion_count: no event of the data set", `^$`},
+		},
+		{
+			"policy prints a policy whatever the events carry",
+			[]string{"policy", "--data-dir", typo},
+			want{0, `"group_by": "sources"`, `^$`},
 		},
 		{
 			"observe without a policy file fails",
