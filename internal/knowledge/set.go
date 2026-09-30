@@ -227,6 +227,8 @@ func (s Set) propose(draft Knowledge, now time.Time) (Knowledge, error) {
 // The records of an approval with the approved record first and the record it supersedes after it
 // 1. a candidate of a compaction is refused because only ApproveCompaction checks its replay
 // 2. a candidate built on a version that a compaction retired is refused because approving it would undo that compaction
+// 3. a new version that drops or weakens the veto of the approved version is refused with ErrVetoLifted
+// Only a retire by a named person lifts a veto
 func (s Set) approval(id string, version int, approver string, now time.Time) ([]Knowledge, error) {
 	history, err := s.historyOf(id)
 	if err != nil {
@@ -249,6 +251,10 @@ func (s Set) approval(id string, version int, approver string, now time.Time) ([
 	}
 	records := []Knowledge{to}
 	if superseded != nil {
+		if superseded.Veto != nil && !to.keepsVeto(*superseded.Veto) {
+			return nil, fmt.Errorf("%w: %s v%d does not block what v%d blocks. Restate the veto or retire v%d first",
+				ErrVetoLifted, id, version, superseded.Version, superseded.Version)
+		}
 		records = append(records, *superseded)
 	}
 	return records, nil

@@ -207,6 +207,11 @@ func (k Knowledge) checkVersion() error {
 	return nil
 }
 
+// Whether the veto of the item still blocks the example of the old veto
+func (k Knowledge) keepsVeto(old Veto) bool {
+	return k.Veto != nil && k.Veto.preserves(k.ID, k.Content, old)
+}
+
 // Whether both are one record as the store keeps it
 // Compared as JSON because a record read back from a file carries its times and examples in decoded form
 func (k Knowledge) same(other Knowledge) bool {
