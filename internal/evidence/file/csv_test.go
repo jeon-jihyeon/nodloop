@@ -103,6 +103,45 @@ func TestSourceEvent(t *testing.T) {
 			want: want{err: evidence.ErrMalformed, text: "events.csv line 2 column value"},
 		},
 		{
+			name: "a byte order mark before the header is dropped",
+			args: args{files: map[string]string{"events.csv": "\uFEFF" + events}, id: "e"},
+			want: want{event: evidence.Event{ID: "e", ChangeContext: evidence.ContextUnknown, Points: point}},
+		},
+		{
+			name: "a byte order mark before a quoted header is dropped",
+			args: args{files: map[string]string{"events.csv": "\uFEFF\"event_id\",timestamp,metric,value\n" +
+				"e,2026-09-22T10:00:00Z,m,1\n"}, id: "e"},
+			want: want{event: evidence.Event{ID: "e", ChangeContext: evidence.ContextUnknown, Points: point}},
+		},
+		{
+			name: "a byte order mark before a dimension column leaves the dimension name clean",
+			args: args{files: map[string]string{"events.csv": "\uFEFFsource,event_id,timestamp,metric,value\n" +
+				"a,e,2026-09-22T10:00:00Z,m,1\n"}, id: "e"},
+			want: want{event: evidence.Event{ID: "e", ChangeContext: evidence.ContextUnknown, Points: []evidence.Point{
+				{Time: at, Metric: "m", Value: 1, Dims: map[string]string{"source": "a"}},
+			}}},
+		},
+		{
+			name: "a byte order mark before the contexts header is dropped",
+			args: args{files: map[string]string{
+				"events.csv":   events,
+				"contexts.csv": "\uFEFF" + contexts + "e,planned_operational_change\n",
+			}, id: "e"},
+			want: want{event: evidence.Event{ID: "e", ChangeContext: evidence.ContextPlannedChange, Points: point}},
+		},
+		{
+			name: "a column without a name is not a dimension",
+			args: args{files: map[string]string{"events.csv": "event_id,timestamp,metric,value,\n" +
+				"e,2026-09-22T10:00:00Z,m,1,\n"}, id: "e"},
+			want: want{event: evidence.Event{ID: "e", ChangeContext: evidence.ContextUnknown, Points: point}},
+		},
+		{
+			name: "a repeated column name names the column",
+			args: args{files: map[string]string{"events.csv": "event_id,timestamp,metric,value,source,source\n" +
+				"e,2026-09-22T10:00:00Z,m,1,a,b\n"}, id: "e"},
+			want: want{err: evidence.ErrMalformed, text: `events.csv column 6 repeats column "source"`},
+		},
+		{
 			name: "empty event id names the line",
 			args: args{files: map[string]string{"events.csv": header + ",2026-09-22T10:00:00Z,m,1\n"}, id: "e"},
 			want: want{err: evidence.ErrMalformed, text: "events.csv line 2 empty event_id"},
