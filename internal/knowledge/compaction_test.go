@@ -771,3 +771,126 @@ func TestLedgerNarrowedDuringCompaction(t *testing.T) {
 		})
 	}
 }
+
+// A candidate built on a version that a compaction retired
+// Approving it would bring back what the compaction merged so it is refused however the steps interleave
+func TestLedgerCandidateOfCompactedVersion(t *testing.T) {
+	seeds := newCompactionSeeds()
+	passed := knowledge.Replay{Compaction: "c-1", Events: []knowledge.ReplayEvent{
+		{EventID: "e1", Expected: evidence.StatusNoAction, Got: evidence.StatusNoAction, TraceID: "r1"},
+	}}
+	reword := func(id string) knowledge.Knowledge {
+		return knowledge.Knowledge{
+			ID: id, Kind: knowledge.KindMeaning, Content: id + " reworded", Scope: seeds.b.Scope,
+			Evidence: knowledge.Evidence{FeedbackTraceIDs: []string{"t9"}}, Author: "jed",
+		}
+	}
+	stacked := reword("b")
+	stacked.Version, stacked.Base, stacked.Status, stacked.Time = 3, 2, knowledge.StatusCandidate, seeds.at.Add(time.Minute)
+	stacked.Basis = knowledge.BasisStated
+	steps := map[string]func(context.Context, *knowledge.Ledger) error{
+		"propose b": func(ctx context.Context, l *knowledge.Ledger) error {
+			_, _, err := l.Propose(ctx, reword("b"))
+			return err
+		},
+		"propose k-1": func(ctx context.Context, l *knowledge.Ledger) error {
+			_, _, err := l.Propose(ctx, reword("k-1"))
+			return err
+		},
+		"stack b v3 on v2": func(ctx context.Context, l *knowledge.Ledger) error {
+			return testkit.Err(l.Import(ctx, []knowledge.Knowledge{stacked}))
+		},
+		"propose compaction": func(ctx context.Context, l *knowledge.Ledger) error {
+			return testkit.Err(l.ProposeCompaction(ctx, "a", seeds.drafts()))
+		},
+		"approve compaction": func(ctx context.Context, l *knowledge.Ledger) error {
+			return testkit.Err(l.ApproveCompaction(ctx, "c-1", "jed", passed))
+		},
+		"approve b v2": func(ctx context.Context, l *knowledge.Ledger) error {
+			return testkit.Err(l.Approve(ctx, "b", 2, "jed"))
+		},
+		"approve b v3": func(ctx context.Context, l *knowledge.Ledger) error {
+			return testkit.Err(l.Approve(ctx, "b", 3, "jed"))
+		},
+		"approve k-1 v2": func(ctx context.Context, l *knowledge.Ledger) error {
+			return testkit.Err(l.Approve(ctx, "k-1", 2, "jed"))
+		},
+		"retire b v1": func(ctx context.Context, l *knowledge.Ledger) error { return testkit.Err(l.Retire(ctx, "b", 1, "jed")) },
+		"retire k-1 v1": func(ctx context.Context, l *knowledge.Ledger) error {
+			return testkit.Err(l.Retire(ctx, "k-1", 1, "jed"))
+		},
+	}
+	type want struct {
+		// The error of the last step
+		err error
+		// The approved version of the id the last step names and empty when none
+		approved string
+	}
+	tcs := []struct {
+		name string
+		// The steps in the order they run
+		args []string
+		want want
+	}{
+		{
+			"a candidate proposed before the compaction retired its base is refused",
+			[]string{"propose b", "propose compaction", "approve compaction", "approve b v2"},
+			want{knowledge.ErrCandidateOutdated, ""},
+		},
+		{
+			"a candidate approved before the compaction makes the compaction outdated",
+			[]string{"propose b", "propose compaction", "approve b v2", "approve compaction"},
+			want{knowledge.ErrCompactionOutdated, "b v2"},
+		},
+		{
+			"a candidate proposed after the compaction starts a new history and is approved",
+			[]string{"propose compaction", "approve compaction", "propose b", "approve b v2"},
+			want{nil, "b v2"},
+		},
+		{
+			"a candidate stacked on one built before the compaction is refused",
+			[]string{"propose b", "propose compaction", "approve compaction", "stack b v3 on v2", "approve b v3"},
+			want{knowledge.ErrCandidateOutdated, ""},
+		},
+		{
+			"a candidate proposed on top of a pending one after the compaction is refused",
+			[]string{"propose b", "propose compaction", "approve compaction", "propose b", "approve b v3"},
+			want{knowledge.ErrCandidateOutdated, ""},
+		},
+		{
+			"a candidate whose base a person retired is approved",
+			[]string{"propose b", "retire b v1", "approve b v2"},
+			want{nil, "b v2"},
+		},
+		{
+			"a candidate of a compacted item whose base a person retired is approved",
+			[]string{"propose compaction", "approve compaction", "propose k-1", "retire k-1 v1", "approve k-1 v2"},
+			want{nil, "k-1 v2"},
+		},
+	}
+	ctx := context.Background()
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			l, _ := newTestLedger(t, t.TempDir(), seeds.at.Add(time.Hour))
+			require.NoError(t, testkit.Err(l.Import(ctx, seeds.all())))
+			last := len(tc.args) - 1
+			for _, step := range tc.args[:last] {
+				require.NoError(t, steps[step](ctx, l), step)
+			}
+
+			err := steps[tc.args[last]](ctx, l)
+
+			assert.ErrorIs(t, err, tc.want.err)
+			id := strings.Fields(tc.args[last])[1]
+			if id == "compaction" {
+				id = "b"
+			}
+			approved := ""
+			if version, verr := l.ApprovedVersion(ctx, id); verr == nil {
+				approved = fmt.Sprintf("%s v%d", id, version)
+			}
+			assert.Equal(t, tc.want.approved, approved)
+		})
+	}
+}
