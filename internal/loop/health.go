@@ -96,6 +96,7 @@ type Issue struct {
 // 2. paragraph ids must be paragraphs of the procedures
 // 3. knowledge refs must name a recorded version
 // 4. scope change contexts and exceptions must be valid and scope metrics must be observed in some event
+// 5. exceptions must leave some change context of the scope or the item never applies
 func (h *History) BrokenReferences(procedures evidence.Procedures, metrics []string) []Issue {
 	refs := references{feedback: h.withFeedback, outcomes: h.withOutcome, paragraphs: map[string]bool{},
 		versions: map[knowledge.Ref]bool{}, metrics: metrics}
@@ -140,6 +141,7 @@ func (refs references) issues(k knowledge.Knowledge) []Issue {
 	for _, c := range k.Exceptions {
 		found.check("exceptions", string(c), c.Valid())
 	}
+	found.check("exceptions", fmt.Sprint(k.Exceptions), !k.Excluded())
 	for _, m := range k.Scope.Metrics {
 		found.check("metrics", m, slices.Contains(refs.metrics, m))
 	}

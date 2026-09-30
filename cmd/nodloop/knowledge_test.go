@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -136,8 +137,18 @@ func TestRunKnowledge(t *testing.T) {
 		},
 		{
 			"propose takes the trace as feedback evidence",
-			args{args: append(checkTracking, "--trace", "d1", "--scope-context", "launch", "--exception", "other")},
-			want{0, "^k-t\tv1\tcandidate\nscope\tchange contexts launch\nfolder\t[0-9]+ of 70000 chars\t[0-9]+ of 10 items in [a-z_ ]+\tno other item\n$", `^$`},
+			args{args: append(checkTracking, "--trace", "d1", "--scope-context", "no_known_change", "--scope-context", "unknown", "--exception", "unknown")},
+			want{0, "^k-t\tv1\tcandidate\nscope\tchange contexts no_known_change or unknown\nfolder\t[0-9]+ of 70000 chars\t[0-9]+ of 10 items in [a-z_ ]+\tno other item\n$", `^$`},
+		},
+		{
+			"propose with a misspelled exception fails before anything is recorded",
+			args{args: append(slices.Clone(proposeAgg), "--exception", "planned_change")},
+			want{1, `^$`, `^nodloop knowledge: knowledge: scope names no event: exception "planned_change" is not one of`},
+		},
+		{
+			"propose with exceptions over its only change context fails",
+			args{args: append(slices.Clone(proposeAgg), "--scope-context", "no_known_change", "--exception", "no_known_change")},
+			want{1, `^$`, `^nodloop knowledge: knowledge: scope names no event: the exceptions \[no_known_change\] cover`},
 		},
 		{
 			"propose with an unknown trace fails",

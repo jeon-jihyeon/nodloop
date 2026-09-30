@@ -194,12 +194,38 @@ func (k Knowledge) validate() error {
 		return fmt.Errorf("%w: %s needs one", ErrApproverRequired, k.Status)
 	case k.Author == "":
 		return ErrAuthorRequired
-	case k.Veto == nil:
+	}
+	if err := k.checkScope(); err != nil {
+		return err
+	}
+	if k.Veto == nil {
 		return nil
-	case k.Kind != KindJudgment:
+	}
+	if k.Kind != KindJudgment {
 		return ErrVetoKind
 	}
 	return k.Veto.check(k.ID, k.Content)
+}
+
+// Fails with ErrScopeInvalid when no event could ever match the scope and the exceptions
+// 1. a change context or exception outside the valid set matches no event
+// 2. exceptions that cover every change context left leave the item nothing to apply to
+// A misspelled exception would otherwise let the item reach the events the person meant to exclude
+func (k Knowledge) checkScope() error {
+	for _, c := range k.Scope.ChangeContexts {
+		if !c.Valid() {
+			return fmt.Errorf("%w: change context %q is not one of %v", ErrScopeInvalid, c, evidence.Contexts())
+		}
+	}
+	for _, c := range k.Exceptions {
+		if !c.Valid() {
+			return fmt.Errorf("%w: exception %q is not one of %v", ErrScopeInvalid, c, evidence.Contexts())
+		}
+	}
+	if k.Excluded() {
+		return fmt.Errorf("%w: the exceptions %v cover every change context of the scope", ErrScopeInvalid, k.Exceptions)
+	}
+	return nil
 }
 
 // A base names an earlier version so a walk down the bases always ends

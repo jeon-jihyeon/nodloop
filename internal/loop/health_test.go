@@ -210,6 +210,15 @@ func TestHistoryBrokenReferences(t *testing.T) {
 				{ID: "k", Version: 2, Field: "metrics", Reference: "views"},
 			},
 		},
+		{
+			"exceptions that cover every scoped change context",
+			args{
+				evidence:   knowledge.Evidence{ParagraphIDs: []string{"p#1"}},
+				scope:      knowledge.Scope{Scope: evidence.Scope{ChangeContexts: []evidence.Context{evidence.ContextNoKnownChange}}},
+				exceptions: []evidence.Context{evidence.ContextNoKnownChange},
+			},
+			[]loop.Issue{{ID: "k", Version: 2, Field: "exceptions", Reference: "[no_known_change]"}},
+		},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
