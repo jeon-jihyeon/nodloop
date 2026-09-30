@@ -263,7 +263,7 @@ func (c knowledgeCommand) proposeFrom(
 	return nil
 }
 
-// Prints the candidate and its veto and the folder it would join so the person sees both before approving
+// Prints the candidate and its scope and its veto and the folder it would join so the person sees how wide it reaches before approving
 func (c knowledgeCommand) propose(ctx context.Context, draft knowledge.Knowledge) error {
 	if err := c.app.checkReviews(ctx, draft.Evidence.TraceIDs()...); err != nil {
 		return err
@@ -272,7 +272,7 @@ func (c knowledgeCommand) propose(ctx context.Context, draft knowledge.Knowledge
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(c.out, "%s\tv%d\t%s\n", k.ID, k.Version, k.Status)
+	fmt.Fprintf(c.out, "%s\tv%d\t%s\nscope\t%s\n", k.ID, k.Version, k.Status, k.Scope)
 	for _, o := range overlaps {
 		fmt.Fprintf(c.out, "overlaps\t%s\tv%d\t%s\n", o.ID, o.Version, o.Status)
 	}

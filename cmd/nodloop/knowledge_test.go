@@ -112,7 +112,7 @@ func TestRunKnowledge(t *testing.T) {
 		{
 			"propose adds a candidate",
 			args{args: proposeAgg},
-			want{0, "^k-agg\tv1\tcandidate\nfolder\t[0-9]+ of 70000 chars\t[0-9]+ of 10 items in [a-z_ ]+\tno other item\n$", `^$`},
+			want{0, "^k-agg\tv1\tcandidate\nscope\tmetrics conversion_count\nfolder\t[0-9]+ of 70000 chars\t[0-9]+ of 10 items in [a-z_ ]+\tno other item\n$", `^$`},
 		},
 		{
 			"propose without an id generates one",
@@ -120,24 +120,24 @@ func TestRunKnowledge(t *testing.T) {
 				setup: nil,
 				args:  []string{"propose", "--kind", "meaning", "--content", "time bases differ", "--evidence-paragraph", "p#1"},
 			},
-			want{0, "^k-[0-9a-f]+\tv1\tcandidate\nfolder\t[0-9]+ of 70000 chars\t[0-9]+ of 10 items in [a-z_ ]+\tno other item\n$", `^$`},
+			want{0, "^k-[0-9a-f]+\tv1\tcandidate\nscope\tany event\nfolder\t[0-9]+ of 70000 chars\t[0-9]+ of 10 items in [a-z_ ]+\tno other item\n$", `^$`},
 		},
 		{
 			"propose lists overlaps",
 			args{setup: [][]string{proposeAgg}, args: proposeAgg2},
 			want{
-				0, "^k-agg2\tv1\tcandidate\noverlaps\tk-agg\tv1\tcandidate\nfolder\t[0-9]+ of 70000 chars\t[0-9]+ of 10 items in [a-z_ ]+\tno other item\n$", `^$`,
+				0, "^k-agg2\tv1\tcandidate\nscope\tmetrics conversion_count\noverlaps\tk-agg\tv1\tcandidate\nfolder\t[0-9]+ of 70000 chars\t[0-9]+ of 10 items in [a-z_ ]+\tno other item\n$", `^$`,
 			},
 		},
 		{
 			"propose of a known id adds the next version",
 			args{setup: [][]string{proposeAgg}, args: proposeAggV2},
-			want{0, "^k-agg\tv2\tcandidate\nfolder\t[0-9]+ of 70000 chars\t[0-9]+ of 10 items in [a-z_ ]+\tno other item\n$", `^$`},
+			want{0, "^k-agg\tv2\tcandidate\nscope\tmetrics conversion_count\nfolder\t[0-9]+ of 70000 chars\t[0-9]+ of 10 items in [a-z_ ]+\tno other item\n$", `^$`},
 		},
 		{
 			"propose takes the trace as feedback evidence",
 			args{args: append(checkTracking, "--trace", "d1", "--scope-context", "launch", "--exception", "other")},
-			want{0, "^k-t\tv1\tcandidate\nfolder\t[0-9]+ of 70000 chars\t[0-9]+ of 10 items in [a-z_ ]+\tno other item\n$", `^$`},
+			want{0, "^k-t\tv1\tcandidate\nscope\tchange contexts launch\nfolder\t[0-9]+ of 70000 chars\t[0-9]+ of 10 items in [a-z_ ]+\tno other item\n$", `^$`},
 		},
 		{
 			"propose with an unknown trace fails",
@@ -291,7 +291,7 @@ func TestRunKnowledge(t *testing.T) {
 			args{args: proposeSed},
 			want{
 				0,
-				"^k-sed\tv1\tcandidate\nveto\tBash\tcommand matches sed\\\\s\\+-i unless \"\"\n" +
+				"^k-sed\tv1\tcandidate\nscope\tany event\nveto\tBash\tcommand matches sed\\\\s\\+-i unless \"\"\n" +
 					"folder\t[0-9]+ of 70000 chars\t[0-9]+ of 10 items in [a-z_ ]+\tno other item\n$",
 				`^$`,
 			},
@@ -524,7 +524,11 @@ func TestRunKnowledgeFrom(t *testing.T) {
 			Status: knowledge.StatusCandidate, Author: "author", Drafted: drafted,
 		}
 	}
-	candidate := "^k-[0-9a-f]+\tv1\tcandidate\nfolder\t[0-9]+ of 70000 chars\t1 of 10 items in [a-z_ ]+\tno other item\n"
+	// The id line and the scope line and the folder line of a stored candidate
+	candidate := func(scope string) string {
+		return "^k-[0-9a-f]+\tv1\tcandidate\nscope\t" + scope + "\nfolder\t[0-9]+ of 70000 chars\t1 of 10 items in [a-z_ ]+\tno other item\n"
+	}
+	spike := "change contexts no_known_change\\. metrics click_count or conversion_count"
 	drafting := gomock.Cond(func(r llm.Request) bool { return r.System == diagnose.DraftRules && r.Model == "haiku" })
 	drafted := llm.Response{Output: json.RawMessage(`{"content":"Clicks that never convert are no incident."}`), CostUSD: 0.0012}
 	tcs := []struct {
@@ -538,7 +542,7 @@ func TestRunKnowledgeFrom(t *testing.T) {
 			"content given fills scope and evidence without a model call",
 			args{[]string{"--verdict", "reject"}, []string{"--kind", "meaning", "--content", "clicks without conversions"}},
 			func(*llmmock.MockClient) {},
-			want{0, candidate + "$", `^$`, []knowledge.Knowledge{filled(obs.Moved(), "clicks without conversions", false)}},
+			want{0, candidate(spike) + "$", `^$`, []knowledge.Knowledge{filled(obs.Moved(), "clicks without conversions", false)}},
 		},
 		{
 			"content left out is drafted by the model and marked",
@@ -547,7 +551,7 @@ func TestRunKnowledgeFrom(t *testing.T) {
 				client.EXPECT().Complete(gomock.Any(), drafting).Return(drafted, nil)
 			},
 			want{
-				0, candidate + "drafted\t0.0012 usd\tClicks that never convert are no incident\\.\n$", `^$`,
+				0, candidate(spike) + "drafted\t0.0012 usd\tClicks that never convert are no incident\\.\n$", `^$`,
 				[]knowledge.Knowledge{filled(obs.Moved(), "Clicks that never convert are no incident.", true)},
 			},
 		},
@@ -558,7 +562,10 @@ func TestRunKnowledgeFrom(t *testing.T) {
 				[]string{"--kind", "meaning", "--content", "c", "--scope-metric", "conversion_count"},
 			},
 			func(*llmmock.MockClient) {},
-			want{0, candidate + "$", `^$`, []knowledge.Knowledge{filled([]string{"conversion_count"}, "c", false)}},
+			want{
+				0, candidate("change contexts no_known_change\\. metrics conversion_count") + "$", `^$`,
+				[]knowledge.Knowledge{filled([]string{"conversion_count"}, "c", false)},
+			},
 		},
 		{
 			"an approved review is no correction",
