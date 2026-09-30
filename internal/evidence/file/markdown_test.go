@@ -77,9 +77,9 @@ func TestSourceProceduresParagraphs(t *testing.T) {
 			}},
 		},
 		{
-			name: "no procedures give no paragraphs",
+			name: "an empty procedures folder fails because no review could cite a paragraph",
 			args: args{procedures: map[string]string{}},
-			want: want{},
+			want: want{err: file.ErrNoProcedures},
 		},
 		{
 			name: "a byte order mark before the first heading keeps the heading",
@@ -293,13 +293,28 @@ func TestSourceProceduresDemo(t *testing.T) {
 	}
 }
 
+// Takes every permission from a folder and gives them back before the temp directory is removed
+// Skips the test where permissions do not stop a read such as for root or on windows
+func lock(t *testing.T, dir string) {
+	t.Helper()
+	require.NoError(t, os.Chmod(dir, 0))
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+	if _, err := os.ReadDir(dir); err == nil {
+		t.Skip("folder permissions do not stop a read here")
+	}
+}
+
 func TestSourceProceduresFolder(t *testing.T) {
 	type args struct {
 		folders []string
 		files   map[string]string
+		// Folders that cannot be opened during the run
+		locked []string
 	}
 	type want struct {
 		texts []string
+		// Paths relative to the data directory that the error names
+		named []string
 		err   error
 	}
 	tcs := []struct {
@@ -307,11 +322,64 @@ func TestSourceProceduresFolder(t *testing.T) {
 		args args
 		want want
 	}{
-		{"no folder reads as no procedures", args{}, want{}},
+		{"no folder fails because no review could cite a paragraph", args{}, want{err: file.ErrNoProcedures}},
+		{
+			"a folder of files that are not procedures fails",
+			args{folders: []string{"procedures"}, files: map[string]string{"procedures/notes.txt": "x"}},
+			want{err: file.ErrNoProcedures},
+		},
+		{
+			"a folder of Markdown it does not read fails with the entries named",
+			args{folders: []string{"procedures/team"}, files: map[string]string{
+				"procedures/GAP.MD": "skipped", "procedures/team/a.md": "nested",
+			}},
+			want{named: []string{"procedures/GAP.MD", "procedures/team"}, err: file.ErrProcedureSkipped},
+		},
+		{
+			"a folder that holds procedures only deeper down fails with the folder named",
+			args{folders: []string{"procedures/payments/latency"}, files: map[string]string{
+				"procedures/payments/latency/l.md": "nested",
+			}},
+			want{named: []string{"procedures/payments"}, err: file.ErrProcedureSkipped},
+		},
+		{
+			"Markdown beside a procedure is skipped so an archive never stops the reviews",
+			args{folders: []string{"procedures/archive"}, files: map[string]string{
+				"procedures/r.md": "current", "procedures/GAP.MD": "skipped", "procedures/archive/a.md": "old",
+			}},
+			want{texts: []string{"current"}},
+		},
+		{
+			"hidden entries and folders without Markdown are skipped",
+			args{folders: []string{"procedures/images", "procedures/.obsidian"}, files: map[string]string{
+				"procedures/r.md": "current", "procedures/images/a.png": "png",
+				"procedures/.obsidian/n.md": "hidden", "procedures/.draft.markdown": "hidden",
+				"procedures/.draft.md": "hidden", "procedures/._r.md": "apple double",
+			}},
+			want{texts: []string{"current"}},
+		},
 		{
 			"the procedures folder is read",
 			args{folders: []string{"procedures"}, files: map[string]string{"procedures/r.md": "current"}},
 			want{texts: []string{"current"}},
+		},
+		{
+			"a folder that cannot be opened beside a procedure never stops the reviews",
+			args{folders: []string{"procedures/private"}, files: map[string]string{"procedures/r.md": "current"}, locked: []string{"procedures/private"}},
+			want{texts: []string{"current"}},
+		},
+		{
+			"a folder that cannot be opened deeper down never stops the reviews",
+			args{
+				folders: []string{"procedures/archive/private"}, files: map[string]string{"procedures/r.md": "current"},
+				locked: []string{"procedures/archive/private"},
+			},
+			want{texts: []string{"current"}},
+		},
+		{
+			"a folder that cannot be opened without a procedure fails with the folder named",
+			args{folders: []string{"procedures/private"}, locked: []string{"procedures/private"}},
+			want{named: []string{"procedures/private"}, err: file.ErrProcedureSkipped},
 		},
 		{
 			"a runbooks folder fails with a rename hint",
@@ -347,6 +415,9 @@ func TestSourceProceduresFolder(t *testing.T) {
 			for name, content := range tc.args.files {
 				require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte(content), 0o600))
 			}
+			for _, folder := range tc.args.locked {
+				lock(t, filepath.Join(dir, folder))
+			}
 			src, err := file.New(dir)
 			require.NoError(t, err)
 			got, err := src.Procedures(ctx)
@@ -356,6 +427,97 @@ func TestSourceProceduresFolder(t *testing.T) {
 			}
 			assert.ErrorIs(t, err, tc.want.err)
 			assert.Equal(t, tc.want.texts, texts)
+			for _, rel := range tc.want.named {
+				assert.ErrorContains(t, err, filepath.Join(dir, rel))
+			}
+		})
+	}
+}
+
+func TestSourceSkipped(t *testing.T) {
+	type args struct {
+		folders []string
+		files   map[string]string
+		// Folders that cannot be opened during the run
+		locked []string
+	}
+	type want struct {
+		// Paths relative to the data directory
+		skipped []string
+		err     error
+	}
+	tcs := []struct {
+		name string
+		args args
+		want want
+	}{
+		{
+			"Markdown spelled otherwise and a folder that holds Markdown are named in name order",
+			args{folders: []string{"procedures/archive", "procedures/images"}, files: map[string]string{
+				"procedures/r.md": "current", "procedures/GAP.MD": "x", "procedures/gap.markdown": "x",
+				"procedures/archive/a.md": "old", "procedures/images/a.png": "png", "procedures/._r.md": "apple double",
+			}},
+			want{skipped: []string{"procedures/GAP.MD", "procedures/archive", "procedures/gap.markdown"}},
+		},
+		{
+			"a folder that holds Markdown only deeper down is named",
+			args{folders: []string{"procedures/payments/latency", "procedures/images/icons"}, files: map[string]string{
+				"procedures/r.md": "current", "procedures/payments/latency/l.md": "nested", "procedures/images/icons/a.png": "png",
+			}},
+			want{skipped: []string{"procedures/payments"}},
+		},
+		{
+			"Markdown under a hidden folder deeper down is not named",
+			args{folders: []string{"procedures/archive/.git"}, files: map[string]string{
+				"procedures/r.md": "current", "procedures/archive/.git/x.md": "hidden", "procedures/archive/.x.md": "hidden",
+			}},
+			want{},
+		},
+		{
+			"a folder that cannot be opened is named because nothing proves it holds no Markdown",
+			args{folders: []string{"procedures/private"}, files: map[string]string{"procedures/r.md": "current"}, locked: []string{"procedures/private"}},
+			want{skipped: []string{"procedures/private"}},
+		},
+		{
+			"a folder that cannot be opened deeper down names the folder under procedures",
+			args{
+				folders: []string{"procedures/archive/private"}, files: map[string]string{"procedures/r.md": "current"},
+				locked: []string{"procedures/archive/private"},
+			},
+			want{skipped: []string{"procedures/archive"}},
+		},
+		{
+			"procedures alone name nothing",
+			args{folders: []string{"procedures"}, files: map[string]string{"procedures/r.md": "current"}},
+			want{},
+		},
+		{"no folder fails", args{}, want{err: file.ErrNoProcedures}},
+	}
+	ctx := context.Background()
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			for _, folder := range tc.args.folders {
+				require.NoError(t, os.MkdirAll(filepath.Join(dir, folder), 0o700))
+			}
+			for name, content := range tc.args.files {
+				require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte(content), 0o600))
+			}
+			for _, folder := range tc.args.locked {
+				lock(t, filepath.Join(dir, folder))
+			}
+			src, err := file.New(dir)
+			require.NoError(t, err)
+			got, err := src.Skipped(ctx)
+			var skipped []string
+			for _, p := range got {
+				rel, relErr := filepath.Rel(dir, p)
+				require.NoError(t, relErr)
+				skipped = append(skipped, filepath.ToSlash(rel))
+			}
+			assert.ErrorIs(t, err, tc.want.err)
+			assert.Equal(t, tc.want.skipped, skipped)
 		})
 	}
 }
