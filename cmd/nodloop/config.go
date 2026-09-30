@@ -3,6 +3,7 @@ package main
 import (
 	"cmp"
 	"fmt"
+	"path/filepath"
 )
 
 const (
@@ -35,6 +36,7 @@ type config struct {
 // 2. never the working directory because a plugin server starts in the plugin folder
 // 3. HOME comes from getenv only so a test with an empty environment never reads the real config
 // 4. the source is only checked since the file source is the one implementation
+// 5. the record dir is one absolute path because it names the records and the approved veto file of every process
 func resolveConfig(getenv func(string) string, src, dataDir, recordDir string) (config, error) {
 	var uc userConfig
 	var homeRecords string
@@ -46,11 +48,11 @@ func resolveConfig(getenv func(string) string, src, dataDir, recordDir string) (
 		}
 		homeRecords = h.recordDir()
 	}
-	cfg := config{
-		dataDir:   cmp.Or(dataDir, getenv(envFileDir), uc.DataDir),
-		recordDir: cmp.Or(recordDir, getenv(envRecordDir), uc.RecordDir, homeRecords),
-		home:      h,
+	records, err := recordDirOf(recordDir, getenv(envRecordDir), uc.RecordDir, homeRecords)
+	if err != nil {
+		return config{}, err
 	}
+	cfg := config{dataDir: cmp.Or(dataDir, getenv(envFileDir), uc.DataDir), recordDir: records, home: h}
 	if cfg.dataDir == "" {
 		return config{}, fmt.Errorf("%w: run nodloop setup or set the variable", errDataDirUnset)
 	}
@@ -60,4 +62,24 @@ func resolveConfig(getenv func(string) string, src, dataDir, recordDir string) (
 	default:
 		return config{}, fmt.Errorf("%w: %q", errUnknownSource, s)
 	}
+}
+
+// The record dir as one clean absolute path
+// 1. a flag is relative to the working directory of the command that names it
+// 2. the variable and the setup config must be absolute because a server started in another folder would resolve them there
+func recordDirOf(flag, env, configured, fallback string) (string, error) {
+	if flag != "" {
+		return filepath.Abs(flag)
+	}
+	if env != "" && !filepath.IsAbs(env) {
+		return "", fmt.Errorf("%w: %s is %q. Set it to an absolute path or unset it", errRecordDirRelative, envRecordDir, env)
+	}
+	if env == "" && configured != "" && !filepath.IsAbs(configured) {
+		return "", fmt.Errorf("%w: record_dir in %s is %q. Run nodloop setup again or set it to an absolute path",
+			errRecordDirRelative, configFile, configured)
+	}
+	if dir := cmp.Or(env, configured, fallback); dir != "" {
+		return filepath.Clean(dir), nil
+	}
+	return "", nil
 }

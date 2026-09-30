@@ -17,6 +17,8 @@ var (
 	errVetoExample      = errors.New("veto example is not a JSON object")
 	// go deletes a go run build on exit so a hook on it would fail open
 	errExecutableTemporary = errors.New("the executable is a temporary go build. Install from a built binary such as one from go install")
+	// A relative path names other records and another approved veto file in every working directory
+	errRecordDirRelative = errors.New("the record directory must be an absolute path")
 )
 
 // A command that cannot run as asked

@@ -15,16 +15,23 @@ func TestResolveConfig(t *testing.T) {
 	demo := testkit.DemoDir(t)
 	h := homeDir(t.TempDir())
 	records := filepath.Join(t.TempDir(), "records")
-	_, err := h.setup(demo, records)
+	uc, err := newUserConfig(demo, records)
 	require.NoError(t, err)
+	require.NoError(t, h.save(uc))
 	dataOnly := homeDir(t.TempDir())
-	_, err = dataOnly.setup(demo, "")
+	uc, err = newUserConfig(demo, "")
 	require.NoError(t, err)
+	require.NoError(t, dataOnly.save(uc))
 	bare := homeDir(t.TempDir())
 	broken := homeDir(t.TempDir())
 	require.NoError(t, os.MkdirAll(broken.dir(), 0o755))
 	require.NoError(t, os.WriteFile(broken.configPath(), []byte("{broken"), 0o600))
 	env := map[string]string{envFileDir: "/data", envRecordDir: "/records"}
+	relative := homeDir(t.TempDir())
+	require.NoError(t, os.MkdirAll(relative.dir(), 0o755))
+	require.NoError(t, os.WriteFile(relative.configPath(), []byte(`{"record_dir":"records"}`), 0o600))
+	wd, err := os.Getwd()
+	require.NoError(t, err)
 	type args struct {
 		env       map[string]string
 		source    string
@@ -83,6 +90,31 @@ func TestResolveConfig(t *testing.T) {
 			want{config{}, errUnknownSource},
 		},
 		{"unknown flag source fails", args{env: env, source: "postgres"}, want{config{}, errUnknownSource}},
+		{
+			"a relative flag resolves against the working directory",
+			args{env: env, recordDir: "rec"},
+			want{config{dataDir: "/data", recordDir: filepath.Join(wd, "rec")}, nil},
+		},
+		{
+			"a flag with dot segments is cleaned",
+			args{env: env, recordDir: "/a/./b/../rec/"},
+			want{config{dataDir: "/data", recordDir: "/a/rec"}, nil},
+		},
+		{
+			"an absolute variable with a trailing slash is cleaned",
+			args{env: map[string]string{envFileDir: "/data", envRecordDir: "/records/"}},
+			want{config{dataDir: "/data", recordDir: "/records"}, nil},
+		},
+		{
+			"a relative variable fails because a server started elsewhere would read other records",
+			args{env: map[string]string{envFileDir: "/data", envRecordDir: "records"}},
+			want{config{}, errRecordDirRelative},
+		},
+		{
+			"a relative record dir in the setup config fails",
+			args{env: map[string]string{"HOME": string(relative), envFileDir: "/data"}},
+			want{config{}, errRecordDirRelative},
+		},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
