@@ -637,6 +637,61 @@ func TestLedgerProposeCompactionVetoConditions(t *testing.T) {
 	}
 }
 
+// j and k are two judgments of one folder with a sed veto and a perl veto
+// plain is k without its veto
+func TestLedgerProposeCompactionMergedVetoes(t *testing.T) {
+	seeds := newCompactionSeeds()
+	k := seeds.j
+	k.ID, k.Content = "k", "never perl -i"
+	k.Scope.ChangeContexts = []evidence.Context{evidence.ContextPlannedChange}
+	k.Veto = &knowledge.Veto{
+		Tool: "Bash", When: []knowledge.VetoCondition{{Field: "command", Match: `perl\s+-i`}},
+		Example: map[string]any{"command": "perl -i -pe s/a/b/ f"},
+	}
+	separate := seeds.drafts()
+	kept := separate[1]
+	kept.ID, kept.Content, kept.Veto = k.ID, k.Content, k.Veto
+	kept.Scope, kept.Evidence.Knowledge = k.Scope, []knowledge.Ref{{ID: "k", Version: 1}}
+	separate[1].Exceptions = k.Scope.ChangeContexts
+	separate = append(separate, kept)
+	merged := seeds.drafts()
+	merged[1].Evidence.Knowledge = []knowledge.Ref{{ID: "j", Version: 1}, {ID: "k", Version: 1}}
+	merged[1].Scope = k.Scope
+	merged[1].Veto.When = []knowledge.VetoCondition{{Field: "command", Match: `(?:sed\s+-i)|(?:perl\s+-i)`}}
+	shared := append(seeds.drafts(), kept)
+	plain := k
+	plain.Veto = nil
+	plainKept := kept
+	plainKept.Veto = nil
+	sharedPlain := append(seeds.drafts(), plainKept)
+	type args struct {
+		k      knowledge.Knowledge
+		drafts []knowledge.Knowledge
+	}
+	tcs := []struct {
+		name string
+		args args
+		want error
+	}{
+		{"one judgment per old veto is accepted", args{k, separate}, nil},
+		{"two vetoes merged into one alternation are refused", args{k, merged}, knowledge.ErrCompactionVeto},
+		{"two judgments that each keep an old veto may share a folder", args{k, shared}, nil},
+		{"a judgment without a veto may not share a folder with a veto judgment", args{plain, sharedPlain}, knowledge.ErrCompactionOverlap},
+	}
+	ctx := context.Background()
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			l, _ := newTestLedger(t, t.TempDir(), seeds.at.Add(time.Hour))
+			require.NoError(t, testkit.Err(l.Import(ctx, append(seeds.all(), tc.args.k))))
+
+			_, err := l.ProposeCompaction(ctx, "a", tc.args.drafts)
+
+			assert.ErrorIs(t, err, tc.want)
+		})
+	}
+}
+
 func TestLedgerApproveRefusesCompactionCandidate(t *testing.T) {
 	tcs := []struct {
 		name string
