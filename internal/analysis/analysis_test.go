@@ -100,7 +100,12 @@ func TestLoadPolicy(t *testing.T) {
 		{
 			name: "proportion with one metric is rejected",
 			args: "version: v1\nanalyzers:\n  - rule: proportion_control\n    metrics: [x]\n    baseline: 1\n    window: 1\n",
-			want: want{err: analysis.ErrMissingDenominator},
+			want: want{err: analysis.ErrProportionMetrics},
+		},
+		{
+			name: "proportion with a third metric is rejected instead of dropping it",
+			args: "version: v1\nanalyzers:\n  - rule: proportion_control\n    metrics: [x, y, z]\n    baseline: 1\n    window: 1\n",
+			want: want{err: analysis.ErrProportionMetrics},
 		},
 	}
 	for _, tc := range tcs {

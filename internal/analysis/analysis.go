@@ -244,8 +244,8 @@ func (spec RuleSpec) validate() error {
 	switch {
 	case len(spec.Metrics) == 0 || spec.Window <= 0 || spec.Baseline <= 0:
 		return ErrIncompleteAnalyzer
-	case spec.Rule == RuleProportion && len(spec.Metrics) < 2:
-		return ErrMissingDenominator
+	case spec.Rule == RuleProportion && len(spec.Metrics) != 2:
+		return ErrProportionMetrics
 	case spec.Rule == RuleConcentration && spec.GroupBy == "":
 		return ErrMissingGroupBy
 	}
