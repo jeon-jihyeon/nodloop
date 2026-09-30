@@ -55,13 +55,14 @@ func revisePrompt(prompt string, diag Diagnosis, reasons []string) string {
 
 // Reasons a review must be revised before it is recorded
 // Each reason names one defect the model can fix without new information
-// 1. a Decide paragraph never states a cause
-// 2. a ready_for_review cause cites no first step because a first step is a check
-// 3. a ready_for_review cause keeps a listed paragraph id because the gate holds a cause without one
-// 4. a ready_for_review keeps the first step of the lead procedure as a check
-// Any other status loses its causes at the gate so 2 and 3 never cost it a second model call
+// 1. the status and the causes agree as the shape reasons say
+// 2. a Decide paragraph never states a cause
+// 3. a ready_for_review cause cites no first step because a first step is a check
+// 4. a ready_for_review cause keeps a listed paragraph id because the gate holds a cause without one
+// 5. a ready_for_review keeps the first step of the lead procedure as a check
+// A hold loses its causes at the gate so 3 and 4 never cost it a second model call
 func (diag Diagnosis) revisions(firstSteps steps) []string {
-	var out []string
+	out := diag.shapeDefects()
 	ready := diag.Status == evidence.StatusReadyForReview
 	for _, c := range diag.Causes {
 		if id, ok := c.cites(evidence.ParagraphID.IsDecide); ok {
@@ -80,6 +81,24 @@ func (diag Diagnosis) revisions(firstSteps steps) []string {
 		return out
 	}
 	return append(out, fmt.Sprintf("check %s is missing. The first step of the lead procedure is always a check", step))
+}
+
+// Reasons the status and the causes contradict each other
+// The gate would hold each of them although the model can fix it
+// 1. a status outside the valid set
+// 2. a ready_for_review without a cause
+// 3. a no_action with causes
+func (diag Diagnosis) shapeDefects() []string {
+	switch {
+	case !diag.Status.Valid():
+		return []string{fmt.Sprintf("status %q is not one of %s, %s or %s",
+			diag.Status, evidence.StatusNoAction, evidence.StatusReadyForReview, evidence.StatusHold)}
+	case diag.Status == evidence.StatusReadyForReview && len(diag.Causes) == 0:
+		return []string{"ready_for_review gives no cause. Give the cause with the paragraph that states it or return hold"}
+	case diag.Status == evidence.StatusNoAction && len(diag.Causes) > 0:
+		return []string{"no_action carries causes. Return ready_for_review with the causes or no_action without them"}
+	}
+	return nil
 }
 
 // The first paragraph id the cause cites that the predicate holds for
