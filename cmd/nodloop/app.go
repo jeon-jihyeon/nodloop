@@ -234,6 +234,10 @@ func (a app) compactor(ledger *knowledge.Ledger) (*compact.Compactor, error) {
 	if err != nil {
 		return nil, err
 	}
+	outcomes, err := a.outcomes()
+	if err != nil {
+		return nil, err
+	}
 	dir, err := a.makeRecordDir()
 	if err != nil {
 		return nil, err
@@ -242,11 +246,11 @@ func (a app) compactor(ledger *knowledge.Ledger) (*compact.Compactor, error) {
 	if err != nil {
 		return nil, err
 	}
-	return compact.New(src, ledger, traces, verdicts, replays), nil
+	return compact.New(src, ledger, traces, verdicts, outcomes, replays), nil
 }
 
 func (p pipeline) compactor() *compact.Compactor {
-	return compact.New(p.src, p.ledger, p.traces, p.feedback, p.replays)
+	return compact.New(p.src, p.ledger, p.traces, p.feedback, p.outcomes, p.replays)
 }
 
 // Reviews over the preview of a compaction into the replay store
