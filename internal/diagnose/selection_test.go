@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -13,8 +14,10 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 
+	"github.com/jeon-jihyeon/nodloop/internal/analysis"
 	"github.com/jeon-jihyeon/nodloop/internal/diagnose"
 	"github.com/jeon-jihyeon/nodloop/internal/evidence"
+	evidencefile "github.com/jeon-jihyeon/nodloop/internal/evidence/file"
 	"github.com/jeon-jihyeon/nodloop/internal/feedback"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	"github.com/jeon-jihyeon/nodloop/internal/llm"
@@ -304,6 +307,103 @@ func TestPrepareCandidates(t *testing.T) {
 				t, wantOffer,
 				offer{knowledge: got.KnowledgeCandidates, examples: got.ExampleCandidates, omitted: got.CandidatesOmitted},
 			)
+		})
+	}
+}
+
+// Under a zscore only policy tq-005 moves click_count on source-a alone while every source stays in the event
+func TestPrepareKnowledgeScopedToMovedSeries(t *testing.T) {
+	policy, err := analysis.LoadPolicy([]byte("version: zscore-1\nanalyzers:\n" +
+		"  - rule: zscore\n    metrics: [click_count]\n    baseline: 36\n    window: 12\n    threshold: 3\n    min_samples: 12\n"))
+	require.NoError(t, err)
+	clicksOn := func(source string) knowledge.Scope {
+		return knowledge.Scope{Scope: evidence.Scope{Metrics: []string{"click_count"}}, Dims: map[string]string{"source": source}}
+	}
+	// The demo policy adds concentration_change whose source-b share on tq-005 falls only because source-a grew
+	demo := testkit.Policy(t)
+	// ev-1 of testdata diluted moves only source-d whose share rose because the other sources fell
+	diluted, err := analysis.LoadPolicy([]byte("version: diluted-1\nanalyzers:\n" +
+		"  - rule: zscore\n    metrics: [click_count]\n    baseline: 36\n    window: 12\n    threshold: 3\n    min_samples: 12\n" +
+		"  - rule: concentration_change\n    metrics: [click_count]\n    group_by: source\n    baseline: 36\n    window: 12\n" +
+		"    threshold: 0.15\n    min_samples: 12\n"))
+	require.NoError(t, err)
+	demoDir, dilutedDir := testkit.DemoDir(t), filepath.Join("testdata", "diluted")
+	clicks := knowledge.Scope{Scope: evidence.Scope{
+		ChangeContexts: []evidence.Context{evidence.ContextNoKnownChange}, Metrics: []string{"click_count"},
+	}}
+	type args struct {
+		policy analysis.Policy
+		scope  knowledge.Scope
+		dir    string
+		event  string
+	}
+	tcs := []struct {
+		name string
+		args args
+		want []string
+	}{
+		{"offers an item scoped to the source that moved", args{policy, clicksOn("source-a"), demoDir, "tq-005"}, []string{"k-scoped"}},
+		{
+			"skips an item scoped to a source the event carries that never moved",
+			args{policy, clicksOn("source-b"), demoDir, "tq-005"},
+			nil,
+		},
+		{
+			"offers an item scoped to a carried source without a metric",
+			args{policy, knowledge.Scope{Dims: map[string]string{"source": "source-b"}}, demoDir, "tq-005"},
+			[]string{"k-scoped"},
+		},
+		{
+			"offers an item scoped to the source whose share grew on its own",
+			args{demo, clicksOn("source-a"), demoDir, "tq-005"},
+			[]string{"k-scoped"},
+		},
+		{
+			"skips an item scoped to the source whose share only the other sources moved",
+			args{demo, clicksOn("source-b"), demoDir, "tq-005"},
+			nil,
+		},
+		{
+			"offers an item scoped to a diluted source without a metric",
+			args{demo, knowledge.Scope{Dims: map[string]string{"source": "source-b"}}, demoDir, "tq-005"},
+			[]string{"k-scoped"},
+		},
+		{
+			"offers a metric scope on an event whose only moved group is diluted",
+			args{diluted, clicks, dilutedDir, "ev-1"},
+			[]string{"k-scoped"},
+		},
+		{
+			"skips a scope on the diluted group of an event whose only moved group is diluted",
+			args{diluted, clicksOn("source-d"), dilutedDir, "ev-1"},
+			nil,
+		},
+	}
+	ctx := context.Background()
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			s := testkit.Open(t)
+			src, err := evidencefile.New(tc.args.dir)
+			require.NoError(t, err)
+			d := diagnose.New(src, tc.args.policy, nil, s.Traces, s.Feedback, s.Ledger, s.Clock.Now)
+			k := knowledge.Knowledge{
+				ID: "k-scoped", Kind: knowledge.KindMeaning, Content: "a source rule", Scope: tc.args.scope,
+				Evidence: knowledge.Evidence{ParagraphIDs: []string{"p-1"}}, Author: "author",
+			}
+			_, _, err = s.Ledger.Propose(ctx, k)
+			require.NoError(t, err)
+			_, err = s.Ledger.Approve(ctx, k.ID, 1, "author")
+			require.NoError(t, err)
+
+			got, err := d.Prepare(ctx, tc.args.event, diagnose.ModeInteractive, diagnose.Session{})
+			require.NoError(t, err)
+			var ids []string
+			for _, c := range got.KnowledgeCandidates {
+				ids = append(ids, c.ID)
+			}
+
+			assert.Equal(t, tc.want, ids)
 		})
 	}
 }

@@ -418,7 +418,7 @@ func (d *Diagnoser) prepare(ctx context.Context, eventID string, mode Mode, sess
 	if c.ExampleCandidates, examplesOmitted, err = d.exampleCandidates(ctx, eventID, excluded, ev.ChangeContext, obs.Metrics()); err != nil {
 		return Context{}, err
 	}
-	if c.KnowledgeCandidates, knowledgeOmitted, err = d.knowledgeCandidates(ctx, ev.ChangeContext, obs.Moved(), ev.Dims()); err != nil {
+	if c.KnowledgeCandidates, knowledgeOmitted, err = d.knowledgeCandidates(ctx, ev.ChangeContext, knowledge.Moved{Metrics: obs.Moved(), Series: obs.MovedSeries()}, ev.Dims()); err != nil {
 		return Context{}, err
 	}
 	c.CandidatesOmitted = examplesOmitted || knowledgeOmitted
