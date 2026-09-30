@@ -71,7 +71,7 @@ func TestRunKnowledge(t *testing.T) {
 		}
 		approveNamed = func(id string) []string { return []string{"approve", id, "--version", "1", "--approver", "reviewer"} }
 		retireSed    = []string{"retire", "k-sed", "--version", "1", "--approver", "reviewer"}
-		hooked       = `{"hooks":{"PreToolUse":[{"matcher":"*","hooks":[{"type":"command","command":"/bin/nodloop guard"}]}]}}`
+		hooked       = `{"hooks":{"PreToolUse":[{"matcher":"*","hooks":[{"type":"command","command":"{home}/bin/nodloop guard"}]}]}}`
 		vetoes       = "vetoes\t1 approved in .*/\\.claude/nodloop/vetoes\\.approved\\.[0-9a-f]+\\.yaml\t"
 		unhooked     = "guard hook not installed\\. Run nodloop guard install to enforce them\n"
 		folder       = "folder\t[0-9]+ of 70000 chars\t1 items\tno other item\n"
@@ -296,9 +296,21 @@ func TestRunKnowledge(t *testing.T) {
 			"approve of a veto says the guard hook is installed",
 			args{
 				setup: [][]string{proposeSed}, args: approveSed, home: "{home}",
-				files: map[string]string{".claude/settings.json": hooked},
+				files: map[string]string{".claude/settings.json": hooked, "bin/nodloop": ""},
 			},
 			want{0, "^k-sed\tv1\tapproved\treviewer\n" + vetoes + "guard hook installed\n" + folder + "$", `^$`},
+		},
+		{
+			"approve of a veto says a hook whose executable is gone is broken",
+			args{
+				setup: [][]string{proposeSed}, args: approveSed, home: "{home}",
+				files: map[string]string{".claude/settings.json": hooked},
+			},
+			want{
+				0, "^k-sed\tv1\tapproved\treviewer\n" + vetoes +
+					"guard hook broken: hook executable missing: .*/bin/nodloop\\. Run nodloop guard install to repair it\n" + folder + "$",
+				`^$`,
+			},
 		},
 		{
 			"approve of a veto with a broken settings file says the hook state is unknown",
@@ -406,7 +418,7 @@ func TestRunKnowledge(t *testing.T) {
 			dir := t.TempDir()
 			for rel, content := range tc.args.files {
 				require.NoError(t, os.MkdirAll(filepath.Dir(filepath.Join(dir, rel)), 0o700))
-				require.NoError(t, os.WriteFile(filepath.Join(dir, rel), []byte(content), 0o600))
+				require.NoError(t, os.WriteFile(filepath.Join(dir, rel), []byte(strings.ReplaceAll(content, "{home}", dir)), 0o600))
 			}
 			home := strings.NewReplacer("{home}", dir).Replace(tc.args.home)
 			data := t.TempDir()

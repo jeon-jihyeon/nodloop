@@ -1,12 +1,15 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/jeon-jihyeon/nodloop/internal/guard"
+	"github.com/jeon-jihyeon/nodloop/internal/settings"
 	settingsfile "github.com/jeon-jihyeon/nodloop/internal/settings/file"
 	"github.com/jeon-jihyeon/nodloop/internal/veto"
 	vetofile "github.com/jeon-jihyeon/nodloop/internal/veto/file"
@@ -76,16 +79,16 @@ func (c guardCommand) discover(cwd string) (veto.Vetoes, error) {
 	return sources.Vetoes(), err
 }
 
-// Loads veto files without evaluating them
+// Loads veto files without evaluating them and says whether the hook enforces them
 // 1. every file that loaded is listed even when another file is broken
 // 2. a veto whose tool names no tool call carries is named because it blocks nothing
-// 3. any load error fails after the listing
+// 3. the hook line always comes last and never changes the exit
+// 4. any load error fails after the listing
 func (c guardCommand) check(cwd string) error {
 	sources, err := vetofile.Discover(cwd, string(c.home))
 	if len(sources) == 0 && err == nil {
 		fmt.Fprintf(c.out, "no veto file found (looked for %s from %s up to its project root and under %s)\n",
 			vetofile.RelPath, cwd, c.home)
-		return nil
 	}
 	for _, s := range sources {
 		fmt.Fprintf(c.out, "%s: %d vetoes\n", s.Path, len(s.Vetoes))
@@ -95,8 +98,33 @@ func (c guardCommand) check(cwd string) error {
 			}
 		}
 	}
-	fmt.Fprintf(c.out, "merged: %d vetoes\n", len(sources.Vetoes()))
+	if len(sources) > 0 || err != nil {
+		fmt.Fprintf(c.out, "merged: %d vetoes\n", len(sources.Vetoes()))
+	}
+	hook := "guard hook unknown: " + errHomeUnknown.Error()
+	if c.home != "" {
+		hook = hookState(c.home.settingsPath(), c.home.stableBinary())
+	}
+	fmt.Fprintln(c.out, hook)
 	return err
+}
+
+// Whether guard enforces the vetoes as one line
+func hookState(settingsPath, stable string) string {
+	installed, err := settingsfile.Installed(settingsPath, stable)
+	switch {
+	case errors.Is(err, settings.ErrHooksOff):
+		return "guard hook off: " + settings.ErrHooksOff.Error() + " in " + settingsPath + " so no hook runs. Remove it to enforce them"
+	case errors.Is(err, settingsfile.ErrHookMissing) || errors.Is(err, settings.ErrHookNarrow):
+		return "guard hook broken: " + strings.ReplaceAll(err.Error(), "\n", "; ") + ". Run nodloop guard install to repair it"
+	case errors.Is(err, settingsfile.ErrHookStale):
+		return "guard hook stale: " + strings.ReplaceAll(err.Error(), "\n", "; ") + ". Run " + stable + " guard install so the hook follows the plugin"
+	case err != nil:
+		return "guard hook unknown: " + err.Error()
+	case !installed:
+		return "guard hook not installed. Run nodloop guard install to enforce them"
+	}
+	return "guard hook installed"
 }
 
 func (c guardCommand) install() error {

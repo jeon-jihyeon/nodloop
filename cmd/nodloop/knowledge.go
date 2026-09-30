@@ -19,7 +19,6 @@ import (
 	"github.com/jeon-jihyeon/nodloop/internal/jsonl"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	"github.com/jeon-jihyeon/nodloop/internal/llm"
-	settingsfile "github.com/jeon-jihyeon/nodloop/internal/settings/file"
 )
 
 // Flags of the knowledge subcommands
@@ -201,12 +200,14 @@ type knowledgeCommand struct {
 	// Empty without a home
 	vetoPath     string
 	settingsPath string
+	stableBinary string
 	out          io.Writer
 }
 
 func (a app) knowledgeCommand(ledger *knowledge.Ledger, out io.Writer) knowledgeCommand {
 	return knowledgeCommand{
-		app: a, ledger: ledger, vetoPath: a.vetoFile(a.cfg.recordDir).Path(), settingsPath: a.cfg.home.settingsPath(), out: out,
+		app: a, ledger: ledger, vetoPath: a.vetoFile(a.cfg.recordDir).Path(), settingsPath: a.cfg.home.settingsPath(),
+		stableBinary: a.cfg.home.stableBinary(), out: out,
 	}
 }
 
@@ -393,15 +394,7 @@ func (c knowledgeCommand) vetoLine(count int) {
 		fmt.Fprintln(c.out, "vetoes\tnot exported because the home directory is unknown")
 		return
 	}
-	hook := "guard hook installed"
-	installed, err := settingsfile.Installed(c.settingsPath)
-	switch {
-	case err != nil:
-		hook = "guard hook unknown: " + err.Error()
-	case !installed:
-		hook = "guard hook not installed. Run nodloop guard install to enforce them"
-	}
-	fmt.Fprintf(c.out, "vetoes\t%d approved in %s\t%s\n", count, c.vetoPath, hook)
+	fmt.Fprintf(c.out, "vetoes\t%d approved in %s\t%s\n", count, c.vetoPath, hookState(c.settingsPath, c.stableBinary))
 }
 
 // Appends the records of a jsonl file as they are

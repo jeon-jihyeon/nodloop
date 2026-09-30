@@ -32,6 +32,11 @@ func (h homeDir) recordDir() string {
 	return filepath.Join(h.dir(), "records")
 }
 
+// The link the plugin launcher points at the binary it runs before every run
+func (h homeDir) stableBinary() string {
+	return filepath.Join(h.dir(), "bin", "nodloop")
+}
+
 // Claude Code `settings.json` that holds the guard hook
 func (h homeDir) settingsPath() string {
 	return filepath.Join(string(h), ".claude", "settings.json")

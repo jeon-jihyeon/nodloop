@@ -3,6 +3,7 @@ package file_test
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 
@@ -229,36 +230,103 @@ func TestEditOfAnUnusablePath(t *testing.T) {
 }
 
 func TestInstalled(t *testing.T) {
-	b, err := os.ReadFile(filepath.Join("testdata", "installed.json"))
-	require.NoError(t, err)
-	installed := string(b)
-	b, err = os.ReadFile(filepath.Join("testdata", "existing.json"))
+	b, err := os.ReadFile(filepath.Join("testdata", "existing.json"))
 	require.NoError(t, err)
 	existing := string(b)
+	hook := func(matcher, command string) string {
+		return `{"hooks":{"PreToolUse":[{"matcher":"` + matcher + `","hooks":[{"type":"command","command":"` + command + `"}]}]}}`
+	}
 	type want struct {
 		installed bool
 		err       error
 	}
 	tcs := []struct {
 		name string
-		// Files in the directory keyed by name. settings.json is the one read
+		// Files in the directory keyed by name with {dir} for the directory
+		// settings.json is the one read and nodloop is an executable
+		// bin/nodloop is the stable link to the relative binary it names
 		args map[string]string
 		want want
 	}{
-		{"settings with the hook report it installed", map[string]string{"settings.json": installed}, want{true, nil}},
+		{"settings with the hook report it installed", map[string]string{"settings.json": hook("*", "{dir}/nodloop guard")}, want{true, nil}},
+		{
+			"an empty matcher covers every tool",
+			map[string]string{"settings.json": hook("", "{dir}/nodloop guard")},
+			want{true, nil},
+		},
+		{"a bare command name is not checked", map[string]string{"settings.json": hook("*", "nodloop guard")}, want{true, nil}},
+		{
+			"a hook whose executable is gone is broken",
+			map[string]string{"settings.json": hook("*", "{dir}/gone/nodloop guard")},
+			want{true, file.ErrHookMissing},
+		},
+		{
+			"a hook on Bash alone is broken",
+			map[string]string{"settings.json": hook("Bash", "{dir}/nodloop guard")},
+			want{true, settings.ErrHookNarrow},
+		},
+		{
+			"a hook under disableAllHooks is off",
+			map[string]string{"settings.json": `{"disableAllHooks":true,` + hook("*", "{dir}/nodloop guard")[1:]},
+			want{true, settings.ErrHooksOff},
+		},
+		{
+			"disableAllHooks false leaves the hook on",
+			map[string]string{"settings.json": `{"disableAllHooks":false,` + hook("*", "{dir}/nodloop guard")[1:]},
+			want{true, nil},
+		},
 		{"settings without the hook report it missing", map[string]string{"settings.json": existing}, want{false, nil}},
 		{"no settings file reports it missing", map[string]string{}, want{false, nil}},
 		{"broken settings fail", map[string]string{"settings.json": "{"}, want{false, file.ErrJSONInvalid}},
+		{
+			"a hook on the stable link passes",
+			map[string]string{"settings.json": hook("*", "{dir}/bin/nodloop guard"), "bin/nodloop": "v0.5.0/nodloop"},
+			want{true, nil},
+		},
+		{
+			"a hook on the binary the stable link names passes",
+			map[string]string{"settings.json": hook("*", "{dir}/bin/v0.5.0/nodloop guard"), "bin/nodloop": "v0.5.0/nodloop"},
+			want{true, nil},
+		},
+		{
+			"a hook left on an older binary beside the stable link is stale",
+			map[string]string{"settings.json": hook("*", "{dir}/bin/v0.4.1/nodloop guard"), "bin/nodloop": "v0.5.0/nodloop"},
+			want{true, file.ErrHookStale},
+		},
+		{
+			"a hook on an older binary without a stable link passes",
+			map[string]string{"settings.json": hook("*", "{dir}/bin/v0.4.1/nodloop guard")},
+			want{true, nil},
+		},
+		{
+			"a hook on a binary outside the stable link folder passes",
+			map[string]string{"settings.json": hook("*", "{dir}/nodloop guard"), "bin/nodloop": "v0.5.0/nodloop"},
+			want{true, nil},
+		},
+		{
+			"a gone older binary beside the stable link is missing",
+			map[string]string{"settings.json": hook("*", "{dir}/bin/v0.3.0/nodloop guard"), "bin/nodloop": "v0.5.0/nodloop"},
+			want{true, file.ErrHookMissing},
+		},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			dir := t.TempDir()
+			for _, exe := range []string{"nodloop", "bin/v0.4.1/nodloop", "bin/v0.5.0/nodloop"} {
+				require.NoError(t, os.MkdirAll(filepath.Join(dir, filepath.Dir(exe)), 0o700))
+				require.NoError(t, os.WriteFile(filepath.Join(dir, exe), nil, 0o700))
+			}
 			for name, content := range tc.args {
+				if name == "bin/nodloop" {
+					require.NoError(t, os.Symlink(content, filepath.Join(dir, name)))
+					continue
+				}
+				content = strings.ReplaceAll(content, "{dir}", dir)
 				require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte(content), 0o600))
 			}
 
-			got, err := file.Installed(filepath.Join(dir, "settings.json"))
+			got, err := file.Installed(filepath.Join(dir, "settings.json"), filepath.Join(dir, "bin", "nodloop"))
 
 			assert.ErrorIs(t, err, tc.want.err)
 			assert.Equal(t, tc.want.installed, got)
