@@ -267,6 +267,8 @@ type recordInput struct {
 	Examples  []appliedExample   `json:"examples"`
 	// Set when the select cut an item at a cap
 	Omitted bool `json:"omitted"`
+	// Set when a candidate list was cut at the cap
+	CandidatesOmitted bool `json:"candidates_omitted,omitempty"`
 	// Runes of each section as sent and the runes the caps left out
 	Chars        promptChars  `json:"chars"`
 	OmittedChars sectionChars `json:"omitted_chars"`
@@ -290,8 +292,9 @@ func (c Context) diagnoseTrace(now time.Time, selected *selectInput, run modelRu
 		Mode: c.Mode, PolicyVersion: c.PolicyVersion, PromptVersion: c.PromptVersion, ChangeContext: c.ChangeContext,
 		Metrics: c.Observations.Metrics(), Selector: selected.Selector, Procedures: c.Procedures, Knowledge: selected.givenKnowledge(),
 		Examples: slices.DeleteFunc(append([]appliedExample{}, selected.Examples...), appliedExample.dropped), Omitted: selected.Omitted,
-		Chars:        promptChars{Procedures: c.ProcedureChars, sectionChars: selected.Chars},
-		OmittedChars: selected.OmittedChars, UnknownIDs: unknownIDs,
+		CandidatesOmitted: c.CandidatesOmitted,
+		Chars:             promptChars{Procedures: c.ProcedureChars, sectionChars: selected.Chars},
+		OmittedChars:      selected.OmittedChars, UnknownIDs: unknownIDs,
 	}
 	tr.Input, _ = json.Marshal(in)
 	return tr

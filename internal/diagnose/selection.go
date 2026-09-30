@@ -120,12 +120,14 @@ func (e appliedExample) dropped() bool {
 // Stored as the select trace Input
 // Holds no float and no map so encoding never fails
 type selectInput struct {
-	Selector     Selector           `json:"mode"`
-	Knowledge    []AppliedKnowledge `json:"knowledge"`
-	Examples     []appliedExample   `json:"examples"`
-	Omitted      bool               `json:"omitted"`
-	Chars        sectionChars       `json:"chars"`
-	OmittedChars sectionChars       `json:"omitted_chars"`
+	Selector  Selector           `json:"mode"`
+	Knowledge []AppliedKnowledge `json:"knowledge"`
+	Examples  []appliedExample   `json:"examples"`
+	Omitted   bool               `json:"omitted"`
+	// Copied from the context because a list cut at the cap leaves no item size to show it
+	CandidatesOmitted bool         `json:"candidates_omitted,omitempty"`
+	Chars             sectionChars `json:"chars"`
+	OmittedChars      sectionChars `json:"omitted_chars"`
 }
 
 // Knowledge that reached the model whole or cut
@@ -298,6 +300,7 @@ func (d *Diagnoser) loadExamples(ctx context.Context, picks []Choice) ([]chosenE
 }
 
 func (d *Diagnoser) recordSelection(ctx context.Context, c Context, selected selectInput) error {
+	selected.CandidatesOmitted = c.CandidatesOmitted
 	tr := c.newTrace(trace.NameSelect, d.now())
 	tr.Input, _ = json.Marshal(selected)
 	return d.traces.Append(ctx, tr)
