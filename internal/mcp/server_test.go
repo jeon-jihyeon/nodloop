@@ -822,8 +822,10 @@ func TestServerProposeFrom(t *testing.T) {
 func TestServerApproveKeepsTheApproval(t *testing.T) {
 	type args struct {
 		// Files under the veto home keyed by relative path
-		// A file named .claude blocks the veto export
+		// A file named .claude blocks the veto export before it reads the records
 		files map[string]string
+		// Reads the store allows before the folder read fails
+		reads int
 	}
 	type want struct {
 		keys   []string
@@ -836,12 +838,12 @@ func TestServerApproveKeepsTheApproval(t *testing.T) {
 	}{
 		{
 			"a failed folder read answers the approval and the folder error",
-			args{},
+			args{nil, 1},
 			want{[]string{"id", "version", "status", "approver", "veto", "folder_error"}, knowledge.StatusApproved},
 		},
 		{
 			"a failed veto export and folder read answer the approval and both errors",
-			args{map[string]string{".claude": ""}},
+			args{map[string]string{".claude": ""}, 0},
 			want{[]string{"id", "version", "status", "approver", "veto", "veto_export_error", "folder_error"}, knowledge.StatusApproved},
 		},
 	}
@@ -861,7 +863,7 @@ func TestServerApproveKeepsTheApproval(t *testing.T) {
 				Evidence: knowledge.Evidence{ParagraphIDs: []string{knownSegment}}, Basis: knowledge.BasisStated,
 				Status: knowledge.StatusCandidate, Author: "author", Time: st.Clock.Now(),
 			}))
-			flaky := &testkit.FlakyKnowledge{Store: items, Reads: testkit.Reads{Allowed: 1, Err: assert.AnError}}
+			flaky := &testkit.FlakyKnowledge{Store: items, Reads: testkit.Reads{Allowed: tc.args.reads, Err: assert.AnError}}
 			st.Ledger = knowledge.NewLedger(flaky, vetofile.NewApprovedFile(home, dir), st.Clock.Now, func(p string) string { return p })
 			c := connect(t, st, "nodloop", "")
 			var got map[string]any

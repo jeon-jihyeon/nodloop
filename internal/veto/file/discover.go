@@ -22,7 +22,7 @@ func Discover(cwd, home string) (Sources, error) {
 	paths := projectPaths(cwd, home)
 	var errs []error
 	if home != "" {
-		approved, err := approvedPaths(home)
+		approved, err := approvedPaths(filepath.Join(home, dir))
 		errs = append(errs, err)
 		paths = append(append(paths, filepath.Join(home, RelPath)), approved...)
 	}
