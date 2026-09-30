@@ -155,6 +155,17 @@ func TestAnalyzeProportionControl(t *testing.T) {
 			}},
 		},
 		{
+			name: "a denominator series of other dimensions is inadequate",
+			args: args{spec: spec, points: slices.Concat(
+				hourly("conversion_count", a, shifted(50, 10)), hourly("click_count", b, slices.Repeat([]float64{1000}, 30)),
+			)},
+			want: analysis.Observations{{
+				Rule: analysis.RuleProportion, Target: a, Metric: "conversion_count",
+				Detail: analysis.Detail{Missing: 30}, Ref: analysis.Ref{EventID: "e1"},
+				Summary: "conversion_count source=a over click_count: 0 baseline points, fewer than 12 required",
+			}},
+		},
+		{
 			name: "short numerator series is inadequate",
 			args: args{spec: spec, points: slices.Concat(clicks, hourly("conversion_count", a, []float64{1, 2, 3}))},
 			want: analysis.Observations{{
