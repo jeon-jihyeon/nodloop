@@ -51,6 +51,14 @@ func TestSourceProcedures(t *testing.T) {
 			}}},
 		},
 		{
+			"a byte order mark before the front matter keeps the scope and the paragraph ids",
+			"\uFEFF---\nchange_contexts: [data_availability_issue]\n---\n" + body,
+			want{procedures: evidence.Procedures{{
+				Slug: "r", File: "r.md", Paragraphs: paragraphs,
+				Scope: evidence.Scope{ChangeContexts: []evidence.Context{evidence.ContextDataAvailability}},
+			}}},
+		},
+		{
 			"empty front matter is an empty scope",
 			"---\n---\n" + body,
 			want{procedures: evidence.Procedures{{Slug: "r", File: "r.md", Paragraphs: paragraphs}}},
