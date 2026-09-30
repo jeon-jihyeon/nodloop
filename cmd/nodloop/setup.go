@@ -8,6 +8,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+
+	"github.com/jeon-jihyeon/nodloop/internal/atomicfile"
 )
 
 const configFile = "config.json"
@@ -79,17 +81,21 @@ func (h homeDir) setup(dataDir, recordDir string) (userConfig, error) {
 	if err != nil {
 		return userConfig{}, err
 	}
-	if err := os.MkdirAll(h.dir(), 0o755); err != nil {
-		return userConfig{}, err
-	}
-	b, err := json.MarshalIndent(uc, "", "  ")
-	if err != nil {
-		return userConfig{}, err
-	}
-	if err := os.WriteFile(h.configPath(), append(b, '\n'), 0o600); err != nil {
+	if err := h.save(uc); err != nil {
 		return userConfig{}, err
 	}
 	return uc, nil
+}
+
+func (h homeDir) save(uc userConfig) error {
+	if err := os.MkdirAll(h.dir(), 0o755); err != nil {
+		return err
+	}
+	b, err := json.MarshalIndent(uc, "", "  ")
+	if err != nil {
+		return err
+	}
+	return atomicfile.Replace(h.configPath(), append(b, '\n'))
 }
 
 func runSetup(args []string, getenv func(string) string, stdout, stderr io.Writer) int {
