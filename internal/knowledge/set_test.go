@@ -1,6 +1,7 @@
 package knowledge_test
 
 import (
+	"slices"
 	"testing"
 	"time"
 
@@ -150,8 +151,40 @@ func TestSetApplicable(t *testing.T) {
 		Exceptions: []evidence.Context{evidence.ContextPlannedChange},
 	}
 	candidate := knowledge.Knowledge{ID: "candidate", Version: 1, Status: knowledge.StatusCandidate}
-	dims := knowledge.Dims{"source": {"source-a": {}, "source-b": {}}}
+	clicksOnB := knowledge.Knowledge{
+		ID: "clicks-on-b", Version: 1, Status: knowledge.StatusApproved,
+		Scope: knowledge.Scope{Scope: evidence.Scope{Metrics: []string{"click_count"}}, Dims: map[string]string{"source": "source-b"}},
+	}
+	onA, onB := map[string]string{"source": "source-a"}, map[string]string{"source": "source-b"}
+	dims := knowledge.Dims{"source": {"source-a": {}, "source-b": {}, "source-d": {}}, "region": {"eu": {}}}
 	change, unknown := evidence.ContextPlannedChange, evidence.ContextUnknown
+	type ref = evidence.SeriesRef
+	// Undiluted series that also name their metrics
+	series := func(refs ...evidence.SeriesRef) knowledge.Moved {
+		m := knowledge.Moved{Series: refs}
+		for _, ref := range refs {
+			if !slices.Contains(m.Metrics, ref.Metric) {
+				m.Metrics = append(m.Metrics, ref.Metric)
+			}
+		}
+		return m
+	}
+	// Only a diluted group of the metric moved
+	diluted := knowledge.Moved{Metrics: []string{"click_count"}}
+	clicks := knowledge.Knowledge{
+		ID: "clicks", Version: 1, Status: knowledge.StatusApproved,
+		Scope: knowledge.Scope{Scope: evidence.Scope{
+			ChangeContexts: []evidence.Context{evidence.ContextNoKnownChange}, Metrics: []string{"click_count"},
+		}},
+	}
+	clicksOnD := knowledge.Knowledge{
+		ID: "clicks-on-d", Version: 1, Status: knowledge.StatusApproved,
+		Scope: knowledge.Scope{Scope: evidence.Scope{Metrics: []string{"click_count"}}, Dims: map[string]string{"source": "source-d"}},
+	}
+	clicksInEU := knowledge.Knowledge{
+		ID: "clicks-in-eu", Version: 1, Status: knowledge.StatusApproved,
+		Scope: knowledge.Scope{Scope: evidence.Scope{Metrics: []string{"click_count"}}, Dims: map[string]string{"region": "eu"}},
+	}
 	type args struct {
 		item          knowledge.Knowledge
 		changeContext evidence.Context
@@ -162,24 +195,69 @@ func TestSetApplicable(t *testing.T) {
 		args args
 		want knowledge.Set
 	}{
-		{"unscoped approved item applies to any event", args{approved, unknown, nil}, knowledge.Set{approved}},
-		{"candidate never applies", args{candidate, unknown, nil}, knowledge.Set{}},
+		{"unscoped approved item applies to any event", args{approved, unknown, knowledge.Moved{}}, knowledge.Set{approved}},
+		{"candidate never applies", args{candidate, unknown, knowledge.Moved{}}, knowledge.Set{}},
 		{
 			"moved metric matches a metric scope",
-			args{metric, unknown, knowledge.Moved{"click_count", "impressions"}},
+			args{metric, unknown, series(ref{Metric: "click_count"}, ref{Metric: "impressions"})},
 			knowledge.Set{metric},
 		},
 		{
 			"metric the event carries but nobody flagged does not match",
-			args{metric, unknown, knowledge.Moved{"click_count"}},
+			args{metric, unknown, series(ref{Metric: "click_count"})},
 			knowledge.Set{},
 		},
-		{"context scope matches its change context", args{planned, change, nil}, knowledge.Set{planned}},
-		{"context scope skips another change context", args{planned, unknown, nil}, knowledge.Set{}},
-		{"exception skips its change context", args{excepted, change, nil}, knowledge.Set{}},
-		{"exception leaves another change context", args{excepted, unknown, nil}, knowledge.Set{excepted}},
-		{"dimension value the event carries matches", args{dim, unknown, nil}, knowledge.Set{dim}},
-		{"dimension value the event lacks does not match", args{otherDim, unknown, nil}, knowledge.Set{}},
+		{
+			"metric and dim value moved on one series match",
+			args{clicksOnB, unknown, series(ref{Metric: "click_count", Dims: onB})},
+			knowledge.Set{clicksOnB},
+		},
+		{
+			"metric that moved on another dim value does not match although the event carries the value",
+			args{clicksOnB, unknown, series(ref{Metric: "click_count", Dims: onA})},
+			knowledge.Set{},
+		},
+		{
+			"another metric that moved on the dim value does not match",
+			args{clicksOnB, unknown, series(ref{Metric: "click_count", Dims: onA}, ref{Metric: "conversion_count", Dims: onB})},
+			knowledge.Set{},
+		},
+		{
+			"series whose target leaves out the dim falls back to the values the event carries",
+			args{clicksOnB, unknown, series(ref{Metric: "click_count", Dims: map[string]string{"topic": "shopping"}})},
+			knowledge.Set{clicksOnB},
+		},
+		{
+			"dim value without a metric applies when nothing moved",
+			args{dim, unknown, knowledge.Moved{}},
+			knowledge.Set{dim},
+		},
+		{
+			"dim value without a metric applies whatever moved on another value",
+			args{dim, unknown, series(ref{Metric: "click_count", Dims: onA})},
+			knowledge.Set{dim},
+		},
+		{
+			"a metric moved only by a diluted group matches a metric scope",
+			args{clicks, evidence.ContextNoKnownChange, diluted},
+			knowledge.Set{clicks},
+		},
+		{
+			"a diluted group never admits a scope on its own dim value",
+			args{clicksOnD, unknown, diluted},
+			knowledge.Set{},
+		},
+		{
+			"a diluted movement admits no scope on a dim key of another dimension either",
+			args{clicksInEU, unknown, diluted},
+			knowledge.Set{},
+		},
+		{"context scope matches its change context", args{planned, change, knowledge.Moved{}}, knowledge.Set{planned}},
+		{"context scope skips another change context", args{planned, unknown, knowledge.Moved{}}, knowledge.Set{}},
+		{"exception skips its change context", args{excepted, change, knowledge.Moved{}}, knowledge.Set{}},
+		{"exception leaves another change context", args{excepted, unknown, knowledge.Moved{}}, knowledge.Set{excepted}},
+		{"dimension value the event carries matches", args{dim, unknown, knowledge.Moved{}}, knowledge.Set{dim}},
+		{"dimension value the event lacks does not match", args{otherDim, unknown, knowledge.Moved{}}, knowledge.Set{}},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {

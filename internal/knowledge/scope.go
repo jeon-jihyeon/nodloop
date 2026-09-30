@@ -16,9 +16,16 @@ type Scope struct {
 	Dims map[string]string `json:"dims,omitempty"`
 }
 
-// Metrics an observation flagged on the event
+// What moved on the event at two levels
 // A metric scope matches those and not every series the event carries
-type Moved []string
+type Moved struct {
+	// Metrics an adequate observation moved
+	// A group diluted by the other groups still moves its metric
+	Metrics []string
+	// Series an adequate observation flagged with the dimension values it targets
+	// A diluted group is left out so a dim value the other groups moved never admits a scope
+	Series []evidence.SeriesRef
+}
 
 // Dimension values the event carries keyed by dimension name
 type Dims map[string]map[string]struct{}
@@ -35,13 +42,47 @@ func (d Dims) Names() []string {
 	return names
 }
 
-// Whether the event fits the procedure scope and carries every dim value the scope names
+// Whether the event fits the procedure scope and the dims of the scope
+// 1. with metrics only one moved metric fits
+// 2. with metrics and dims one moved series must fit both axes so a dim value that only sits in the event never admits it
+// 3. without metrics the event must carry every dim value because such an item reads the event whatever moved
 func (s Scope) admits(changeContext evidence.Context, moved Moved, dims Dims) bool {
-	if !s.Matches(changeContext, moved) {
+	if !s.Matches(changeContext, moved.Metrics) {
+		return false
+	}
+	if len(s.Metrics) == 0 {
+		return s.carried(dims)
+	}
+	if len(s.Dims) == 0 {
+		return true
+	}
+	for _, ref := range moved.Series {
+		if s.admitsSeries(ref, dims) {
+			return true
+		}
+	}
+	return false
+}
+
+func (s Scope) carried(dims Dims) bool {
+	for key, value := range s.Dims {
+		if !dims.Has(key, value) {
+			return false
+		}
+	}
+	return true
+}
+
+// Whether a moved series fits the metric and every dim value of the scope
+// A dim the series target does not name falls back to the values the event carries
+// A concentration target names only its group dimension
+func (s Scope) admitsSeries(ref evidence.SeriesRef, dims Dims) bool {
+	if !slices.Contains(s.Metrics, ref.Metric) {
 		return false
 	}
 	for key, value := range s.Dims {
-		if !dims.Has(key, value) {
+		got, named := ref.Dims[key]
+		if named && got != value || !named && !dims.Has(key, value) {
 			return false
 		}
 	}
