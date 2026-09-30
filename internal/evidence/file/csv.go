@@ -1,6 +1,7 @@
 package file
 
 import (
+	"bufio"
 	"encoding/csv"
 	"errors"
 	"fmt"
@@ -31,8 +32,15 @@ type table struct {
 	positions map[string]int
 }
 
+// 1. a leading byte order mark is dropped because it would fuse with the first column name
+// 2. a column without a name is left out because a trailing comma leaves one on every row
+// 3. a repeated column name is rejected because the later column would silently win
 func readTable(name string, r io.Reader, required []string) (table, error) {
-	cr := csv.NewReader(r)
+	br := bufio.NewReader(r)
+	if b, err := br.Peek(len(byteOrderMark)); err == nil && string(b) == byteOrderMark {
+		_, _ = br.Discard(len(byteOrderMark))
+	}
+	cr := csv.NewReader(br)
 	cr.TrimLeadingSpace = true
 	header, err := cr.Read()
 	if err != nil {
@@ -40,7 +48,14 @@ func readTable(name string, r io.Reader, required []string) (table, error) {
 	}
 	positions := make(map[string]int, len(header))
 	for i, h := range header {
-		positions[strings.TrimSpace(h)] = i
+		h = strings.TrimSpace(h)
+		if h == "" {
+			continue
+		}
+		if _, ok := positions[h]; ok {
+			return table{}, fmt.Errorf("%w: %s column %d repeats column %q", evidence.ErrMalformed, name, i+1, h)
+		}
+		positions[h] = i
 	}
 	for _, c := range required {
 		if _, ok := positions[c]; !ok {
