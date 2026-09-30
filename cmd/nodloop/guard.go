@@ -88,8 +88,9 @@ func (c guardCommand) discover(cwd string) (veto.Vetoes, error) {
 // Loads veto files without evaluating them and says whether the hook enforces them
 // 1. every file that loaded is listed even when another file is broken
 // 2. a veto whose tool names no tool call carries is named because it blocks nothing
-// 3. the hook line always comes last and never changes the exit
-// 4. any load error fails after the listing
+// 3. an approved file of a relative record directory is named on stderr and never changes the exit
+// 4. the hook line always comes last and never changes the exit
+// 5. any load error fails after the listing
 func (c guardCommand) check(cwd string) error {
 	sources, err := vetofile.Discover(cwd, string(c.home))
 	if len(sources) == 0 && err == nil {
@@ -98,6 +99,9 @@ func (c guardCommand) check(cwd string) error {
 	}
 	for _, s := range sources {
 		fmt.Fprintf(c.out, "%s: %d vetoes\n", s.Path, len(s.Vetoes))
+		if err := s.Orphan(); err != nil {
+			fmt.Fprintf(c.errOut, "nodloop: %v\n", err)
+		}
 		for _, v := range s.Vetoes {
 			if unknown := v.UnknownTools(); len(unknown) > 0 {
 				fmt.Fprintf(c.out, "%s: veto %s blocks nothing on %q: %v\n", s.Path, v.ID(), unknown, veto.ErrToolUnknown)

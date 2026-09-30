@@ -29,6 +29,7 @@ import (
 	"github.com/jeon-jihyeon/nodloop/internal/testkit"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
 	tracefile "github.com/jeon-jihyeon/nodloop/internal/trace/file"
+	vetofile "github.com/jeon-jihyeon/nodloop/internal/veto/file"
 )
 
 func TestRunKnowledge(t *testing.T) {
@@ -79,7 +80,7 @@ func TestRunKnowledge(t *testing.T) {
 		hooked       = `{"hooks":{"PreToolUse":[{"matcher":"*","hooks":[{"type":"command","command":"{home}/bin/nodloop guard"}]}]}}`
 		vetoes       = "vetoes\t1 approved in .*/\\.claude/nodloop/vetoes\\.approved\\.[0-9a-f]+\\.yaml\t"
 		unhooked     = "guard hook not installed\\. Run nodloop guard install to enforce them\n"
-		folder       = "folder\t[0-9]+ of 70000 chars\t1 of 10 items in [a-z_ ]+\tno other item\n"
+		folder       = "folder\t[0-9]+ of 70000 chars\t1 of 10 items in [a-z_]+\tno other item\n"
 	)
 	type args struct {
 		// Commands that must succeed before the one under test
@@ -90,7 +91,12 @@ func TestRunKnowledge(t *testing.T) {
 		// `{home}` is a temp dir and empty means no home
 		home string
 		// Files under the temp home keyed by relative path such as `.claude/settings.json`
+		// `{home}` in a content is the temp home
 		files map[string]string
+		// Symlinks under the temp home keyed by relative path to the target they name
+		links map[string]string
+		// A directory under the temp home made read only before the run
+		readOnly string
 		// Content of `policy.yaml` in the data dir
 		policy string
 		// Content of `events.csv` in the data dir
@@ -117,7 +123,7 @@ func TestRunKnowledge(t *testing.T) {
 		{
 			"propose adds a candidate",
 			args{args: proposeAgg},
-			want{0, "^k-agg\tv1\tcandidate\nscope\tmetrics conversion_count\nfolder\t[0-9]+ of 70000 chars\t[0-9]+ of 10 items in [a-z_ ]+\tno other item\n$", `^$`},
+			want{0, "^k-agg\tv1\tcandidate\nscope\tmetrics conversion_count\nfolder\t[0-9]+ of 70000 chars\t[0-9]+ of 10 items in [a-z_]+\tno other item\n$", `^$`},
 		},
 		{
 			"propose without an id generates one",
@@ -125,24 +131,24 @@ func TestRunKnowledge(t *testing.T) {
 				setup: nil,
 				args:  []string{"propose", "--kind", "meaning", "--content", "time bases differ", "--evidence-paragraph", "p#1"},
 			},
-			want{0, "^k-[0-9a-f]+\tv1\tcandidate\nscope\tany event\nfolder\t[0-9]+ of 70000 chars\t[0-9]+ of 10 items in [a-z_ ]+\tno other item\n$", `^$`},
+			want{0, "^k-[0-9a-f]+\tv1\tcandidate\nscope\tany event\nfolder\t[0-9]+ of 70000 chars\t[0-9]+ of 10 items in [a-z_]+\tno other item\n$", `^$`},
 		},
 		{
 			"propose lists overlaps",
 			args{setup: [][]string{proposeAgg}, args: proposeAgg2},
 			want{
-				0, "^k-agg2\tv1\tcandidate\nscope\tmetrics conversion_count\noverlaps\tk-agg\tv1\tcandidate\nfolder\t[0-9]+ of 70000 chars\t[0-9]+ of 10 items in [a-z_ ]+\tno other item\n$", `^$`,
+				0, "^k-agg2\tv1\tcandidate\nscope\tmetrics conversion_count\noverlaps\tk-agg\tv1\tcandidate\nfolder\t[0-9]+ of 70000 chars\t[0-9]+ of 10 items in [a-z_]+\tno other item\n$", `^$`,
 			},
 		},
 		{
 			"propose of a known id adds the next version",
 			args{setup: [][]string{proposeAgg}, args: proposeAggV2},
-			want{0, "^k-agg\tv2\tcandidate\nscope\tmetrics conversion_count\nfolder\t[0-9]+ of 70000 chars\t[0-9]+ of 10 items in [a-z_ ]+\tno other item\n$", `^$`},
+			want{0, "^k-agg\tv2\tcandidate\nscope\tmetrics conversion_count\nfolder\t[0-9]+ of 70000 chars\t[0-9]+ of 10 items in [a-z_]+\tno other item\n$", `^$`},
 		},
 		{
 			"propose takes the trace as feedback evidence",
 			args{args: append(checkTracking, "--trace", "d1", "--scope-context", "no_known_change", "--scope-context", "unknown", "--exception", "unknown")},
-			want{0, "^k-t\tv1\tcandidate\nscope\tchange contexts no_known_change or unknown\nfolder\t[0-9]+ of 70000 chars\t[0-9]+ of 10 items in [a-z_ ]+\tno other item\n$", `^$`},
+			want{0, "^k-t\tv1\tcandidate\nscope\tchange contexts no_known_change or unknown\nfolder\t[0-9]+ of 70000 chars\t[0-9]+ of 10 items in [a-z_]+\tno other item\n$", `^$`},
 		},
 		{
 			"propose with a misspelled exception fails before anything is recorded",
@@ -171,6 +177,22 @@ func TestRunKnowledge(t *testing.T) {
 			"propose with a scope metric reads the events",
 			args{args: proposeAgg, events: "nope\n"},
 			want{1, `^$`, `^nodloop knowledge: .+`},
+		},
+		{
+			"import of a file again skips the records already recorded",
+			args{setup: [][]string{{"import", "--file", valid}}, args: []string{"import", "--file", valid}},
+			want{0, "^imported 0\tskipped 1 already recorded\n$", `^$`},
+		},
+		{
+			"import of a file again after a retire keeps the item retired",
+			args{
+				setup: [][]string{
+					{"import", "--file", valid}, {"retire", "k-imp", "--version", "1", "--approver", "reviewer"},
+					{"import", "--file", valid},
+				},
+				args: []string{"list"},
+			},
+			want{0, `^$`, `^$`},
 		},
 		{
 			"propose with an unknown trace fails",
@@ -274,22 +296,6 @@ func TestRunKnowledge(t *testing.T) {
 			want{0, "^imported 1\n$", `^$`},
 		},
 		{
-			"import of a file again skips the records already recorded",
-			args{setup: [][]string{{"import", "--file", valid}}, args: []string{"import", "--file", valid}},
-			want{0, "^imported 0\tskipped 1 already recorded\n$", `^$`},
-		},
-		{
-			"import of a file again after a retire keeps the item retired",
-			args{
-				setup: [][]string{
-					{"import", "--file", valid}, {"retire", "k-imp", "--version", "1", "--approver", "reviewer"},
-					{"import", "--file", valid},
-				},
-				args: []string{"list"},
-			},
-			want{0, `^$`, `^$`},
-		},
-		{
 			"import without a file fails",
 			args{args: []string{"import"}},
 			want{1, `^$`, `^nodloop knowledge: --file is required\n\nusage:`},
@@ -325,7 +331,7 @@ func TestRunKnowledge(t *testing.T) {
 			want{
 				0,
 				"^k-sed\tv1\tcandidate\nscope\tany event\nveto\tBash\tcommand matches sed\\\\s\\+-i unless \"\"\n" +
-					"folder\t[0-9]+ of 70000 chars\t[0-9]+ of 10 items in [a-z_ ]+\tno other item\n$",
+					"folder\t[0-9]+ of 70000 chars\t[0-9]+ of 10 items in [a-z_]+\tno other item\n$",
 				`^$`,
 			},
 		},
@@ -363,6 +369,33 @@ func TestRunKnowledge(t *testing.T) {
 					"guard hook broken: hook executable missing: .*/bin/nodloop\\. Run nodloop guard install to repair it\n" + folder + "$",
 				`^$`,
 			},
+		},
+		{
+			"approve of a veto says a hook left on an older plugin binary is stale",
+			args{
+				setup: [][]string{proposeSed}, args: approveSed, home: "{home}",
+				files: map[string]string{
+					".claude/settings.json":       strings.ReplaceAll(hooked, "{home}/bin", "{home}/.nodloop/bin/v0.4.1"),
+					".nodloop/bin/v0.4.1/nodloop": "", ".nodloop/bin/v0.5.0/nodloop": "",
+				},
+				links: map[string]string{".nodloop/bin/nodloop": "v0.5.0/nodloop"},
+			},
+			want{
+				0, "^k-sed\tv1\tapproved\treviewer\n" + vetoes +
+					"guard hook stale: hook runs another binary than the stable link: .*/v0\\.4\\.1/nodloop runs while the stable link runs " +
+					".*/\\.nodloop/bin/nodloop\\. Run .*/\\.nodloop/bin/nodloop guard install so the hook follows the plugin\n" + folder + "$",
+				`^$`,
+			},
+		},
+		{
+			"approve of an item without a veto writes nothing under a read only claude directory",
+			args{setup: [][]string{proposeAgg}, args: approveAgg, home: "{home}", readOnly: ".claude"},
+			want{0, "^k-agg\tv1\tapproved\treviewer\n" + folder + "$", `^$`},
+		},
+		{
+			"import of items without a veto writes nothing under a read only claude directory",
+			args{args: []string{"import", "--file", valid}, home: "{home}", readOnly: ".claude"},
+			want{0, "^imported 1\n$", `^$`},
 		},
 		{
 			"approve of a veto with a broken settings file says the hook state is unknown",
@@ -431,7 +464,7 @@ func TestRunKnowledge(t *testing.T) {
 				args:  approveNamed("k-r6"),
 			},
 			want{
-				0, "^k-r6\tv1\tapproved\treviewer\nfolder\t[0-9]+ of 70000 chars\t6 of 10 items in [a-z_ ]+\t.*\n" +
+				0, "^k-r6\tv1\tapproved\treviewer\nfolder\t[0-9]+ of 70000 chars\t6 of 10 items in [a-z_]+\t.*\n" +
 					"compaction due\ta review of one change context carries more than 5 approved items an event can replay\\. " +
 					"Run nodloop knowledge compact k-r6\n$",
 				`^$`,
@@ -444,7 +477,7 @@ func TestRunKnowledge(t *testing.T) {
 				args:  approveNamed("k-j6"),
 			},
 			want{
-				0, "^k-j6\tv1\tapproved\treviewer\nfolder\t[0-9]+ of 70000 chars\t6 of 10 items in [a-z_ ]+\t.*\n" +
+				0, "^k-j6\tv1\tapproved\treviewer\nfolder\t[0-9]+ of 70000 chars\t6 of 10 items in [a-z_]+\t.*\n" +
 					"compaction blocked\ta review of one change context carries more than 5 approved items but no evidence event has " +
 					"a label or an edit or approve verdict: e-r-6, e-r-1, e-r-2, e-r-3, e-r-4, e-r-5\n$",
 				`^$`,
@@ -456,7 +489,7 @@ func TestRunKnowledge(t *testing.T) {
 				setup: [][]string{{"import", "--file", "testdata/crowded.jsonl"}, proposeNamed("k-p")},
 				args:  approveNamed("k-p"),
 			},
-			want{0, "^k-p\tv1\tapproved\treviewer\nfolder\t[0-9]+ of 70000 chars\t6 of 10 items in [a-z_ ]+\t.*\n$", `^$`},
+			want{0, "^k-p\tv1\tapproved\treviewer\nfolder\t[0-9]+ of 70000 chars\t6 of 10 items in [a-z_]+\t.*\n$", `^$`},
 		},
 		{
 			"unknown flag fails",
@@ -498,7 +531,20 @@ func TestRunKnowledge(t *testing.T) {
 			dir := t.TempDir()
 			for rel, content := range tc.args.files {
 				require.NoError(t, os.MkdirAll(filepath.Dir(filepath.Join(dir, rel)), 0o700))
-				require.NoError(t, os.WriteFile(filepath.Join(dir, rel), []byte(strings.ReplaceAll(content, "{home}", dir)), 0o600))
+				content = strings.ReplaceAll(content, "{home}", dir)
+				require.NoError(t, os.WriteFile(filepath.Join(dir, rel), []byte(content), 0o600))
+			}
+			for rel, target := range tc.args.links {
+				require.NoError(t, os.Symlink(target, filepath.Join(dir, rel)))
+			}
+			if tc.args.readOnly != "" {
+				if os.Geteuid() == 0 {
+					t.Skip("root writes under a read only directory")
+				}
+				ro := filepath.Join(dir, tc.args.readOnly)
+				require.NoError(t, os.MkdirAll(ro, 0o700))
+				require.NoError(t, os.Chmod(ro, 0o555))
+				t.Cleanup(func() { _ = os.Chmod(ro, 0o700) })
 			}
 			home := strings.NewReplacer("{home}", dir).Replace(tc.args.home)
 			data := t.TempDir()
@@ -560,7 +606,7 @@ func TestRunKnowledgeFrom(t *testing.T) {
 	}
 	// The id line and the scope line and the folder line of a stored candidate
 	candidate := func(scope string) string {
-		return "^k-[0-9a-f]+\tv1\tcandidate\nscope\t" + scope + "\nfolder\t[0-9]+ of 70000 chars\t1 of 10 items in [a-z_ ]+\tno other item\n"
+		return "^k-[0-9a-f]+\tv1\tcandidate\nscope\t" + scope + "\nfolder\t[0-9]+ of 70000 chars\t1 of 10 items in no_known_change\tno other item\n"
 	}
 	spike := "change contexts no_known_change\\. metrics click_count or conversion_count"
 	drafting := gomock.Cond(func(r llm.Request) bool { return r.System == diagnose.DraftRules && r.Model == "haiku" })
@@ -728,6 +774,88 @@ func TestApprovedVetoBlocksTheCall(t *testing.T) {
 			got := runGuard(nil, getenv, os.Executable, strings.NewReader(input), io.Discard, &stderr)
 
 			assert.Equal(t, tc.want, got)
+		})
+	}
+}
+
+// One record dir spelled two ways names one approved veto file
+// So a retire under another spelling removes the veto the approval exported
+func TestRunKnowledgeRecordDirSpellings(t *testing.T) {
+	work, home := t.TempDir(), t.TempDir()
+	t.Chdir(work)
+	data := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(data, "events.csv"),
+		[]byte("event_id,timestamp,metric,value\ne1,2026-09-22T00:00:00Z,conversion_count,1\n"), 0o600))
+	getenv := func(k string) string { return map[string]string{envFileDir: data, "HOME": home}[k] }
+	now := testkit.Open(t).Clock.Now
+	steps := [][]string{
+		{
+			"propose", "--id", "no-drop", "--kind", "judgment", "--content", "never drop a table",
+			"--evidence-paragraph", "p#1", "--veto-tool", "Bash", "--veto-field", "command", "--veto-match", "drop table",
+			"--veto-example", `{"command":"psql -c 'drop table x'"}`, "--record-dir", "rec",
+		},
+		{"approve", "no-drop", "--version", "1", "--approver", "jed", "--record-dir", "rec"},
+	}
+	var stderr bytes.Buffer
+	for _, args := range steps {
+		require.Equal(t, 0, runKnowledge(args, getenv, nil, now, io.Discard, &stderr), stderr.String())
+	}
+	approved, err := filepath.Glob(filepath.Join(home, ".claude", "nodloop", "vetoes.approved.*.yaml"))
+	require.NoError(t, err)
+	require.Len(t, approved, 1)
+
+	retire := []string{"retire", "no-drop", "--version", "1", "--approver", "jed", "--record-dir", filepath.Join(work, "rec") + "/"}
+	got := runKnowledge(retire, getenv, nil, now, io.Discard, &stderr)
+
+	assert.Equal(t, 0, got, stderr.String())
+	left, err := filepath.Glob(filepath.Join(home, ".claude", "nodloop", "vetoes.approved.*.yaml"))
+	require.NoError(t, err)
+	assert.Empty(t, left)
+}
+
+// An approved file an older build named after another spelling of the record directory
+// A retire under the clean spelling removes it when its first line names an absolute directory
+func TestRetireRemovesTheFileOfAnOldSpelling(t *testing.T) {
+	t.Parallel()
+	tcs := []struct {
+		name string
+		// Record directory the old file names with `{records}` for the clean one
+		args string
+		want int
+	}{
+		{"a trailing slash spelling stops blocking after the retire", "{records}/", 0},
+		{"a relative spelling keeps blocking until it is deleted by hand", "rec", 2},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			home, records := t.TempDir(), t.TempDir()
+			getenv := func(k string) string {
+				return map[string]string{envFileDir: testkit.DemoDir(t), envRecordDir: records, "HOME": home}[k]
+			}
+			spelling := strings.ReplaceAll(tc.args, "{records}", records)
+			old := vetofile.NewApprovedFile(home, spelling).Path()
+			require.NoError(t, os.MkdirAll(filepath.Dir(old), 0o700))
+			require.NoError(t, os.WriteFile(old, []byte("# Generated by nodloop from the approved judgment knowledge of "+spelling+"\n"+
+				"vetoes: [{id: k-sed, tool: Bash, when: [{field: command, match: 'sed\\s+-i'}], reason: r}]\n"), 0o600))
+			now := testkit.Open(t).Clock.Now
+			var stderr bytes.Buffer
+			for _, args := range [][]string{
+				{
+					"propose", "--id", "k-sed", "--kind", "judgment", "--content", "never edit files with sed -i",
+					"--evidence-paragraph", "p#1", "--veto-tool", "Bash", "--veto-field", "command",
+					"--veto-match", `sed\s+-i`, "--veto-example", `{"command":"sed -i x f"}`,
+				},
+				{"approve", "k-sed", "--version", "1", "--approver", "reviewer"},
+				{"retire", "k-sed", "--version", "1", "--approver", "reviewer"},
+			} {
+				require.Equal(t, 0, runKnowledge(args, getenv, nil, now, io.Discard, &stderr), stderr.String())
+			}
+			input := `{"tool_name":"Bash","cwd":"` + t.TempDir() + `","tool_input":{"command":"sed -i s/a/b/ f"}}`
+
+			got := runGuard(nil, getenv, os.Executable, strings.NewReader(input), io.Discard, &stderr)
+
+			assert.Equal(t, tc.want, got, stderr.String())
 		})
 	}
 }
