@@ -103,6 +103,21 @@ func TestSourceEvent(t *testing.T) {
 			want: want{err: evidence.ErrMalformed, text: "events.csv line 2 column value"},
 		},
 		{
+			name: "a value that is not a number is rejected with the line and column",
+			args: args{files: map[string]string{"events.csv": header + "e,2026-09-22T10:00:00Z,m,NaN\n"}, id: "e"},
+			want: want{err: evidence.ErrMalformed, text: `events.csv line 2 column value: not a finite number "NaN"`},
+		},
+		{
+			name: "a positive infinite value is rejected with the line and column",
+			args: args{files: map[string]string{"events.csv": header + "e,2026-09-22T10:00:00Z,m,+Inf\n"}, id: "e"},
+			want: want{err: evidence.ErrMalformed, text: `events.csv line 2 column value: not a finite number "+Inf"`},
+		},
+		{
+			name: "a negative infinite value is rejected with the line and column",
+			args: args{files: map[string]string{"events.csv": header + "e,2026-09-22T10:00:00Z,m,-Infinity\n"}, id: "e"},
+			want: want{err: evidence.ErrMalformed, text: `events.csv line 2 column value: not a finite number "-Infinity"`},
+		},
+		{
 			name: "a byte order mark before the header is dropped",
 			args: args{files: map[string]string{"events.csv": "\uFEFF" + events}, id: "e"},
 			want: want{event: evidence.Event{ID: "e", ChangeContext: evidence.ContextUnknown, Points: point}},
