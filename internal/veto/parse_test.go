@@ -26,6 +26,10 @@ func TestParse(t *testing.T) {
 	readmeReason := "Do not create README files"
 	readme, err := veto.New("no-readme", "Write|Edit", []veto.Condition{readmeCondition}, readmeReason, true)
 	require.NoError(t, err)
+	xCondition, err := veto.NewCondition("command", "x", "")
+	require.NoError(t, err)
+	a, err := veto.New("a", "Bash", []veto.Condition{xCondition}, "r", true)
+	require.NoError(t, err)
 	type want struct {
 		vetoes veto.Vetoes
 		err    error
@@ -46,43 +50,43 @@ func TestParse(t *testing.T) {
 		{
 			"missing id fails with the index",
 			"vetoes:\n  - tool: Bash\n    when: [{field: command, match: x}]\n    reason: r",
-			want{nil, veto.ErrIDMissing, "vetoes[0] (): missing id"},
+			want{veto.Vetoes{}, veto.ErrIDMissing, "vetoes[0] (): missing id"},
 		},
 		{
 			"missing tool fails with the id",
 			"vetoes:\n  - id: a\n    when: [{field: command, match: x}]\n    reason: r",
-			want{nil, veto.ErrToolMissing, "vetoes[0] (a): missing tool"},
+			want{veto.Vetoes{}, veto.ErrToolMissing, "vetoes[0] (a): missing tool"},
 		},
 		{
 			"tool of only separators fails",
 			"vetoes:\n  - id: a\n    tool: ' | '\n    when: [{field: command, match: x}]\n    reason: r",
-			want{nil, veto.ErrToolMissing, "vetoes[0] (a): missing tool"},
+			want{veto.Vetoes{}, veto.ErrToolMissing, "vetoes[0] (a): missing tool"},
 		},
 		{
 			"missing when fails",
 			"vetoes:\n  - id: a\n    tool: Bash\n    reason: r",
-			want{nil, veto.ErrWhenMissing, "vetoes[0] (a): missing when"},
+			want{veto.Vetoes{}, veto.ErrWhenMissing, "vetoes[0] (a): missing when"},
 		},
 		{
 			"missing reason fails",
 			"vetoes:\n  - id: a\n    tool: Bash\n    when: [{field: command, match: x}]",
-			want{nil, veto.ErrReasonMissing, "vetoes[0] (a): missing reason"},
+			want{veto.Vetoes{}, veto.ErrReasonMissing, "vetoes[0] (a): missing reason"},
 		},
 		{
 			"missing field fails with the condition index",
 			"vetoes:\n  - id: a\n    tool: Bash\n    when: [{match: x}]\n    reason: r",
-			want{nil, veto.ErrFieldMissing, "vetoes[0] (a): when[0]: missing field"},
+			want{veto.Vetoes{}, veto.ErrFieldMissing, "vetoes[0] (a): when[0]: missing field"},
 		},
 		{
 			"missing match fails with the condition index",
 			"vetoes:\n  - id: a\n    tool: Bash\n    when: [{field: command}]\n    reason: r",
-			want{nil, veto.ErrMatchMissing, "vetoes[0] (a): when[0]: missing match"},
+			want{veto.Vetoes{}, veto.ErrMatchMissing, "vetoes[0] (a): when[0]: missing match"},
 		},
 		{
 			"unsupported match regexp fails",
 			string(invalidRegex),
 			want{
-				nil,
+				veto.Vetoes{},
 				veto.ErrMatchInvalid,
 				"vetoes[0] (bad-regex): when[0]: invalid match regexp: error parsing regexp: invalid named capture: `(?<=x)y`",
 			},
@@ -91,17 +95,50 @@ func TestParse(t *testing.T) {
 			"invalid unless regexp fails",
 			"vetoes:\n  - id: a\n    tool: Bash\n    when: [{field: command, match: x, unless: '('}]\n    reason: r",
 			want{
-				nil,
+				veto.Vetoes{},
 				veto.ErrUnlessInvalid,
 				"vetoes[0] (a): when[0]: invalid unless regexp: error parsing regexp: missing closing ): `(`",
 			},
 		},
 		{
-			"duplicate id fails at the second entry",
+			"duplicate id keeps the first entry and reports the second",
 			"vetoes:\n  - id: a\n    tool: Bash\n    when: [{field: command, match: x}]\n    reason: r\n" +
 				"  - id: a\n    tool: Bash\n    when: [{field: command, match: y}]\n    reason: r",
-			want{nil, veto.ErrIDDuplicate, "vetoes[1] (a): duplicate id"},
+			want{veto.Vetoes{a}, veto.ErrIDDuplicate, "vetoes[1] (a): duplicate id"},
 		},
+		{
+			"broken entry is left out and the valid ones still load",
+			"vetoes:\n  - id: a\n    tool: Bash\n    when: [{field: command, match: x}]\n    reason: r\n" +
+				"  - id: b\n    tool: Bash\n    when: [{field: command, match: '('}]\n    reason: r",
+			want{
+				veto.Vetoes{a},
+				veto.ErrMatchInvalid,
+				"vetoes[1] (b): when[0]: invalid match regexp: error parsing regexp: missing closing ): `(`",
+			},
+		},
+		{
+			"entry of the wrong type is left out and the valid ones still load",
+			"vetoes:\n  - id: a\n    tool: Bash\n    when: [{field: command, match: x}]\n    reason: r\n" +
+				"  - id: b\n    tool: Bash\n    when: sed\n    reason: r",
+			want{
+				veto.Vetoes{a},
+				veto.ErrEntryInvalid,
+				"vetoes[1] (b): invalid entry: yaml: unmarshal errors:\n" +
+					"  line 8: cannot unmarshal !!str `sed` into []veto.When",
+			},
+		},
+		{
+			"key written twice in an entry fails that entry",
+			"vetoes:\n  - id: a\n    tool: Bash\n    when: [{field: command, match: x}]\n    reason: r\n    reason: s",
+			want{
+				veto.Vetoes{},
+				veto.ErrEntryInvalid,
+				"vetoes[0] (a): invalid entry: yaml: unmarshal errors:\n" +
+					"  line 6: mapping key \"reason\" already defined at line 5",
+			},
+		},
+		{"empty input loads nothing", "", want{veto.Vetoes{}, nil, "<nil>"}},
+		{"comments alone load nothing", "# nothing yet\n", want{veto.Vetoes{}, nil, "<nil>"}},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {

@@ -8,7 +8,8 @@ import (
 )
 
 // Read and parse one veto file
-// Errors name the path and a missing file still matches os.ErrNotExist
+// 1. errors name the path and a missing file still matches os.ErrNotExist
+// 2. the entries that built come back even when others in the file failed
 func Load(path string) (veto.Vetoes, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -16,7 +17,7 @@ func Load(path string) (veto.Vetoes, error) {
 	}
 	vetoes, err := veto.Parse(b)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", path, err)
+		return vetoes, fmt.Errorf("%s: %w", path, err)
 	}
 	return vetoes, nil
 }

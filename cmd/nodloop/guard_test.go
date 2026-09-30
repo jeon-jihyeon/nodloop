@@ -65,12 +65,26 @@ func TestRunGuard(t *testing.T) {
 		{
 			"hook fails on a missing veto file",
 			args{[]string{"--vetoes", "nope.yaml"}, sed, "{home}", "{}"},
-			want{1, "", `^nodloop guard: nope.yaml: failed to read veto file: open nope.yaml: no such file`, "{}"},
+			want{
+				1, "",
+				`^nodloop guard: failed to load vetoes, skipped: nope.yaml: failed to read veto file: open nope.yaml: no such file`,
+				"{}",
+			},
 		},
 		{
-			"hook fails on an invalid veto file",
+			"hook fails on a veto file whose only entry is broken",
 			args{[]string{"--vetoes", "testdata/invalid_regex.yaml"}, sed, "{home}", "{}"},
-			want{1, "", `^nodloop guard: testdata/invalid_regex.yaml: vetoes\[0\] \(bad-regex\)`, "{}"},
+			want{1, "", `^nodloop guard: failed to load vetoes, skipped: testdata/invalid_regex.yaml: vetoes\[0\] \(bad-regex\)`, "{}"},
+		},
+		{
+			"hook blocks through the valid entries of a file with a broken entry",
+			args{[]string{"--vetoes", "testdata/partial.yaml"}, sed, "{home}", "{}"},
+			want{
+				2, "",
+				`^nodloop guard: failed to load vetoes, skipped: testdata/partial.yaml: vetoes\[1\] \(bad-regex\).*\n` +
+					`nodloop guard: Bash call blocked by veto no-sed-inplace\n`,
+				"{}",
+			},
 		},
 		{
 			"hook fails on an unknown flag",
