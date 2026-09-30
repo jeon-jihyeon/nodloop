@@ -157,6 +157,16 @@ func TestRunEval(t *testing.T) {
 			want{1, "", `^nodloop eval: --session is required\n\nusage:`, os.ErrNotExist},
 		},
 		{
+			"session with a slash fails before any review",
+			args{"", nil, []string{"seed", "--session", "2026/09/30"}},
+			want{1, "", `^nodloop eval: --session "2026/09/30" must not contain a path separator\n\nusage:`, os.ErrNotExist},
+		},
+		{
+			"session that climbs out of the record dir fails",
+			args{"", [][]string{{"seed", "--session", "t", "--events", "tq-001"}}, []string{"report", "--session", "x/../../escaped"}},
+			want{1, "", `^nodloop eval: --session "x/../../escaped" must not contain a path separator\n\nusage:`, os.ErrNotExist},
+		},
+		{
 			"negative parallel fails",
 			args{"", nil, []string{"seed", "--session", "t", "--parallel", "-1"}},
 			want{1, "", `^nodloop eval: diagnose: negative parallel`, os.ErrNotExist},

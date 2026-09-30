@@ -38,8 +38,8 @@ func runEval(
 	if err := fs.Parse(args[1:]); err != nil {
 		return 1
 	}
-	if opts.SessionID == "" {
-		return fail(stderr, "eval", fmt.Errorf("--session %w", errRequired))
+	if err := checkSession(opts.SessionID); err != nil {
+		return fail(stderr, "eval", err)
 	}
 	if *conditions != "" {
 		for _, c := range strings.Split(*conditions, ",") {
@@ -78,6 +78,18 @@ func runEval(
 		return fail(stderr, "eval", err)
 	}
 	return 0
+}
+
+// The session names the report file
+// A separator is refused before any review is paid for since report could never write the file of such a session
+func checkSession(id string) error {
+	switch {
+	case id == "":
+		return fmt.Errorf("--session %w", errRequired)
+	case strings.ContainsRune(id, '/') || strings.ContainsRune(id, filepath.Separator):
+		return fmt.Errorf("--session %q %w", id, errSessionPath)
+	}
+	return nil
 }
 
 // Progress and the report path go to log so stdout holds only the result

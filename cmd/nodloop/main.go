@@ -187,7 +187,8 @@ func parseID(fs *flag.FlagSet, args []string) (string, error) {
 // A usage error adds the usage text
 func fail(stderr io.Writer, command string, err error) int {
 	fmt.Fprintf(stderr, "nodloop %s: %v\n", command, err)
-	if errors.Is(err, errUnknownAction) || errors.Is(err, errRequired) || errors.Is(err, errUnknownTraceName) {
+	if errors.Is(err, errUnknownAction) || errors.Is(err, errRequired) || errors.Is(err, errUnknownTraceName) ||
+		errors.Is(err, errSessionPath) {
 		fmt.Fprintf(stderr, "\n%s", usage)
 	}
 	return 1
