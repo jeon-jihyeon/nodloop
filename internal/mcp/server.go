@@ -459,7 +459,7 @@ type proposeInput struct {
 	Content        string             `json:"content" jsonschema:"the knowledge in one or a few sentences with units, conditions and exceptions kept"`
 	ChangeContexts []evidence.Context `json:"change_contexts,omitempty" jsonschema:"scope: change contexts it applies to"`
 	Metrics        []string           `json:"metrics,omitempty" jsonschema:"scope: metrics it applies to"`
-	Dims           map[string]string  `json:"dims,omitempty" jsonschema:"scope: dimension values it applies to such as platform ios"`
+	Dims           map[string]string  `json:"dims,omitempty" jsonschema:"scope: dimension values it applies to. Each key and value must be one the events carry as the events tool matches them. Propose fails naming a metric or dim value no event carries"`
 	Exceptions     []evidence.Context `json:"exceptions,omitempty" jsonschema:"change contexts where it must not apply. Propose fails on a context outside the valid set or on exceptions that leave no scoped context"`
 	TraceIDs       []string           `json:"trace_ids,omitempty" jsonschema:"diagnose trace ids whose feedback is the evidence. Give at least one of trace_ids or paragraph_ids"`
 	ParagraphIDs   []string           `json:"paragraph_ids,omitempty" jsonschema:"procedure paragraph ids that support it"`
@@ -518,6 +518,9 @@ func (s *Server) propose(ctx context.Context, _ *sdk.CallToolRequest, in propose
 		p := c.Proposal()
 		draft = draft.Filled(p.Scope, p.Evidence, p.Basis)
 	}
+	if err := s.observed(ctx, draft.Scope); err != nil {
+		return nil, nil, err
+	}
 	k, overlaps, err := s.ledger.Propose(ctx, draft)
 	if err != nil {
 		return nil, nil, err
@@ -531,6 +534,19 @@ func (s *Server) propose(ctx context.Context, _ *sdk.CallToolRequest, in propose
 		"id": k.ID, "version": k.Version, "status": k.Status, "overlaps": overlaps, "folder": newFolderAnswer(folder, false),
 		"veto": k.Veto, "scope": k.Scope, "drafted": k.Drafted,
 	}, nil
+}
+
+// Fails naming each metric and dim value of the scope that no event of the data set carries
+func (s *Server) observed(ctx context.Context, scope knowledge.Scope) error {
+	metrics, err := s.src.Metrics(ctx)
+	if err != nil {
+		return err
+	}
+	dims, err := s.src.Dims(ctx)
+	if err != nil {
+		return err
+	}
+	return scope.Observed(metrics, dims)
 }
 
 // What the person sees around an approval

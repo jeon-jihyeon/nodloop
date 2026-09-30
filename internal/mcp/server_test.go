@@ -637,7 +637,7 @@ func TestServerProposeAndApprove(t *testing.T) {
 			want: want{
 				proposed: proposal{
 					ID: "k-tracking", Version: 1, Status: knowledge.StatusCandidate, Overlaps: []knowledge.Knowledge{},
-					Folder: folder{Chars: 144, Budget: knowledge.ReviewChars, Items: []string{}}, Drafted: true,
+					Folder: folder{Chars: 147, Budget: knowledge.ReviewChars, Items: []string{}}, Drafted: true,
 				},
 				approved: approval{ID: "k-tracking", Version: 1, Status: knowledge.StatusApproved, Approver: "reviewer"},
 				author:   "claude",
@@ -649,7 +649,7 @@ func TestServerProposeAndApprove(t *testing.T) {
 			want: want{
 				proposed: proposal{
 					ID: "k-meaning", Version: 1, Status: knowledge.StatusCandidate, Overlaps: []knowledge.Knowledge{},
-					Folder: folder{Chars: 154, Budget: knowledge.ReviewChars, Items: []string{}}, Drafted: true,
+					Folder: folder{Chars: 157, Budget: knowledge.ReviewChars, Items: []string{}}, Drafted: true,
 				},
 				approved: approval{ID: "k-meaning", Version: 1, Status: knowledge.StatusApproved, Approver: "reviewer"},
 				author:   "user",
@@ -665,7 +665,7 @@ func TestServerProposeAndApprove(t *testing.T) {
 			want: want{
 				proposed: proposal{
 					ID: "k-no-sed", Version: 1, Status: knowledge.StatusCandidate, Overlaps: []knowledge.Knowledge{},
-					Folder: folder{Chars: 150, Budget: knowledge.ReviewChars, Items: []string{}}, Veto: sed, Drafted: true,
+					Folder: folder{Chars: 153, Budget: knowledge.ReviewChars, Items: []string{}}, Veto: sed, Drafted: true,
 				},
 				approved: approval{
 					ID: "k-no-sed", Version: 1, Status: knowledge.StatusApproved, Approver: "reviewer", Veto: true,
@@ -679,7 +679,7 @@ func TestServerProposeAndApprove(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			scope := knowledge.Scope{
 				Scope: evidence.Scope{ChangeContexts: []evidence.Context{tc.args.context}, Metrics: []string{"click_count"}},
-				Dims:  map[string]string{"platform": "ios"},
+				Dims:  map[string]string{"source": "source-a"},
 			}
 			in := map[string]any{
 				"id": tc.args.id, "kind": tc.args.kind, "content": "after a planned change check tracking first",
@@ -1231,6 +1231,59 @@ func TestServerRefusals(t *testing.T) {
 			err := c.Run(t, tc.args.tool, tc.args.input)
 			assert.ErrorIs(t, err, testkit.ErrTool)
 			assert.ErrorContains(t, err, tc.want)
+		})
+	}
+}
+
+// A scope value no event can match is refused before the candidate is recorded
+// Otherwise the item silently never applies or reaches the events the person meant to exclude
+func TestServerProposeRefusesScopeNoEventMatches(t *testing.T) {
+	tcs := []struct {
+		name string
+		args map[string]any
+		want string
+	}{
+		{
+			"a dim value spelled other than the events carry it",
+			map[string]any{"dims": map[string]string{"source": "source_a"}},
+			"knowledge: scope names a value no event of the data set carries: dim source=source_a",
+		},
+		{
+			"a dim no event carries",
+			map[string]any{"dims": map[string]string{"platform": "ios"}},
+			"knowledge: scope names a value no event of the data set carries: dim platform=ios",
+		},
+		{
+			"a metric the data set lacks",
+			map[string]any{"metrics": []string{"conversions"}},
+			"knowledge: scope names a value no event of the data set carries: metric conversions",
+		},
+		{
+			"a misspelled change context",
+			map[string]any{"change_contexts": []string{"no-known-change"}},
+			`knowledge: scope names no event: change context "no-known-change" is not one of`,
+		},
+		{
+			"an exception of the only scoped change context",
+			map[string]any{"change_contexts": []string{"no_known_change"}, "exceptions": []string{"no_known_change"}},
+			"knowledge: scope names no event: the exceptions [no_known_change] cover every change context of the scope",
+		},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			st := testkit.Open(t)
+			c := connect(t, st, "nodloop", "")
+			in := map[string]any{"id": "k-scope", "kind": "meaning", "content": "c", "paragraph_ids": []string{knownSegment}}
+			maps.Copy(in, tc.args)
+
+			err := c.Call(t, "propose", in, &map[string]any{})
+
+			assert.ErrorIs(t, err, testkit.ErrTool)
+			assert.ErrorContains(t, err, tc.want)
+			all, listErr := st.Ledger.All(context.Background())
+			require.NoError(t, listErr)
+			assert.Empty(t, all)
 		})
 	}
 }
