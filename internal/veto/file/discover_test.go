@@ -81,7 +81,7 @@ func TestDiscover(t *testing.T) {
 	require.NoError(t, os.WriteFile(strayPath, []byte("vetoes: ["), 0o644))
 	require.NoError(t, os.WriteFile(homeBrokenPath, []byte("vetoes: ["), 0o644))
 	homeBrokenMsg := homeBrokenPath +
-		": failed to parse yaml: yaml: line 1: did not find expected node content"
+		": failed to read veto file: failed to parse yaml: yaml: line 1: did not find expected node content"
 	partialPath := filepath.Join(partial, file.RelPath)
 	require.NoError(t, os.MkdirAll(filepath.Dir(partialPath), 0o755))
 	require.NoError(t, os.WriteFile(partialPath, []byte(contents[filepath.Join(project, file.RelPath)]+
@@ -93,7 +93,7 @@ func TestDiscover(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Dir(crackedPath), 0o755))
 	require.NoError(t, os.WriteFile(crackedPath, []byte("vetoes: ["), 0o644))
 	crackedMsg := crackedPath +
-		": failed to parse yaml: yaml: line 1: did not find expected node content"
+		": failed to read veto file: failed to parse yaml: yaml: line 1: did not find expected node content"
 	require.NoError(t, os.MkdirAll(filepath.Join(directory, file.RelPath), 0o755))
 	// A file where the veto directory belongs so neither the user file nor the approved files can be read
 	require.NoError(t, os.MkdirAll(filepath.Join(blocked, ".claude"), 0o755))
@@ -103,8 +103,9 @@ func TestDiscover(t *testing.T) {
 		"%[2]s: failed to read veto file: open %[2]s: not a directory",
 		blockedDir, filepath.Join(blocked, file.RelPath))
 	parseMsg := filepath.Join(broken, file.RelPath) +
-		": failed to parse yaml: yaml: line 1: did not find expected node content"
+		": failed to read veto file: failed to parse yaml: yaml: line 1: did not find expected node content"
 	directoryPath := filepath.Join(directory, file.RelPath)
+	outside := file.ErrOutsideHome.Error() + ": "
 	readMsg := fmt.Sprintf("%[1]s: failed to read veto file: read %[1]s: is a directory", directoryPath)
 	type args struct {
 		cwd  string
@@ -168,7 +169,7 @@ func TestDiscover(t *testing.T) {
 		{
 			"broken nested project file is reported and the outer one still loads",
 			args{cracked, empty},
-			want{file.Sources{sources[filepath.Join(outer, file.RelPath)]}, veto.ErrYAMLInvalid, crackedMsg},
+			want{file.Sources{sources[filepath.Join(outer, file.RelPath)]}, file.ErrOutsideHome, outside + crackedMsg},
 		},
 		{
 			"user file above the cwd loads once as the user file",
@@ -183,7 +184,7 @@ func TestDiscover(t *testing.T) {
 		{
 			"broken file in an ancestor is reported with its path",
 			args{filepath.Join(broken, "sub"), empty},
-			want{nil, veto.ErrYAMLInvalid, parseMsg},
+			want{nil, file.ErrOutsideHome, outside + parseMsg},
 		},
 		{
 			"file with a broken entry still applies its valid entries",
@@ -208,7 +209,7 @@ func TestDiscover(t *testing.T) {
 		{
 			"both broken files are reported together",
 			args{broken, directory},
-			want{nil, syscall.EISDIR, parseMsg + "\n" + readMsg},
+			want{nil, syscall.EISDIR, outside + parseMsg + "\n" + readMsg},
 		},
 		{
 			"cwd outside home without .git reads no file of a parent",
@@ -226,7 +227,7 @@ func TestDiscover(t *testing.T) {
 			want{file.Sources{sources[filepath.Join(worktree, file.RelPath)]}, nil, "<nil>"},
 		},
 		{
-			"broken project file under home names its path",
+			"project file under home that is not valid yaml keeps the yaml error",
 			args{filepath.Join(homeRepo, "repo"), homeRepo},
 			want{nil, veto.ErrYAMLInvalid, homeBrokenMsg},
 		},

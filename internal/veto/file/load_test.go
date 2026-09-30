@@ -49,7 +49,18 @@ func TestLoad(t *testing.T) {
 			want{
 				nil,
 				veto.ErrYAMLInvalid,
-				filepath.Join(dir, "broken.yaml") + ": failed to parse yaml: yaml: line 1: did not find expected node content",
+				filepath.Join(dir, "broken.yaml") +
+					": failed to read veto file: failed to parse yaml: yaml: line 1: did not find expected node content",
+			},
+		},
+		{
+			"file that is not yaml cannot be read as a whole",
+			"broken.yaml",
+			want{
+				nil,
+				file.ErrRead,
+				filepath.Join(dir, "broken.yaml") +
+					": failed to read veto file: failed to parse yaml: yaml: line 1: did not find expected node content",
 			},
 		},
 		{

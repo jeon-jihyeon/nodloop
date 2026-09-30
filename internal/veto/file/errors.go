@@ -9,6 +9,8 @@ var (
 )
 
 var (
+	// A shared directory may hold a file its user cannot repair
+	ErrOutsideHome = errors.New("outside home so it does not block every call")
 	// An older build hashed a relative record directory as it was typed
 	ErrOrphan = errors.New("relative so no knowledge status change rewrites or removes it. Delete it by hand")
 )

@@ -3,10 +3,13 @@ package guard
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"path/filepath"
 
 	"github.com/jeon-jihyeon/nodloop/internal/veto"
+	vetofile "github.com/jeon-jihyeon/nodloop/internal/veto/file"
 )
 
 // Fields of the PreToolUse hook input used for evaluation
@@ -34,9 +37,13 @@ const (
 // 1. no matching veto: ExitPass
 // 2. matching veto: ExitBlock with the id and reason on stderr
 // 3. input parse failure: ExitFail
-// 4. veto load failure without a match: ExitFail after a warning on stderr
-// 5. a load failure fails open for the broken file only and the vetoes that did load still block
-func Run(stdin io.Reader, stderr io.Writer, load Loader) Exit {
+// 4. a veto file that was read but is not valid YAML: ExitBlock for every call but one that reads or edits a veto file or the file named on the command line
+// 5. any other load failure without a match: ExitFail after a warning on stderr
+// 6. the vetoes that did load block first in every case
+// Rule 4 keeps a file broken by one write from turning every veto in it off
+// Exit 1 lets the call run so failing open there would do exactly that
+// A file no Edit or Write can repair such as one without permission or a directory gets rule 5 so it never locks the session
+func Run(stdin io.Reader, stderr io.Writer, load Loader, named string) Exit {
 	var in input
 	err := json.NewDecoder(stdin).Decode(&in)
 	if err == nil && in.ToolName == "" {
@@ -54,8 +61,20 @@ func Run(stdin io.Reader, stderr io.Writer, load Loader) Exit {
 		fmt.Fprintf(stderr, "nodloop guard: %s call blocked by veto %s\n%s\n", in.ToolName, v.ID(), v.Reason())
 		return ExitBlock
 	}
+	if errors.Is(err, veto.ErrYAMLInvalid) && !in.repairs(named) {
+		fmt.Fprintf(stderr, "nodloop guard: %s call blocked because a veto file is not valid YAML\n"+
+			"Fix the file named above. Reading and editing a veto file still pass\n", in.ToolName)
+		return ExitBlock
+	}
 	if err != nil {
 		return ExitFail
 	}
 	return ExitPass
+}
+
+// Whether the call reads or edits a veto file by its file_path so a broken file can be repaired
+// A file named on the command line counts under any name because the lockout covers it too
+func (in input) repairs(named string) bool {
+	path, _ := in.ToolInput["file_path"].(string)
+	return vetofile.Named(path) || (named != "" && filepath.Clean(path) == named)
 }
