@@ -501,6 +501,8 @@ func TestRecord(t *testing.T) {
 	withUnknown.UnknownIDs = []string{"made-up"}
 	heldUnknown := withUnknown
 	heldUnknown.Tags = []string{"feedback:off", diagnose.TagGateHold}
+	heldRecorded := recorded
+	heldRecorded.Tags = heldUnknown.Tags
 	selected := recorded
 	selected.Selector = diagnose.SelectByClaude
 	chosen := selected
@@ -645,6 +647,18 @@ func TestRecord(t *testing.T) {
 				}, Forced: true},
 				traced: trace.NameDiagnose, inputs: []input{heldUnknown},
 				revised: []revised{{Subject: "tq-005", Reasons: []string{citesNone}, Review: madeUp}},
+			}},
+		},
+		{
+			name: "records the forced hold of a cause citing only a Decide paragraph after the send back",
+			args: args{records: []diagnose.Diagnosis{decideCause}, pending: "context", diag: decideCause},
+			want: want{outcome: outcome{
+				result: diagnose.Result{Diagnosis: diagnose.Diagnosis{
+					Status: evidence.StatusHold, Causes: []diagnose.Cause{}, Checks: decideCause.Checks,
+					HoldReasons: []string{`no paragraph supports: c`},
+				}, Forced: true},
+				traced: trace.NameDiagnose, inputs: []input{heldRecorded},
+				revised: []revised{{Subject: "tq-005", Reasons: []string{citesDecide}, Review: decideCause}},
 			}},
 		},
 		{
