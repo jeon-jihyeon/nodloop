@@ -216,6 +216,16 @@ func TestServerContext(t *testing.T) {
 	assert.Empty(t, got.KnowledgeCandidates)
 	assert.Empty(t, got.ExampleCandidates)
 	assert.Equal(t, new(bool), got.CandidatesOmitted)
+
+	// An offloaded answer read in part still shows the pending id and the schema before the rules and the bulk text
+	text, err := c.Text(t, "context", map[string]any{"event_id": spikeEvent})
+	require.NoError(t, err)
+	order := []int{
+		strings.Index(text, `"pending_id":`), strings.Index(text, `"schema":`), strings.Index(text, `"rules":`),
+		strings.Index(text, `"context":`),
+	}
+	assert.NotContains(t, order, -1)
+	assert.IsIncreasing(t, order)
 }
 
 // Approved knowledge and the correction it came from reach events of the same change context only
