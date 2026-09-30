@@ -167,6 +167,8 @@ func TestGuardCommandCheck(t *testing.T) {
 	require.NoError(t, err)
 	broken, err := os.ReadFile("testdata/invalid_regex.yaml")
 	require.NoError(t, err)
+	partial, err := os.ReadFile("testdata/partial.yaml")
+	require.NoError(t, err)
 	type args struct {
 		// Veto file content keyed by the `{cwd}` or `{parent}` or `{home}` placeholder
 		// `{parent}` is the parent directory of the cwd
@@ -221,6 +223,15 @@ func TestGuardCommandCheck(t *testing.T) {
 			"broken project file still lists the user file",
 			args{map[string][]byte{"{cwd}": broken, "{home}": valid}},
 			want{"{home}/{rel}: 2 vetoes\nmerged: 2 vetoes\n", veto.ErrMatchInvalid},
+		},
+		{
+			"file with a broken entry lists its valid entries and names a veto that blocks nothing",
+			args{map[string][]byte{"{home}": partial}},
+			want{
+				"{home}/{rel}: 2 vetoes\n{home}/{rel}: veto lower-case-tool blocks nothing on [\"bash\"]: " +
+					veto.ErrToolUnknown.Error() + "\nmerged: 2 vetoes\n",
+				veto.ErrMatchInvalid,
+			},
 		},
 	}
 	for _, tc := range tcs {

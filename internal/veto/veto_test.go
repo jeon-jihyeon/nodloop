@@ -86,6 +86,32 @@ func TestVetoBlocks(t *testing.T) {
 	}
 }
 
+func TestVetoUnknownTools(t *testing.T) {
+	t.Parallel()
+	condition, err := veto.NewCondition("command", "x", "")
+	require.NoError(t, err)
+	tcs := []struct {
+		name string
+		args string
+		want []string
+	}{
+		{"built in tools are known", "Bash|Edit|MultiEdit|NotebookEdit", nil},
+		{"an mcp tool is known", "mcp__plugin_slack_slack__slack_send_message|mcp__cmux-cua__click", nil},
+		{"a lower case name is unknown", "bash", []string{"bash"}},
+		{"a permission rule is unknown", "Bash(sed -i:*)", []string{"Bash(sed -i:*)"}},
+		{"only the unknown names of a list come back", "Edit|write", []string{"write"}},
+		{"an mcp name without a tool is unknown", "mcp__srv", []string{"mcp__srv"}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			v, err := veto.New("v", tc.args, []veto.Condition{condition}, "r", true)
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, v.UnknownTools())
+		})
+	}
+}
+
 func TestVetoesMatch(t *testing.T) {
 	b, err := os.ReadFile("testdata/valid.yaml")
 	require.NoError(t, err)

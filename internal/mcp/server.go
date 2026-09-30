@@ -395,7 +395,7 @@ type proposeInput struct {
 }
 
 type vetoInput struct {
-	Tool    string         `json:"tool" jsonschema:"the tool name such as Bash or a list such as Edit|Write"`
+	Tool    string         `json:"tool" jsonschema:"the exact case sensitive tool_name such as Bash or mcp__server__tool or a list such as Edit|Write. Never a permission rule such as Bash(sed:*)"`
 	When    []vetoWhen     `json:"when" jsonschema:"conditions on tool_input fields that must all match"`
 	Example map[string]any `json:"example" jsonschema:"a tool_input the veto must block such as a command field. Proposing fails when it does not match"`
 }

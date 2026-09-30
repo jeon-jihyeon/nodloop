@@ -11,6 +11,7 @@ import (
 	"github.com/jeon-jihyeon/nodloop/internal/evidence"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge/file"
+	"github.com/jeon-jihyeon/nodloop/internal/veto"
 	vetofile "github.com/jeon-jihyeon/nodloop/internal/veto/file"
 )
 
@@ -65,6 +66,11 @@ func TestKnowledgeValidate(t *testing.T) {
 	missedExample.Veto = &knowledge.Veto{Tool: "Bash", When: sed.When, Example: map[string]any{"command": "ls"}}
 	otherTool := judgment
 	otherTool.Veto = &knowledge.Veto{Tool: "Edit|Bash", When: sed.When, Example: sed.Example}
+	toolVeto := func(tool string) knowledge.Knowledge {
+		k := judgment
+		k.Veto = &knowledge.Veto{Tool: tool, When: sed.When, Example: sed.Example}
+		return k
+	}
 	tcs := []struct {
 		name string
 		args knowledge.Knowledge
@@ -89,6 +95,10 @@ func TestKnowledgeValidate(t *testing.T) {
 		{"veto with a broken pattern fails", badPattern, knowledge.ErrVetoInvalid},
 		{"veto without a tool fails", noTool, knowledge.ErrVetoInvalid},
 		{"veto that lets its example through fails", missedExample, knowledge.ErrVetoExample},
+		{"veto on an mcp tool is valid", toolVeto("mcp__srv__do"), nil},
+		{"veto on a lower case tool fails", toolVeto("bash"), veto.ErrToolUnknown},
+		{"veto on a permission rule fails", toolVeto("Bash(sed -i:*)"), veto.ErrToolUnknown},
+		{"veto with one unknown tool in its list fails", toolVeto("Edit|write"), knowledge.ErrVetoInvalid},
 	}
 	ctx := context.Background()
 	for _, tc := range tcs {

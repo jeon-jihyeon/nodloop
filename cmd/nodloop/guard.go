@@ -78,7 +78,8 @@ func (c guardCommand) discover(cwd string) (veto.Vetoes, error) {
 
 // Loads veto files without evaluating them
 // 1. every file that loaded is listed even when another file is broken
-// 2. any load error fails after the listing
+// 2. a veto whose tool names no tool call carries is named because it blocks nothing
+// 3. any load error fails after the listing
 func (c guardCommand) check(cwd string) error {
 	sources, err := vetofile.Discover(cwd, string(c.home))
 	if len(sources) == 0 && err == nil {
@@ -88,6 +89,11 @@ func (c guardCommand) check(cwd string) error {
 	}
 	for _, s := range sources {
 		fmt.Fprintf(c.out, "%s: %d vetoes\n", s.Path, len(s.Vetoes))
+		for _, v := range s.Vetoes {
+			if unknown := v.UnknownTools(); len(unknown) > 0 {
+				fmt.Fprintf(c.out, "%s: veto %s blocks nothing on %q: %v\n", s.Path, v.ID(), unknown, veto.ErrToolUnknown)
+			}
+		}
 	}
 	fmt.Fprintf(c.out, "merged: %d vetoes\n", len(sources.Vetoes()))
 	return err
