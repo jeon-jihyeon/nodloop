@@ -843,6 +843,111 @@ func TestLedgerApproveItemCap(t *testing.T) {
 	}
 }
 
+// A review already past a cap takes a new version that replaces an item while the review does not grow
+func TestLedgerApproveInOverfullFolder(t *testing.T) {
+	now := time.Date(2026, 9, 23, 0, 0, 0, 0, time.UTC)
+	quiet := []evidence.Context{evidence.ContextNoKnownChange}
+	planned := []evidence.Context{evidence.ContextPlannedChange}
+	item := func(id string, version int, status knowledge.Status, content string, contexts []evidence.Context) knowledge.Knowledge {
+		k := knowledge.Knowledge{
+			ID: id, Version: version, Kind: knowledge.KindMeaning, Content: content,
+			Scope:    knowledge.Scope{Scope: evidence.Scope{ChangeContexts: contexts}},
+			Evidence: knowledge.Evidence{ParagraphIDs: []string{"p#1"}}, Basis: knowledge.BasisStated,
+			Status: status, Author: "author", Time: now,
+		}
+		if status != knowledge.StatusCandidate {
+			k.Approver, k.ApprovedAt = "ann", now
+		}
+		return k
+	}
+	group := func(prefix string, count int, contexts []evidence.Context) []knowledge.Knowledge {
+		out := make([]knowledge.Knowledge, 0, count)
+		for i := range count {
+			out = append(out, item(fmt.Sprintf("%s%d", prefix, i), 1, knowledge.StatusApproved, "one", contexts))
+		}
+		return out
+	}
+	// Eleven items in one change context as a ledger approved before the item cap leaves them
+	overfull := group("k-", 11, quiet)
+	version := func(content string, contexts []evidence.Context) knowledge.Knowledge {
+		k := item("k-0", 2, knowledge.StatusCandidate, content, contexts)
+		k.Base = 1
+		return k
+	}
+	large := item("large", 1, knowledge.StatusApproved, strings.Repeat("가", knowledge.ReviewChars), quiet)
+	retired := item("k-0", 1, knowledge.StatusRetired, "one", quiet)
+	reapproved := version("one", quiet)
+	reapproved.Base = 0
+	type args struct {
+		seeds []knowledge.Knowledge
+		id    string
+	}
+	type want struct {
+		status knowledge.Status
+		err    error
+	}
+	tcs := []struct {
+		name string
+		args args
+		want want
+	}{
+		{
+			"a shorter new version in a review past the item cap is approved",
+			args{append(slices.Clone(overfull), version("o", quiet)), "k-0"},
+			want{knowledge.StatusApproved, nil},
+		},
+		{
+			"a longer new version in a review past the item cap and under the char cap is approved",
+			args{append(slices.Clone(overfull), version("one and more", quiet)), "k-0"},
+			want{knowledge.StatusApproved, nil},
+		},
+		{
+			"a longer new version in a review past the char cap is refused",
+			args{[]knowledge.Knowledge{large, overfull[0], version("one and more", quiet)}, "k-0"},
+			want{knowledge.StatusCandidate, knowledge.ErrFolderFull},
+		},
+		{
+			"a new id in a review past the item cap is refused",
+			args{append(slices.Clone(overfull), item("k-new", 1, knowledge.StatusCandidate, "o", quiet)), "k-new"},
+			want{knowledge.StatusCandidate, knowledge.ErrFolderFull},
+		},
+		{
+			"a new version that widens into another change context is refused before any cap is counted",
+			args{slices.Concat(overfull, group("k-p", 10, planned), []knowledge.Knowledge{version("o", slices.Concat(quiet, planned))}), "k-0"},
+			want{knowledge.StatusCandidate, knowledge.ErrScopeWidened},
+		},
+		{
+			"a new version after its approved version was retired counts as an added item",
+			args{append(slices.Clone(overfull), retired, reapproved), "k-0"},
+			want{knowledge.StatusCandidate, knowledge.ErrFolderFull},
+		},
+	}
+	ctx := context.Background()
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			store, err := file.New(t.TempDir())
+			require.NoError(t, err)
+			l := knowledge.NewLedger(
+				store, vetofile.NewApprovedFile(t.TempDir(), "records"),
+				func() time.Time { return now.Add(time.Hour) }, func(prefix string) string { return prefix + "new" },
+			)
+			require.NoError(t, testkit.Err(l.Import(ctx, tc.args.seeds)))
+			latest, err := l.History(ctx, tc.args.id)
+			require.NoError(t, err)
+
+			v := latest[0].Version
+			_, err = l.Approve(ctx, tc.args.id, v, "jed")
+			history, herr := l.History(ctx, tc.args.id)
+			require.NoError(t, herr)
+			got := history[slices.IndexFunc(history, func(k knowledge.Knowledge) bool { return k.Version == v })]
+
+			assert.ErrorIs(t, err, tc.want.err)
+			assert.Equal(t, tc.want.status, got.Status)
+		})
+	}
+}
+
 func TestLedgerRetire(t *testing.T) {
 	now := time.Date(2026, 9, 23, 0, 0, 0, 0, time.UTC)
 	at := now.Add(-time.Hour)

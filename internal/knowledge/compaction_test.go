@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -859,6 +860,8 @@ func TestLedgerApproveCompaction(t *testing.T) {
 		replay   knowledge.Replay
 		approver string
 		extra    []knowledge.Knowledge
+		// The drafts of seeds when nil
+		drafts []knowledge.Knowledge
 	}
 	type want struct {
 		// id version status and compaction of every record the approval appended in order
@@ -880,6 +883,23 @@ func TestLedgerApproveCompaction(t *testing.T) {
 	other.Compaction = "c-other"
 	large := seeds.p
 	large.ID, large.Content = "large", strings.Repeat("가", knowledge.ReviewChars)
+	// Fills the review of the folder up to the char cap exactly
+	filling := seeds.p
+	filling.ID, filling.Content = "filling", ""
+	used := utf8.RuneCountInString(filling.Text())
+	for _, k := range []knowledge.Knowledge{seeds.a, seeds.b, seeds.j, seeds.p} {
+		used += utf8.RuneCountInString(k.Text())
+	}
+	filling.Content = strings.Repeat("가", knowledge.ReviewChars-used)
+	longer := seeds.drafts()
+	longer[0].Content += strings.Repeat("x", 100)
+	// Nine items that cite only paragraphs push the review of the folder past the item cap before the compaction
+	var crowd []knowledge.Knowledge
+	for i := range 9 {
+		k := seeds.p
+		k.ID, k.Content = fmt.Sprintf("crowd-%d", i), fmt.Sprintf("paragraph fact %d", i)
+		crowd = append(crowd, k)
+	}
 	success := []string{
 		"k-1 v1 approved c-1", "j v2 approved c-1", "j v1 superseded c-1", "a v1 retired c-1", "b v1 retired c-1",
 	}
@@ -923,9 +943,19 @@ func TestLedgerApproveCompaction(t *testing.T) {
 			want{err: knowledge.ErrTransitionInvalid},
 		},
 		{
-			"refused when a new item's folder would outgrow the review",
-			args{replay: passed, approver: "jed", extra: []knowledge.Knowledge{large}},
+			"refused when a new item pushes a review past the char cap",
+			args{replay: passed, approver: "jed", extra: []knowledge.Knowledge{filling}, drafts: longer},
 			want{err: knowledge.ErrFolderFull},
+		},
+		{
+			"a compaction that shrinks a review already past the char cap passes",
+			args{replay: passed, approver: "jed", extra: []knowledge.Knowledge{large}},
+			want{appended: success, items: items, vetoes: true},
+		},
+		{
+			"a compaction that shrinks a review already past the item cap passes",
+			args{replay: passed, approver: "jed", extra: crowd},
+			want{appended: success, items: items, vetoes: true},
 		},
 		{"refused without an approver", args{replay: passed}, want{err: knowledge.ErrApproverRequired}},
 	}
@@ -935,7 +965,11 @@ func TestLedgerApproveCompaction(t *testing.T) {
 			t.Parallel()
 			l, vetoPath := newTestLedger(t, t.TempDir(), now)
 			require.NoError(t, testkit.Err(l.Import(ctx, append(seeds.all(), tc.args.extra...))))
-			proposed, err := l.ProposeCompaction(ctx, "a", seeds.drafts())
+			drafts := tc.args.drafts
+			if drafts == nil {
+				drafts = seeds.drafts()
+			}
+			proposed, err := l.ProposeCompaction(ctx, "a", drafts)
 			require.NoError(t, err)
 			for _, ref := range tc.args.retired {
 				_, err = l.Retire(ctx, ref.ID, ref.Version, "ann")

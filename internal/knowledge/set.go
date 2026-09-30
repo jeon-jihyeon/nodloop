@@ -130,6 +130,25 @@ func (s Set) folderIn(item Knowledge, changeContext evidence.Context) Folder {
 	return Folder{Chars: utf8.RuneCountInString(item.Text()) + carried.runes(), Carried: carried, Context: changeContext}
 }
 
+// The folder of the approved item in the first change context whose review the set holds past a cap and bigger than before
+// 1. a review past ReviewChars grows when its chars grow and a review past ReviewItems when its items grow
+// 2. each cap is judged alone so a review with fewer items and more chars passes while its chars stay under the cap
+// 3. a review already past a cap that does not grow passes so a replacement never needs a retire first
+// Only a change context the item reaches can grow because every other change between the sets retires or supersedes
+func (s Set) outgrows(before Set, item Knowledge) (Folder, bool) {
+	for _, c := range evidence.Contexts() {
+		if !item.reaches(c) {
+			continue
+		}
+		f := s.folderIn(item, c)
+		was := before.carried("", c)
+		if (f.Chars > ReviewChars && f.Chars > was.runes()) || (f.Size() > ReviewItems && f.Size() > len(was)) {
+			return f, true
+		}
+	}
+	return Folder{}, false
+}
+
 // The approved items other than id that a review of the change context may load
 func (s Set) carried(id string, changeContext evidence.Context) Set {
 	out := Set{}
@@ -256,6 +275,8 @@ func (s Set) propose(draft Knowledge, now time.Time) (Knowledge, error) {
 // Only a retire by a named person lifts a veto
 // 4. a new version that reaches events the approved version never reached is refused with ErrScopeWidened
 // Only a retire by a named person widens the scope the same way
+// 5. an approval that pushes a review past ReviewChars or ReviewItems or grows one already past them is refused
+// So a new version that replaces an item in a review already past a cap passes while that review does not grow
 func (s Set) approval(id string, version int, approver string, now time.Time) ([]Knowledge, error) {
 	history, err := s.historyOf(id)
 	if err != nil {
@@ -288,6 +309,9 @@ func (s Set) approval(id string, version int, approver string, now time.Time) ([
 				ErrScopeWidened, id, version, reached, superseded.Version, superseded.Version, superseded.reachText(), superseded.Version)
 		}
 		records = append(records, *superseded)
+	}
+	if f, grew := slices.Concat(records, s).outgrows(s, to); grew {
+		return nil, fmt.Errorf("%w: %s with %s", ErrFolderFull, f.load(), f)
 	}
 	return records, nil
 }
