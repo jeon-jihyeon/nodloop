@@ -203,6 +203,14 @@ func TestPropose(t *testing.T) {
 			}}},
 			want{err: knowledge.ErrCompactionInvalid},
 		},
+		{
+			"an item scoped to a dim value no event carries is refused",
+			args{nil, "a", compact.Draft{Items: []compact.Item{{
+				Kind: knowledge.KindMeaning, Content: "lag and basis", ChangeContexts: merged.Items[0].ChangeContexts,
+				Metrics: merged.Items[0].Metrics, Dims: map[string]string{"source": "nowhere"}, From: []string{"a", "b"},
+			}}}},
+			want{err: knowledge.ErrScopeUnobserved},
+		},
 		{"a folder without an expected status is refused", args{nil, "far", merged}, want{err: compact.ErrNothingToReplay}},
 		{"an anchor that cites only paragraphs is refused", args{nil, "p", merged}, want{err: knowledge.ErrParagraphOnly}},
 		{
