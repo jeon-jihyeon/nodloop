@@ -11,6 +11,7 @@ import (
 	"github.com/jeon-jihyeon/nodloop/internal/evidence"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	knowledgefile "github.com/jeon-jihyeon/nodloop/internal/knowledge/file"
+	"github.com/jeon-jihyeon/nodloop/internal/testkit"
 	vetofile "github.com/jeon-jihyeon/nodloop/internal/veto/file"
 )
 
@@ -144,7 +145,7 @@ func TestLedgerReaffirm(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			ledger, _ := newTestLedger(t, t.TempDir(), now)
-			require.NoError(t, ledger.Import(ctx, tc.args.records))
+			require.NoError(t, testkit.Err(ledger.Import(ctx, tc.args.records)))
 			_, err := ledger.Reaffirm(ctx, tc.args.id, tc.args.version, tc.args.approver)
 			assert.ErrorIs(t, err, tc.want.err)
 			history, err := ledger.History(ctx, "item")
@@ -197,7 +198,7 @@ func TestLedgerReaffirmConcurrentWrite(t *testing.T) {
 			sink := vetofile.NewApprovedFile(t.TempDir(), dir)
 			id := func(prefix string) string { return prefix + "item" }
 			first := knowledge.NewLedger(store, sink, func() time.Time { return now }, id)
-			require.NoError(t, first.Import(ctx, []knowledge.Knowledge{item}))
+			require.NoError(t, testkit.Err(first.Import(ctx, []knowledge.Knowledge{item})))
 			read, landed := make(chan struct{}), make(chan struct{})
 			second := knowledge.NewLedger(other, sink, func() time.Time {
 				close(read)
@@ -210,7 +211,7 @@ func TestLedgerReaffirmConcurrentWrite(t *testing.T) {
 				result <- err
 			}()
 			<-read
-			err = first.Import(ctx, []knowledge.Knowledge{tc.args})
+			err = testkit.Err(first.Import(ctx, []knowledge.Knowledge{tc.args}))
 			close(landed)
 			require.NoError(t, err)
 
@@ -331,7 +332,7 @@ func TestLedgerNarrow(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			ledger, _ := newTestLedger(t, t.TempDir(), at.Add(time.Hour))
-			require.NoError(t, ledger.Import(ctx, []knowledge.Knowledge{tc.args.item}))
+			require.NoError(t, testkit.Err(ledger.Import(ctx, []knowledge.Knowledge{tc.args.item})))
 
 			got, _, err := ledger.Narrow(ctx, "item", tc.args.version, tc.args.contexts, []string{"r2", "r1"}, "jed")
 			history, historyErr := ledger.History(ctx, "item")

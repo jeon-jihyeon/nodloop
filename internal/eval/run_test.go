@@ -442,7 +442,7 @@ func TestHoldout(t *testing.T) {
 			for _, fb := range tc.args.feedback {
 				require.NoError(t, s.Feedback.Append(ctx, fb))
 			}
-			require.NoError(t, s.Ledger.Import(ctx, tc.args.knowledge))
+			require.NoError(t, testkit.Err(s.Ledger.Import(ctx, tc.args.knowledge)))
 			traces, err := eval.New(s.Source, d, s.Traces, s.Feedback, s.Ledger).Holdout(ctx, tc.args.opts)
 			var got []review
 			for _, tr := range traces {
@@ -708,7 +708,7 @@ func TestSeedThenHoldoutReport(t *testing.T) {
 			require.NoError(t, err)
 			records, err := demo.All()
 			require.NoError(t, err)
-			require.NoError(t, s.Ledger.Import(ctx, records))
+			require.NoError(t, testkit.Err(s.Ledger.Import(ctx, records)))
 			holdout, err := r.Holdout(ctx, eval.RunOptions{SessionID: "s", Parallel: tc.args.parallel})
 			require.NoError(t, err)
 			require.Len(t, holdout, 48)
