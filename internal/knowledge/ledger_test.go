@@ -16,6 +16,7 @@ import (
 	"github.com/jeon-jihyeon/nodloop/internal/evidence"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge/file"
+	"github.com/jeon-jihyeon/nodloop/internal/testkit"
 	vetofile "github.com/jeon-jihyeon/nodloop/internal/veto/file"
 )
 
@@ -54,7 +55,7 @@ func TestLedgerApproved(t *testing.T) {
 		store, vetofile.NewApprovedFile(t.TempDir(), "records"),
 		func() time.Time { return at }, func(prefix string) string { return prefix + "new" },
 	)
-	require.NoError(t, l.Import(ctx, []knowledge.Knowledge{candidate, approved, other}))
+	require.NoError(t, testkit.Err(l.Import(ctx, []knowledge.Knowledge{candidate, approved, other})))
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -98,7 +99,7 @@ func TestLedgerApprovedVersion(t *testing.T) {
 		store, vetofile.NewApprovedFile(t.TempDir(), "records"),
 		func() time.Time { return at }, func(prefix string) string { return prefix + "new" },
 	)
-	require.NoError(t, l.Import(ctx, []knowledge.Knowledge{first, second, candidate, other}))
+	require.NoError(t, testkit.Err(l.Import(ctx, []knowledge.Knowledge{first, second, candidate, other})))
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -139,7 +140,7 @@ func TestLedgerHistory(t *testing.T) {
 		store, vetofile.NewApprovedFile(t.TempDir(), "records"),
 		func() time.Time { return at }, func(prefix string) string { return prefix + "new" },
 	)
-	require.NoError(t, l.Import(ctx, []knowledge.Knowledge{candidate, other, approved}))
+	require.NoError(t, testkit.Err(l.Import(ctx, []knowledge.Knowledge{candidate, other, approved})))
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -180,7 +181,7 @@ func TestLedgerOverlaps(t *testing.T) {
 		store, vetofile.NewApprovedFile(t.TempDir(), "records"),
 		func() time.Time { return at }, func(prefix string) string { return prefix + "new" },
 	)
-	require.NoError(t, l.Import(ctx, []knowledge.Knowledge{k1, k2, retired}))
+	require.NoError(t, testkit.Err(l.Import(ctx, []knowledge.Knowledge{k1, k2, retired})))
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -284,7 +285,7 @@ func TestLedgerPropose(t *testing.T) {
 				store, vetofile.NewApprovedFile(t.TempDir(), "records"),
 				func() time.Time { return now }, func(prefix string) string { return prefix + "new" },
 			)
-			require.NoError(t, l.Import(ctx, tc.args.seeds))
+			require.NoError(t, testkit.Err(l.Import(ctx, tc.args.seeds)))
 			got, overlaps, err := l.Propose(ctx, tc.args.draft)
 			assert.ErrorIs(t, err, tc.want.err)
 			assert.Equal(t, tc.want.knowledge, got)
@@ -448,7 +449,7 @@ func TestLedgerApprove(t *testing.T) {
 				store, vetofile.NewApprovedFile(home, "records"),
 				func() time.Time { return now }, func(prefix string) string { return prefix + "new" },
 			)
-			require.NoError(t, l.Import(ctx, tc.args.seeds))
+			require.NoError(t, testkit.Err(l.Import(ctx, tc.args.seeds)))
 			got, err := l.Approve(ctx, "k1", tc.args.version, tc.args.approver)
 			assert.ErrorIs(t, err, tc.want.err)
 			assert.Equal(t, tc.want.knowledge, got)
@@ -560,7 +561,7 @@ func TestLedgerRetire(t *testing.T) {
 				store, vetofile.NewApprovedFile(home, "records"),
 				func() time.Time { return now }, func(prefix string) string { return prefix + "new" },
 			)
-			require.NoError(t, l.Import(ctx, tc.args.seeds))
+			require.NoError(t, testkit.Err(l.Import(ctx, tc.args.seeds)))
 			got, err := l.Retire(ctx, "k1", tc.args.version, tc.args.approver)
 			assert.ErrorIs(t, err, tc.want.err)
 			assert.Equal(t, tc.want.knowledge, got)
@@ -592,8 +593,18 @@ func TestLedgerImport(t *testing.T) {
 		When:    []knowledge.VetoCondition{{Field: "command", Match: `sed\s+-i`}},
 		Example: map[string]any{"command": "sed -i s/a/b/ f"},
 	}
+	retired := approved
+	retired.Status, retired.Time = knowledge.StatusRetired, at.Add(time.Hour)
+	edited := approved
+	edited.Content = "one edited"
+	type args struct {
+		// Imported before the records under test
+		seeds   []knowledge.Knowledge
+		records []knowledge.Knowledge
+	}
 	type want struct {
-		history knowledge.Set
+		imported knowledge.Set
+		history  knowledge.Set
 		// The generated veto file and empty when there is none
 		vetoes string
 		err    error
@@ -601,18 +612,18 @@ func TestLedgerImport(t *testing.T) {
 	}
 	tcs := []struct {
 		name string
-		args []knowledge.Knowledge
+		args args
 		want want
 	}{
 		{
 			"valid records are appended as they are",
-			[]knowledge.Knowledge{candidate, approved},
-			want{knowledge.Set{approved, candidate}, "", nil, "<nil>"},
+			args{nil, []knowledge.Knowledge{candidate, approved}},
+			want{knowledge.Set{candidate, approved}, knowledge.Set{approved, candidate}, "", nil, "<nil>"},
 		},
 		{
 			"an approved judgment with a veto is exported for guard",
-			[]knowledge.Knowledge{judgment},
-			want{knowledge.Set{judgment}, "# Generated by nodloop from the approved judgment knowledge of records\n" +
+			args{nil, []knowledge.Knowledge{judgment}},
+			want{knowledge.Set{judgment}, knowledge.Set{judgment}, "# Generated by nodloop from the approved judgment knowledge of records\n" +
 				"# Edits here are overwritten. Retire the knowledge to remove a veto\n" +
 				"vetoes:\n" +
 				"    - id: k1\n" +
@@ -624,9 +635,31 @@ func TestLedgerImport(t *testing.T) {
 				"      source: nodloop knowledge k1 v1 approved by jed\n", nil, "<nil>"},
 		},
 		{
-			"invalid record stops the import after the valid ones and is named by position",
-			[]knowledge.Knowledge{candidate, empty, approved},
-			want{knowledge.Set{candidate}, "", knowledge.ErrContentRequired, "record 2: knowledge: content is required"},
+			"invalid record stops the import before any record lands and is named by position",
+			args{[]knowledge.Knowledge{candidate}, []knowledge.Knowledge{approved, empty}},
+			want{nil, knowledge.Set{candidate}, "", knowledge.ErrContentRequired, "record 2: knowledge: content is required"},
+		},
+		{
+			"an approved veto before an invalid record is neither recorded nor exported",
+			args{[]knowledge.Knowledge{candidate}, []knowledge.Knowledge{judgment, empty}},
+			want{nil, knowledge.Set{candidate}, "", knowledge.ErrContentRequired, "record 2: knowledge: content is required"},
+		},
+		{
+			"importing the same file again after a retire keeps the retire",
+			args{[]knowledge.Knowledge{candidate, approved, retired}, []knowledge.Knowledge{candidate, approved}},
+			want{knowledge.Set{}, knowledge.Set{retired, approved, candidate}, "", nil, "<nil>"},
+		},
+		{
+			"a record older than the recorded history of its version fails and lands nothing",
+			args{[]knowledge.Knowledge{candidate, retired}, []knowledge.Knowledge{edited}},
+			want{nil, knowledge.Set{retired, candidate}, "", knowledge.ErrImportStale,
+				"record 1: knowledge: import record is older than the recorded history of its version: " +
+					"k1 v1 approved at 2026-09-23T00:00:00Z and the recorded retired at 2026-09-23T01:00:00Z"},
+		},
+		{
+			"a record as new as the recorded history lands",
+			args{[]knowledge.Knowledge{candidate}, []knowledge.Knowledge{approved}},
+			want{knowledge.Set{approved}, knowledge.Set{approved, candidate}, "", nil, "<nil>"},
 		},
 	}
 	ctx := context.Background()
@@ -640,9 +673,11 @@ func TestLedgerImport(t *testing.T) {
 				store, vetofile.NewApprovedFile(home, "records"),
 				func() time.Time { return at }, func(prefix string) string { return prefix + "new" },
 			)
-			err = l.Import(ctx, tc.args)
+			require.NoError(t, testkit.Err(l.Import(ctx, tc.args.seeds)))
+			imported, err := l.Import(ctx, tc.args.records)
 			assert.ErrorIs(t, err, tc.want.err)
 			assert.Equal(t, tc.want.msg, fmt.Sprint(err))
+			assert.Equal(t, tc.want.imported, imported)
 			history, err := l.History(ctx, "k1")
 			require.NoError(t, err)
 			assert.Equal(t, tc.want.history, history)
@@ -675,7 +710,7 @@ func TestLedgerFailsOnBrokenStore(t *testing.T) {
 	readOnly := knowledge.NewLedger(
 		readOnlyStore, vetofile.NewApprovedFile(t.TempDir(), "records"), now, newID,
 	)
-	require.NoError(t, readOnly.Import(ctx, []knowledge.Knowledge{candidate}))
+	require.NoError(t, testkit.Err(readOnly.Import(ctx, []knowledge.Knowledge{candidate})))
 	require.NoError(t, os.Chmod(filepath.Join(readOnlyDir, "knowledge.jsonl"), 0o400))
 	// A file where the veto directory belongs so every export fails
 	// The records go in through a ledger whose export works
@@ -688,7 +723,7 @@ func TestLedgerFailsOnBrokenStore(t *testing.T) {
 	seeder := knowledge.NewLedger(
 		blockedStore, vetofile.NewApprovedFile(t.TempDir(), "records"), now, newID,
 	)
-	require.NoError(t, seeder.Import(ctx, []knowledge.Knowledge{candidate, approved}))
+	require.NoError(t, testkit.Err(seeder.Import(ctx, []knowledge.Knowledge{candidate, approved})))
 	blocked := knowledge.NewLedger(
 		blockedStore, vetofile.NewApprovedFile(blockedHome, "records"), now, newID,
 	)
@@ -761,11 +796,18 @@ func TestLedgerFailsOnBrokenStore(t *testing.T) {
 			want{knowledge.Knowledge{}, file.ErrRead},
 		},
 		{
-			"import fails to append",
+			"import fails to read",
 			args{unreadable, func(ctx context.Context, l *knowledge.Ledger) (any, error) {
-				return nil, l.Import(ctx, []knowledge.Knowledge{candidate})
+				return l.Import(ctx, []knowledge.Knowledge{candidate})
 			}},
-			want{nil, file.ErrAppend},
+			want{knowledge.Set(nil), file.ErrRead},
+		},
+		{
+			"import fails to append",
+			args{readOnly, func(ctx context.Context, l *knowledge.Ledger) (any, error) {
+				return l.Import(ctx, []knowledge.Knowledge{third})
+			}},
+			want{knowledge.Set(nil), file.ErrAppend},
 		},
 		{
 			"propose compaction fails to read",
@@ -804,9 +846,9 @@ func TestLedgerFailsOnBrokenStore(t *testing.T) {
 		{
 			"import fails to export the vetoes after appending",
 			args{blocked, func(ctx context.Context, l *knowledge.Ledger) (any, error) {
-				return nil, l.Import(ctx, []knowledge.Knowledge{third})
+				return l.Import(ctx, []knowledge.Knowledge{third})
 			}},
-			want{nil, knowledge.ErrVetoExport},
+			want{knowledge.Set{third}, knowledge.ErrVetoExport},
 		},
 		{
 			"approve fails to export the vetoes and still returns the approved record",
@@ -1054,7 +1096,7 @@ func TestLedgerFolder(t *testing.T) {
 				store, vetofile.NewApprovedFile(t.TempDir(), "records"),
 				func() time.Time { return now }, func(prefix string) string { return prefix + "new" },
 			)
-			require.NoError(t, l.Import(ctx, tc.args.seeds))
+			require.NoError(t, testkit.Err(l.Import(ctx, tc.args.seeds)))
 
 			got, err := l.Folder(ctx, "k1", tc.args.version)
 

@@ -183,20 +183,29 @@ func (l *Ledger) Retire(ctx context.Context, id string, version int, approver st
 	return to, l.exportVetoes(ctx, to)
 }
 
-// Appends each record as it is once it is valid
-func (l *Ledger) Import(ctx context.Context, records []Knowledge) error {
-	for i, k := range records {
-		if err := k.validate(); err != nil {
-			return fmt.Errorf("record %d: %w", i+1, err)
-		}
+// Appends the records of a file that the ledger does not hold yet and returns them
+// 1. every record is checked before any lands so a bad file lands nothing
+// 2. a record the ledger already holds is skipped so importing one file again changes nothing
+// 3. a record older than the recorded history of its version fails with ErrImportStale
+// The records land as they are without the status change checks because a data set brings its seed this way
+func (l *Ledger) Import(ctx context.Context, records []Knowledge) (Set, error) {
+	all, err := l.All(ctx)
+	if err != nil {
+		return nil, err
+	}
+	fresh, err := all.importable(records)
+	if err != nil {
+		return nil, err
+	}
+	for _, k := range fresh {
 		if err := l.store.Append(ctx, k); err != nil {
-			return err
+			return nil, err
 		}
 	}
 	if err := l.ExportVetoes(ctx); err != nil {
-		return fmt.Errorf("%w: %d records imported: %w", ErrVetoExport, len(records), err)
+		return fresh, fmt.Errorf("%w: %d records imported: %w", ErrVetoExport, len(fresh), err)
 	}
-	return nil
+	return fresh, nil
 }
 
 // Hands the approved vetoes to the sink again

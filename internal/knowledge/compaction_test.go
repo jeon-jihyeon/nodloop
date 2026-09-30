@@ -17,6 +17,7 @@ import (
 	"github.com/jeon-jihyeon/nodloop/internal/evidence"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge/file"
+	"github.com/jeon-jihyeon/nodloop/internal/testkit"
 	vetofile "github.com/jeon-jihyeon/nodloop/internal/veto/file"
 )
 
@@ -228,7 +229,7 @@ func TestLedgerProposeCompaction(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			l, _ := newTestLedger(t, t.TempDir(), now)
-			require.NoError(t, l.Import(ctx, seeds.all()))
+			require.NoError(t, testkit.Err(l.Import(ctx, seeds.all())))
 
 			got, err := l.ProposeCompaction(ctx, tc.args.anchor, tc.args.drafts)
 			all, listErr := l.All(ctx)
@@ -342,7 +343,7 @@ func TestLedgerProposeCompactionAgain(t *testing.T) {
 			seeds := newCompactionSeeds()
 			dir := t.TempDir()
 			l, _ := newTestLedger(t, dir, seeds.at.Add(time.Hour))
-			require.NoError(t, l.Import(ctx, seeds.all()))
+			require.NoError(t, testkit.Err(l.Import(ctx, seeds.all())))
 			_, err := l.ProposeCompaction(ctx, "a", seeds.drafts())
 			require.NoError(t, err)
 			for _, ref := range tc.args.retired {
@@ -392,7 +393,7 @@ func TestLedgerProposeCompactionVetoTools(t *testing.T) {
 			seeds := newCompactionSeeds()
 			seeds.j.Veto.Tool = tc.args.oldTools
 			l, _ := newTestLedger(t, t.TempDir(), seeds.at.Add(time.Hour))
-			require.NoError(t, l.Import(ctx, seeds.all()))
+			require.NoError(t, testkit.Err(l.Import(ctx, seeds.all())))
 			drafts := seeds.drafts()
 			drafts[1].Veto.Tool = tc.args.newTools
 
@@ -421,7 +422,7 @@ func TestLedgerApproveRefusesCompactionCandidate(t *testing.T) {
 			t.Parallel()
 			seeds := newCompactionSeeds()
 			ledger, _ := newTestLedger(t, t.TempDir(), seeds.at)
-			require.NoError(t, ledger.Import(ctx, seeds.all()))
+			require.NoError(t, testkit.Err(ledger.Import(ctx, seeds.all())))
 			drafts := seeds.drafts()
 			drafts[0].ID = "a"
 			proposed, err := ledger.ProposeCompaction(ctx, "a", drafts)
@@ -464,7 +465,7 @@ func TestLedgerCompactionCompleteness(t *testing.T) {
 			seeds := newCompactionSeeds()
 			dir := t.TempDir()
 			l, vetoPath := newTestLedger(t, dir, seeds.at)
-			require.NoError(t, l.Import(ctx, seeds.all()))
+			require.NoError(t, testkit.Err(l.Import(ctx, seeds.all())))
 			drafts := seeds.drafts()
 			drafts[0].Evidence.Knowledge = append(drafts[0].Evidence.Knowledge, knowledge.Ref{ID: "j", Version: 1})
 			proposed, err := l.ProposeCompaction(ctx, "a", drafts)
@@ -538,7 +539,7 @@ func TestPreview(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			l, _ := newTestLedger(t, t.TempDir(), now)
-			require.NoError(t, l.Import(ctx, seeds.all()))
+			require.NoError(t, testkit.Err(l.Import(ctx, seeds.all())))
 			c, err := l.ProposeCompaction(ctx, "a", seeds.drafts())
 			require.NoError(t, err)
 			before, err := l.All(ctx)
@@ -649,7 +650,7 @@ func TestLedgerApproveCompaction(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			l, vetoPath := newTestLedger(t, t.TempDir(), now)
-			require.NoError(t, l.Import(ctx, append(seeds.all(), tc.args.extra...)))
+			require.NoError(t, testkit.Err(l.Import(ctx, append(seeds.all(), tc.args.extra...))))
 			proposed, err := l.ProposeCompaction(ctx, "a", seeds.drafts())
 			require.NoError(t, err)
 			for _, ref := range tc.args.retired {
@@ -661,7 +662,7 @@ func TestLedgerApproveCompaction(t *testing.T) {
 				require.NoError(t, err)
 				k := history[0]
 				k.Status, k.Approver = knowledge.StatusApproved, "jed"
-				require.NoError(t, l.Import(ctx, []knowledge.Knowledge{k}))
+				require.NoError(t, testkit.Err(l.Import(ctx, []knowledge.Knowledge{k})))
 			}
 			before, err := l.All(ctx)
 			require.NoError(t, err)

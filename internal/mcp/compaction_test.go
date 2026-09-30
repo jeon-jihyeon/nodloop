@@ -42,7 +42,7 @@ func compactionStores(t *testing.T) testkit.Stores {
 	a.ID, a.Content, a.Evidence = "a", "lag", knowledge.Evidence{FeedbackTraceIDs: []string{"t1"}}
 	b.ID, b.Content, b.Evidence = "b", "basis", knowledge.Evidence{FeedbackTraceIDs: []string{"t2"}}
 	p.ID, p.Content, p.Evidence = "p", "paragraph only", knowledge.Evidence{ParagraphIDs: []string{"p#1"}}
-	require.NoError(t, st.Ledger.Import(ctx, []knowledge.Knowledge{a, b, p}))
+	require.NoError(t, testkit.Err(st.Ledger.Import(ctx, []knowledge.Knowledge{a, b, p})))
 	return st
 }
 

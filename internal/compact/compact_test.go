@@ -57,7 +57,7 @@ func seed(t *testing.T, s testkit.Stores) {
 		require.NoError(t, err)
 		require.NoError(t, s.Feedback.Append(ctx, fb))
 	}
-	require.NoError(t, s.Ledger.Import(ctx, seedItems(at)))
+	require.NoError(t, testkit.Err(s.Ledger.Import(ctx, seedItems(at))))
 }
 
 func seedItems(at time.Time) []knowledge.Knowledge {
@@ -387,7 +387,7 @@ func TestReplay(t *testing.T) {
 			items := seedItems(at)[:2]
 			items[0].Evidence = knowledge.Evidence{FeedbackTraceIDs: []string{"t1"}}
 			items[1].Evidence = knowledge.Evidence{FeedbackTraceIDs: []string{"t2"}}
-			require.NoError(t, s.Ledger.Import(ctx, items))
+			require.NoError(t, testkit.Err(s.Ledger.Import(ctx, items)))
 			c := compact.New(s.Source, s.Ledger, s.Traces, s.Feedback, s.Replays)
 			proposed, _, err := c.Propose(ctx, "a", merged, "")
 			require.NoError(t, err)
