@@ -27,6 +27,7 @@ commands:
   setup --data-dir <dir> [--record-dir <dir>]
                             Point nodloop at a reference data directory such as examples/demo of the repository.
                             Records go to ~/.nodloop/records unless --record-dir or NODLOOP_RECORD_DIR names another
+                            A rerun without --record-dir keeps the record dir saved before and prints the records in use
   llm probe [--model <m>]   Send a minimal structured-output request through claude -p and print cost
   evidence events           List events from the configured source
   evidence event --id <id>  Print the change context and the series of one event

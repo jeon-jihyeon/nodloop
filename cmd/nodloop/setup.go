@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -46,6 +47,26 @@ func (h homeDir) configPath() string {
 	return filepath.Join(h.dir(), configFile)
 }
 
+// A directory as stored or given
+// Paths stay as written so the printed and saved dirs never change spelling
+type dirPath string
+
+// Whether both paths name one directory
+// 1. a path through a symlink names the directory the link points at
+// 2. a path spelled in another case names the same directory on a file system that ignores case
+// 3. a path that cannot be read names none so a data dir removed since the last setup still counts as another
+func (p dirPath) sameAs(other string) bool {
+	if string(p) == other {
+		return true
+	}
+	a, err := os.Stat(string(p))
+	if err != nil {
+		return false
+	}
+	b, err := os.Stat(other)
+	return err == nil && os.SameFile(a, b)
+}
+
 func (h homeDir) readConfig() (userConfig, error) {
 	b, err := os.ReadFile(h.configPath())
 	if errors.Is(err, os.ErrNotExist) {
@@ -81,17 +102,6 @@ func newUserConfig(dataDir, recordDir string) (userConfig, error) {
 	return userConfig{DataDir: abs, RecordDir: recordDir}, nil
 }
 
-func (h homeDir) setup(dataDir, recordDir string) (userConfig, error) {
-	uc, err := newUserConfig(dataDir, recordDir)
-	if err != nil {
-		return userConfig{}, err
-	}
-	if err := h.save(uc); err != nil {
-		return userConfig{}, err
-	}
-	return uc, nil
-}
-
 func (h homeDir) save(uc userConfig) error {
 	if err := os.MkdirAll(h.dir(), 0o755); err != nil {
 		return err
@@ -107,7 +117,7 @@ func runSetup(args []string, getenv func(string) string, stdout, stderr io.Write
 	fs := flag.NewFlagSet("setup", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	dataDir := fs.String("data-dir", "", "reference data directory with events.csv and policy.yaml and procedures")
-	recordDir := fs.String("record-dir", "", "record directory. Empty means ~/.nodloop/records")
+	recordDir := fs.String("record-dir", "", "record directory. Empty keeps the one saved before and otherwise means ~/.nodloop/records")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -115,7 +125,7 @@ func runSetup(args []string, getenv func(string) string, stdout, stderr io.Write
 	if h == "" {
 		return fail(stderr, "setup", fmt.Errorf("%w: HOME is not set", errHomeUnknown))
 	}
-	cmd := setupCommand{home: h, out: stdout}
+	cmd := setupCommand{home: h, fileEnv: getenv(envFileDir), recordEnv: getenv(envRecordDir), out: stdout, log: stderr}
 	if *dataDir == "" {
 		return fail(stderr, "setup", fmt.Errorf("--data-dir %w", errRequired))
 	}
@@ -127,14 +137,83 @@ func runSetup(args []string, getenv func(string) string, stdout, stderr io.Write
 
 type setupCommand struct {
 	home homeDir
-	out  io.Writer
+	// NODLOOP_FILE_DIR that wins over the saved data dir in every later command
+	fileEnv string
+	// NODLOOP_RECORD_DIR that wins over the saved record dir in every later command
+	recordEnv string
+	out, log  io.Writer
 }
 
+// Prints the data and the records every later command uses so a changed or shadowed dir is never silent
+// 1. an empty record dir keeps the one saved before so rerunning setup with the data dir alone never drops the records
+// 2. a broken config fails unless --record-dir names the records since the record dir saved in it cannot be read
+// 3. the dirs in use resolve before the config is written so a failed setup changes nothing
+// 4. NODLOOP_FILE_DIR naming another directory warns because every command started with it reviews that dir
+// 5. a data dir naming another directory over the records in use before warns when they hold files because their knowledge and corrections carry into its reviews
+// 6. two spellings of one directory are one dir so a symlinked path never splits the records
 func (c setupCommand) data(dataDir, recordDir string) error {
-	uc, err := c.home.setup(dataDir, recordDir)
+	prior, err := c.prior(recordDir)
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(c.out, "data %s\nconfig %s\n", uc.DataDir, c.home.configPath())
+	uc, err := newUserConfig(dataDir, cmp.Or(recordDir, prior.RecordDir))
+	if err != nil {
+		return err
+	}
+	records, err := recordDirOf("", c.recordEnv, uc.RecordDir, c.home.recordDir())
+	if err != nil {
+		return err
+	}
+	// The variable is taken as is by every later command so it resolves against the working directory like theirs
+	data, err := filepath.Abs(cmp.Or(c.fileEnv, uc.DataDir))
+	if err != nil {
+		return err
+	}
+	if err := c.home.save(uc); err != nil {
+		return err
+	}
+	fmt.Fprintf(c.out, "data %s\nrecords %s\nconfig %s\n", data, records, c.home.configPath())
+	if !dirPath(uc.DataDir).sameAs(data) {
+		fmt.Fprintf(c.log, "nodloop setup: warning: %s is %s and wins over the saved data dir so every command started with it reviews %s. "+
+			"Unset it to review %s\n", envFileDir, c.fileEnv, data, uc.DataDir)
+	}
+	c.warnCarryOver(prior, uc.DataDir, records)
 	return nil
+}
+
+// The config saved before
+// A broken one counts as none only when --record-dir names the records
+func (c setupCommand) prior(recordDir string) (userConfig, error) {
+	uc, err := c.home.readConfig()
+	if !errors.Is(err, errConfigInvalid) {
+		return uc, err
+	}
+	if recordDir != "" {
+		return userConfig{}, nil
+	}
+	return userConfig{}, fmt.Errorf("%w. Fix it or run setup again with --record-dir <dir> since the record dir saved in it cannot be read", err)
+}
+
+// Warns when the records in use before hold files of another data dir
+func (c setupCommand) warnCarryOver(prior userConfig, dataDir, records string) {
+	if prior.DataDir == "" || dirPath(prior.DataDir).sameAs(dataDir) {
+		return
+	}
+	// A prior record dir that does not resolve failed every earlier command so no records came from it
+	used, err := recordDirOf("", c.recordEnv, prior.RecordDir, c.home.recordDir())
+	if err != nil || !dirPath(used).sameAs(records) {
+		return
+	}
+	if entries, err := os.ReadDir(records); err == nil && len(entries) > 0 {
+		fmt.Fprintf(c.log, "nodloop setup: warning: %s holds the reviews and knowledge of %s and they carry into reviews of %s. "+
+			"%s to keep them apart\n", records, prior.DataDir, dataDir, c.recordHint())
+	}
+}
+
+// NODLOOP_RECORD_DIR wins over the saved record dir so a new --record-dir alone would not move the records
+func (c setupCommand) recordHint() string {
+	if c.recordEnv != "" {
+		return "Set " + envRecordDir + " to a new dir"
+	}
+	return "Run setup again with --record-dir <new dir>"
 }
