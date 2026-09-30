@@ -802,7 +802,7 @@ func TestRecord(t *testing.T) {
 		{
 			name: "refuses a second record of one context",
 			args: args{records: []diagnose.Diagnosis{ready}, pending: "context", diag: ready},
-			want: want{outcome: outcome{inputs: []input{recorded}}, err: diagnose.ErrRecorded},
+			want: want{outcome: outcome{inputs: []input{recorded}}, err: diagnose.ErrRecorded, names: "diagnose"},
 		},
 		{
 			name: "refuses an unknown pending id",

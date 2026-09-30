@@ -191,6 +191,8 @@ var tools = []tool{
 		"record refuses a context whose candidates were never selected", (*Server).selectTool),
 	newTool("record", "Validate and record a review written from a context. "+
 		"Refuses unknown or already recorded pending ids and contexts whose candidates were not selected. "+
+		"An already recorded pending id fails naming the trace id of the review recorded before. "+
+		"queue with limit 0 lists that review under the trace id. "+
 		"Every cause must cite paragraph ids from the context. "+
 		"Answers with recorded false and revise reasons once when the review has defects to fix: "+
 		"fix only those and call record again with the same pending id. "+

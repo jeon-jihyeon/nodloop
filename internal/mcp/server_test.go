@@ -1069,7 +1069,7 @@ func TestServerRefusals(t *testing.T) {
 		{
 			name: "record refuses a context recorded before",
 			args: args{tool: "record", input: map[string]any{"pending_id": opened.PendingID, "diagnosis": review}},
-			want: diagnose.ErrRecorded.Error(),
+			want: diagnose.ErrRecorded.Error() + ": " + opened.PendingID + " by trace " + reviewed.TraceID,
 		},
 		{
 			name: "record refuses a context an interrupted batch run left open",
