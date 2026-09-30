@@ -125,6 +125,13 @@ func TestSourceLabels(t *testing.T) {
 			},
 			want: want{text: "labels.jsonl line 1: evidence: malformed data: label a expects unknown status \"maybe\""},
 		},
+		{
+			name: "a repeated event id is named at its second line",
+			args: map[string]string{"labels.jsonl": "{\"event_id\":\"a\",\"type\":\"t\",\"expected_status\":\"no_action\"}\n" +
+				"{\"event_id\":\"b\",\"type\":\"t\",\"expected_status\":\"no_action\"}\n" +
+				"{\"event_id\":\"a\",\"type\":\"t\",\"expected_status\":\"hold\",\"hold\":true}\n"},
+			want: want{text: "labels.jsonl line 3: evidence: malformed data: label repeats event_id \"a\""},
+		},
 	}
 	ctx := context.Background()
 	for _, tc := range tcs {

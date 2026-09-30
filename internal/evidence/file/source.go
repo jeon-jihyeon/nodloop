@@ -195,13 +195,25 @@ func markdown(name string) bool {
 
 // File order
 // A missing file reads as empty because labels are optional
-// An invalid label fails the read with its line named
+// 1. an invalid label fails the read with its line named
+// 2. a repeated event id fails the same way because the later line would silently decide the score
 func (s *Source) Labels(_ context.Context) ([]evidence.Label, error) {
 	f, err := jsonl.Open[evidence.Label](s.dir, labelsFile)
 	if err != nil {
 		return nil, err
 	}
-	return f.All(evidence.Label.Validate)
+	return f.All(evidence.Label.Validate, labeledEvents{}.add)
+}
+
+// Event ids of the labels read so far
+type labeledEvents map[string]struct{}
+
+func (seen labeledEvents) add(l evidence.Label) error {
+	if _, ok := seen[l.EventID]; ok {
+		return fmt.Errorf("%w: label repeats event_id %q", evidence.ErrMalformed, l.EventID)
+	}
+	seen[l.EventID] = struct{}{}
+	return nil
 }
 
 func (s *Source) loadEvents() ([]evidence.Event, error) {
