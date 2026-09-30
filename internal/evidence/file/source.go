@@ -17,6 +17,7 @@ const (
 	eventsFile    = "events.csv"
 	contextsFile  = "contexts.csv"
 	proceduresDir = "procedures"
+	procedureExt  = ".md"
 	runbooksDir   = "runbooks"
 	labelsFile    = "labels.jsonl"
 	// Some editors and spreadsheet exports write it before Unicode text
@@ -93,7 +94,7 @@ func (s *Source) Procedures(_ context.Context) (evidence.Procedures, error) {
 	}
 	var out evidence.Procedures
 	for _, entry := range entries {
-		if filepath.Ext(entry.Name()) != ".md" {
+		if filepath.Ext(entry.Name()) != procedureExt {
 			continue
 		}
 		b, err := os.ReadFile(filepath.Join(dir, entry.Name()))
