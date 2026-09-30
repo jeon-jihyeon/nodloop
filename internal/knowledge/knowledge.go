@@ -92,6 +92,9 @@ type Knowledge struct {
 	ReviewedAt time.Time `json:"reviewed_at,omitzero"`
 	// Previous version of the same id
 	Supersedes int `json:"supersedes,omitempty"`
+	// The current version of the id when this version was proposed
+	// Zero when the id had none or the record predates the field
+	Base int `json:"base,omitempty"`
 	// When this record set its status
 	// Every status change is a new record so this is not the creation time of the version
 	Time   time.Time `json:"time"`
@@ -164,11 +167,13 @@ func (v Veto) check(id, reason string) error {
 }
 
 func (k Knowledge) validate() error {
-	switch {
-	case k.ID == "":
+	if k.ID == "" {
 		return ErrIDRequired
-	case k.Version <= 0:
-		return ErrVersionInvalid
+	}
+	if err := k.checkVersion(); err != nil {
+		return err
+	}
+	switch {
 	case !k.Kind.valid():
 		return fmt.Errorf("%w: %q", ErrKindUnknown, k.Kind)
 	case k.Content == "":
@@ -189,6 +194,17 @@ func (k Knowledge) validate() error {
 		return ErrVetoKind
 	}
 	return k.Veto.check(k.ID, k.Content)
+}
+
+// A base names an earlier version so a walk down the bases always ends
+func (k Knowledge) checkVersion() error {
+	if k.Version <= 0 {
+		return ErrVersionInvalid
+	}
+	if k.Base < 0 || k.Base >= k.Version {
+		return fmt.Errorf("%w: base %d of version %d", ErrVersionInvalid, k.Base, k.Version)
+	}
+	return nil
 }
 
 // Whether both are one record as the store keeps it

@@ -207,13 +207,17 @@ func (s Set) overlapsOf(id string) (Set, error) {
 // The draft as the next candidate version of its id
 // 1. status and approval fields of the draft are dropped so a proposal never arrives approved
 // 2. compaction fields are dropped so only a compaction proposal marks its candidates
+// 3. the base is the current version of the id so approval can tell which versions the candidate was built on
 func (s Set) propose(draft Knowledge, now time.Time) (Knowledge, error) {
 	if draft.Basis == "" {
 		draft.Basis = BasisStated
 	}
 	draft.Version, draft.Status, draft.Time = s.nextVersion(draft.ID), StatusCandidate, now
 	draft.Approver, draft.ApprovedAt, draft.ReviewedAt, draft.Supersedes = "", time.Time{}, time.Time{}, 0
-	draft.Compaction, draft.CompactionSize = "", 0
+	draft.Compaction, draft.CompactionSize, draft.Base = "", 0, 0
+	if cur := s.current(draft.ID); cur != nil {
+		draft.Base = cur.Version
+	}
 	if err := draft.validate(); err != nil {
 		return Knowledge{}, err
 	}
@@ -221,7 +225,9 @@ func (s Set) propose(draft Knowledge, now time.Time) (Knowledge, error) {
 }
 
 // The approved record and the approved record it supersedes when the id has one
-// A version older than the approved one is refused so an approval never rolls the id back
+// 1. a version older than the approved one is refused so an approval never rolls the id back
+// 2. a candidate whose bases never reach the approved version is refused because it was built without that version
+// Approving it would drop whatever the approved version added such as the facts a compaction merged
 func (s Set) approve(id string, version int, approver string, now time.Time) (Knowledge, *Knowledge, error) {
 	from, err := s.latest(id, version)
 	if err != nil {
@@ -239,9 +245,35 @@ func (s Set) approve(id string, version int, approver string, now time.Time) (Kn
 		return Knowledge{}, nil, fmt.Errorf("%w: %s version %d is older than approved version %d",
 			ErrTransitionInvalid, id, version, cur.Version)
 	}
+	if !s.builtOn(from, cur.Version) {
+		return Knowledge{}, nil, fmt.Errorf(
+			"%w: %s v%d was built from v%d and never from the approved v%d. Propose again from v%d or retire v%d",
+			ErrCandidateOutdated, id, version, from.Base, cur.Version, cur.Version, version)
+	}
 	to.Supersedes = cur.Version
 	superseded := cur.changed(StatusSuperseded, approver, now)
 	return to, &superseded, nil
+}
+
+// Whether version is the base of k or a base of its base
+// 1. a candidate built on another candidate knows every version that candidate was built on
+// 2. a record without a base cannot tell and counts as built on any version
+// 3. a base missing from the set ends the walk
+func (s Set) builtOn(k Knowledge, version int) bool {
+	if k.Base == 0 {
+		return true
+	}
+	for base := k.Base; base > 0; {
+		if base == version {
+			return true
+		}
+		b, err := s.latest(k.ID, base)
+		if err != nil {
+			return false
+		}
+		base = b.Base
+	}
+	return false
 }
 
 // The records of an import that the set does not hold yet in their order

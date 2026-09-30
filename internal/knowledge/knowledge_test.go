@@ -32,6 +32,10 @@ func TestKnowledgeValidate(t *testing.T) {
 	noID.ID = ""
 	zeroVersion := valid
 	zeroVersion.Version = 0
+	baseBelow := valid
+	baseBelow.Version, baseBelow.Base = 2, 1
+	baseAtVersion := valid
+	baseAtVersion.Base = 1
 	unknownKind := valid
 	unknownKind.Kind = "rule"
 	noContent := valid
@@ -82,6 +86,8 @@ func TestKnowledgeValidate(t *testing.T) {
 		{"outcome evidence alone is enough", outcomeOnly, nil},
 		{"missing id fails", noID, knowledge.ErrIDRequired},
 		{"zero version fails", zeroVersion, knowledge.ErrVersionInvalid},
+		{"a base below the version is valid", baseBelow, nil},
+		{"a base at the version fails", baseAtVersion, knowledge.ErrVersionInvalid},
 		{"unknown kind fails", unknownKind, knowledge.ErrKindUnknown},
 		{"empty content fails", noContent, knowledge.ErrContentRequired},
 		{"empty evidence fails", noEvidence, knowledge.ErrEvidenceRequired},
