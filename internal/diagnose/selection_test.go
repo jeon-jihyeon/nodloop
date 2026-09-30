@@ -383,6 +383,10 @@ func TestSelect(t *testing.T) {
 			"Cause paragraphs removed: " + segment + "\n"
 	}
 	handEdit := []verdict{{"tq-007", feedback.VerdictEdit, "newer reason", json.RawMessage(`"rewritten by hand"`)}}
+	// An edit citing a paragraph the procedures no longer hold beside a listed one
+	goneEdit := []verdict{{"tq-007", feedback.VerdictEdit, "newer reason", json.RawMessage(
+		`{"status":"ready_for_review","causes":[{"summary":"s","paragraph_ids":["gone#1","` + segment + `"]}]}`,
+	)}}
 	aggregation := diagnose.AppliedKnowledge{
 		ID:      "k-agg",
 		Version: 1,
@@ -473,6 +477,24 @@ func TestSelect(t *testing.T) {
 					"Verdict: edit\nReason: newer reason\n" + changed("hold") + "Corrected: {\"status\":\"hold\"}\n",
 				},
 				absent: []string{"older reason", "## Approved knowledge"},
+			},
+		},
+		{
+			name: "names the paragraphs an edited example cites that the context does not list",
+			args: args{
+				reviews: reviews, verdicts: goneEdit, pending: "context",
+				choices: diagnose.Choices{Examples: []diagnose.Choice{{ID: "tq-007"}}},
+			},
+			want: want{
+				selected: selected{applied: none, inputs: []input{{
+					Selector: diagnose.SelectByClaude, Knowledge: none,
+					Examples: []example{{TraceID: "tq-007", Chars: 1016}},
+					Chars:    sections{Examples: examplesHeading + 1016},
+				}}},
+				present: []string{
+					"Cause paragraphs added: gone#1\nParagraphs this review does not list: gone#1. " +
+						"Follow the correction through the listed paragraph that states the same finding\nCorrected: ",
+				},
 			},
 		},
 		{

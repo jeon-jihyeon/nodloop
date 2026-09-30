@@ -41,7 +41,8 @@ type promptChars struct {
 
 // Renders the chosen items within the caps
 // Returns the select trace input that names every item with its size and cut and the text that reached the model
-func fit(selector Selector, items []chosenKnowledge, examples []chosenExample) (selectInput, Selection) {
+// known holds the paragraph ids the review may cite so an example names the ones it cannot
+func fit(selector Selector, items []chosenKnowledge, examples []chosenExample, known citable) (selectInput, Selection) {
 	selected := selectInput{Selector: selector, Knowledge: []AppliedKnowledge{}, Examples: []appliedExample{}}
 	knowledgeTexts := make([]block, len(items))
 	for i, k := range items {
@@ -56,7 +57,7 @@ func fit(selector Selector, items []chosenKnowledge, examples []chosenExample) (
 	}
 	exampleTexts := make([]block, len(examples))
 	for i, e := range examples {
-		exampleTexts[i] = e.render(i + 1)
+		exampleTexts[i] = e.render(i+1, known)
 	}
 	exampleText, exampleSizes := budget(exampleChars).section(examplesHeading, examplesNotice, exampleTexts)
 	for i, e := range examples {
