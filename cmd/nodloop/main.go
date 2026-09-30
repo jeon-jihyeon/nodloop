@@ -71,10 +71,10 @@ commands:
                             Fails naming the retire command when every change context of the version was refuted
   knowledge overlaps <id>   Current items of the same kind with an intersecting scope
   knowledge approve <id> --version <n> --approver <name>
-                            Refused when its folder may outgrow the review. Retire or replace an item, narrow the scope
-                            or compact the folder. Refused when it would lift the veto of the approved version
-                            or was not built from that version
-                            Says when the folder holds more than five items and a compaction is due
+                            Refused when its folder may outgrow the review. Retire or replace an item, scope it to other
+                            change contexts or compact the folder. Refused when it would lift the veto of the approved
+                            version or was not built from that version. Says when the folder holds more
+                            than five items and whether a compaction is due or blocked for lack of an expected status
   knowledge retire <id> --version <n> --approver <name>
   knowledge import --file <jsonl>
                             Append the records of a file not yet recorded, such as the knowledge.jsonl of a data set

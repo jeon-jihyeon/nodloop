@@ -115,9 +115,17 @@ func (c *Compactor) Folder(ctx context.Context, anchor string) (Folder, error) {
 // Approval needs a replay so a folder without an expected status cannot be compacted
 func (f Folder) replayable() error {
 	if len(f.Replay) == 0 {
-		return fmt.Errorf("%w: %s", ErrNothingToReplay, f.Anchor)
+		return fmt.Errorf("%w: %s has no label and no edit or approve verdict on the events %s",
+			ErrNothingToReplay, f.Anchor, strings.Join(f.Unverifiable, ", "))
 	}
 	return nil
+}
+
+// Whether a compaction is due and could pass
+// 1. crowding counts the items one review of a change context carries and never the union the draft is written from
+// 2. only here is it known which events have an expected status
+func (f Folder) Due() bool {
+	return f.Crowded() && f.replayable() == nil
 }
 
 // Proposes the draft as a compaction of the anchor's folder and returns it with the events its replay reviews
