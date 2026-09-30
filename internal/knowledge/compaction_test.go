@@ -24,7 +24,7 @@ import (
 // One folder of conversion items
 // 1. a and b are meanings and j is a judgment with a veto and all three are replayable
 // 2. p cites only a paragraph so a compaction leaves it out
-// 3. far sits in another folder
+// 3. far sits in another folder because it names another change context
 type compactionSeeds struct {
 	a, b, j, p, far knowledge.Knowledge
 	at              time.Time
@@ -32,7 +32,10 @@ type compactionSeeds struct {
 
 func newCompactionSeeds() compactionSeeds {
 	at := time.Date(2026, 9, 28, 0, 0, 0, 0, time.UTC)
-	conversions := knowledge.Scope{Scope: evidence.Scope{Metrics: []string{"conversion_count"}}}
+	conversions := knowledge.Scope{Scope: evidence.Scope{
+		ChangeContexts: []evidence.Context{evidence.ContextNoKnownChange, evidence.ContextPlannedChange},
+		Metrics:        []string{"conversion_count"},
+	}}
 	base := knowledge.Knowledge{
 		Version: 1, Kind: knowledge.KindMeaning, Scope: conversions, Basis: knowledge.BasisStated,
 		Status: knowledge.StatusApproved, Approver: "ann", ApprovedAt: at, Author: "author", Time: at,
@@ -55,7 +58,9 @@ func newCompactionSeeds() compactionSeeds {
 	p.ID, p.Content, p.Evidence = "p", "paragraph only", knowledge.Evidence{ParagraphIDs: []string{"p#2"}}
 	far := base
 	far.ID, far.Content, far.Evidence = "far", "clicks", knowledge.Evidence{FeedbackTraceIDs: []string{"t4"}}
-	far.Scope = knowledge.Scope{Scope: evidence.Scope{Metrics: []string{"click_count"}}}
+	far.Scope = knowledge.Scope{Scope: evidence.Scope{
+		ChangeContexts: []evidence.Context{evidence.ContextMeasurementChanged}, Metrics: []string{"click_count"},
+	}}
 	return compactionSeeds{a: a, b: b, j: j, p: p, far: far, at: at}
 }
 
@@ -241,6 +246,100 @@ func TestLedgerProposeCompaction(t *testing.T) {
 			assert.Equal(t, got.Items, stored.Items)
 			assert.ElementsMatch(t, got.Replaced, stored.Replaced)
 			assert.Len(t, all, len(seeds.all())+len(tc.want.compaction.Items), "a refused compaction appends nothing")
+		})
+	}
+}
+
+// Two meanings of one folder split by the value of one dim
+// Both except planned changes so each reaches no known changes only
+func TestLedgerProposeCompactionScope(t *testing.T) {
+	at := time.Date(2026, 9, 28, 0, 0, 0, 0, time.UTC)
+	planned := []evidence.Context{evidence.ContextPlannedChange}
+	scope := knowledge.Scope{Scope: evidence.Scope{
+		ChangeContexts: []evidence.Context{evidence.ContextNoKnownChange, evidence.ContextPlannedChange},
+		Metrics:        []string{"conversion_count", "click_count"},
+	}}
+	base := knowledge.Knowledge{
+		Version: 1, Kind: knowledge.KindMeaning, Exceptions: planned, Basis: knowledge.BasisStated,
+		Status: knowledge.StatusApproved, Approver: "ann", ApprovedAt: at, Author: "author", Time: at,
+	}
+	shop, sports := base, base
+	shop.ID, shop.Content, shop.Evidence = "shop", "shop fact", knowledge.Evidence{FeedbackTraceIDs: []string{"t1"}}
+	shop.Scope = scope
+	shop.Scope.Dims = map[string]string{"topic": "shopping"}
+	sports.ID, sports.Content, sports.Evidence = "sports", "sports fact", knowledge.Evidence{FeedbackTraceIDs: []string{"t2"}}
+	sports.Scope = scope
+	sports.Scope.Dims = map[string]string{"topic": "sports"}
+	draftOf := func(old knowledge.Knowledge, edit func(*knowledge.Knowledge)) knowledge.Knowledge {
+		d := knowledge.Knowledge{
+			ID: old.ID, Kind: old.Kind, Content: old.Content + " kept", Scope: old.Scope, Exceptions: old.Exceptions,
+			Author: "claude", Evidence: knowledge.Evidence{Knowledge: []knowledge.Ref{{ID: old.ID, Version: 1}}},
+		}
+		edit(&d)
+		return d
+	}
+	keep := func(*knowledge.Knowledge) {}
+	type want struct {
+		// Dims of every proposed item
+		dims []map[string]string
+		err  error
+	}
+	shopping, sporting := map[string]string{"topic": "shopping"}, map[string]string{"topic": "sports"}
+	tcs := []struct {
+		name   string
+		drafts []knowledge.Knowledge
+		want   want
+	}{
+		{
+			"dims keep two meanings of one folder apart",
+			[]knowledge.Knowledge{draftOf(shop, keep), draftOf(sports, keep)},
+			want{dims: []map[string]string{shopping, sporting}},
+		},
+		{
+			"two meanings split by metrics with none in common pass",
+			[]knowledge.Knowledge{
+				draftOf(shop, func(d *knowledge.Knowledge) { d.Scope.Metrics = []string{"conversion_count"} }),
+				draftOf(shop, func(d *knowledge.Knowledge) { d.ID, d.Scope.Metrics = "", []string{"click_count"} }),
+				draftOf(sports, keep),
+			},
+			want{dims: []map[string]string{shopping, shopping, sporting}},
+		},
+		{
+			"two meanings whose metric lists share one overlap",
+			[]knowledge.Knowledge{
+				draftOf(shop, func(d *knowledge.Knowledge) { d.Scope.Metrics = []string{"conversion_count"} }),
+				draftOf(shop, func(d *knowledge.Knowledge) { d.ID = "" }),
+				draftOf(sports, keep),
+			},
+			want{err: knowledge.ErrCompactionOverlap},
+		},
+		{
+			"two meanings whose dims differ in keys but not in values overlap",
+			[]knowledge.Knowledge{
+				draftOf(shop, keep),
+				draftOf(shop, func(d *knowledge.Knowledge) {
+					d.ID, d.Scope.Dims = "", map[string]string{"topic": "shopping", "platform": "ios"}
+				}),
+				draftOf(sports, keep),
+			},
+			want{err: knowledge.ErrCompactionOverlap},
+		},
+	}
+	ctx := context.Background()
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			l, _ := newTestLedger(t, t.TempDir(), at)
+			require.NoError(t, testkit.Err(l.Import(ctx, []knowledge.Knowledge{shop, sports})))
+
+			got, err := l.ProposeCompaction(ctx, "shop", tc.drafts)
+			var dims []map[string]string
+			for _, k := range got.Items {
+				dims = append(dims, k.Scope.Dims)
+			}
+
+			assert.ErrorIs(t, err, tc.want.err)
+			assert.Equal(t, tc.want.dims, dims)
 		})
 	}
 }

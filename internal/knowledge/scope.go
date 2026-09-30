@@ -43,12 +43,17 @@ func (s Scope) admits(changeContext evidence.Context, moved Moved, dims Dims) bo
 // Two scopes overlap when every set axis shares a value or is empty on either side
 // Each dimension key is an axis of its own
 func (s Scope) overlaps(other Scope) bool {
+	return !s.splitByDims(other) && s.Intersects(other.Scope)
+}
+
+// Whether both name one dimension key with a different value
+func (s Scope) splitByDims(other Scope) bool {
 	for key, value := range s.Dims {
 		if theirs, ok := other.Dims[key]; ok && theirs != value {
-			return false
+			return true
 		}
 	}
-	return s.Intersects(other.Scope)
+	return false
 }
 
 // One line for a candidate list and the context text
