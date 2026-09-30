@@ -333,6 +333,48 @@ func TestServerRecordSendsBack(t *testing.T) {
 	assert.NotEmpty(t, recorded.TraceID)
 }
 
+// The input schema lists the valid statuses so a typo is refused before anything is recorded
+// The corrected review of the same context is then recorded
+func TestServerRecordRefusesUnknownStatus(t *testing.T) {
+	t.Parallel()
+	st := testkit.Open(t)
+	c := connect(t, st, "nodloop")
+	b, err := os.ReadFile(reviewFile)
+	require.NoError(t, err)
+	var review diagnose.Diagnosis
+	require.NoError(t, json.Unmarshal(b, &review))
+	tcs := []struct {
+		name string
+		args evidence.Status
+	}{
+		{name: "a dashed status", args: "ready-for-review"},
+		{name: "a capitalized status", args: "Hold"},
+		{name: "an empty status", args: ""},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var opened struct {
+				PendingID string `json:"pending_id"`
+			}
+			require.NoError(t, c.Call(t, "context", map[string]any{"event_id": spikeEvent}, &opened))
+			typo := review
+			typo.Status = tc.args
+
+			refused := c.Run(t, "record", map[string]any{"pending_id": opened.PendingID, "diagnosis": typo})
+			var recorded struct {
+				Recorded   bool `json:"recorded"`
+				ForcedHold bool `json:"forced_hold"`
+			}
+			require.NoError(t, c.Call(t, "record", map[string]any{"pending_id": opened.PendingID, "diagnosis": review}, &recorded))
+			assert.ErrorIs(t, refused, testkit.ErrTool)
+			assert.ErrorContains(t, refused, "status")
+			assert.True(t, recorded.Recorded)
+			assert.False(t, recorded.ForcedHold)
+		})
+	}
+}
+
 func TestServerRecord(t *testing.T) {
 	t.Parallel()
 	st := testkit.Open(t)

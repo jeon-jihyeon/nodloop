@@ -7,10 +7,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"slices"
 	"strings"
 	"time"
 
+	"github.com/google/jsonschema-go/jsonschema"
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/jeon-jihyeon/nodloop/internal/analysis"
@@ -137,7 +139,12 @@ type tool struct {
 func newTool[In any](
 	name, description string, h func(*Server, context.Context, *sdk.CallToolRequest, In) (*sdk.CallToolResult, any, error),
 ) tool {
-	t := &sdk.Tool{Name: name, Description: description}
+	schema, err := jsonschema.For[In](&jsonschema.ForOptions{TypeSchemas: enumSchemas()})
+	if err != nil {
+		// An input type the schema cannot express is a programming error the SDK would also panic on
+		panic(err)
+	}
+	t := &sdk.Tool{Name: name, Description: description, InputSchema: schema}
 	return tool{
 		name: name,
 		serve: func(srv *sdk.Server, s *Server) {
@@ -151,6 +158,16 @@ func newTool[In any](
 			})
 		},
 	}
+}
+
+// Input types whose schema lists the valid values
+// So the SDK refuses a value outside the set before the handler records anything
+func enumSchemas() map[reflect.Type]*jsonschema.Schema {
+	statuses := make([]any, 0, len(evidence.Statuses()))
+	for _, s := range evidence.Statuses() {
+		statuses = append(statuses, string(s))
+	}
+	return map[reflect.Type]*jsonschema.Schema{reflect.TypeFor[evidence.Status](): {Type: "string", Enum: statuses}}
 }
 
 var tools = []tool{

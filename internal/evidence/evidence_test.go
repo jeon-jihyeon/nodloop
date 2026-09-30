@@ -37,28 +37,50 @@ func TestContextValid(t *testing.T) {
 	}
 }
 
-// The declared Context constants are read from the source so a constant left out of Contexts fails here
-func TestContexts(t *testing.T) {
+// The declared constants are read from the source so a constant left out of its list fails here
+func TestEnumLists(t *testing.T) {
 	f, err := parser.ParseFile(token.NewFileSet(), "evidence.go", nil, 0)
 	require.NoError(t, err)
-	var declared []evidence.Context
-	for _, decl := range f.Decls {
-		gen, ok := decl.(*ast.GenDecl)
-		if !ok || gen.Tok != token.CONST {
-			continue
-		}
-		for _, spec := range gen.Specs {
-			vs := spec.(*ast.ValueSpec)
-			if typ, ok := vs.Type.(*ast.Ident); !ok || typ.Name != "Context" {
-				continue
-			}
-			value, err := strconv.Unquote(vs.Values[0].(*ast.BasicLit).Value)
-			require.NoError(t, err)
-			declared = append(declared, evidence.Context(value))
-		}
+	tcs := []struct {
+		name string
+		// Type name of the constants
+		args string
+		want []string
+	}{
+		{"contexts list every declared context", "Context", enumValues(evidence.Contexts())},
+		{"statuses list every declared status", "Status", enumValues(evidence.Statuses())},
 	}
-	require.NotEmpty(t, declared)
-	assert.ElementsMatch(t, declared, evidence.Contexts())
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var declared []string
+			for _, decl := range f.Decls {
+				gen, ok := decl.(*ast.GenDecl)
+				if !ok || gen.Tok != token.CONST {
+					continue
+				}
+				for _, spec := range gen.Specs {
+					vs := spec.(*ast.ValueSpec)
+					if typ, ok := vs.Type.(*ast.Ident); !ok || typ.Name != tc.args {
+						continue
+					}
+					value, err := strconv.Unquote(vs.Values[0].(*ast.BasicLit).Value)
+					require.NoError(t, err)
+					declared = append(declared, value)
+				}
+			}
+			require.NotEmpty(t, declared)
+			assert.ElementsMatch(t, declared, tc.want)
+		})
+	}
+}
+
+func enumValues[T ~string](values []T) []string {
+	out := make([]string, 0, len(values))
+	for _, v := range values {
+		out = append(out, string(v))
+	}
+	return out
 }
 
 func TestContextBreaks(t *testing.T) {
