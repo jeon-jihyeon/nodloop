@@ -50,14 +50,38 @@ func TestDocumentInstall(t *testing.T) {
 			want{false, nil, `{"hooks":{"PreToolUse":[` + ours + `]}}`},
 		},
 		{
-			"quoted executable is recognized",
-			args{`{"hooks":{"PreToolUse":[{"hooks":[{"command":"'/Users/my apps/nodloop' guard"}]}]}}`, exe},
-			want{false, nil, `{"hooks":{"PreToolUse":[{"hooks":[{"command":"'/Users/my apps/nodloop' guard"}]}]}}`},
+			"quoted executable of this install is left unchanged",
+			args{
+				`{"hooks":{"PreToolUse":[{"matcher":"*","hooks":[{"command":"'/Users/my apps/nodloop' guard"}]}]}}`,
+				"/Users/my apps/nodloop",
+			},
+			want{false, nil, `{"hooks":{"PreToolUse":[{"matcher":"*","hooks":[{"command":"'/Users/my apps/nodloop' guard"}]}]}}`},
 		},
 		{
-			"release binary name is recognized",
-			args{`{"hooks":{"PreToolUse":[{"hooks":[{"command":"/opt/nodloop-darwin-arm64 guard"}]}]}}`, exe},
-			want{false, nil, `{"hooks":{"PreToolUse":[{"hooks":[{"command":"/opt/nodloop-darwin-arm64 guard"}]}]}}`},
+			"quoted executable of another path is replaced",
+			args{`{"hooks":{"PreToolUse":[{"hooks":[{"command":"'/Users/my apps/nodloop' guard"}]}]}}`, exe},
+			want{true, nil, `{"hooks":{"PreToolUse":[` + ours + `]}}`},
+		},
+		{
+			"release binary of another version is replaced",
+			args{`{"hooks":{"PreToolUse":[{"hooks":[{"command":"/home/.nodloop/bin/v0.4.1/nodloop guard"}]}]}}`, exe},
+			want{true, nil, `{"hooks":{"PreToolUse":[` + ours + `]}}`},
+		},
+		{
+			"hook on Bash alone is replaced by one on every tool",
+			args{`{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"command":"/Users/me/go/bin/nodloop guard"}]}]}}`, exe},
+			want{true, nil, `{"hooks":{"PreToolUse":[` + ours + `]}}`},
+		},
+		{
+			"stale hook beside this one is dropped",
+			args{`{"hooks":{"PreToolUse":[` + ours + `,{"matcher":"*","hooks":[{"command":"/gone/nodloop guard"}]}]}}`, exe},
+			want{true, nil, `{"hooks":{"PreToolUse":[` + ours + `]}}`},
+		},
+		{
+			"stale hook in a shared group leaves the other hook of that group",
+			args{`{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"command":"/gone/nodloop guard"},` +
+				`{"command":"other-hook"}]}]}}`, exe},
+			want{true, nil, `{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"command":"other-hook"}]},` + ours + `]}}`},
 		},
 		{
 			"another guard command is not ours",
@@ -180,6 +204,31 @@ func TestDocumentUninstall(t *testing.T) {
 			got, err := json.Marshal(doc)
 			require.NoError(t, err)
 			assert.JSONEq(t, tc.want.doc, string(got))
+		})
+	}
+}
+
+func TestDocumentHooks(t *testing.T) {
+	tcs := []struct {
+		name string
+		args string
+		want []settings.Hook
+	}{
+		{
+			"every nodloop hook comes back with its matcher in file order",
+			`{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"command":"other-hook"},{"command":"/a/nodloop guard"}]},` +
+				`{"hooks":[{"command":"'/my apps/nodloop' guard"}]}]}}`,
+			[]settings.Hook{{Command: "/a/nodloop guard", Matcher: "Bash"}, {Command: "'/my apps/nodloop' guard"}},
+		},
+		{"settings without a nodloop hook hold none", `{"hooks":{"PreToolUse":[{"hooks":[{"command":"x guard"}]}]}}`, nil},
+		{"hooks of an unexpected shape hold none", `{"hooks":"odd"}`, nil},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			doc := settings.Document{}
+			require.NoError(t, json.Unmarshal([]byte(tc.args), &doc))
+			assert.Equal(t, tc.want, doc.Hooks())
 		})
 	}
 }
