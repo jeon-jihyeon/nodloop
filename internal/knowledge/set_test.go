@@ -416,6 +416,9 @@ func TestSetFind(t *testing.T) {
 	}
 }
 
+// k-c v1 compacts k-a and k-b and k-d v1 compacts k-c and k-e
+// k-a v2 reuses its id to replace k-a v1 and k-b v1
+// k-c v2 revises the compacted k-c v1 with evidence of its own
 func TestSetLineage(t *testing.T) {
 	t.Parallel()
 	ref := func(id string, version int) knowledge.Ref { return knowledge.Ref{ID: id, Version: version} }
@@ -444,6 +447,58 @@ func TestSetLineage(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			assert.Equal(t, tc.want, set.Lineage(tc.args))
+		})
+	}
+}
+
+// k-c v1 compacts k-a v1 and k-b v1 and k-d v1 compacts k-c v1
+// k-e v1 cites k-a v1 as evidence without a compaction
+func TestSetInherits(t *testing.T) {
+	ref := func(id string, version int) knowledge.Ref { return knowledge.Ref{ID: id, Version: version} }
+	quiet := knowledge.Scope{Scope: evidence.Scope{ChangeContexts: []evidence.Context{evidence.ContextNoKnownChange}}}
+	set := knowledge.Set{
+		{ID: "k-a", Version: 1},
+		{ID: "k-b", Version: 1},
+		{
+			ID: "k-c", Version: 1, Scope: quiet, Compaction: "c-1",
+			Evidence: knowledge.Evidence{Knowledge: []knowledge.Ref{ref("k-a", 1), ref("k-b", 1)}, OutcomeTraceIDs: []string{"cited"}},
+		},
+		{ID: "k-d", Version: 1, Compaction: "c-2", Evidence: knowledge.Evidence{Knowledge: []knowledge.Ref{ref("k-c", 1)}}},
+		{ID: "k-e", Version: 1, Evidence: knowledge.Evidence{Knowledge: []knowledge.Ref{ref("k-a", 1)}}},
+	}
+	type args struct {
+		ref           knowledge.Ref
+		traceID       string
+		applied       []knowledge.Ref
+		changeContext evidence.Context
+	}
+	quietly := evidence.ContextNoKnownChange
+	tcs := []struct {
+		name string
+		args args
+		want bool
+	}{
+		{"a review of a merged version passes to the compaction", args{ref("k-c", 1), "r", []knowledge.Ref{ref("k-a", 1)}, quietly}, true},
+		{"a review of a version merged two compactions back passes on", args{ref("k-d", 1), "r", []knowledge.Ref{ref("k-b", 1)}, quietly}, true},
+		{
+			"a review that applied the version itself is its own",
+			args{ref("k-c", 1), "r", []knowledge.Ref{ref("k-a", 1), ref("k-c", 1)}, quietly},
+			false,
+		},
+		{"a review the version cites is answered", args{ref("k-c", 1), "cited", []knowledge.Ref{ref("k-a", 1)}, quietly}, false},
+		{"a review a merged version cites is answered", args{ref("k-d", 1), "cited", []knowledge.Ref{ref("k-a", 1)}, quietly}, false},
+		{
+			"a review of a change context the version no longer reaches stays behind",
+			args{ref("k-c", 1), "r", []knowledge.Ref{ref("k-a", 1)}, evidence.ContextPlannedChange},
+			false,
+		},
+		{"evidence without a compaction merges nothing", args{ref("k-e", 1), "r", []knowledge.Ref{ref("k-a", 1)}, quietly}, false},
+		{"an unknown version inherits nothing", args{ref("k-z", 1), "r", []knowledge.Ref{ref("k-a", 1)}, quietly}, false},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.want, set.Inherits(tc.args.ref, tc.args.traceID, tc.args.applied, tc.args.changeContext))
 		})
 	}
 }

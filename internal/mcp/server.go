@@ -239,6 +239,7 @@ var tools = []tool{
 		"Pass audit true to feedback when the user judges a review marked audit", (*Server).queue),
 	newTool("knowledge_health", "Read how the reviews that applied each knowledge version held up, "+
 		"which versions are retire candidates or past their review deadline, and which references broke. "+
+		"carried_confirmed and carried_refuted count the outcomes a version takes over from reviews of the versions a compaction merged into it. "+
 		"Reads only. Retire, narrow and reaffirm stay with a named person", (*Server).knowledgeHealth),
 	newTool("reaffirm", "Record that a named person rechecked an approved knowledge version, "+
 		"which resets its review deadline without changing it. "+

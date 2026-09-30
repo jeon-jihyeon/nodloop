@@ -1,6 +1,7 @@
 package loop_test
 
 import (
+	"slices"
 	"testing"
 	"time"
 
@@ -293,6 +294,115 @@ func TestHistoryRefuted(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, tc.want.contexts, h.RefutedContexts("k", 1))
 			assert.Equal(t, tc.want.traceIDs, h.RefutedTraces("k", 1))
+		})
+	}
+}
+
+// Outcomes of reviews that applied versions a compaction merged pass to the version it made
+func TestHistoryCarriedOutcomes(t *testing.T) {
+	quiet := knowledge.Scope{Scope: evidence.Scope{ChangeContexts: []evidence.Context{evidence.ContextNoKnownChange}}}
+	merged := func(id string, version int) knowledge.Knowledge {
+		k := item(id, version, knowledge.StatusSuperseded)
+		if id == "y" {
+			k.Status = knowledge.StatusRetired
+		}
+		return k
+	}
+	x1, y1 := merged("x", 1), merged("y", 1)
+	// x v2 compacts x v1 and y v1 into no_known_change
+	compacted := func(edit func(*knowledge.Knowledge)) knowledge.Knowledge {
+		k := item("x", 2, knowledge.StatusApproved)
+		k.Scope, k.Compaction, k.Supersedes = quiet, "c-1", 1
+		k.Evidence.Knowledge = []knowledge.Ref{{ID: "x", Version: 1}, {ID: "y", Version: 1}}
+		edit(&k)
+		return k
+	}
+	keep := func(*knowledge.Knowledge) {}
+	onX1 := []diagnose.AppliedKnowledge{applied("x", 1)}
+	onBoth := []diagnose.AppliedKnowledge{applied("x", 1), applied("y", 1)}
+	quietReview := func(id string, uses []diagnose.AppliedKnowledge) review {
+		return review{id: id, knowledge: uses, context: evidence.ContextNoKnownChange}
+	}
+	type args struct {
+		items    knowledge.Set
+		reviews  []review
+		outcomes feedback.Outcomes
+	}
+	type want struct {
+		confirmed, refuted int
+		retire             bool
+		contexts           []evidence.Context
+	}
+	tcs := []struct {
+		name string
+		args args
+		want want
+	}{
+		{
+			"a refuted review of a merged version flags the compacted version and names its change context",
+			args{
+				knowledge.Set{x1, y1, compacted(keep)}, []review{quietReview("r1", onX1)},
+				feedback.Outcomes{outcome("r1", feedback.ResultRefuted, monday)},
+			},
+			want{refuted: 1, retire: true, contexts: []evidence.Context{evidence.ContextNoKnownChange}},
+		},
+		{
+			"a review that applied both merged versions counts once",
+			args{
+				knowledge.Set{x1, y1, compacted(keep)}, []review{quietReview("r1", onBoth)},
+				feedback.Outcomes{outcome("r1", feedback.ResultRefuted, monday)},
+			},
+			want{refuted: 1, retire: true, contexts: []evidence.Context{evidence.ContextNoKnownChange}},
+		},
+		{
+			"carried confirmed reviews outweigh a carried refuted one",
+			args{
+				knowledge.Set{x1, y1, compacted(keep)},
+				[]review{quietReview("r1", onX1), quietReview("r2", onX1), quietReview("r3", onBoth)},
+				feedback.Outcomes{
+					outcome("r1", feedback.ResultRefuted, monday), outcome("r2", feedback.ResultConfirmed, monday),
+					outcome("r3", feedback.ResultConfirmed, monday),
+				},
+			},
+			want{confirmed: 2, refuted: 1, contexts: []evidence.Context{evidence.ContextNoKnownChange}},
+		},
+		{
+			"a review the version cites as outcome evidence is answered and not carried",
+			args{
+				knowledge.Set{x1, y1, compacted(func(k *knowledge.Knowledge) { k.Evidence.OutcomeTraceIDs = []string{"r1"} })},
+				[]review{quietReview("r1", onX1)}, feedback.Outcomes{outcome("r1", feedback.ResultRefuted, monday)},
+			},
+			want{},
+		},
+		{
+			"a review of a change context the version no longer reaches is not carried",
+			args{
+				knowledge.Set{x1, y1, compacted(keep)},
+				[]review{{id: "r1", knowledge: onX1, context: evidence.ContextPlannedChange}},
+				feedback.Outcomes{outcome("r1", feedback.ResultRefuted, monday)},
+			},
+			want{},
+		},
+		{
+			"a version that cites another item without a compaction carries nothing",
+			args{
+				knowledge.Set{x1, y1, compacted(func(k *knowledge.Knowledge) { k.Compaction = "" })},
+				[]review{quietReview("r1", onX1)}, feedback.Outcomes{outcome("r1", feedback.ResultRefuted, monday)},
+			},
+			want{},
+		},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			h, err := loop.New(traces(t, tc.args.reviews...), nil, tc.args.outcomes, tc.args.items)
+			require.NoError(t, err)
+			rows := h.Health(monday)
+			i := slices.IndexFunc(rows, func(row loop.Health) bool { return row.ID == "x" && row.Version == 2 })
+			require.GreaterOrEqual(t, i, 0)
+
+			got := want{rows[i].CarriedConfirmed, rows[i].CarriedRefuted, rows[i].RetireCandidate, h.RefutedContexts("x", 2)}
+			assert.Equal(t, tc.want, got)
 		})
 	}
 }

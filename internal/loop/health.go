@@ -27,7 +27,12 @@ type Health struct {
 	Confirmed    int `json:"confirmed"`
 	Refuted      int `json:"refuted"`
 	Inconclusive int `json:"inconclusive"`
+	// Outcomes the version takes over from reviews of the versions a compaction merged into it
+	// Only reviews of a change context it still reaches that no narrowing answered
+	CarriedConfirmed int `json:"carried_confirmed,omitempty"`
+	CarriedRefuted   int `json:"carried_refuted,omitempty"`
 	// An approved version with a refuted outcome and no more confirmed than refuted
+	// Carried outcomes count with its own
 	// A flag for a person and never a retire
 	RetireCandidate bool      `json:"retire_candidate"`
 	LastReviewed    time.Time `json:"last_reviewed,omitzero"`
@@ -50,8 +55,12 @@ func (h *History) Health(now time.Time) []Health {
 		}
 	}
 	out := make([]Health, 0, len(rows))
-	for _, row := range rows {
-		row.RetireCandidate = row.Status == knowledge.StatusApproved && row.Refuted > 0 && row.Refuted >= row.Confirmed
+	for ref, row := range rows {
+		for _, r := range h.inherited(ref) {
+			row.carry(h.outcomes[r.trace.ID].Result)
+		}
+		refuted, confirmed := row.Refuted+row.CarriedRefuted, row.Confirmed+row.CarriedConfirmed
+		row.RetireCandidate = row.Status == knowledge.StatusApproved && refuted > 0 && refuted >= confirmed
 		out = append(out, *row)
 	}
 	slices.SortFunc(out, Health.compare)
@@ -81,6 +90,16 @@ func (row *Health) add(verdict feedback.Verdict, result feedback.Result) {
 		row.Refuted++
 	case feedback.ResultInconclusive:
 		row.Inconclusive++
+	}
+}
+
+// Only a confirmed or refuted outcome is carried
+func (row *Health) carry(result feedback.Result) {
+	switch result {
+	case feedback.ResultConfirmed:
+		row.CarriedConfirmed++
+	case feedback.ResultRefuted:
+		row.CarriedRefuted++
 	}
 }
 
@@ -167,7 +186,7 @@ func (is *issues) check(field, ref string, resolved bool) {
 	}
 }
 
-// The valid change contexts of the conversation reviews that applied the version and were refuted
+// The valid change contexts of the conversation reviews that applied the version or passed their outcome to it and were refuted
 // Sorted once each so a narrowing proposal reads the same whatever the record order
 func (h *History) RefutedContexts(id string, version int) []evidence.Context {
 	var out []evidence.Context
@@ -180,7 +199,7 @@ func (h *History) RefutedContexts(id string, version int) []evidence.Context {
 	return out
 }
 
-// The trace ids of the conversation reviews that applied the version and were refuted
+// The trace ids of the conversation reviews that applied the version or passed their outcome to it and were refuted
 // Sorted so a narrowing proposal reads the same whatever the record order
 func (h *History) RefutedTraces(id string, version int) []string {
 	var out []string
@@ -191,11 +210,28 @@ func (h *History) RefutedTraces(id string, version int) []string {
 	return out
 }
 
-// The conversation reviews that applied the version and whose latest outcome refuted them
+// The conversation reviews that applied the version or passed their outcome to it and whose latest outcome refuted them
 func (h *History) refuted(ref knowledge.Ref) []review {
 	var out []review
 	for _, r := range h.reviews {
 		if h.outcomes[r.trace.ID].Result == feedback.ResultRefuted && slices.Contains(r.applied(), ref) {
+			out = append(out, r)
+		}
+	}
+	for _, r := range h.inherited(ref) {
+		if h.outcomes[r.trace.ID].Result == feedback.ResultRefuted {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// The conversation reviews with an outcome that pass it to the version
+// A review that applied several merged versions counts once
+func (h *History) inherited(ref knowledge.Ref) []review {
+	var out []review
+	for _, r := range h.reviews {
+		if _, ok := h.outcomes[r.trace.ID]; ok && h.knowledge.Inherits(ref, r.trace.ID, r.applied(), r.ChangeContext) {
 			out = append(out, r)
 		}
 	}
