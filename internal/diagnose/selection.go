@@ -406,7 +406,7 @@ func (d *Diagnoser) joinExample(ctx context.Context, traceID string) (example, e
 
 // Approved items whose scope fits the event up to the candidate cap and whether the cap cut the list
 func (d *Diagnoser) knowledgeCandidates(
-	ctx context.Context, changeContext evidence.Context, moved []string, dims map[string]map[string]struct{},
+	ctx context.Context, changeContext evidence.Context, moved knowledge.Moved, dims map[string]map[string]struct{},
 ) ([]KnowledgeCandidate, bool, error) {
 	all, err := d.knowledge.All(ctx)
 	if err != nil {
