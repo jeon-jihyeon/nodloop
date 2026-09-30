@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -18,6 +19,7 @@ import (
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge/file"
 	"github.com/jeon-jihyeon/nodloop/internal/testkit"
+	"github.com/jeon-jihyeon/nodloop/internal/veto"
 	vetofile "github.com/jeon-jihyeon/nodloop/internal/veto/file"
 )
 
@@ -1630,4 +1632,54 @@ func TestLedgerConcurrentWrite(t *testing.T) {
 			}
 		})
 	}
+}
+
+// Approvals of six vetoed judgments from separate ledgers at once
+// Every approved veto reaches the file whatever order the exports finish in
+func TestLedgerConcurrentApprovalsKeepEveryVeto(t *testing.T) {
+	at := time.Date(2026, 9, 28, 0, 0, 0, 0, time.UTC)
+	ctx := context.Background()
+	dir, home := t.TempDir(), t.TempDir()
+	const judgments = 6
+	var seeds []knowledge.Knowledge
+	for i := range judgments {
+		seeds = append(seeds, knowledge.Knowledge{
+			ID: fmt.Sprintf("v%d", i), Version: 1, Kind: knowledge.KindJudgment, Content: fmt.Sprintf("never run cmd%d", i),
+			Evidence: knowledge.Evidence{ParagraphIDs: []string{"p#1"}}, Basis: knowledge.BasisStated,
+			Status: knowledge.StatusCandidate, Author: "author", Time: at,
+			Veto: &knowledge.Veto{
+				Tool: "Bash", When: []knowledge.VetoCondition{{Field: "command", Match: fmt.Sprintf(`cmd%d\b`, i)}},
+				Example: map[string]any{"command": fmt.Sprintf("cmd%d", i)},
+			},
+		})
+	}
+	open := func() *knowledge.Ledger {
+		store, err := file.New(dir)
+		require.NoError(t, err)
+		return knowledge.NewLedger(
+			store, vetofile.NewApprovedFile(home, dir), func() time.Time { return at }, func(p string) string { return p },
+		)
+	}
+	require.NoError(t, testkit.Err(open().Import(ctx, seeds)))
+	ledgers := make([]*knowledge.Ledger, judgments)
+	for i := range ledgers {
+		ledgers[i] = open()
+	}
+	var wg sync.WaitGroup
+	for i, l := range ledgers {
+		wg.Go(func() {
+			_, err := l.Approve(ctx, fmt.Sprintf("v%d", i), 1, "jed")
+			assert.NoError(t, err)
+		})
+	}
+	wg.Wait()
+
+	all, err := open().All(ctx)
+	require.NoError(t, err)
+	assert.Len(t, all.Approved(), judgments)
+	b, err := os.ReadFile(vetofile.NewApprovedFile(home, dir).Path())
+	require.NoError(t, err)
+	vetoes, err := veto.Parse(b)
+	require.NoError(t, err)
+	assert.Len(t, vetoes, judgments)
 }

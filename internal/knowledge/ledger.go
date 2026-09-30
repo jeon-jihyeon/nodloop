@@ -28,8 +28,9 @@ type Store interface {
 
 // Where the vetoes of the approved items take effect
 // Handed the whole approved set every time so it never drifts from the records and an empty set clears it
+// The sink calls read while no other process replaces the same vetoes so the last replace reads the newest records
 type VetoSink interface {
-	Write(specs []veto.Spec) error
+	Replace(read func() ([]veto.Spec, error)) error
 }
 
 // Every write appends new records and none edits an earlier one
@@ -202,11 +203,13 @@ func (l *Ledger) Import(ctx context.Context, records []Knowledge) (Set, error) {
 // Hands the approved vetoes to the sink again
 // The way back after a failed hand off because nothing else changes a status
 func (l *Ledger) ExportVetoes(ctx context.Context) error {
-	all, err := l.All(ctx)
-	if err != nil {
-		return err
-	}
-	return l.vetoes.Write(all.Vetoes())
+	return l.vetoes.Replace(func() ([]veto.Spec, error) {
+		all, err := l.All(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return all.Vetoes(), nil
+	})
 }
 
 // The status change already happened so the error names it
