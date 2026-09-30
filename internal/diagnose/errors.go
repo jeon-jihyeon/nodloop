@@ -25,6 +25,11 @@ var (
 	ErrEditInvalid = errors.New("diagnose: the edited review does not fit the review it corrects")
 	// A correction was asked of a review whose latest human verdict approves it
 	ErrNotCorrected = errors.New("diagnose: the latest verdict on the review is not an edit or reject")
+	// A proposal from a review where no metric moved names no change context or metric of its own
+	// The filled scope would cover every event of the change context
+	ErrQuietScope = errors.New("diagnose: no metric moved on the corrected review so the filled scope would cover every event of its change context")
+	// A proposal from a review where no metric moved names metrics
+	ErrQuietMetricScope = errors.New("diagnose: no metric moved on the corrected review so a metric scope would reach only events where that metric moved and never an event like the corrected one")
 	// Run on a Diagnoser built for the conversation without a model client
 	ErrNoClient = errors.New("diagnose: no model client for the batch path")
 	// Prepare refuses a mode outside interactive and batch

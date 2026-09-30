@@ -147,16 +147,83 @@ func TestCorrection(t *testing.T) {
 				TraceID: r.traceID, EventID: "tq-005", ChangeContext: evidence.ContextNoKnownChange, Moved: r.moved,
 				Verdict: tc.want.verdict, Reason: "a reason", Original: r.review, Corrected: tc.want.corrected,
 			}, got)
+			proposed, err := got.Proposal(knowledge.Knowledge{})
+			require.NoError(t, err)
 			assert.Equal(t, knowledge.Knowledge{
 				Scope: knowledge.Scope{Scope: evidence.Scope{
 					ChangeContexts: []evidence.Context{evidence.ContextNoKnownChange}, Metrics: r.moved,
 				}},
 				Evidence: knowledge.Evidence{FeedbackTraceIDs: []string{r.traceID}},
 				Basis:    knowledge.BasisStated,
-			}, got.Proposal())
+			}, proposed)
 			for _, text := range tc.want.present {
 				assert.Contains(t, got.String(), text)
 			}
+		})
+	}
+}
+
+// Where no metric moved an empty metric axis would reach every event of the change context
+// so only change contexts the draft names itself are accepted
+// A metric scope would never reach an event where no metric moved
+func TestCorrectionProposal(t *testing.T) {
+	type args struct {
+		moved []string
+		// The scope of the draft
+		contexts []evidence.Context
+		metrics  []string
+	}
+	type want struct {
+		proposed knowledge.Knowledge
+		err      error
+	}
+	noKnownChange := []evidence.Context{evidence.ContextNoKnownChange}
+	filled := func(metrics []string) knowledge.Knowledge {
+		return knowledge.Knowledge{
+			Content: "c", Scope: knowledge.Scope{Scope: evidence.Scope{ChangeContexts: noKnownChange, Metrics: metrics}},
+			Evidence: knowledge.Evidence{FeedbackTraceIDs: []string{"d1"}}, Basis: knowledge.BasisStated,
+		}
+	}
+	tcs := []struct {
+		name string
+		args args
+		want want
+	}{
+		{"moved metrics fill the metric axis", args{moved: []string{"click_count"}}, want{proposed: filled([]string{"click_count"})}},
+		{"no metric moved and no scope named fails", args{}, want{err: diagnose.ErrQuietScope}},
+		{
+			"no metric moved and a change context named accepts every event of it",
+			args{contexts: noKnownChange},
+			want{proposed: filled(nil)},
+		},
+		{
+			"no metric moved and a metric named fails because the scope misses events like the corrected one",
+			args{metrics: []string{"conversion_count"}},
+			want{err: diagnose.ErrQuietMetricScope},
+		},
+		{
+			"no metric moved and a change context and a metric named fails",
+			args{contexts: noKnownChange, metrics: []string{"conversion_count"}},
+			want{err: diagnose.ErrQuietMetricScope},
+		},
+		{
+			"moved metrics and a metric named keep the narrowed metric",
+			args{moved: []string{"click_count"}, metrics: []string{"conversion_count"}},
+			want{proposed: filled([]string{"conversion_count"})},
+		},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			c := diagnose.Correction{TraceID: "d1", ChangeContext: evidence.ContextNoKnownChange, Moved: tc.args.moved}
+			draft := knowledge.Knowledge{Content: "c", Scope: knowledge.Scope{Scope: evidence.Scope{
+				ChangeContexts: tc.args.contexts, Metrics: tc.args.metrics,
+			}}}
+
+			got, err := c.Proposal(draft)
+
+			assert.ErrorIs(t, err, tc.want.err)
+			assert.Equal(t, tc.want.proposed, got)
 		})
 	}
 }
