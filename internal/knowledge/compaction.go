@@ -552,6 +552,29 @@ func (s Set) approveCompaction(c Compaction, approver string, now time.Time) ([]
 	return records, working, nil
 }
 
+// The records that approve the compaction of id
+// 1. an approver is required once the compaction is found
+// 2. an approval that pushes a review past a cap or grows one already past it is refused like one of Approve
+func (s Set) compactionApproval(id, approver string, now time.Time) ([]Knowledge, error) {
+	c, err := s.compaction(id)
+	if err != nil {
+		return nil, err
+	}
+	if approver == "" {
+		return nil, fmt.Errorf("%w: compaction %s needs one", ErrApproverRequired, id)
+	}
+	records, after, err := s.approveCompaction(c, approver, now)
+	if err != nil {
+		return nil, err
+	}
+	for _, k := range c.Items {
+		if f, grew := after.outgrows(s, k); grew {
+			return nil, fmt.Errorf("%w: %s %s with %s", ErrFolderFull, k.ID, f.load(), f)
+		}
+	}
+	return records, nil
+}
+
 // The set with the compaction approved in memory
 func (s Set) preview(c Compaction, now time.Time) (Set, error) {
 	_, working, err := s.approveCompaction(c, "preview", now)

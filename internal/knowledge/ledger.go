@@ -38,7 +38,8 @@ type VetoSink interface {
 // 2. approve and retire need an approver and follow the allowed status changes
 // 3. the clock is read here in UTC and every record of one call carries that time
 // 4. approve and retire and import end by handing the approved vetoes to the sink
-// 5. approve refuses an item whose folder may outgrow ReviewChars or ReviewItems and import never checks it
+// 5. approve refuses an approval that pushes a review past ReviewChars or ReviewItems or grows one already past them
+// and import never checks it
 // 6. every write decides under the store lock on the records as they are then
 // So two writers at once never both pass a check that only one of them may pass and neither refuses the other
 // A failed hand off returns ErrVetoExport after the records are appended so the caller knows the status changed
@@ -150,9 +151,6 @@ func (l *Ledger) Approve(ctx context.Context, id string, version int, approver s
 			return nil, err
 		}
 		to = records[0]
-		if f := all.folder(to); f.Full() {
-			return nil, fmt.Errorf("%w: %s with %s", ErrFolderFull, f.load(), f)
-		}
 		return records, nil
 	})
 	if err != nil {
@@ -288,23 +286,7 @@ func (l *Ledger) ApproveCompaction(ctx context.Context, id, approver string, rep
 		return Compaction{}, fmt.Errorf("%w: %s", ErrReplayNotPassed, id)
 	}
 	err := l.store.AppendDecided(ctx, func(all Set) ([]Knowledge, error) {
-		c, err := all.compaction(id)
-		if err != nil {
-			return nil, err
-		}
-		if approver == "" {
-			return nil, fmt.Errorf("%w: compaction %s needs one", ErrApproverRequired, id)
-		}
-		records, after, err := all.approveCompaction(c, approver, l.now().UTC())
-		if err != nil {
-			return nil, err
-		}
-		for _, k := range c.Items {
-			if f := after.folder(k); f.Full() {
-				return nil, fmt.Errorf("%w: %s %s with %s", ErrFolderFull, k.ID, f.load(), f)
-			}
-		}
-		return records, nil
+		return all.compactionApproval(id, approver, l.now().UTC())
 	})
 	if err != nil {
 		return Compaction{}, err
