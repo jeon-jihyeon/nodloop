@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/jeon-jihyeon/nodloop/internal/evidence"
@@ -332,6 +333,18 @@ func (k Knowledge) applies(changeContext evidence.Context, moved Moved, dims Dim
 // Whether the item applies to some event of the change context whatever its metrics and dims
 func (k Knowledge) mayApply(changeContext evidence.Context) bool {
 	return k.Status == StatusApproved && k.reaches(changeContext)
+}
+
+// The scope and the exceptions in one line so a refusal can quote what a new version must keep
+func (k Knowledge) reachText() string {
+	if len(k.Exceptions) == 0 {
+		return k.Scope.String()
+	}
+	except := make([]string, len(k.Exceptions))
+	for i, c := range k.Exceptions {
+		except[i] = string(c)
+	}
+	return k.Scope.String() + ". except " + strings.Join(except, " and ")
 }
 
 // Whether the scope and the exceptions leave the change context to the item whatever its status
