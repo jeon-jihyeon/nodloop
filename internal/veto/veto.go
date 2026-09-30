@@ -44,6 +44,24 @@ func New(id, tool string, when []Condition, reason string, enabled bool) (Veto, 
 	return Veto{id: id, tools: tools, when: when, reason: reason, enabled: enabled}, nil
 }
 
+// Shape of a PreToolUse `tool_name`
+// 1. a built in tool such as Bash or NotebookEdit
+// 2. an MCP tool as mcp__server__tool
+// A shape and not a list so a tool Claude Code adds later is still accepted
+var toolName = regexp.MustCompile(`^([A-Z][A-Za-z0-9]*|mcp__[A-Za-z0-9_-]+__[A-Za-z0-9_.-]+)$`)
+
+// Tool names no tool call carries such as bash or a permission rule like `Bash(sed:*)`
+// Matching is exact so a veto that lists only these blocks nothing
+func (v Veto) UnknownTools() []string {
+	var unknown []string
+	for _, t := range v.tools {
+		if !toolName.MatchString(t) {
+			unknown = append(unknown, t)
+		}
+	}
+	return unknown
+}
+
 // Unique kebab case identifier used for merging and stderr output
 func (v Veto) ID() string { return v.id }
 
