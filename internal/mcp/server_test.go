@@ -3,6 +3,7 @@ package mcp_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"maps"
 	"os"
 	"path/filepath"
@@ -61,15 +62,99 @@ func TestServerTools(t *testing.T) {
 }
 
 func TestServerEvents(t *testing.T) {
-	t.Parallel()
-	st := testkit.Open(t)
-	c := connect(t, st, "nodloop")
-	want, err := os.ReadFile("testdata/events.json")
-	require.NoError(t, err)
+	type args struct {
+		dataDir string
+		input   map[string]any
+	}
+	dims := func(pairs ...string) map[string]any {
+		named := map[string]string{}
+		for i := 0; i < len(pairs); i += 2 {
+			named[pairs[i]] = pairs[i+1]
+		}
+		return map[string]any{"dims": named}
+	}
+	type want struct {
+		// Golden answer
+		golden string
+		// The refusal names the scope error and ends with the dimension names
+		refused string
+	}
+	unobserved := "events dims filter: " + knowledge.ErrScopeUnobserved.Error() + ": "
+	tcs := []struct {
+		name string
+		args args
+		want want
+	}{
+		{
+			"demo events list their range and the dimension names once",
+			args{testkit.DemoDir(t), map[string]any{}}, want{golden: "testdata/events.json"},
+		},
+		{"a data set without dimensions answers an empty name list", args{"testdata/nodims", map[string]any{}}, want{golden: "testdata/events-nodims.json"}},
+		{
+			"a filter on a data set without dimensions is refused naming none",
+			args{"testdata/nodims", dims("source", "source-a")}, want{refused: unobserved + "dim source=source-a. Dimensions: none"},
+		},
+		{"rows carry no dimension values however many an event has", args{"testdata/dims", map[string]any{}}, want{golden: "testdata/events-dims.json"}},
+		{"a value past the tenth still finds its event", args{"testdata/dims", dims("source", "source-11")}, want{golden: "testdata/events-dims-wide.json"}},
+		{"the eleventh value finds its event", args{"testdata/dims", dims("source", "source-10")}, want{golden: "testdata/events-dims-wide.json"}},
+		{"an early value finds its event", args{"testdata/dims", dims("source", "source-03")}, want{golden: "testdata/events-dims-wide.json"}},
+		{
+			"two values that each exist but never on one event find nothing",
+			args{"testdata/dims", dims("source", "source-11", "topic", "finance")}, want{golden: "testdata/events-dims-none.json"},
+		},
+		{
+			"a misspelled dimension name is refused naming the dimensions",
+			args{"testdata/dims", dims("sources", "source-a")}, want{refused: unobserved + "dim sources=source-a. Dimensions: source, topic"},
+		},
+		{
+			"a dimension name in the wrong case is refused naming the dimensions",
+			args{"testdata/dims", dims("Source", "source-03")}, want{refused: unobserved + "dim Source=source-03. Dimensions: source, topic"},
+		},
+		{
+			"a dimension no event carries is refused",
+			args{"testdata/dims", dims("region", "eu")}, want{refused: unobserved + "dim region=eu. Dimensions: source, topic"},
+		},
+		{
+			"a value no event carries is refused",
+			args{"testdata/dims", dims("source", "source-99")}, want{refused: unobserved + "dim source=source-99. Dimensions: source, topic"},
+		},
+		{
+			"two events that share their first ten values both list",
+			args{"testdata/campaigns", map[string]any{}}, want{golden: "testdata/events-campaigns.json"},
+		},
+		{"a value past the tenth tells two events apart", args{"testdata/campaigns", dims("campaign", "c-12")}, want{golden: "testdata/events-campaigns-c12.json"}},
+		{
+			"the value only the other event carries finds that event",
+			args{"testdata/campaigns", dims("campaign", "c-13")}, want{golden: "testdata/events-campaigns-c13.json"},
+		},
+		{
+			"a dimension the events lack is refused naming the one they have",
+			args{"testdata/campaigns", dims("source", "c-12")}, want{refused: unobserved + "dim source=c-12. Dimensions: campaign"},
+		},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			st := testkit.Open(t)
+			src, err := evidencefile.New(tc.args.dataDir)
+			require.NoError(t, err)
+			st.Source = src
+			c := connect(t, st, "nodloop")
 
-	var got json.RawMessage
-	require.NoError(t, c.Call(t, "events", map[string]any{}, &got))
-	assert.JSONEq(t, string(want), string(got))
+			var got json.RawMessage
+			err = c.Call(t, "events", tc.args.input, &got)
+
+			if tc.want.refused != "" {
+				assert.ErrorIs(t, err, testkit.ErrTool)
+				assert.True(t, strings.HasSuffix(fmt.Sprint(err), tc.want.refused), fmt.Sprint(err))
+				return
+			}
+			require.NoError(t, err)
+			want, err := os.ReadFile(tc.want.golden)
+			require.NoError(t, err)
+			assert.JSONEq(t, string(want), string(got))
+		})
+	}
 }
 
 // The answers are captured from the default policy over the demo data

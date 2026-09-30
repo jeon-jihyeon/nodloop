@@ -67,6 +67,20 @@ type EventRef struct {
 	ID    string
 	Start time.Time
 	End   time.Time
+	// Distinct values of each dimension in name order keyed by dimension name
+	// So an event can be found by a dimension value the user names
+	Dims map[string][]string
+}
+
+// Every dimension named holds its value among all the values of the event
+// No dimension named carries
+func (r EventRef) Carries(dims map[string]string) bool {
+	for name, value := range dims {
+		if !slices.Contains(r.Dims[name], value) {
+			return false
+		}
+	}
+	return true
 }
 
 type Event struct {
@@ -106,6 +120,19 @@ func (e Event) Dims() map[string]map[string]struct{} {
 		}
 	}
 	return dims
+}
+
+// The range the points span and the values each dimension takes
+// An event without points has a zero range
+func (e Event) Ref() EventRef {
+	ref := EventRef{ID: e.ID, Dims: map[string][]string{}}
+	if len(e.Points) > 0 {
+		ref.Start, ref.End = e.Points[0].Time, e.Points[len(e.Points)-1].Time
+	}
+	for name, values := range e.Dims() {
+		ref.Dims[name] = slices.Sorted(maps.Keys(values))
+	}
+	return ref
 }
 
 // Point count per series keyed by the series key

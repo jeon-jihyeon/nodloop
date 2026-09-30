@@ -26,7 +26,7 @@ When a tool answers that no data directory is configured, ask the user for the d
 
 ## Steps
 
-1. Find the event. Call ` + "`events`" + ` when the user names a period or a source instead of an event id
+1. Find the event. Call ` + "`events`" + ` when the user names a period instead of an event id and pick the events whose range covers it. When the user names a dimension value such as a source, call ` + "`events`" + ` with ` + "`dims`" + ` keyed by a name from the ` + "`dimensions`" + ` it answers, such as ` + "`{\"source\": \"src-11\"}`" + `. When ` + "`events`" + ` fails naming a dim and value no event carries, look for the name among the dimensions the error lists. When the name is missing there the name is wrong: call again with the listed name it meant. When the name is listed the value is wrong: ask the user once which value they meant instead of trying others. An empty answer means no single event carries all the named values together
 2. Call ` + "`observe`" + ` with the event id and read the observations. Numbers come from here, never from your own arithmetic
 3. Call ` + "`context`" + ` with the event id. Keep the pending id. Read the knowledge candidates and the example candidates. When ` + "`candidates_omitted`" + ` is true the lists were cut at the cap, so tell the user that more candidates exist than were offered
 4. Call ` + "`select`" + ` with the pending id and the candidates that apply to this event, one reason each. Call it with empty lists when none applies. Judge relevance yourself. Do not pick the newest few by habit and do not conclude that nothing applies before reading every candidate
