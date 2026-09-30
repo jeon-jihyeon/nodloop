@@ -100,12 +100,12 @@ func TestKnowledgeApplied(t *testing.T) {
 	tcs := []struct {
 		name string
 		args json.RawMessage
-		want []string
+		want []knowledge.Ref
 	}{
 		{
 			"diagnose input names its knowledge",
 			json.RawMessage(`{"knowledge":[{"id":"k-1","version":2},{"id":"k-2","version":1}]}`),
-			[]string{"k-1", "k-2"},
+			[]knowledge.Ref{{ID: "k-1", Version: 2}, {ID: "k-2", Version: 1}},
 		},
 		{"diagnose input without knowledge names nothing", json.RawMessage(`{"knowledge":[]}`), nil},
 		{"malformed input names nothing", json.RawMessage(`[]`), nil},
@@ -1320,7 +1320,7 @@ func TestRunKeepsItsSelection(t *testing.T) {
 	}
 	type written struct {
 		name    trace.Name
-		applied []string
+		applied []knowledge.Ref
 	}
 	type outcome struct {
 		// Name of the trace the result id refers to
@@ -1354,7 +1354,7 @@ func TestRunKeepsItsSelection(t *testing.T) {
 			args: args{mode: diagnose.KnowledgeSelected, keep: []trace.Name{trace.NameContext}, moved: "records"},
 			want: want{outcome: outcome{
 				traced: trace.NameDiagnose,
-				traces: []written{{name: trace.NameDiagnose, applied: []string{"k-agg"}}, {name: trace.NameContext}},
+				traces: []written{{name: trace.NameDiagnose, applied: []knowledge.Ref{{ID: "k-agg", Version: 1}}}, {name: trace.NameContext}},
 			}},
 		},
 		{
@@ -1366,7 +1366,7 @@ func TestRunKeepsItsSelection(t *testing.T) {
 			},
 			want: want{
 				outcome: outcome{
-					traces: []written{{name: trace.NameSelect, applied: []string{"k-agg"}}, {name: trace.NameContext}},
+					traces: []written{{name: trace.NameSelect, applied: []knowledge.Ref{{ID: "k-agg", Version: 1}}}, {name: trace.NameContext}},
 				},
 				err: os.ErrNotExist,
 			},
