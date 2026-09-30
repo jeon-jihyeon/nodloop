@@ -148,7 +148,7 @@ func (c Compactable) Crowded() bool {
 // 4. no draft reaches an event that an old item it names does not reach
 // 5. no two drafts of one kind overlap in a folder
 // Metrics with none in common or one dim key with a different value on each keep two drafts apart
-// 6. an old veto is kept by a new veto of an item that names it and blocks the old example
+// 6. an old veto is kept by a new veto of an item that names it and keeps its tools and conditions and example
 // 7. a draft id is one old id so it becomes the next version of that id or a new id and no id repeats
 // 8. evidence is the union of the named old items and basis is verified only when every named item is
 func (s Set) compact(id string, old Set, drafts []Knowledge, now time.Time) (Set, error) {
@@ -323,21 +323,62 @@ func (s Set) checkExclusive() error {
 	return nil
 }
 
-// Every old veto is blocked by the veto of a new judgment that names its item
+// Every old veto is kept by the veto of a new judgment that names its item
 // Retiring the old item would otherwise lift a guard block unseen
 func (s Set) checkVetoes(items Set) error {
 	for _, old := range s {
 		if old.Veto == nil {
 			continue
 		}
-		kept := slices.ContainsFunc(items, func(k Knowledge) bool {
-			return slices.Contains(k.Evidence.Knowledge, Ref{old.ID, old.Version}) && k.keepsVeto(*old.Veto)
-		})
-		if !kept {
-			return fmt.Errorf("%w: the veto of %s v%d", ErrCompactionVeto, old.ID, old.Version)
+		lifted := "no judgment that names it carries a veto"
+		for _, k := range items {
+			if k.Veto == nil || !slices.Contains(k.Evidence.Knowledge, Ref{old.ID, old.Version}) {
+				continue
+			}
+			if lifted = k.liftedVeto(*old.Veto); lifted == "" {
+				break
+			}
+		}
+		if lifted != "" {
+			return fmt.Errorf("%w: the veto of %s v%d: %s", ErrCompactionVeto, old.ID, old.Version, lifted)
 		}
 	}
 	return nil
+}
+
+// The first change by which the veto of the item blocks less than old and empty when it blocks at least what old blocks
+// 1. every old tool stays and a tool may be added
+// 2. every condition keeps the field and match of one old condition since conditions join by AND
+// 3. its unless is empty or the unless of that old condition
+// 4. the old example stays blocked
+// Regexp inclusion is undecidable so a condition is kept as written and may only be dropped
+// A veto that merges two old vetoes changes a match and is refused
+func (k Knowledge) liftedVeto(old Veto) string {
+	tools := k.Veto.tools()
+	for _, t := range old.tools() {
+		if !slices.Contains(tools, t) {
+			return fmt.Sprintf("tool %s is dropped", t)
+		}
+	}
+	for _, c := range k.Veto.When {
+		if slices.ContainsFunc(old.When, c.narrows) {
+			continue
+		}
+		condition := fmt.Sprintf("%s %q", c.Field, c.Match)
+		if c.Unless != "" {
+			condition += fmt.Sprintf(" unless %q", c.Unless)
+		}
+		return fmt.Sprintf("condition %s is not an old condition as written", condition)
+	}
+	if !k.keepsVeto(old) {
+		return "the old example is no longer blocked"
+	}
+	return ""
+}
+
+// Whether the condition blocks at least what old blocks
+func (c VetoCondition) narrows(old VetoCondition) bool {
+	return c.Field == old.Field && c.Match == old.Match && (c.Unless == "" || c.Unless == old.Unless)
 }
 
 func (v Veto) preserves(id, reason string, old Veto) bool {
@@ -345,12 +386,23 @@ func (v Veto) preserves(id, reason string, old Veto) bool {
 	if err != nil {
 		return false
 	}
-	for tool := range strings.SplitSeq(old.Tool, "|") {
-		if tool = strings.TrimSpace(tool); tool != "" && !compiled.Matches(tool, old.Example) {
+	for _, tool := range old.tools() {
+		if !compiled.Matches(tool, old.Example) {
 			return false
 		}
 	}
 	return true
+}
+
+// The tool names of the list without blanks
+func (v Veto) tools() []string {
+	var out []string
+	for t := range strings.SplitSeq(v.Tool, "|") {
+		if t = strings.TrimSpace(t); t != "" {
+			out = append(out, t)
+		}
+	}
+	return out
 }
 
 // The records of a compaction: the versions proposed under its id and the old versions they name

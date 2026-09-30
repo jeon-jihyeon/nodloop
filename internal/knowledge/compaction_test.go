@@ -81,8 +81,8 @@ func (s compactionSeeds) drafts() []knowledge.Knowledge {
 		ID: "j", Kind: knowledge.KindJudgment, Content: "never edit in place", Scope: s.a.Scope, Author: "claude",
 		Evidence: knowledge.Evidence{Knowledge: []knowledge.Ref{{ID: "j", Version: 1}}},
 		Veto: &knowledge.Veto{
-			Tool: "Bash", When: []knowledge.VetoCondition{{Field: "command", Match: `sed\s+(-i|--in-place)`}},
-			Example: map[string]any{"command": "sed --in-place s/a/b/ f"},
+			Tool: "Bash", When: []knowledge.VetoCondition{{Field: "command", Match: `sed\s+-i`}},
+			Example: map[string]any{"command": "sed -i s/c/d/ g"},
 		},
 	}
 	return []knowledge.Knowledge{meaning, judgment}
@@ -158,6 +158,10 @@ func TestLedgerProposeCompaction(t *testing.T) {
 	noVeto[1].Veto = nil
 	weakVeto := seeds.drafts()
 	weakVeto[1].Veto.When = []knowledge.VetoCondition{{Field: "command", Match: `--in-place`}}
+	weakVeto[1].Veto.Example = map[string]any{"command": "sed --in-place s/a/b/ f"}
+	exampleVeto := seeds.drafts()
+	exampleVeto[1].Veto.When = []knowledge.VetoCondition{{Field: "command", Match: `^sed -i s/a/b/ f$`}}
+	exampleVeto[1].Veto.Example = seeds.j.Veto.Example
 
 	planned := []evidence.Context{evidence.ContextPlannedChange}
 	overlapping := seeds.drafts()
@@ -226,6 +230,11 @@ func TestLedgerProposeCompaction(t *testing.T) {
 		{
 			"a new veto that lets the old example through is refused",
 			args{"a", weakVeto},
+			want{err: knowledge.ErrCompactionVeto},
+		},
+		{
+			"a new veto that blocks only the old example is refused",
+			args{"a", exampleVeto},
 			want{err: knowledge.ErrCompactionVeto},
 		},
 	}
@@ -542,6 +551,80 @@ func TestLedgerProposeCompactionVetoTools(t *testing.T) {
 			require.NoError(t, testkit.Err(l.Import(ctx, seeds.all())))
 			drafts := seeds.drafts()
 			drafts[1].Veto.Tool = tc.args.newTools
+
+			got, err := l.ProposeCompaction(ctx, "a", drafts)
+
+			assert.ErrorIs(t, err, tc.want.err)
+			assert.Len(t, got.Items, tc.want.items)
+			all, err := l.All(ctx)
+			require.NoError(t, err)
+			assert.Len(t, all, len(seeds.all())+tc.want.items)
+		})
+	}
+}
+
+// The old veto of j blocks sed -i on a go file unless the file is generated
+func TestLedgerProposeCompactionVetoConditions(t *testing.T) {
+	sed := knowledge.VetoCondition{Field: "command", Match: `sed\s+-i`}
+	goFile := knowledge.VetoCondition{Field: "command", Match: `\.go\b`, Unless: `_gen\.go`}
+	type args struct {
+		when    []knowledge.VetoCondition
+		example string
+	}
+	type want struct {
+		items int
+		err   error
+	}
+	tcs := []struct {
+		name string
+		args args
+		want want
+	}{
+		{"conditions kept as written are accepted", args{[]knowledge.VetoCondition{sed, goFile}, "sed -i s/a/b/ f.go"}, want{2, nil}},
+		{"a dropped condition is accepted", args{[]knowledge.VetoCondition{sed}, "sed -i s/a/b/ f.md"}, want{2, nil}},
+		{
+			"a dropped unless is accepted",
+			args{[]knowledge.VetoCondition{sed, {Field: "command", Match: `\.go\b`}}, "sed -i s/a/b/ f_gen.go"},
+			want{2, nil},
+		},
+		{
+			"a match narrowed to the old example is refused",
+			args{[]knowledge.VetoCondition{{Field: "command", Match: `^sed -i s/a/b/ f\.go$`}}, "sed -i s/a/b/ f.go"},
+			want{0, knowledge.ErrCompactionVeto},
+		},
+		{
+			"a widened match is refused because inclusion is only checked as written",
+			args{[]knowledge.VetoCondition{{Field: "command", Match: `sed\s+(-i|--in-place)`}}, "sed -i s/a/b/ f.go"},
+			want{0, knowledge.ErrCompactionVeto},
+		},
+		{
+			"an added unless is refused",
+			args{[]knowledge.VetoCondition{{Field: "command", Match: `sed\s+-i`, Unless: `\.md`}}, "sed -i s/a/b/ f.go"},
+			want{0, knowledge.ErrCompactionVeto},
+		},
+		{
+			"a changed unless is refused",
+			args{[]knowledge.VetoCondition{sed, {Field: "command", Match: `\.go\b`, Unless: `_test\.go`}}, "sed -i s/a/b/ f.go"},
+			want{0, knowledge.ErrCompactionVeto},
+		},
+		{
+			"an added condition is refused",
+			args{[]knowledge.VetoCondition{sed, goFile, {Field: "command", Match: `\sf\.go$`}}, "sed -i s/a/b/ f.go"},
+			want{0, knowledge.ErrCompactionVeto},
+		},
+	}
+	ctx := context.Background()
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			seeds := newCompactionSeeds()
+			seeds.j.Veto.When = []knowledge.VetoCondition{sed, goFile}
+			seeds.j.Veto.Example = map[string]any{"command": "sed -i s/a/b/ f.go"}
+			l, _ := newTestLedger(t, t.TempDir(), seeds.at.Add(time.Hour))
+			require.NoError(t, testkit.Err(l.Import(ctx, seeds.all())))
+			drafts := seeds.drafts()
+			drafts[1].Veto.When = tc.args.when
+			drafts[1].Veto.Example = map[string]any{"command": tc.args.example}
 
 			got, err := l.ProposeCompaction(ctx, "a", drafts)
 
