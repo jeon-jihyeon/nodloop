@@ -27,6 +27,8 @@ const (
 type Policy struct {
 	Version   string     `yaml:"version" json:"version"`
 	Analyzers []RuleSpec `yaml:"analyzers" json:"analyzers"`
+	// Names an analyzer reads that no event of the data set it was bound to carries
+	absent []absence
 }
 
 type RuleSpec struct {
@@ -210,6 +212,7 @@ var analyzers = map[Rule]analyzer{
 // Runs every analyzer of the policy and orders the result by severity
 // 1. inadequate observations sort last so the review sees scored series first
 // 2. a change context that breaks the comparison is flagged once where the first coverage_rule runs
+// 3. a name absent from the whole data set is reported inadequate unless this event carries it by now
 func (p Policy) Analyze(ev evidence.Event) (Observations, error) {
 	if err := p.validate(); err != nil {
 		return nil, err
@@ -223,6 +226,11 @@ func (p Policy) Analyze(ev evidence.Event) (Observations, error) {
 			unflagged = false
 		}
 		out = append(out, analyzers[spec.Rule](spec, ev.ID, points)...)
+	}
+	for _, a := range p.absent {
+		if !points.carries(a) {
+			out = append(out, points.absenceObservation(ev.ID, a))
+		}
 	}
 	slices.SortStableFunc(out, Observation.compare)
 	return out, nil
