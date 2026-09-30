@@ -194,6 +194,28 @@ func (ls labelSet) leak(traces trace.Traces, records feedback.Records, approved 
 	return nil
 }
 
+// Corrections a review of the half could take as an example
+// The labels are the whole holdout half and a correction counts under the rules diagnose applies to example candidates
+// 1. the latest verdict on the trace is edit or reject
+// 2. the trace is a diagnose trace with an output
+// 3. the trace is not a review of a holdout event
+func (ls labelSet) corrections(traces trace.Traces, records feedback.Records) int {
+	events := ls.ids()
+	offered := map[string]struct{}{}
+	for _, tr := range traces {
+		if tr.Name == trace.NameDiagnose && len(tr.Output) > 0 && !slices.Contains(events, tr.Subject) {
+			offered[tr.ID] = struct{}{}
+		}
+	}
+	n := 0
+	for _, fb := range records.Latest() {
+		if _, ok := offered[fb.TraceID]; ok && fb.Corrects() {
+			n++
+		}
+	}
+	return n
+}
+
 // Reviews every seed event without examples so a reviewer can annotate the results
 // Seed runs only the seed condition so a condition list is refused instead of ignored
 func (r *Runner) Seed(ctx context.Context, opts RunOptions) ([]trace.Trace, error) {
@@ -216,7 +238,8 @@ func (r *Runner) Seed(ctx context.Context, opts RunOptions) ([]trace.Trace, erro
 
 // Reviews every holdout event under each condition
 // 1. refuses when any trace of a holdout event in any session has feedback or when approved knowledge cites one
-// 2. no review takes a review of a holdout event as an example even when feedback on one arrives during the run
+// 2. refuses a condition with nothing to inject before any review
+// 3. no review takes a review of a holdout event as an example even when feedback on one arrives during the run
 func (r *Runner) Holdout(ctx context.Context, opts RunOptions) ([]trace.Trace, error) {
 	conditions, err := opts.conditions()
 	if err != nil {
@@ -246,8 +269,15 @@ func (r *Runner) Holdout(ctx context.Context, opts RunOptions) ([]trace.Trace, e
 	if err != nil {
 		return nil, err
 	}
-	if err := holdout.leak(traces, records, set.Approved()); err != nil {
+	approved := set.Approved()
+	if err := holdout.leak(traces, records, approved); err != nil {
 		return nil, err
+	}
+	corrections := holdout.corrections(traces, records)
+	for _, cond := range conditions {
+		if err := cond.supplied(opts.Examples, corrections, len(approved)); err != nil {
+			return nil, err
+		}
 	}
 	return r.reviewAll(ctx, opts.jobs(labels.ids(), conditions, holdout.ids()), opts.Parallel, opts.Log)
 }
