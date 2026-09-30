@@ -21,7 +21,7 @@ const (
 	// Approval never grows a folder past it so only an imported ledger or one approved before the item cap overflows it
 	knowledgeItems = knowledge.ReviewItems
 	// One list Claude Code can show on one screen
-	// No approval bounds corrections so the newest come first
+	// No approval bounds corrections so the closest and newest come first
 	exampleItems = 10
 )
 

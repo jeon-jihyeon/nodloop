@@ -467,6 +467,9 @@ func TestServerFeedback(t *testing.T) {
 				PendingID string `json:"pending_id"`
 			}
 			require.NoError(t, c.Call(t, "context", map[string]any{"event_id": spikeEvent}, &opened))
+			// A correction of the other case may already be offered as an example of the same event
+			selectInput := map[string]any{"pending_id": opened.PendingID, "knowledge": []any{}, "examples": []any{}}
+			require.NoError(t, c.Run(t, "select", selectInput))
 			var reviewed struct {
 				TraceID string `json:"trace_id"`
 			}

@@ -1,6 +1,7 @@
 package diagnose
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -402,20 +403,23 @@ func (d *Diagnoser) knowledgeCandidates(
 // 1. the latest verdict per trace decides so a trace later approved is skipped
 // 2. the trace must be a diagnose trace whose recordInput decodes
 // A hand edited trace that no longer decodes is skipped so one bad line never blocks every later review
-// 3. same change context and at least one shared metric
+// 3. same change context and one shared metric or no metric on both sides
 // 4. never a review of an excluded event so eval cannot leak an answer into its own question
-// 5. excluded always holds the event under review
-// 6. newest first and at most the candidate cap
+// 5. corrections of the event under review first
+// 6. then the closest metric set first
+// 7. then newest first within one distance up to the candidate cap
+// A reviewer who corrected this event expects that correction in its next review
+// Newer corrections that share one metric never push out an older one of the same metric set
 // Every feedback record is read and each correction costs one trace read
 // A store query by change context would bound this once the records grow
 func (d *Diagnoser) exampleCandidates(
-	ctx context.Context, excluded []string, changeContext evidence.Context, metrics []string,
+	ctx context.Context, eventID string, excluded []string, changeContext evidence.Context, metrics []string,
 ) ([]ExampleCandidate, bool, error) {
 	all, err := d.feedback.List(ctx, feedback.Filter{})
 	if err != nil {
 		return nil, false, err
 	}
-	var out []ExampleCandidate
+	var found exampleMatches
 	for _, verdict := range feedback.Records(all).Latest() {
 		if !verdict.Corrects() {
 			continue
@@ -434,10 +438,45 @@ func (d *Diagnoser) exampleCandidates(
 		if json.Unmarshal(tr.Input, &in) != nil || !in.matches(changeContext, metrics) {
 			continue
 		}
-		if len(out) == exampleItems {
-			return out, true, nil
-		}
-		out = append(out, ExampleCandidate{TraceID: verdict.TraceID, Verdict: verdict.Verdict, Head: headline(verdict.Reason)})
+		found = append(found, exampleMatch{
+			candidate: ExampleCandidate{TraceID: verdict.TraceID, Verdict: verdict.Verdict, Head: headline(verdict.Reason)},
+			distance:  in.distance(metrics),
+			own:       tr.Subject == eventID,
+		})
 	}
-	return out, false, nil
+	out, cut := found.offer()
+	return out, cut, nil
+}
+
+// A correction that fits the event with the number of metrics only one side holds
+type exampleMatch struct {
+	candidate ExampleCandidate
+	distance  int
+	// A correction of the event under review
+	own bool
+}
+
+// Own corrections before others and then the closer metric set
+func (m exampleMatch) rank(other exampleMatch) int {
+	if m.own != other.own {
+		if m.own {
+			return -1
+		}
+		return 1
+	}
+	return cmp.Compare(m.distance, other.distance)
+}
+
+// Newest first as the feedback records read
+type exampleMatches []exampleMatch
+
+// The best ranked first up to the candidate cap and whether the cap cut the list
+// The sort is stable so newest first holds within one rank
+func (ms exampleMatches) offer() ([]ExampleCandidate, bool) {
+	ranked := slices.SortedStableFunc(slices.Values(ms), exampleMatch.rank)
+	var out []ExampleCandidate
+	for _, m := range ranked[:min(len(ranked), exampleItems)] {
+		out = append(out, m.candidate)
+	}
+	return out, len(ranked) > exampleItems
 }

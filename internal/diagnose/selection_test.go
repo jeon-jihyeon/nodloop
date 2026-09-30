@@ -1,9 +1,11 @@
 package diagnose_test
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -75,6 +77,47 @@ func TestPrepareCandidates(t *testing.T) {
 			manyOffered = append([]diagnose.ExampleCandidate{offered}, manyOffered...)
 		}
 	}
+	// One older correction with the metric set of tq-008 and ten newer ones that share only click_count or add a metric
+	ranked := []trace.Trace{{
+		ID: "near", Name: trace.NameDiagnose, Subject: "tq-006", Output: json.RawMessage(`{"status":"hold"}`),
+		Input: json.RawMessage(`{"change_context":"no_known_change","metrics":["click_count","conversion_count"]}`),
+	}}
+	rankedVerdicts := []verdict{{"near", feedback.VerdictReject, "same metric set", nil}}
+	rankedOffered := []diagnose.ExampleCandidate{{TraceID: "near", Verdict: feedback.VerdictReject, Head: "same metric set"}}
+	for i := range 10 {
+		id := fmt.Sprintf("far%02d", i)
+		metrics := `["click_count"]`
+		if i%2 == 1 {
+			metrics = `["click_count","conversion_count","impression_count"]`
+		}
+		ranked = append(ranked, trace.Trace{
+			ID: id, Name: trace.NameDiagnose, Subject: "tq-005", Output: json.RawMessage(`{"status":"hold"}`),
+			Input: json.RawMessage(`{"change_context":"no_known_change","metrics":` + metrics + `}`),
+		})
+		rankedVerdicts = append(rankedVerdicts, verdict{id, feedback.VerdictReject, "reason " + id, nil})
+		if i > 0 {
+			offered := diagnose.ExampleCandidate{TraceID: id, Verdict: feedback.VerdictReject, Head: "reason " + id}
+			rankedOffered = slices.Insert(rankedOffered, 1, offered)
+		}
+	}
+	// One correction of tq-008 and three newer ones of tq-005 with the same metric set
+	own := []trace.Trace{{
+		ID: "own", Name: trace.NameDiagnose, Subject: "tq-008", Output: json.RawMessage(`{"status":"hold"}`),
+		Input: json.RawMessage(`{"change_context":"no_known_change","metrics":["click_count"]}`),
+	}}
+	var newer []verdict
+	var newerOffered []diagnose.ExampleCandidate
+	for i := range 3 {
+		id := fmt.Sprintf("newer%d", i)
+		own = append(own, trace.Trace{
+			ID: id, Name: trace.NameDiagnose, Subject: "tq-005", Output: json.RawMessage(`{"status":"hold"}`),
+			Input: json.RawMessage(`{"change_context":"no_known_change","metrics":["click_count"]}`),
+		})
+		newer = append(newer, verdict{id, feedback.VerdictReject, "reason " + id, nil})
+		offered := diagnose.ExampleCandidate{TraceID: id, Verdict: feedback.VerdictReject, Head: "reason " + id}
+		newerOffered = append([]diagnose.ExampleCandidate{offered}, newerOffered...)
+	}
+	ownRejected := diagnose.ExampleCandidate{TraceID: "own", Verdict: feedback.VerdictReject, Head: "own reason"}
 	aggregation := "clicks and conversions use different aggregation time bases"
 	conversions := knowledge.Scope{Scope: evidence.Scope{Metrics: []string{"conversion_count"}}}
 	tcs := []struct {
@@ -123,16 +166,46 @@ func TestPrepareCandidates(t *testing.T) {
 			}}},
 		},
 		{
-			name: "never offers an event its own review",
+			name: "offers an event its own earlier correction when it is reviewed again",
 			args: args{reviews: reviews, verdicts: verdicts, event: "tq-005"},
-			want: want{offer: offer{
-				examples: []diagnose.ExampleCandidate{{TraceID: "tq-007", Verdict: feedback.VerdictEdit, Head: "newer reason"}},
-			}},
+			want: want{offer: offer{examples: []diagnose.ExampleCandidate{
+				{TraceID: "tq-005", Verdict: feedback.VerdictReject, Head: "older reason"},
+				{TraceID: "tq-007", Verdict: feedback.VerdictEdit, Head: "newer reason"},
+			}}},
+		},
+		{
+			name: "ranks a rejected review of the event under review ahead of newer corrections of the same metric set",
+			args: args{
+				traces: own, verdicts: slices.Concat([]verdict{{"own", feedback.VerdictReject, "own reason", nil}}, newer), event: "tq-008",
+			},
+			want: want{offer: offer{examples: slices.Concat([]diagnose.ExampleCandidate{ownRejected}, newerOffered)}},
+		},
+		{
+			name: "ranks an edited review of the event under review ahead of newer corrections of the same metric set",
+			args: args{
+				traces: own, event: "tq-008",
+				verdicts: slices.Concat([]verdict{{"own", feedback.VerdictEdit, "own reason", json.RawMessage(`{"status":"hold"}`)}}, newer),
+			},
+			want: want{offer: offer{examples: slices.Concat(
+				[]diagnose.ExampleCandidate{{TraceID: "own", Verdict: feedback.VerdictEdit, Head: "own reason"}}, newerOffered,
+			)}},
+		},
+		{
+			name: "keeps newest first when the event under review has no correction of its own",
+			args: args{
+				traces: own, verdicts: slices.Concat([]verdict{{"own", feedback.VerdictReject, "own reason", nil}}, newer), event: "tq-013",
+			},
+			want: want{offer: offer{examples: slices.Concat(newerOffered, []diagnose.ExampleCandidate{ownRejected})}},
 		},
 		{
 			name: "the candidate cap offers the ten newest corrections and marks the rest omitted",
 			args: args{traces: many, verdicts: manyVerdicts, event: "tq-008"},
 			want: want{offer: offer{examples: manyOffered, omitted: true}},
+		},
+		{
+			name: "the candidate cap keeps an older correction of the same metric set ahead of newer looser ones",
+			args: args{traces: ranked, verdicts: rankedVerdicts, event: "tq-008"},
+			want: want{offer: offer{examples: rankedOffered, omitted: true}},
 		},
 		{
 			name: "offers a correction of a quiet event to the next quiet event of the same context",
@@ -641,6 +714,8 @@ func TestRunSelection(t *testing.T) {
 		mode     diagnose.KnowledgeMode
 		examples int
 		exclude  []string
+		// Empty means tq-008
+		event string
 	}
 	type want struct {
 		// Text the prompt must and must not carry
@@ -687,6 +762,11 @@ func TestRunSelection(t *testing.T) {
 		{
 			name: "reviews of an excluded event are never examples",
 			args: args{examples: 1, exclude: []string{"tq-007"}},
+			want: want{present: []string{"## Examples", "older reason"}, absent: []string{"newer reason"}},
+		},
+		{
+			name: "the code pick carries the correction of the event under review ahead of a newer one",
+			args: args{examples: 1, event: "tq-005"},
 			want: want{present: []string{"## Examples", "older reason"}, absent: []string{"newer reason"}},
 		},
 		{
@@ -766,7 +846,7 @@ func TestRunSelection(t *testing.T) {
 				})
 
 			got, err := d.Run(
-				ctx, "tq-008", diagnose.BatchOptions{Knowledge: tc.args.mode, Examples: tc.args.examples, Exclude: tc.args.exclude},
+				ctx, cmp.Or(tc.args.event, "tq-008"), diagnose.BatchOptions{Knowledge: tc.args.mode, Examples: tc.args.examples, Exclude: tc.args.exclude},
 			)
 			require.NoError(t, err)
 			tr, err := s.Traces.Get(ctx, got.TraceID)
