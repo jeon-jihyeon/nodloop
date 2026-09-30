@@ -1,16 +1,24 @@
 # Seed vetoes distilled from a personal CLAUDE.md
-# Copy to ~/.claude/nodloop/vetoes.yaml for every project or to .claude/nodloop/vetoes.yaml for one project
+# Copy to ~/.claude/nodloop/vetoes.yaml for every project or to .claude/nodloop/vetoes.yaml at a project root for that project
 #
 # The Bash patterns share one command start prefix
-#   (^|[\n;&|(){}`])\s*                             start of input, a new line, a separator, a subshell, a group or a backtick
-#   ((builtin|command|env|exec|nohup|sudo|time|xargs)(\s+[^\s;&|]+)*?\s+)?   an optional wrapper with its own arguments
-#   (\S*/)?                                         an optional path such as /usr/bin/
+#   start      the input start, a new line, one of ; & | ( ) { } ` !, the keywords do then else elif or find -exec -execdir -ok -okdir
+#   assign     any number of VAR=value words such as LC_ALL=C
+#   wrapper    any number of builtin command env exec nice nohup stdbuf sudo time timeout xargs with the options each one takes
+#              an option cluster that ends in a letter taking a value such as -Eu root takes the next word
+#   name       an optional backslash or quote and an optional path such as /usr/bin/
+# Arguments are read quote aware so a ; inside quotes or a line continuation does not end the command
+# A regexp veto is best effort
+# 1. it never follows variables, aliases or functions so a deliberate evasion gets past it
+# 2. a start word inside quoted text such as a commit message with then sed -i also counts as a command start
+# 3. any sed option cluster holding i or the BSD I counts as in place so -ei with a script named i is blocked too
 vetoes:
   - id: no-sed-inplace
     tool: Bash
     when:
       - field: command
-        match: '(^|[\n;&|(){}`])\s*((builtin|command|env|exec|nohup|sudo|time|xargs)(\s+[^\s;&|]+)*?\s+)?(\S*/)?(sed|perl)\s+([^;&|\n]*\s)?(-[a-zA-Z]*i|--in-place)'
+        match: |-
+          (^|[\n;&|(){}`!]|\b(do|then|else|elif)\s|\s-(exec|execdir|ok|okdir)\s)(\s|\\\n)*(([A-Za-z_][A-Za-z0-9_]*=[^\s;&|]*|(builtin|nohup|command(\s+-[pvV]+)*|exec(\s+(-[A-Za-z]*a\s+[^\s;&|]+|-[^\s;&|]*))*|time(\s+-[^\s;&|]*)*|nice(\s+(-[A-Za-z]*n\s+[^\s;&|]+|-[^\s;&|]*))*|stdbuf(\s+-[^\s;&|]*)*|timeout(\s+(-[A-Za-z]*[ks]\s+[^\s;&|]+|--[A-Za-z0-9-]+(=[^\s;&|]*)?|-[^\s;&|]*))*\s+[0-9.]+[smhd]?|env(\s+(-[A-Za-z0-9]*[uCSP]\s+[^\s;&|]+|--[A-Za-z0-9-]+(=[^\s;&|]*|\s+[^-\s;&|][^\s;&|]*)?|-[^\s;&|]*|[A-Za-z_][A-Za-z0-9_]*=[^\s;&|]*))*|sudo(\s+(-[A-Za-z]*[ugUChprDRTt]\s+[^\s;&|]+|--[A-Za-z0-9-]+(=[^\s;&|]*|\s+[^-\s;&|][^\s;&|]*)?|-[^\s;&|]*|[A-Za-z_][A-Za-z0-9_]*=[^\s;&|]*))*|xargs(\s+(-[A-Za-z0-9]*[nILPdEsaJRS]\s+[^\s;&|]+|--[A-Za-z0-9-]+(=[^\s;&|]*|\s+[^-\s;&|][^\s;&|]*)?|-[^\s;&|]*))*))(\s|\\\n)+)*\\?['\"]?(\S*/)?(sed['\"]?(\s([^;&|\n'"\\]|'[^']*'|"([^"\\]|\\[\s\S])*"|\\[\s\S])*?)?(\s|\\\n)(-[A-Za-z]*[iI]|--in-place)|perl['\"]?(\s([^;&|\n'"\\]|'[^']*'|"([^"\\]|\\[\s\S])*"|\\[\s\S])*?)?(\s|\\\n)-[^\s;&|'\"MmIeEdxF]*i)
     reason: sed -i and perl -i are forbidden. Use the Edit tool to modify files
     source: personal CLAUDE.md
 
@@ -18,7 +26,8 @@ vetoes:
     tool: Bash
     when:
       - field: command
-        match: '(^|[\n;&|(){}`])\s*((builtin|command|env|exec|nohup|sudo|time|xargs)(\s+[^\s;&|]+)*?\s+)?(\S*/)?eval(\s|$)'
+        match: |-
+          (^|[\n;&|(){}`!]|\b(do|then|else|elif)\s|\s-(exec|execdir|ok|okdir)\s)(\s|\\\n)*(([A-Za-z_][A-Za-z0-9_]*=[^\s;&|]*|(builtin|nohup|command(\s+-[pvV]+)*|exec(\s+(-[A-Za-z]*a\s+[^\s;&|]+|-[^\s;&|]*))*|time(\s+-[^\s;&|]*)*|nice(\s+(-[A-Za-z]*n\s+[^\s;&|]+|-[^\s;&|]*))*|stdbuf(\s+-[^\s;&|]*)*|timeout(\s+(-[A-Za-z]*[ks]\s+[^\s;&|]+|--[A-Za-z0-9-]+(=[^\s;&|]*)?|-[^\s;&|]*))*\s+[0-9.]+[smhd]?|env(\s+(-[A-Za-z0-9]*[uCSP]\s+[^\s;&|]+|--[A-Za-z0-9-]+(=[^\s;&|]*|\s+[^-\s;&|][^\s;&|]*)?|-[^\s;&|]*|[A-Za-z_][A-Za-z0-9_]*=[^\s;&|]*))*|sudo(\s+(-[A-Za-z]*[ugUChprDRTt]\s+[^\s;&|]+|--[A-Za-z0-9-]+(=[^\s;&|]*|\s+[^-\s;&|][^\s;&|]*)?|-[^\s;&|]*|[A-Za-z_][A-Za-z0-9_]*=[^\s;&|]*))*|xargs(\s+(-[A-Za-z0-9]*[nILPdEsaJRS]\s+[^\s;&|]+|--[A-Za-z0-9-]+(=[^\s;&|]*|\s+[^-\s;&|][^\s;&|]*)?|-[^\s;&|]*))*))(\s|\\\n)+)*\\?['\"]?(\S*/)?eval['\"]?(\s|$)
     reason: eval is forbidden. Run the command directly or use python3 -c
     source: personal CLAUDE.md
 
@@ -26,7 +35,8 @@ vetoes:
     tool: Bash
     when:
       - field: command
-        match: '(^|[\n;&|(){}`])\s*((builtin|command|env|exec|nohup|sudo|time|xargs)(\s+[^\s;&|]+)*?\s+)?(\S*/)?(bash|sh|zsh)\s+([^;&|\n]*\s)?-[a-zA-Z]*c(\s|$)'
+        match: |-
+          (^|[\n;&|(){}`!]|\b(do|then|else|elif)\s|\s-(exec|execdir|ok|okdir)\s)(\s|\\\n)*(([A-Za-z_][A-Za-z0-9_]*=[^\s;&|]*|(builtin|nohup|command(\s+-[pvV]+)*|exec(\s+(-[A-Za-z]*a\s+[^\s;&|]+|-[^\s;&|]*))*|time(\s+-[^\s;&|]*)*|nice(\s+(-[A-Za-z]*n\s+[^\s;&|]+|-[^\s;&|]*))*|stdbuf(\s+-[^\s;&|]*)*|timeout(\s+(-[A-Za-z]*[ks]\s+[^\s;&|]+|--[A-Za-z0-9-]+(=[^\s;&|]*)?|-[^\s;&|]*))*\s+[0-9.]+[smhd]?|env(\s+(-[A-Za-z0-9]*[uCSP]\s+[^\s;&|]+|--[A-Za-z0-9-]+(=[^\s;&|]*|\s+[^-\s;&|][^\s;&|]*)?|-[^\s;&|]*|[A-Za-z_][A-Za-z0-9_]*=[^\s;&|]*))*|sudo(\s+(-[A-Za-z]*[ugUChprDRTt]\s+[^\s;&|]+|--[A-Za-z0-9-]+(=[^\s;&|]*|\s+[^-\s;&|][^\s;&|]*)?|-[^\s;&|]*|[A-Za-z_][A-Za-z0-9_]*=[^\s;&|]*))*|xargs(\s+(-[A-Za-z0-9]*[nILPdEsaJRS]\s+[^\s;&|]+|--[A-Za-z0-9-]+(=[^\s;&|]*|\s+[^-\s;&|][^\s;&|]*)?|-[^\s;&|]*))*))(\s|\\\n)+)*\\?['\"]?(\S*/)?(bash|sh|zsh)['\"]?((\s|\\\n)+([-+][A-Za-z]*[oO][A-Za-z]*\s+[^\s;&|]+|--(rcfile|init-file)\s+[^\s;&|]+|[-+][^\s;&|]*))*(\s|\\\n)+-[a-zA-Z]*c(\s|$)
     reason: bash -c and sh -c are forbidden. Run the command directly or use python3 -c
     source: personal CLAUDE.md
 
@@ -34,7 +44,8 @@ vetoes:
     tool: Bash
     when:
       - field: command
-        match: '(^|[\n;&|(){}`])\s*cd(\s[^;&|\n]*)?(&&|;|\n)\s*((command|env|exec)(\s+[^\s;&|]+)*?\s+)?(\S*/)?git(\s|$)'
+        match: |-
+          (^|[\n;&|(){}`!]|\b(do|then|else|elif)\s|\s-(exec|execdir|ok|okdir)\s)(\s|\\\n)*cd(\s([^;&|\n()'"\\$]|\$\([^()]*\)|'[^']*'|"([^"\\]|\\[\s\S])*"|\\[\s\S]|\$)*)?(&&|\|\||;|\n)(([^()'"\\$]|\$\([^()]*\)|'[^']*'|"([^"\\]|\\[\s\S])*"|\\[\s\S]|\$)*?(&&|\|\||;|\n|\|))?(\s|\\\n)*(([A-Za-z_][A-Za-z0-9_]*=[^\s;&|]*|(builtin|nohup|command(\s+-[pvV]+)*|exec(\s+(-[A-Za-z]*a\s+[^\s;&|]+|-[^\s;&|]*))*|time(\s+-[^\s;&|]*)*|nice(\s+(-[A-Za-z]*n\s+[^\s;&|]+|-[^\s;&|]*))*|stdbuf(\s+-[^\s;&|]*)*|timeout(\s+(-[A-Za-z]*[ks]\s+[^\s;&|]+|--[A-Za-z0-9-]+(=[^\s;&|]*)?|-[^\s;&|]*))*\s+[0-9.]+[smhd]?|env(\s+(-[A-Za-z0-9]*[uCSP]\s+[^\s;&|]+|--[A-Za-z0-9-]+(=[^\s;&|]*|\s+[^-\s;&|][^\s;&|]*)?|-[^\s;&|]*|[A-Za-z_][A-Za-z0-9_]*=[^\s;&|]*))*|sudo(\s+(-[A-Za-z]*[ugUChprDRTt]\s+[^\s;&|]+|--[A-Za-z0-9-]+(=[^\s;&|]*|\s+[^-\s;&|][^\s;&|]*)?|-[^\s;&|]*|[A-Za-z_][A-Za-z0-9_]*=[^\s;&|]*))*|xargs(\s+(-[A-Za-z0-9]*[nILPdEsaJRS]\s+[^\s;&|]+|--[A-Za-z0-9-]+(=[^\s;&|]*|\s+[^-\s;&|][^\s;&|]*)?|-[^\s;&|]*))*))(\s|\\\n)+)*\\?['\"]?(\S*/)?git['\"]?(\s+--?[^C\s;&|][^\s;&|]*)*(\s+[^-\s;&|]|\s*$|\s*[;&|\n)])
     reason: cd X && git is forbidden because allow rules apply per segment. Use git -C X instead
     source: personal CLAUDE.md
 
@@ -42,7 +53,7 @@ vetoes:
     tool: Write
     when:
       - field: file_path
-        match: '(?i)(^|/)README(\.[a-z]+)?$'
+        match: '(?i)(^|/)README(\.[a-z]+|([._-][\w-]+)*\.(md|markdown|mdx|rst|txt|adoc|asciidoc|org|textile|rdoc|html?))?$'
         unless: 'node_modules/'
     reason: Do not create README files
     source: personal CLAUDE.md
