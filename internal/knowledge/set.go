@@ -119,7 +119,7 @@ func (s Set) folder(item Knowledge) Folder {
 		}
 	}
 	if item.Status == StatusApproved && item.Evidence.Replayable() {
-		f.Compactable = len(s.compactable(item).Items)
+		f.Compactable = s.compactable(item).heaviest()
 	}
 	return f
 }
