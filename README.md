@@ -42,7 +42,7 @@ Each procedure is a `.md` file directly under `procedures/`, and setup fails whe
   <img alt="observe, context, select and record on the tool row; feedback, propose and approve on the human row; the loop returns to context" src=".github/loop-light.svg" width="760">
 </picture>
 
-Claude Code writes the review with its own model, so there's no API key to set up. nodloop gives it the numbers, computed from your events by plain code, and the paragraphs of the procedures that fit the event, which it can cite. A cause without a citation gets the review sent back once, and a second miss puts it on hold. A Decide paragraph or a first step doesn't count as a citation for a cause.
+Claude Code writes the review with its own model, so there's no API key to set up. nodloop gives it the numbers, computed from your events by plain code, and the paragraphs of the procedures that fit the event, which it can cite. A cause without a citation, or a status that contradicts the causes, gets the review sent back once, and a second miss puts it on hold. A Decide paragraph or a first step doesn't count as a citation for a cause.
 
 When you correct a review, the correction can become a knowledge item. It's used only after someone approves it, and only on events that match its scope. If approving an item would make the knowledge a review carries outgrow its budget of 70,000 characters or 10 items, nodloop refuses and asks you to retire an item, replace one, scope it to other change contexts or compact the folder so each review carries fewer items, instead of cutting text or items you never see.
 
