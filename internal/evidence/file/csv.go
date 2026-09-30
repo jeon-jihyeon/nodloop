@@ -89,6 +89,9 @@ func (t table) each(visit func(line int, rec []string) error) error {
 }
 
 // Events in first seen order with their points sorted by time
+// A point repeats when its event and series and instant repeat
+// 1. a repeat with the same value is dropped because an export sent again would otherwise double every window
+// 2. a repeat with another value is rejected with both lines named because keeping either would be a guess
 func parseEvents(r io.Reader) ([]evidence.Event, error) {
 	t, err := readTable(eventsFile, r, eventColumns)
 	if err != nil {
@@ -97,11 +100,30 @@ func parseEvents(r io.Reader) ([]evidence.Event, error) {
 	l := newLayout(t.positions)
 	var events []evidence.Event
 	index := map[string]int{}
+	type identity struct {
+		event, series string
+		at            int64
+	}
+	type first struct {
+		line  int
+		value float64
+	}
+	seen := map[identity]first{}
 	err = t.each(func(line int, rec []string) error {
 		id, p, err := l.point(rec, line)
 		if err != nil {
 			return err
 		}
+		key := identity{event: id, series: p.SeriesKey(), at: p.Time.UnixNano()}
+		prev, repeated := seen[key]
+		switch {
+		case repeated && prev.value == p.Value:
+			return nil
+		case repeated:
+			return fmt.Errorf("%w: %s line %d repeats line %d with another value: event %q series %q at %s",
+				evidence.ErrMalformed, eventsFile, line, prev.line, id, key.series, p.Time.Format(time.RFC3339))
+		}
+		seen[key] = first{line: line, value: p.Value}
 		i, ok := index[id]
 		if !ok {
 			i = len(events)
