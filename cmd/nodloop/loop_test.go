@@ -110,6 +110,52 @@ func TestRunKnowledgeLoop(t *testing.T) {
 	}
 }
 
+// An item scoped to the one change context where its review was refuted has nothing left to narrow
+// The error names the retire command and never retires on its own
+func TestRunKnowledgeNarrowExhausted(t *testing.T) {
+	ctx := context.Background()
+	now := testkit.Open(t).Clock.Now
+	records := loopRecords(t, now())
+	store, err := knowledgefile.New(records)
+	require.NoError(t, err)
+	require.NoError(t, store.Append(ctx, knowledge.Knowledge{
+		ID: "k-one", Version: 1, Kind: knowledge.KindMeaning, Content: "one context",
+		Scope:    knowledge.Scope{Scope: evidence.Scope{ChangeContexts: []evidence.Context{evidence.ContextPlannedChange}}},
+		Evidence: knowledge.Evidence{ParagraphIDs: []string{"gone#1"}}, Basis: knowledge.BasisStated,
+		Status: knowledge.StatusApproved, Author: "author", Approver: "ann", ApprovedAt: now(), Time: now(),
+	}))
+	in, err := json.Marshal(map[string]any{
+		"mode": diagnose.ModeInteractive, "change_context": evidence.ContextPlannedChange,
+		"knowledge": []diagnose.AppliedKnowledge{{ID: "k-one", Version: 1, Chars: 20}},
+	})
+	require.NoError(t, err)
+	traces, err := tracefile.New(records)
+	require.NoError(t, err)
+	require.NoError(t, traces.Append(ctx, trace.Trace{
+		ID: "review-one", Name: trace.NameDiagnose, Subject: "tq-023", Ref: "ctx-one", Time: now(), Input: in,
+		Output: json.RawMessage(`{"status":"ready_for_review","causes":[],"checks":[]}`),
+	}))
+	outcomes, err := feedbackfile.NewOutcomeStore(records)
+	require.NoError(t, err)
+	require.NoError(t, outcomes.Append(ctx, feedback.Outcome{
+		TraceID: "review-one", Result: feedback.ResultRefuted, Time: now(), Reviewer: "ann",
+	}))
+	getenv := func(k string) string {
+		return map[string]string{envFileDir: testkit.DemoDir(t), envRecordDir: records}[k]
+	}
+	var stdout, stderr bytes.Buffer
+
+	got := runKnowledge([]string{"narrow", "k-one", "--version", "1"}, getenv, nil, now, &stdout, &stderr)
+
+	assert.Equal(t, 1, got)
+	assert.Empty(t, stdout.String())
+	assert.Regexp(t, `^nodloop knowledge: knowledge: narrowing would leave no change context of the version: .*`+
+		`Keep the version or retire it by name with nodloop knowledge retire k-one --version 1 --approver <name>\n`, stderr.String())
+	all, err := store.List(ctx)
+	require.NoError(t, err)
+	assert.Len(t, all, 2, "nothing is proposed or retired")
+}
+
 func TestRunQueue(t *testing.T) {
 	type want struct {
 		code   int

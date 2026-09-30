@@ -309,12 +309,12 @@ func TestLedgerNarrow(t *testing.T) {
 		{
 			"a scope left empty is refused",
 			args{scoped, 1, []evidence.Context{evidence.ContextPlannedChange, evidence.ContextUnknown}},
-			want{records: 1, err: knowledge.ErrNarrowInvalid},
+			want{records: 1, err: knowledge.ErrNarrowExhausted},
 		},
 		{
 			"exceptions over every context are refused",
 			args{nearlyAll, 1, planned},
-			want{records: 1, err: knowledge.ErrNarrowInvalid},
+			want{records: 1, err: knowledge.ErrNarrowExhausted},
 		},
 		{
 			"a version that is not approved is refused",
