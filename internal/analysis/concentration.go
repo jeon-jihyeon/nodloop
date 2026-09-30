@@ -9,14 +9,21 @@ import (
 	"github.com/jeon-jihyeon/nodloop/internal/evidence"
 )
 
-// Share of each group in the window against its share in the baseline
+// Share of each group in the window against its share in the baseline for each metric the analyzer lists
 // 1. share is group sum over the total sum of every group
 // 2. Change is the share delta so a gaining group is positive and a losing one negative
 // 3. series without the group dimension cannot be attributed and are ignored
 // 4. adequacy is judged on the baseline points of every group together because shares are relative
 // 5. the summary ends with the total per point in time because a share alone cannot tell redistribution from growth
 func (spec RuleSpec) concentrationChange(eventID string, all series) []Observation {
-	metric := spec.Metrics[0]
+	var out []Observation
+	for _, metric := range spec.Metrics {
+		out = append(out, spec.concentrationOf(eventID, metric, all)...)
+	}
+	return out
+}
+
+func (spec RuleSpec) concentrationOf(eventID, metric string, all series) []Observation {
 	g := spec.group(all, metric)
 	if len(g.names) == 0 {
 		return nil

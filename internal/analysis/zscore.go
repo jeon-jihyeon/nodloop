@@ -8,15 +8,17 @@ import (
 	"github.com/jeon-jihyeon/nodloop/internal/evidence"
 )
 
-// Peak z of the window against the baseline mean and population stddev
+// Peak z of the window against the baseline mean and population stddev for each series of each metric the analyzer lists
 // 1. the peak is the window point farthest from the baseline mean in either direction
 // 2. Change keeps the sign so a drop reads as a negative z
 // 3. a flat baseline has no scale for z so the series is inadequate rather than infinite
 func (spec RuleSpec) zscore(eventID string, all series) []Observation {
 	var out []Observation
-	for _, points := range all.bySeries(spec.Metrics[0]) {
-		if obs := spec.peakZ(eventID, points); obs != nil {
-			out = append(out, *obs)
+	for _, metric := range spec.Metrics {
+		for _, points := range all.bySeries(metric) {
+			if obs := spec.peakZ(eventID, points); obs != nil {
+				out = append(out, *obs)
+			}
 		}
 	}
 	return out

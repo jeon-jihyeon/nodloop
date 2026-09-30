@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/jeon-jihyeon/nodloop/internal/analysis"
 	"github.com/jeon-jihyeon/nodloop/internal/evidence"
@@ -117,6 +118,65 @@ func TestAnalyzeZScore(t *testing.T) {
 			t.Parallel()
 			got, err := policy.Analyze(evidence.Event{ID: "e1", ChangeContext: evidence.ContextNoKnownChange, Points: tc.args})
 			assert.NoError(t, err)
+			assert.Equal(t, tc.want, got)
+		})
+	}
+}
+
+func TestAnalyzeZScoreEveryMetric(t *testing.T) {
+	t0 := time.Date(2026, 9, 22, 0, 0, 0, 0, time.UTC)
+	hourly := func(metric string, values []float64) []evidence.Point {
+		points := make([]evidence.Point, len(values))
+		for i, v := range values {
+			points[i] = evidence.Point{Time: t0.Add(time.Duration(i) * time.Hour), Metric: metric, Value: v}
+		}
+		return points
+	}
+	// Alternating 100 and 110 so the baseline mean is 105 and the population stddev 5
+	wave := slices.Repeat([]float64{100, 110}, 12)
+	quiet := hourly("conversion_count", slices.Concat(wave, wave[:6]))
+	spiking := hourly("click_count", slices.Concat(wave, slices.Repeat([]float64{100}, 5), []float64{200}))
+	window := analysis.Window{Start: t0.Add(24 * time.Hour), End: t0.Add(29 * time.Hour), Points: 6}
+	spike := analysis.Observations{{
+		Rule: analysis.RuleZScore, Metric: "click_count", Window: window,
+		Current: 700.0 / 6, Baseline: 105, Change: 19, Severity: 1, Adequate: true,
+		Detail:  analysis.Detail{PeakTime: window.End, PeakValue: 200, Samples: 30},
+		Ref:     analysis.Ref{EventID: "e1", Start: window.Start, End: window.End},
+		Summary: "click_count: window mean 116.6667 against baseline 105, peak z 19 at 2026-09-23T05:00:00Z",
+	}}
+	type args struct {
+		metrics []string
+		points  []evidence.Point
+	}
+	tcs := []struct {
+		name string
+		args args
+		want analysis.Observations
+	}{
+		{
+			name: "a spike of the second metric is scored",
+			args: args{metrics: []string{"conversion_count", "click_count"}, points: slices.Concat(quiet, spiking)},
+			want: spike,
+		},
+		{
+			name: "a spike of the first metric is scored",
+			args: args{metrics: []string{"click_count", "conversion_count"}, points: slices.Concat(quiet, spiking)},
+			want: spike,
+		},
+		{
+			name: "a metric the event lacks leaves the other metric scored",
+			args: args{metrics: []string{"conversion_count", "click_count"}, points: spiking},
+			want: spike,
+		},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			policy := analysis.Policy{Version: "t", Analyzers: []analysis.RuleSpec{{
+				Rule: analysis.RuleZScore, Metrics: tc.args.metrics, Baseline: 24, Window: 6, Threshold: 3, MinSamples: 12,
+			}}}
+			got, err := policy.Analyze(evidence.Event{ID: "e1", Points: tc.args.points})
+			require.NoError(t, err)
 			assert.Equal(t, tc.want, got)
 		})
 	}
