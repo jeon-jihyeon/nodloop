@@ -34,11 +34,7 @@ func runGuard(args []string, getenv func(string) string, stdin io.Reader, stdout
 		if err := fs.Parse(args); err != nil {
 			return 1
 		}
-		exit, err := cmd.hook(*vetoesPath)
-		if err != nil {
-			return fail(stderr, "guard", err)
-		}
-		return int(exit)
+		return int(cmd.hook(*vetoesPath))
 	}
 	if err != nil {
 		return fail(stderr, "guard "+action, err)
@@ -66,15 +62,13 @@ type guardCommand struct {
 }
 
 // Without a path the vetoes are discovered under the hook cwd and home on every call
-func (c guardCommand) hook(vetoesPath string) (guard.Exit, error) {
+// A file with a broken entry still blocks through its valid entries
+func (c guardCommand) hook(vetoesPath string) guard.Exit {
 	if vetoesPath == "" {
-		return guard.Run(c.stdin, c.errOut, c.discover), nil
+		return guard.Run(c.stdin, c.errOut, c.discover)
 	}
 	vetoes, err := vetofile.Load(vetoesPath)
-	if err != nil {
-		return guard.ExitFail, err
-	}
-	return guard.Run(c.stdin, c.errOut, func(string) (veto.Vetoes, error) { return vetoes, nil }), nil
+	return guard.Run(c.stdin, c.errOut, func(string) (veto.Vetoes, error) { return vetoes, err })
 }
 
 func (c guardCommand) discover(cwd string) (veto.Vetoes, error) {

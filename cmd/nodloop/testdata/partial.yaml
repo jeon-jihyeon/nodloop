@@ -1,0 +1,19 @@
+vetoes:
+  - id: no-sed-inplace
+    tool: Bash
+    when:
+      - field: command
+        match: '(^|[;&|]\s*)(sed|perl)\s+(-[a-zA-Z]*i|--in-place)'
+    reason: sed -i and perl -i are forbidden. Use the Edit tool to modify files
+  - id: bad-regex
+    tool: Bash
+    when:
+      - field: command
+        match: '(?<=x)y'
+    reason: lookbehind is not supported by RE2
+  - id: lower-case-tool
+    tool: bash
+    when:
+      - field: command
+        match: 'rm -rf'
+    reason: tool names are exact so this blocks nothing

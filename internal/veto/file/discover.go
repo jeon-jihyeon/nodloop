@@ -13,10 +13,11 @@ const RelPath = dir + "/vetoes.yaml"
 
 // Find and load the project file under cwd and then the user file and every approved file under home
 // 1. a missing file is not an error and is left out
-// 2. a file that fails to read or parse is left out and its error names the path
-// 3. the sources that did load come back with the joined errors so one broken file cannot disable the others
-// 4. an empty cwd or home skips its files
-// 5. approved files come last so a hand written veto wins on the same id
+// 2. a broken entry is left out and its error names the path while the rest of its file still applies
+// 3. a file that fails to read or parse as YAML is left out and its error names the path
+// 4. the sources that did load come back with the joined errors so one broken file cannot disable the others
+// 5. an empty cwd or home skips its files
+// 6. approved files come last so a hand written veto wins on the same id
 func Discover(cwd, home string) (Sources, error) {
 	var paths []string
 	var errs []error
@@ -34,11 +35,10 @@ func Discover(cwd, home string) (Sources, error) {
 		if errors.Is(err, os.ErrNotExist) {
 			continue
 		}
-		if err != nil {
-			errs = append(errs, err)
-			continue
+		errs = append(errs, err)
+		if err == nil || len(vetoes) > 0 {
+			sources = append(sources, Source{Path: path, Vetoes: vetoes})
 		}
-		sources = append(sources, Source{Path: path, Vetoes: vetoes})
 	}
 	return sources, errors.Join(errs...)
 }

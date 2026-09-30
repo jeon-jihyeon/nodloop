@@ -18,6 +18,8 @@ func TestLoad(t *testing.T) {
 	content := "vetoes:\n  - id: project\n    tool: Bash\n    when: [{field: command, match: p}]\n    reason: project\n"
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "valid.yaml"), []byte(content), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "broken.yaml"), []byte("vetoes: ["), 0o644))
+	partial := content + "  - id: bad\n    tool: Bash\n    when: [{field: command, match: '('}]\n    reason: bad\n"
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "partial.yaml"), []byte(partial), 0o644))
 	vetoes, err := veto.Parse([]byte(content))
 	require.NoError(t, err)
 	missingPath := filepath.Join(dir, "missing.yaml")
@@ -48,6 +50,16 @@ func TestLoad(t *testing.T) {
 				nil,
 				veto.ErrYAMLInvalid,
 				filepath.Join(dir, "broken.yaml") + ": failed to parse yaml: yaml: line 1: did not find expected node content",
+			},
+		},
+		{
+			"broken entry is reported and the valid entries still load",
+			"partial.yaml",
+			want{
+				vetoes,
+				veto.ErrMatchInvalid,
+				filepath.Join(dir, "partial.yaml") +
+					": vetoes[1] (bad): when[0]: invalid match regexp: error parsing regexp: missing closing ): `(`",
 			},
 		},
 	}
