@@ -2,6 +2,8 @@
 package knowledge
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"slices"
 	"time"
@@ -187,6 +189,14 @@ func (k Knowledge) validate() error {
 		return ErrVetoKind
 	}
 	return k.Veto.check(k.ID, k.Content)
+}
+
+// Whether both are one record as the store keeps it
+// Compared as JSON because a record read back from a file carries its times and examples in decoded form
+func (k Knowledge) same(other Knowledge) bool {
+	a, errA := json.Marshal(k)
+	b, errB := json.Marshal(other)
+	return errA == nil && errB == nil && bytes.Equal(a, b)
 }
 
 // Same id and version with a new status as the next append only record

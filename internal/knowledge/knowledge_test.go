@@ -11,6 +11,7 @@ import (
 	"github.com/jeon-jihyeon/nodloop/internal/evidence"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge/file"
+	"github.com/jeon-jihyeon/nodloop/internal/testkit"
 	"github.com/jeon-jihyeon/nodloop/internal/veto"
 	vetofile "github.com/jeon-jihyeon/nodloop/internal/veto/file"
 )
@@ -110,7 +111,7 @@ func TestKnowledgeValidate(t *testing.T) {
 				store, vetofile.NewApprovedFile(t.TempDir(), "records"),
 				func() time.Time { return at }, func(prefix string) string { return prefix + "new" },
 			)
-			assert.ErrorIs(t, l.Import(ctx, []knowledge.Knowledge{tc.args}), tc.want)
+			assert.ErrorIs(t, testkit.Err(l.Import(ctx, []knowledge.Knowledge{tc.args})), tc.want)
 		})
 	}
 }

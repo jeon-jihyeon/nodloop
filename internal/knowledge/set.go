@@ -244,6 +244,30 @@ func (s Set) approve(id string, version int, approver string, now time.Time) (Kn
 	return to, &superseded, nil
 }
 
+// The records of an import that the set does not hold yet in their order
+// 1. every record must be valid and the first one that is not fails with its position
+// 2. a record the set already holds is left out so importing one file twice changes nothing
+// 3. a record older than the newest record of its id and version fails with ErrImportStale
+// So a file never undoes a later retire or approval
+func (s Set) importable(records []Knowledge) (Set, error) {
+	out := Set{}
+	for i, k := range records {
+		if err := k.validate(); err != nil {
+			return nil, fmt.Errorf("record %d: %w", i+1, err)
+		}
+		if slices.ContainsFunc(s, k.same) {
+			continue
+		}
+		if newest, err := s.latest(k.ID, k.Version); err == nil && k.Time.Before(newest.Time) {
+			return nil, fmt.Errorf("record %d: %w: %s v%d %s at %s and the recorded %s at %s",
+				i+1, ErrImportStale, k.ID, k.Version, k.Status, k.Time.Format(time.RFC3339),
+				newest.Status, newest.Time.Format(time.RFC3339))
+		}
+		out = append(out, k)
+	}
+	return out, nil
+}
+
 func (s Set) retire(id string, version int, approver string, now time.Time) (Knowledge, error) {
 	from, err := s.latest(id, version)
 	if err != nil {

@@ -753,11 +753,11 @@ func TestServerProposeFolder(t *testing.T) {
 		}
 		return k
 	}
-	require.NoError(t, st.Ledger.Import(context.Background(), []knowledge.Knowledge{
+	require.NoError(t, testkit.Err(st.Ledger.Import(context.Background(), []knowledge.Knowledge{
 		replayable("k-b", knowledge.StatusApproved), replayable("k-c", knowledge.StatusApproved),
 		replayable("k-d", knowledge.StatusApproved), replayable("k-e", knowledge.StatusApproved),
 		replayable("k-f", knowledge.StatusCandidate), replayable("k-g", knowledge.StatusCandidate),
-	}))
+	})))
 	fifth, err := call("approve", approve("k-f"))
 	require.NoError(t, err)
 	sixth, err := call("approve", approve("k-g"))

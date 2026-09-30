@@ -113,7 +113,7 @@ func TestCaps(t *testing.T) {
 			d := diagnose.New(s.Source, testkit.Policy(t), nil, s.Traces, s.Feedback, s.Ledger, s.Clock.Now)
 			// Imported because approval refuses a folder over the cap
 			for i := range tc.args.items {
-				require.NoError(t, s.Ledger.Import(ctx, []knowledge.Knowledge{{
+				require.NoError(t, testkit.Err(s.Ledger.Import(ctx, []knowledge.Knowledge{{
 					ID:       fmt.Sprintf("k-%02d", i),
 					Version:  1,
 					Kind:     knowledge.KindMeaning,
@@ -124,7 +124,7 @@ func TestCaps(t *testing.T) {
 					Approver: "author",
 					Author:   "author",
 					Time:     s.Clock.Now(),
-				}}))
+				}})))
 			}
 
 			c, err := d.Prepare(ctx, "tq-005", diagnose.ModeInteractive, diagnose.Session{})

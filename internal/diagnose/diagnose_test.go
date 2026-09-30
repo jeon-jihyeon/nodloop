@@ -763,7 +763,7 @@ func TestRecord(t *testing.T) {
 				k.Version, k.Basis, k.Author = 1, knowledge.BasisStated, "author"
 				k.Evidence = knowledge.Evidence{ParagraphIDs: []string{"p-1"}}
 				k.Status, k.Approver, k.Time = knowledge.StatusApproved, "author", s.Clock.Now()
-				require.NoError(t, s.Ledger.Import(ctx, []knowledge.Knowledge{k}))
+				require.NoError(t, testkit.Err(s.Ledger.Import(ctx, []knowledge.Knowledge{k})))
 			}
 			c, err := d.Prepare(
 				ctx, "tq-005", diagnose.ModeInteractive, diagnose.Session{ID: "s1", Tags: []string{"feedback:off"}},

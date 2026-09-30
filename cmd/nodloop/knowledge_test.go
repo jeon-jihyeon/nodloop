@@ -238,6 +238,22 @@ func TestRunKnowledge(t *testing.T) {
 			want{0, "^imported 1\n$", `^$`},
 		},
 		{
+			"import of a file again skips the records already recorded",
+			args{setup: [][]string{{"import", "--file", valid}}, args: []string{"import", "--file", valid}},
+			want{0, "^imported 0\tskipped 1 already recorded\n$", `^$`},
+		},
+		{
+			"import of a file again after a retire keeps the item retired",
+			args{
+				setup: [][]string{
+					{"import", "--file", valid}, {"retire", "k-imp", "--version", "1", "--approver", "reviewer"},
+					{"import", "--file", valid},
+				},
+				args: []string{"list"},
+			},
+			want{0, `^$`, `^$`},
+		},
+		{
 			"import without a file fails",
 			args{args: []string{"import"}},
 			want{1, `^$`, `^nodloop knowledge: --file is required\n\nusage:`},

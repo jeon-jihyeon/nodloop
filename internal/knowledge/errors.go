@@ -30,4 +30,5 @@ var (
 	ErrReplayNotPassed      = errors.New("knowledge: the replay of the compaction has not passed")
 	ErrNarrowInvalid        = errors.New("knowledge: narrowing needs a refuted change context and must leave one")
 	ErrRecordsChanged       = errors.New("knowledge: records changed since they were read")
+	ErrImportStale          = errors.New("knowledge: import record is older than the recorded history of its version")
 )

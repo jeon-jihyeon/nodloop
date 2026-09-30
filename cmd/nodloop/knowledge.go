@@ -415,9 +415,14 @@ func (c knowledgeCommand) importFile(ctx context.Context, path string) error {
 	if err != nil {
 		return err
 	}
-	if err := c.ledger.Import(ctx, records); err != nil {
+	imported, err := c.ledger.Import(ctx, records)
+	if err != nil {
 		return fmt.Errorf("%s: %w", path, err)
 	}
-	fmt.Fprintf(c.out, "imported %d\n", len(records))
+	if skipped := len(records) - len(imported); skipped > 0 {
+		fmt.Fprintf(c.out, "imported %d\tskipped %d already recorded\n", len(imported), skipped)
+		return nil
+	}
+	fmt.Fprintf(c.out, "imported %d\n", len(imported))
 	return nil
 }

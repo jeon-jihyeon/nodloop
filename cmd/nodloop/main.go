@@ -74,7 +74,8 @@ commands:
                             or compact the folder. Says when the folder holds more than five items and a compaction is due
   knowledge retire <id> --version <n> --approver <name>
   knowledge import --file <jsonl>
-                            Append records from a file, such as the knowledge.jsonl of a data set
+                            Append the records of a file not yet recorded, such as the knowledge.jsonl of a data set
+                            An invalid record or one older than the recorded history of its version lands nothing
   knowledge compact <id> [--model <m>] [--author <a>]
                             Draft through claude -p a smaller set of items that replaces the folder of an item
                             and propose it. Items that cite only procedure paragraphs are left out

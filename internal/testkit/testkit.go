@@ -153,3 +153,8 @@ func (c *Clock) Now() time.Time {
 	c.now = now.Add(ClockStep)
 	return now
 }
+
+// The error of a call whose value the test does not need such as the records an import appended
+func Err[T any](_ T, err error) error {
+	return err
+}

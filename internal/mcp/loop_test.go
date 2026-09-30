@@ -98,11 +98,11 @@ func TestServerKnowledgeHealthAndReaffirm(t *testing.T) {
 			t.Parallel()
 			st := testkit.Open(t)
 			old := st.Clock.Now().AddDate(0, 0, -knowledge.ReviewDays)
-			require.NoError(t, st.Ledger.Import(ctx, []knowledge.Knowledge{{
+			require.NoError(t, testkit.Err(st.Ledger.Import(ctx, []knowledge.Knowledge{{
 				ID: "item", Version: 1, Kind: knowledge.KindMeaning, Content: "meaning", Basis: knowledge.BasisStated,
 				Status: knowledge.StatusApproved, Author: "author", Approver: "ann", Time: old, ApprovedAt: old,
 				Evidence: knowledge.Evidence{ParagraphIDs: []string{knownSegment, "gone#1"}},
-			}}))
+			}})))
 			review := conversationReview(t, "review", "tq-001", st.Clock.Now(), diagnose.AppliedKnowledge{ID: "item", Version: 1, Chars: 20})
 			require.NoError(t, st.Traces.Append(ctx, review))
 			require.NoError(t, st.Outcomes.Append(ctx, feedback.Outcome{
