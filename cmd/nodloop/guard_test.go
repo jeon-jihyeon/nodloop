@@ -100,6 +100,46 @@ func TestRunGuard(t *testing.T) {
 			},
 		},
 		{
+			"hook blocks a plain call while the user veto file is not yaml",
+			args{stdin: plain, home: "{home}", settings: "{}", vetoes: "vetoes: ["},
+			want{
+				2, "",
+				`^nodloop guard: failed to load vetoes, skipped: .*/vetoes\.yaml: failed to read veto file: failed to parse yaml: .*\n` +
+					`nodloop guard: Bash call blocked because a veto file is not valid YAML\n`,
+				"{}",
+			},
+		},
+		{
+			"hook blocks a plain call while the user veto file has an unknown top level key",
+			args{stdin: plain, home: "{home}", settings: "{}", vetoes: "veto: []"},
+			want{2, "", `unknown key: line 1: "veto"\nnodloop guard: Bash call blocked because a veto file is not valid YAML\n`, "{}"},
+		},
+		{
+			"hook lets the repair of a broken user veto file through",
+			args{
+				stdin: []byte(`{"tool_name":"Edit","tool_input":{"file_path":"{home}/{rel}"}}`),
+				home:  "{home}", settings: "{}", vetoes: "vetoes: [",
+			},
+			want{1, "", `^nodloop guard: failed to load vetoes, skipped: [^\n]*\n$`, "{}"},
+		},
+		{
+			"hook lets the repair of a broken veto file named by the vetoes flag through",
+			args{
+				args:  []string{"--vetoes", "{home}/dotfiles/team-vetoes.yaml"},
+				stdin: []byte(`{"tool_name":"Read","tool_input":{"file_path":"{home}/dotfiles/team-vetoes.yaml"}}`),
+				home:  "{home}", settings: "{}", files: map[string]string{"{home}/dotfiles/team-vetoes.yaml": "vetoes: ["},
+			},
+			want{1, "", `^nodloop guard: failed to load vetoes, skipped: [^\n]*team-vetoes\.yaml[^\n]*\n$`, "{}"},
+		},
+		{
+			"hook blocks a plain call while the veto file named by the vetoes flag is not yaml",
+			args{
+				args:  []string{"--vetoes", "{home}/dotfiles/team-vetoes.yaml"},
+				stdin: plain, home: "{home}", settings: "{}", files: map[string]string{"{home}/dotfiles/team-vetoes.yaml": "vetoes: ["},
+			},
+			want{2, "", `\nnodloop guard: Bash call blocked because a veto file is not valid YAML\n`, "{}"},
+		},
+		{
 			"hook blocks through the vetoes of an enclosing project below a nested veto file",
 			args{
 				stdin: []byte(`{"tool_name":"Bash","tool_input":{"command":"sed -i x f"},"cwd":"{home}/mono/web/src"}`),
@@ -131,12 +171,28 @@ func TestRunGuard(t *testing.T) {
 			want{0, "", `^$`, "{}"},
 		},
 		{
+			"hook runs a plain call while a project file outside home is not yaml",
+			args{
+				stdin: []byte(`{"tool_name":"Bash","tool_input":{"command":"ls"},"cwd":"{shared}/me"}`),
+				home:  "{home}", settings: "{}", files: map[string]string{"{shared}/{rel}": "vetoes: ["}, dirs: []string{"{shared}/.git"},
+			},
+			want{1, "", `^nodloop guard: failed to load vetoes, skipped: outside home so it does not block every call: [^\n]*\n$`, "{}"},
+		},
+		{
 			"hook runs a plain call while a directory sits at a project veto path",
 			args{
 				stdin: []byte(`{"tool_name":"Bash","tool_input":{"command":"ls"},"cwd":"{home}/repo"}`),
 				home:  "{home}", settings: "{}", dirs: []string{"{home}/repo/.git", "{home}/repo/{rel}"},
 			},
 			want{1, "", `^nodloop guard: failed to load vetoes, skipped: [^\n]*is a directory\n$`, "{}"},
+		},
+		{
+			"hook blocks a plain call below a repository root under home whose file is not yaml",
+			args{
+				stdin: []byte(`{"tool_name":"Bash","tool_input":{"command":"ls"},"cwd":"{home}/repo/pkg"}`),
+				home:  "{home}", settings: "{}", files: map[string]string{"{home}/repo/{rel}": "vetoes: ["}, dirs: []string{"{home}/repo/.git"},
+			},
+			want{2, "", `\nnodloop guard: Bash call blocked because a veto file is not valid YAML\n`, "{}"},
 		},
 		{
 			"hook passes a plain call beside an approved file of a relative record directory",

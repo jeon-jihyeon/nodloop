@@ -3,8 +3,12 @@ package file
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+
+	"github.com/jeon-jihyeon/nodloop/internal/veto"
 )
 
 // Standard relative path of a veto file
@@ -14,10 +18,11 @@ const RelPath = dir + "/vetoes.yaml"
 // Find and load the project files from cwd up to the project root and then the user file and every approved file under home
 // 1. a missing file is not an error and is left out
 // 2. a broken entry is left out and its error names the path while the rest of its file still applies
-// 3. a file that fails to read or parse as YAML is left out and its error names the path
-// 4. the sources that did load come back with the joined errors so one broken file cannot disable the others
-// 5. an empty cwd or home skips its files
-// 6. approved files come last so a hand written veto wins on the same id
+// 3. a file that fails to read or parse as YAML is left out and its error names the path and wraps ErrRead
+// 4. outside home a file that is not valid YAML wraps ErrOutsideHome in place of both so it never reads as a file the user can repair
+// 5. the sources that did load come back with the joined errors so one broken file cannot disable the others
+// 6. an empty cwd or home skips its files
+// 7. approved files come last so a hand written veto wins on the same id
 func Discover(cwd, home string) (Sources, error) {
 	paths := projectPaths(cwd, home)
 	var errs []error
@@ -32,12 +37,31 @@ func Discover(cwd, home string) (Sources, error) {
 		if errors.Is(err, os.ErrNotExist) {
 			continue
 		}
+		if errors.Is(err, veto.ErrYAMLInvalid) && !under(path, home) {
+			err = fmt.Errorf("%w: %s", ErrOutsideHome, err)
+		}
 		errs = append(errs, err)
 		if err == nil || len(vetoes) > 0 {
 			sources = append(sources, Source{Path: path, Vetoes: vetoes})
 		}
 	}
 	return sources, errors.Join(errs...)
+}
+
+// Whether path names a file Discover reads by its name under any project or home
+func Named(path string) bool {
+	clean := filepath.Clean(path)
+	if parent := filepath.ToSlash(filepath.Dir(clean)); parent != dir && !strings.HasSuffix(parent, "/"+dir) {
+		return false
+	}
+	name := filepath.Base(clean)
+	return name == filepath.Base(RelPath) || approvedName(name)
+}
+
+// Whether path lies below home
+func under(path, home string) bool {
+	rel, err := filepath.Rel(home, path)
+	return home != "" && err == nil && filepath.IsLocal(rel)
 }
 
 // The veto files of cwd and of every ancestor up to the project root nearest first

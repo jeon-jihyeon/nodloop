@@ -2,6 +2,8 @@ package guard_test
 
 import (
 	"bytes"
+	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -13,6 +15,7 @@ import (
 
 	"github.com/jeon-jihyeon/nodloop/internal/guard"
 	"github.com/jeon-jihyeon/nodloop/internal/veto"
+	vetofile "github.com/jeon-jihyeon/nodloop/internal/veto/file"
 )
 
 func TestRun(t *testing.T) {
@@ -31,10 +34,20 @@ func TestRun(t *testing.T) {
 		"sed -i and perl -i are forbidden. Use the Edit tool to modify files\n"
 	loadWarning := "nodloop guard: failed to load vetoes, skipped: " + assert.AnError.Error() + "\n"
 	parseFailed := "nodloop guard: failed to parse hook input: "
+	vetoPath := "/Users/me/repo/.claude/nodloop/vetoes.yaml"
+	unreadable := fmt.Errorf("%s: %w: %w", vetoPath, vetofile.ErrRead, veto.ErrYAMLInvalid)
+	unreadableWarning := "nodloop guard: failed to load vetoes, skipped: " + unreadable.Error() + "\n"
+	missing := fmt.Errorf("%s: %w: %w", vetoPath, vetofile.ErrRead, os.ErrNotExist)
+	denied := fmt.Errorf("%s: %w: %w", vetoPath, vetofile.ErrRead, os.ErrPermission)
+	shared := fmt.Errorf("%w: %s", vetofile.ErrOutsideHome, unreadable)
+	teamPath := "/Users/me/dotfiles/team-vetoes.yaml"
+	teamUnreadable := fmt.Errorf("%s: %w: %w", teamPath, vetofile.ErrRead, veto.ErrYAMLInvalid)
+	teamWarning := "nodloop guard: failed to load vetoes, skipped: " + teamUnreadable.Error() + "\n"
 	type args struct {
 		stdin  string
 		vetoes veto.Vetoes
 		err    error
+		named  string
 	}
 	type want struct {
 		code   guard.Exit
@@ -46,46 +59,125 @@ func TestRun(t *testing.T) {
 		args args
 		want want
 	}{
-		{"plain bash input passes", args{fixtures["bash_plain.json"], vetoes, nil}, want{guard.ExitPass, repo, ""}},
+		{"plain bash input passes", args{fixtures["bash_plain.json"], vetoes, nil, ""}, want{guard.ExitPass, repo, ""}},
 		{
 			"sed in place edit is blocked with the veto id and reason",
-			args{fixtures["bash_sed.json"], vetoes, nil},
+			args{fixtures["bash_sed.json"], vetoes, nil, ""},
 			want{guard.ExitBlock, repo, sedBlocked},
 		},
 		{
 			"readme write is blocked",
-			args{fixtures["write_readme.json"], vetoes, nil},
+			args{fixtures["write_readme.json"], vetoes, nil, ""},
 			want{guard.ExitBlock, repo, "nodloop guard: Write call blocked by veto no-readme\nDo not create README files\n"},
 		},
 		{
 			"sed in place edit passes without vetoes",
-			args{fixtures["bash_sed.json"], nil, nil},
+			args{fixtures["bash_sed.json"], nil, nil, ""},
 			want{guard.ExitPass, repo, ""},
 		},
 		{
 			"non string tool input field passes",
-			args{`{"tool_name":"Bash","tool_input":{"command":["sed","-i"]}}`, vetoes, nil},
+			args{`{"tool_name":"Bash","tool_input":{"command":["sed","-i"]}}`, vetoes, nil, ""},
 			want{guard.ExitPass, "", ""},
 		},
 		{
 			"non json input fails to parse",
-			args{"not json", vetoes, nil},
+			args{"not json", vetoes, nil, ""},
 			want{guard.ExitFail, "", parseFailed + "invalid character 'o' in literal null (expecting 'u')\n"},
 		},
 		{
 			"missing tool name fails to parse",
-			args{`{"tool_input":{"command":"ls"}}`, vetoes, nil},
+			args{`{"tool_input":{"command":"ls"}}`, vetoes, nil, ""},
 			want{guard.ExitFail, "", parseFailed + guard.ErrToolNameMissing.Error() + "\n"},
 		},
 		{
 			"load failure is warned and the loaded vetoes still block",
-			args{fixtures["bash_sed.json"], vetoes, assert.AnError},
+			args{fixtures["bash_sed.json"], vetoes, assert.AnError, ""},
 			want{guard.ExitBlock, repo, loadWarning + sedBlocked},
 		},
 		{
 			"load failure without a match fails with a warning",
-			args{fixtures["bash_plain.json"], vetoes, assert.AnError},
+			args{fixtures["bash_plain.json"], vetoes, assert.AnError, ""},
 			want{guard.ExitFail, repo, loadWarning},
+		},
+		{
+			"unreadable veto file blocks a call no veto matches",
+			args{fixtures["bash_plain.json"], vetoes, unreadable, ""},
+			want{guard.ExitBlock, repo, unreadableWarning + "nodloop guard: Bash call blocked because a veto file is not valid YAML\n" +
+				"Fix the file named above. Reading and editing a veto file still pass\n"},
+		},
+		{
+			"unreadable veto file still lets the loaded vetoes name the block",
+			args{fixtures["bash_sed.json"], vetoes, unreadable, ""},
+			want{guard.ExitBlock, repo, unreadableWarning + sedBlocked},
+		},
+		{
+			"unreadable veto file lets an edit of a veto file through",
+			args{`{"tool_name":"Edit","tool_input":{"file_path":"` + vetoPath + `"},"cwd":"/Users/me/repo"}`, vetoes, unreadable, ""},
+			want{guard.ExitFail, repo, unreadableWarning},
+		},
+		{
+			"unreadable veto file lets a read of an approved veto file through",
+			args{
+				`{"tool_name":"Read","tool_input":{"file_path":"/Users/me/.claude/nodloop/vetoes.approved.0123456789ab.yaml"}}`,
+				vetoes, unreadable, "",
+			},
+			want{guard.ExitFail, "", unreadableWarning},
+		},
+		{
+			"unreadable veto file blocks an edit of another file",
+			args{`{"tool_name":"Edit","tool_input":{"file_path":"/Users/me/repo/main.go"}}`, nil, unreadable, ""},
+			want{guard.ExitBlock, "", unreadableWarning + "nodloop guard: Edit call blocked because a veto file is not valid YAML\n" +
+				"Fix the file named above. Reading and editing a veto file still pass\n"},
+		},
+		{
+			"unreadable file named on the command line lets a read of it through",
+			args{`{"tool_name":"Read","tool_input":{"file_path":"` + teamPath + `"}}`, nil, teamUnreadable, teamPath},
+			want{guard.ExitFail, "", teamWarning},
+		},
+		{
+			"unreadable file named on the command line lets an edit of it through",
+			args{`{"tool_name":"Edit","tool_input":{"file_path":"` + teamPath + `"}}`, nil, teamUnreadable, teamPath},
+			want{guard.ExitFail, "", teamWarning},
+		},
+		{
+			"unreadable file named on the command line still blocks another call",
+			args{fixtures["bash_plain.json"], nil, teamUnreadable, teamPath},
+			want{guard.ExitBlock, repo, teamWarning + "nodloop guard: Bash call blocked because a veto file is not valid YAML\n" +
+				"Fix the file named above. Reading and editing a veto file still pass\n"},
+		},
+		{
+			"unreadable file under another name without a command line name blocks a read of it",
+			args{`{"tool_name":"Read","tool_input":{"file_path":"` + teamPath + `"}}`, nil, teamUnreadable, ""},
+			want{guard.ExitBlock, "", teamWarning + "nodloop guard: Read call blocked because a veto file is not valid YAML\n" +
+				"Fix the file named above. Reading and editing a veto file still pass\n"},
+		},
+		{
+			"veto file without read permission fails open with a warning because no edit repairs it",
+			args{fixtures["bash_plain.json"], vetoes, denied, ""},
+			want{guard.ExitFail, repo, "nodloop guard: failed to load vetoes, skipped: " + denied.Error() + "\n"},
+		},
+		{
+			"veto file without read permission still lets the loaded vetoes block",
+			args{fixtures["bash_sed.json"], vetoes, denied, ""},
+			want{guard.ExitBlock, repo, "nodloop guard: failed to load vetoes, skipped: " + denied.Error() + "\n" + sedBlocked},
+		},
+		{
+			"invalid yaml outside home fails open with a warning",
+			args{fixtures["bash_plain.json"], vetoes, shared, ""},
+			want{guard.ExitFail, repo, "nodloop guard: failed to load vetoes, skipped: " + shared.Error() + "\n"},
+		},
+		{
+			"invalid yaml under home beside one outside still blocks",
+			args{fixtures["bash_plain.json"], nil, errors.Join(shared, unreadable), ""},
+			want{guard.ExitBlock, repo, "nodloop guard: failed to load vetoes, skipped: " + errors.Join(shared, unreadable).Error() + "\n" +
+				"nodloop guard: Bash call blocked because a veto file is not valid YAML\n" +
+				"Fix the file named above. Reading and editing a veto file still pass\n"},
+		},
+		{
+			"missing veto file named by hand fails open with a warning",
+			args{fixtures["bash_plain.json"], vetoes, missing, ""},
+			want{guard.ExitFail, repo, "nodloop guard: failed to load vetoes, skipped: " + missing.Error() + "\n"},
 		},
 	}
 	for _, tc := range tcs {
@@ -97,7 +189,7 @@ func TestRun(t *testing.T) {
 				cwd = c
 				return tc.args.vetoes, tc.args.err
 			}
-			got := guard.Run(strings.NewReader(tc.args.stdin), &stderr, load)
+			got := guard.Run(strings.NewReader(tc.args.stdin), &stderr, load, tc.args.named)
 			assert.Equal(t, tc.want, want{got, cwd, stderr.String()})
 		})
 	}
@@ -113,7 +205,7 @@ func BenchmarkRunWithFiftyVetoes(b *testing.B) {
 	load := func(string) (veto.Vetoes, error) { return veto.Parse(yamlBytes) }
 	b.ReportAllocs()
 	for b.Loop() {
-		code := guard.Run(bytes.NewReader(input), io.Discard, load)
+		code := guard.Run(bytes.NewReader(input), io.Discard, load, "")
 		require.Equal(b, guard.ExitBlock, code, "exit code")
 	}
 }

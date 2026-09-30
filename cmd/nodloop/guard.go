@@ -72,12 +72,17 @@ type guardCommand struct {
 
 // Without a path the vetoes are discovered under the hook cwd and home on every call
 // A file with a broken entry still blocks through its valid entries
+// A named file is compared by its absolute path because Claude Code sends an absolute file_path
 func (c guardCommand) hook(vetoesPath string) guard.Exit {
 	if vetoesPath == "" {
-		return guard.Run(c.stdin, c.errOut, c.discover)
+		return guard.Run(c.stdin, c.errOut, c.discover, "")
 	}
 	vetoes, err := vetofile.Load(vetoesPath)
-	return guard.Run(c.stdin, c.errOut, func(string) (veto.Vetoes, error) { return vetoes, err })
+	named, absErr := filepath.Abs(vetoesPath)
+	if absErr != nil {
+		named = ""
+	}
+	return guard.Run(c.stdin, c.errOut, func(string) (veto.Vetoes, error) { return vetoes, err }, named)
 }
 
 func (c guardCommand) discover(cwd string) (veto.Vetoes, error) {
