@@ -15,8 +15,8 @@ import (
 	"github.com/jeon-jihyeon/nodloop/internal/mcp"
 )
 
-// Without a data directory the server still starts so the conversation can tell the user how to set one up
-// Every tool of that server answers the setup error while any other config error fails the start
+// A server whose config or data cannot be opened still starts so the conversation can tell the user what to fix
+// Every tool of that server answers the error because a client never shows the model what a server printed on stderr
 func runMCP(
 	args []string, getenv func(string) string, now func() time.Time,
 	stdin io.Reader, stdout io.WriteCloser, stderr io.Writer,
@@ -36,11 +36,14 @@ func runMCP(
 	}
 	ctx := context.Background()
 	a, err := data.app(getenv, now)
-	switch {
-	case errors.Is(err, errDataDirUnset):
+	var s *mcp.Server
+	if err == nil {
+		s, err = a.server()
+	}
+	if err != nil {
 		err = cmd.serveUnconfigured(ctx, err)
-	case err == nil:
-		err = cmd.serve(ctx, a)
+	} else {
+		err = s.ServeTransport(ctx, cmd.transport())
 	}
 	if err != nil {
 		return fail(stderr, "mcp", err)
@@ -77,17 +80,18 @@ func shellWord(path string) string {
 	return "'" + strings.ReplaceAll(path, "'", `'\''`) + "'"
 }
 
-func (c mcpCommand) serveUnconfigured(ctx context.Context, unset error) error {
-	reason := fmt.Errorf("%w. Run %s setup --data-dir <dir> and reconnect the nodloop server", unset, executable())
-	fmt.Fprintf(c.log, "nodloop mcp: %v\n", reason)
-	s := mcp.NewUnconfigured(reason, buildVersion())
-	return s.ServeTransport(ctx, &sdk.IOTransport{Reader: io.NopCloser(c.stdin), Writer: c.out})
+func (c mcpCommand) transport() sdk.Transport {
+	return &sdk.IOTransport{Reader: io.NopCloser(c.stdin), Writer: c.out}
 }
 
-func (c mcpCommand) serve(ctx context.Context, a app) error {
-	s, err := a.server()
-	if err != nil {
-		return err
+// The cause comes first and then the way out
+// Only a missing data dir is fixed by setup alone so any other cause asks to fix what it names first
+func (c mcpCommand) serveUnconfigured(ctx context.Context, cause error) error {
+	reason := fmt.Errorf("%w. Run %s setup --data-dir <dir> and reconnect the nodloop server", cause, executable())
+	if !errors.Is(cause, errDataDirUnset) {
+		reason = fmt.Errorf("%w. Fix what this names or run %s setup --data-dir <dir> again and reconnect the nodloop server",
+			cause, executable())
 	}
-	return s.ServeTransport(ctx, &sdk.IOTransport{Reader: io.NopCloser(c.stdin), Writer: c.out})
+	fmt.Fprintf(c.log, "nodloop mcp: %v\n", reason)
+	return mcp.NewUnconfigured(reason, buildVersion()).ServeTransport(ctx, c.transport())
 }
