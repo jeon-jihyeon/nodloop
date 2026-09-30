@@ -313,6 +313,24 @@ func (k Knowledge) reaches(changeContext evidence.Context) bool {
 	return !slices.Contains(k.Exceptions, changeContext) && k.Scope.MatchesContext(changeContext)
 }
 
+// Whether the item reaches every event of the change context and the metric that carries the dims
+// 1. an empty metric stands for every metric so only an item without metrics reaches it
+// 2. a dim value of the item that the dims lack leaves out the events of every other value
+func (k Knowledge) covers(changeContext evidence.Context, metric string, dims map[string]string) bool {
+	if !k.reaches(changeContext) {
+		return false
+	}
+	if len(k.Scope.Metrics) > 0 && (metric == "" || !slices.Contains(k.Scope.Metrics, metric)) {
+		return false
+	}
+	for key, value := range k.Scope.Dims {
+		if dims[key] != value {
+			return false
+		}
+	}
+	return true
+}
+
 // Whether this version stands in for the id instead of the current one with status and version
 // 1. an approved version beats anything but a newer approved version
 // 2. a candidate beats a retired or superseded one and an older candidate

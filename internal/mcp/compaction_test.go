@@ -141,10 +141,17 @@ func TestServerCompactionRefusals(t *testing.T) {
 		{
 			"a draft with two items of one kind in the folder is refused",
 			args{call: call{"propose_compaction", map[string]any{"anchor": "a", "items": []any{
-				map[string]any{"id": "a", "kind": "meaning", "content": "lag", "from": []string{"a"}},
-				map[string]any{"id": "b", "kind": "meaning", "content": "basis", "from": []string{"b"}},
+				map[string]any{"id": "a", "kind": "meaning", "content": "lag", "metrics": []string{"conversion_count"}, "from": []string{"a"}},
+				map[string]any{"id": "b", "kind": "meaning", "content": "basis", "metrics": []string{"conversion_count"}, "from": []string{"b"}},
 			}}}},
 			knowledge.ErrCompactionOverlap.Error(),
+		},
+		{
+			"a draft that drops the metrics of the items it names is refused",
+			args{call: call{"propose_compaction", map[string]any{"anchor": "a", "items": []any{
+				map[string]any{"kind": "meaning", "content": "lag and basis", "from": []string{"a", "b"}},
+			}}}},
+			"it carries the facts of a to events of change contexts no_known_change that a never reached",
 		},
 		{
 			"a second proposal while one is pending is refused",

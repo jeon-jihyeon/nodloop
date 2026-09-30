@@ -84,7 +84,8 @@ func seedItems(at time.Time) []knowledge.Knowledge {
 }
 
 var merged = compact.Draft{Items: []compact.Item{{
-	Kind: knowledge.KindMeaning, Content: "lag and basis", Metrics: []string{"conversion_count"}, From: []string{"a", "b"},
+	Kind: knowledge.KindMeaning, Content: "lag and basis", ChangeContexts: []evidence.Context{evidence.ContextNoKnownChange},
+	Metrics: []string{"conversion_count"}, From: []string{"a", "b"},
 }}}
 
 func TestFolder(t *testing.T) {
@@ -184,10 +185,23 @@ func TestPropose(t *testing.T) {
 		{
 			"the code checks of the ledger surface with their sentinels",
 			args{nil, "a", compact.Draft{Items: []compact.Item{
-				{Kind: knowledge.KindMeaning, Content: "lag", From: []string{"a"}},
-				{ID: "b", Kind: knowledge.KindMeaning, Content: "basis", From: []string{"b"}},
+				{
+					Kind: knowledge.KindMeaning, Content: "lag", ChangeContexts: merged.Items[0].ChangeContexts,
+					Metrics: merged.Items[0].Metrics, From: []string{"a"},
+				},
+				{
+					ID: "b", Kind: knowledge.KindMeaning, Content: "basis", ChangeContexts: merged.Items[0].ChangeContexts,
+					Metrics: merged.Items[0].Metrics, From: []string{"b"},
+				},
 			}}},
 			want{err: knowledge.ErrCompactionOverlap},
+		},
+		{
+			"an item wider than the items it names is refused",
+			args{nil, "a", compact.Draft{Items: []compact.Item{
+				{Kind: knowledge.KindMeaning, Content: "lag and basis", Metrics: []string{"conversion_count"}, From: []string{"a", "b"}},
+			}}},
+			want{err: knowledge.ErrCompactionInvalid},
 		},
 		{"a folder without an expected status is refused", args{nil, "far", merged}, want{err: compact.ErrNothingToReplay}},
 		{"an anchor that cites only paragraphs is refused", args{nil, "p", merged}, want{err: knowledge.ErrParagraphOnly}},
@@ -243,10 +257,11 @@ func TestDraft(t *testing.T) {
 		resent int
 		err    error
 	}
-	answer := `{"items":[{"kind":"meaning","content":"lag and basis","metrics":["conversion_count"],"from":["a","b"]}]}`
-	empty := `{"items":[{"kind":"meaning","content":"","metrics":["conversion_count"],"from":["a","b"]}]}`
-	overlap := `{"items":[{"id":"a","kind":"meaning","content":"lag","from":["a"]},` +
-		`{"id":"b","kind":"meaning","content":"basis","from":["b"]}]}`
+	scope := `"change_contexts":["no_known_change"],"metrics":["conversion_count"]`
+	answer := `{"items":[{"kind":"meaning","content":"lag and basis",` + scope + `,"from":["a","b"]}]}`
+	empty := `{"items":[{"kind":"meaning","content":"",` + scope + `,"from":["a","b"]}]}`
+	overlap := `{"items":[{"id":"a","kind":"meaning","content":"lag",` + scope + `,"from":["a"]},` +
+		`{"id":"b","kind":"meaning","content":"basis",` + scope + `,"from":["b"]}]}`
 	tcs := []struct {
 		name string
 		args args
