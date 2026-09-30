@@ -183,7 +183,7 @@ func TestPrepare(t *testing.T) {
 			t.Parallel()
 			s := testkit.Open(t)
 			policy := testkit.Policy(t)
-			src := scopedDemo(t, "segment-concentration-review.md", tc.args.frontMatter)
+			src := editedDemo(t, "segment-concentration-review.md", "", tc.args.frontMatter)
 			d := diagnose.New(src, policy, nil, s.Traces, s.Feedback, s.Ledger, s.Clock.Now)
 			ev, err := src.Event(ctx, tc.args.event)
 			require.NoError(t, err)
@@ -280,15 +280,16 @@ func TestBatchContextRefusal(t *testing.T) {
 	}
 }
 
-// A copy of the demo data set whose procedure file opens with the front matter
-func scopedDemo(t *testing.T, file, frontMatter string) *evidencefile.Source {
+// A copy of the demo data set whose procedure file has its first old text replaced
+// An empty old puts the replacement at the start of the file
+func editedDemo(t *testing.T, file, old, replacement string) *evidencefile.Source {
 	t.Helper()
 	dir := t.TempDir()
 	require.NoError(t, os.CopyFS(dir, os.DirFS(testkit.DemoDir(t))))
 	path := filepath.Join(dir, "procedures", file)
 	b, err := os.ReadFile(path)
 	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(path, append([]byte(frontMatter), b...), 0o600))
+	require.NoError(t, os.WriteFile(path, []byte(strings.Replace(string(b), old, replacement, 1)), 0o600))
 	src, err := evidencefile.New(dir)
 	require.NoError(t, err)
 	return src
@@ -1622,7 +1623,7 @@ func TestRecordExcludedProcedure(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			s := testkit.Open(t)
-			src := scopedDemo(t, "segment-concentration-review.md", "---\nmetrics: [click_count]\n---\n")
+			src := editedDemo(t, "segment-concentration-review.md", "", "---\nmetrics: [click_count]\n---\n")
 			d := diagnose.New(src, testkit.Policy(t), nil, s.Traces, s.Feedback, s.Ledger, s.Clock.Now)
 			c, err := d.Prepare(ctx, "tq-009", diagnose.ModeInteractive, diagnose.Session{})
 			require.NoError(t, err)
