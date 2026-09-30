@@ -81,7 +81,10 @@ func Run(t *testing.T, src Store, seed Seed) {
 		known := paragraphs(all.Paragraphs()).ids()
 		labeled := func(l evidence.Label) bool { return l.EventID == seed.LabeledEventID }
 		assert.True(t, slices.ContainsFunc(labels, labeled), "label for %s missing", seed.LabeledEventID)
+		seen := map[string]struct{}{}
 		for _, l := range labels {
+			assert.NotContains(t, seen, l.EventID, "label %s repeats", l.EventID)
+			seen[l.EventID] = struct{}{}
 			assert.NoError(t, l.Validate())
 			assert.False(t, l.IsHold() && len(l.Paragraphs) > 0, "hold label %s cites paragraphs", l.EventID)
 			cited := slices.Concat(l.Paragraphs, l.RequiredChecks)
