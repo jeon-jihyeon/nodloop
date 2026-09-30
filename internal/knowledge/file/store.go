@@ -3,7 +3,6 @@ package file
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"slices"
 
@@ -32,17 +31,22 @@ func (s *Store) Append(_ context.Context, k knowledge.Knowledge) error {
 	return nil
 }
 
-// The expected records come newest first as List gives them and the file holds them oldest first
-// A conflict surfaces as knowledge ErrRecordsChanged and not as a failed append so a caller can tell the two apart
-func (s *Store) AppendIfUnchanged(_ context.Context, k knowledge.Knowledge, expected []knowledge.Knowledge) error {
-	ordered := slices.Clone(expected)
-	slices.Reverse(ordered)
-	err := s.file.AppendIfUnchanged(k, ordered)
+// decide gets the records newest first as List gives them and its records land in their order
+// Its refusal comes back as it is and only a file failure becomes ErrAppend so a caller can tell the two apart
+func (s *Store) AppendDecided(_ context.Context, decide func(all knowledge.Set) ([]knowledge.Knowledge, error)) error {
+	var refused error
+	err := s.file.AppendDecided(func(current []knowledge.Knowledge) ([]knowledge.Knowledge, error) {
+		all := slices.Clone(current)
+		slices.Reverse(all)
+		records, err := decide(all)
+		refused = err
+		return records, err
+	})
 	switch {
 	case err == nil:
 		return nil
-	case errors.Is(err, jsonl.ErrChanged):
-		return fmt.Errorf("%w: %w", knowledge.ErrRecordsChanged, err)
+	case refused != nil:
+		return refused
 	}
 	return fmt.Errorf("%w: %w", ErrAppend, err)
 }

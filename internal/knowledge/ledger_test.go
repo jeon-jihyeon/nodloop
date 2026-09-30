@@ -1056,8 +1056,9 @@ func TestLedgerImport(t *testing.T) {
 			assert.ErrorIs(t, err, tc.want.err)
 			assert.Equal(t, tc.want.msg, fmt.Sprint(err))
 			assert.Equal(t, tc.want.imported, imported)
-			history, err := l.History(ctx, "k1")
+			all, err := l.All(ctx)
 			require.NoError(t, err)
+			history := all.Matching(knowledge.Filter{})
 			assert.Equal(t, tc.want.history, history)
 			// A missing file reads as empty
 			vetoes, _ := os.ReadFile(vetofile.NewApprovedFile(home, "records").Path())
@@ -1094,17 +1095,16 @@ func TestLedgerFailsOnBrokenStore(t *testing.T) {
 	// The records go in through a ledger whose export works
 	blockedHome := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(blockedHome, ".claude"), nil, 0o600))
-	blockedStore, err := file.New(t.TempDir())
-	require.NoError(t, err)
 	approved := candidate
 	approved.ID, approved.Status, approved.Approver = "k2", knowledge.StatusApproved, "ann"
-	seeder := knowledge.NewLedger(
-		blockedStore, vetofile.NewApprovedFile(t.TempDir(), "records"), now, newID,
-	)
-	require.NoError(t, testkit.Err(seeder.Import(ctx, []knowledge.Knowledge{candidate, approved})))
-	blocked := knowledge.NewLedger(
-		blockedStore, vetofile.NewApprovedFile(blockedHome, "records"), now, newID,
-	)
+	// One store per case so each case writes on its own records
+	blocked := func() *knowledge.Ledger {
+		store, err := file.New(t.TempDir())
+		require.NoError(t, err)
+		seeder := knowledge.NewLedger(store, vetofile.NewApprovedFile(t.TempDir(), "records"), now, newID)
+		require.NoError(t, testkit.Err(seeder.Import(ctx, []knowledge.Knowledge{candidate, approved})))
+		return knowledge.NewLedger(store, vetofile.NewApprovedFile(blockedHome, "records"), now, newID)
+	}
 	approvedNow := candidate
 	approvedNow.Status, approvedNow.Approver = knowledge.StatusApproved, "jed"
 	approvedNow.ApprovedAt, approvedNow.Time = now(), now()
@@ -1152,47 +1152,40 @@ func TestLedgerFailsOnBrokenStore(t *testing.T) {
 			want{knowledge.Knowledge{}, file.ErrRead},
 		},
 		{
-			"propose fails to read",
+			"propose fails to read the records it decides on as a failed append",
 			args{unreadable, func(ctx context.Context, l *knowledge.Ledger) (any, error) {
 				k, overlaps, err := l.Propose(ctx, candidate)
 				return []any{k, overlaps}, err
 			}},
-			want{[]any{knowledge.Knowledge{}, knowledge.Set(nil)}, file.ErrRead},
+			want{[]any{knowledge.Knowledge{}, knowledge.Set(nil)}, file.ErrAppend},
 		},
 		{
-			"approve fails to read",
+			"approve fails to read the records it decides on as a failed append",
 			args{unreadable, func(ctx context.Context, l *knowledge.Ledger) (any, error) {
 				return l.Approve(ctx, "k1", 1, "jed")
 			}},
-			want{knowledge.Knowledge{}, file.ErrRead},
+			want{knowledge.Knowledge{}, file.ErrAppend},
 		},
 		{
-			"retire fails to read",
+			"retire fails to read the records it decides on as a failed append",
 			args{unreadable, func(ctx context.Context, l *knowledge.Ledger) (any, error) {
 				return l.Retire(ctx, "k1", 1, "jed")
 			}},
-			want{knowledge.Knowledge{}, file.ErrRead},
+			want{knowledge.Knowledge{}, file.ErrAppend},
 		},
 		{
-			"import fails to read",
+			"import fails to read the records it decides on as a failed append",
 			args{unreadable, func(ctx context.Context, l *knowledge.Ledger) (any, error) {
 				return l.Import(ctx, []knowledge.Knowledge{candidate})
-			}},
-			want{knowledge.Set(nil), file.ErrRead},
-		},
-		{
-			"import fails to append",
-			args{readOnly, func(ctx context.Context, l *knowledge.Ledger) (any, error) {
-				return l.Import(ctx, []knowledge.Knowledge{third})
 			}},
 			want{knowledge.Set(nil), file.ErrAppend},
 		},
 		{
-			"propose compaction fails to read",
+			"propose compaction fails to read the records it decides on as a failed append",
 			args{unreadable, func(ctx context.Context, l *knowledge.Ledger) (any, error) {
 				return l.ProposeCompaction(ctx, "k1", nil)
 			}},
-			want{knowledge.Compaction{}, file.ErrRead},
+			want{knowledge.Compaction{}, file.ErrAppend},
 		},
 		{
 			"compaction fails to read",
@@ -1209,12 +1202,12 @@ func TestLedgerFailsOnBrokenStore(t *testing.T) {
 			want{(*knowledge.Preview)(nil), file.ErrRead},
 		},
 		{
-			"approve compaction fails to read",
+			"approve compaction fails to read the records it decides on as a failed append",
 			args{unreadable, func(ctx context.Context, l *knowledge.Ledger) (any, error) {
 				replay := knowledge.Replay{Compaction: "c-x", Events: []knowledge.ReplayEvent{{Expected: "hold", Got: "hold"}}}
 				return l.ApproveCompaction(ctx, "c-x", "jed", replay)
 			}},
-			want{knowledge.Compaction{}, file.ErrRead},
+			want{knowledge.Compaction{}, file.ErrAppend},
 		},
 		{
 			"folder fails to read",
@@ -1223,21 +1216,21 @@ func TestLedgerFailsOnBrokenStore(t *testing.T) {
 		},
 		{
 			"import fails to export the vetoes after appending",
-			args{blocked, func(ctx context.Context, l *knowledge.Ledger) (any, error) {
+			args{blocked(), func(ctx context.Context, l *knowledge.Ledger) (any, error) {
 				return l.Import(ctx, []knowledge.Knowledge{third})
 			}},
 			want{knowledge.Set{third}, knowledge.ErrVetoExport},
 		},
 		{
 			"approve fails to export the vetoes and still returns the approved record",
-			args{blocked, func(ctx context.Context, l *knowledge.Ledger) (any, error) {
+			args{blocked(), func(ctx context.Context, l *knowledge.Ledger) (any, error) {
 				return l.Approve(ctx, "k1", 1, "jed")
 			}},
 			want{approvedNow, knowledge.ErrVetoExport},
 		},
 		{
 			"retire fails to export the vetoes and still returns the retired record",
-			args{blocked, func(ctx context.Context, l *knowledge.Ledger) (any, error) {
+			args{blocked(), func(ctx context.Context, l *knowledge.Ledger) (any, error) {
 				return l.Retire(ctx, "k2", 1, "jed")
 			}},
 			want{retiredNow, knowledge.ErrVetoExport},
@@ -1494,6 +1487,147 @@ func TestLedgerFolder(t *testing.T) {
 			assert.ErrorIs(t, err, tc.want.err)
 			assert.Equal(t, tc.want.folder, got)
 			assert.Equal(t, tc.want.crowded, got.Crowded())
+		})
+	}
+}
+
+// Separate ledgers on one record dir write at the same moment as two sessions would
+// 1. every write decides on the records the others left so a check only one may pass passes once
+// 2. writes that no check ties together all land
+func TestLedgerConcurrentWrite(t *testing.T) {
+	at := time.Date(2026, 9, 28, 0, 0, 0, 0, time.UTC)
+	candidate := knowledge.Knowledge{
+		ID: "item", Version: 1, Kind: knowledge.KindMeaning, Content: "lag is four hours",
+		Evidence: knowledge.Evidence{ParagraphIDs: []string{"p#1"}}, Basis: knowledge.BasisStated,
+		Status: knowledge.StatusCandidate, Author: "author", Time: at,
+	}
+	approved := candidate
+	approved.Status, approved.Approver = knowledge.StatusApproved, "ann"
+	// Nine approved items fill a review but one
+	full := make([]knowledge.Knowledge, 0, 11)
+	for i := range 9 {
+		k := approved
+		k.ID = fmt.Sprintf("full-%d", i)
+		full = append(full, k)
+	}
+	candidates := make([]knowledge.Knowledge, 0, 3)
+	for i := range 3 {
+		k := candidate
+		k.ID = fmt.Sprintf("par-%d", i)
+		candidates = append(candidates, k)
+	}
+	proposal := candidate
+	proposal.Status, proposal.Version = "", 0
+	anonymous := proposal
+	anonymous.ID = ""
+	type args struct {
+		seeds []knowledge.Knowledge
+		calls []func(ctx context.Context, l *knowledge.Ledger) error
+	}
+	type want struct {
+		// Records newest first as id version status after the calls in any order
+		versions []string
+		failed   int
+		err      error
+	}
+	approve := func(id string) func(ctx context.Context, l *knowledge.Ledger) error {
+		return func(ctx context.Context, l *knowledge.Ledger) error {
+			_, err := l.Approve(ctx, id, 1, "jed")
+			return err
+		}
+	}
+	propose := func(draft knowledge.Knowledge) func(ctx context.Context, l *knowledge.Ledger) error {
+		return func(ctx context.Context, l *knowledge.Ledger) error {
+			_, _, err := l.Propose(ctx, draft)
+			return err
+		}
+	}
+	retire := func(ctx context.Context, l *knowledge.Ledger) error {
+		_, err := l.Retire(ctx, "item", 1, "jed")
+		return err
+	}
+	tcs := []struct {
+		name string
+		args args
+		want want
+	}{
+		{
+			"two proposals of one id become two versions and never a second v1",
+			args{nil, []func(context.Context, *knowledge.Ledger) error{propose(proposal), propose(proposal)}},
+			want{[]string{"item 1 candidate", "item 2 candidate"}, 0, nil},
+		},
+		{
+			"two approvals of one version approve it once",
+			args{[]knowledge.Knowledge{candidate}, []func(context.Context, *knowledge.Ledger) error{approve("item"), approve("item")}},
+			want{[]string{"item 1 approved"}, 1, knowledge.ErrTransitionInvalid},
+		},
+		{
+			"two retires of one version retire it once",
+			args{[]knowledge.Knowledge{candidate}, []func(context.Context, *knowledge.Ledger) error{retire, retire}},
+			want{[]string{"item 1 retired"}, 1, knowledge.ErrTransitionInvalid},
+		},
+		{
+			"two approvals into the last seat of a review approve one",
+			args{
+				append(slices.Clone(full), candidates[:2]...),
+				[]func(context.Context, *knowledge.Ledger) error{approve("par-0"), approve("par-1")},
+			},
+			want{nil, 1, knowledge.ErrFolderFull},
+		},
+		{
+			"approvals of three ids at once all land",
+			args{candidates, []func(context.Context, *knowledge.Ledger) error{approve("par-0"), approve("par-1"), approve("par-2")}},
+			want{[]string{"par-0 1 approved", "par-1 1 approved", "par-2 1 approved"}, 0, nil},
+		},
+		{
+			"proposals with generated ids at once all land",
+			args{nil, []func(context.Context, *knowledge.Ledger) error{propose(anonymous), propose(anonymous), propose(anonymous)}},
+			want{[]string{"k-0 1 candidate", "k-1 1 candidate", "k-2 1 candidate"}, 0, nil},
+		},
+	}
+	ctx := context.Background()
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			sink := vetofile.NewApprovedFile(t.TempDir(), dir)
+			open := func(n int) *knowledge.Ledger {
+				store, err := file.New(dir)
+				require.NoError(t, err)
+				return knowledge.NewLedger(store, sink, func() time.Time { return at }, func(p string) string { return fmt.Sprintf("%s%d", p, n) })
+			}
+			require.NoError(t, testkit.Err(open(0).Import(ctx, tc.args.seeds)))
+			start, results := make(chan struct{}), make(chan error, len(tc.args.calls))
+			for i, call := range tc.args.calls {
+				l := open(i)
+				go func() {
+					<-start
+					results <- call(ctx, l)
+				}()
+			}
+			close(start)
+			failed := 0
+			for range tc.args.calls {
+				if err := <-results; err != nil {
+					failed++
+					assert.ErrorIs(t, err, tc.want.err)
+				}
+			}
+
+			all, err := open(0).All(ctx)
+			require.NoError(t, err)
+			var versions []string
+			for _, k := range all.Versions() {
+				if !strings.HasPrefix(k.ID, "full-") && (tc.want.versions != nil || k.Status == knowledge.StatusApproved) {
+					versions = append(versions, fmt.Sprintf("%s %d %s", k.ID, k.Version, k.Status))
+				}
+			}
+			assert.Equal(t, tc.want.failed, failed)
+			if tc.want.versions != nil {
+				assert.ElementsMatch(t, tc.want.versions, versions)
+			} else {
+				assert.Len(t, versions, 1, "one of the two approvals lands")
+			}
 		})
 	}
 }

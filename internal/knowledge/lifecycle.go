@@ -33,23 +33,23 @@ func (k Knowledge) Stale(now time.Time) bool {
 
 // Records that a named person rechecked the current approved version
 // 1. the approved record is appended again with the reaffirm time and the approver and nothing a review sees changes
-// 2. the append fails with ErrRecordsChanged when the records changed since they were read
+// 2. the version is checked under the store lock
 // So a reaffirm never reopens a version that a concurrent retire closed
 func (l *Ledger) Reaffirm(ctx context.Context, id string, version int, approver string) (Knowledge, error) {
 	if approver == "" {
 		return Knowledge{}, fmt.Errorf("%w: reaffirm needs one", ErrApproverRequired)
 	}
-	all, err := l.All(ctx)
+	var k Knowledge
+	err := l.store.AppendDecided(ctx, func(all Set) ([]Knowledge, error) {
+		var err error
+		if k, err = all.currentApproved(id, version); err != nil {
+			return nil, err
+		}
+		k.Time = l.now().UTC()
+		k.ReviewedAt, k.Approver = k.Time, approver
+		return []Knowledge{k}, nil
+	})
 	if err != nil {
-		return Knowledge{}, err
-	}
-	k, err := all.currentApproved(id, version)
-	if err != nil {
-		return Knowledge{}, err
-	}
-	k.Time = l.now().UTC()
-	k.ReviewedAt, k.Approver = k.Time, approver
-	if err := l.store.AppendIfUnchanged(ctx, k, all); err != nil {
 		return Knowledge{}, err
 	}
 	return k, nil
@@ -62,24 +62,23 @@ func (l *Ledger) Reaffirm(ctx context.Context, id string, version int, approver 
 // 1. fails with ErrNarrowInvalid when no context is given
 // 2. fails with ErrNarrowExhausted when no change context of the version would be left
 // The second case is for keeping the version or for a retire by a named person
+// The version is checked under the store lock so a concurrent retire never leaves a narrowed candidate of a retired version
 func (l *Ledger) Narrow(
 	ctx context.Context, id string, version int, contexts []evidence.Context, traceIDs []string, author string,
 ) (Knowledge, Set, error) {
-	all, err := l.All(ctx)
-	if err != nil {
-		return Knowledge{}, nil, err
-	}
-	k, err := all.currentApproved(id, version)
-	if err != nil {
-		return Knowledge{}, nil, err
-	}
-	draft, err := k.narrowed(contexts)
-	if err != nil {
-		return Knowledge{}, nil, err
-	}
-	draft.Author = author
-	draft.Evidence.OutcomeTraceIDs = append(slices.Clone(k.Evidence.OutcomeTraceIDs), traceIDs...)
-	return l.Propose(ctx, draft)
+	return l.appendCandidate(ctx, func(all Set, now time.Time) (Knowledge, error) {
+		k, err := all.currentApproved(id, version)
+		if err != nil {
+			return Knowledge{}, err
+		}
+		draft, err := k.narrowed(contexts)
+		if err != nil {
+			return Knowledge{}, err
+		}
+		draft.Author = author
+		draft.Evidence.OutcomeTraceIDs = append(slices.Clone(k.Evidence.OutcomeTraceIDs), traceIDs...)
+		return all.propose(draft, now)
+	})
 }
 
 // Fails unless the version is the approved one of its id
