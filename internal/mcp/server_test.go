@@ -459,8 +459,8 @@ func TestServerProposeAndApprove(t *testing.T) {
 		id     string
 		kind   knowledge.Kind
 		author string
-		// A metric of its own per case so no two cases share a folder or overlap
-		metric string
+		// A change context of its own per case so no two cases share a folder or overlap
+		context evidence.Context
 		// The veto input as a client sends it
 		veto map[string]any
 	}
@@ -503,11 +503,11 @@ func TestServerProposeAndApprove(t *testing.T) {
 	}{
 		{
 			name: "a candidate without an author is proposed by claude and approved by the named person",
-			args: args{id: "k-tracking", kind: knowledge.KindJudgment, metric: "click_count_tracking"},
+			args: args{id: "k-tracking", kind: knowledge.KindJudgment, context: evidence.ContextNoKnownChange},
 			want: want{
 				proposed: proposal{
 					ID: "k-tracking", Version: 1, Status: knowledge.StatusCandidate, Overlaps: []knowledge.Knowledge{},
-					Folder: folder{Chars: 120, Budget: knowledge.ReviewChars, Items: []string{}}, Drafted: true,
+					Folder: folder{Chars: 144, Budget: knowledge.ReviewChars, Items: []string{}}, Drafted: true,
 				},
 				approved: approval{ID: "k-tracking", Version: 1, Status: knowledge.StatusApproved, Approver: "reviewer"},
 				author:   "claude",
@@ -515,11 +515,11 @@ func TestServerProposeAndApprove(t *testing.T) {
 		},
 		{
 			name: "a candidate keeps the author the caller names",
-			args: args{id: "k-meaning", kind: knowledge.KindMeaning, author: "user", metric: "click_count_meaning"},
+			args: args{id: "k-meaning", kind: knowledge.KindMeaning, author: "user", context: evidence.ContextMeasurementChanged},
 			want: want{
 				proposed: proposal{
 					ID: "k-meaning", Version: 1, Status: knowledge.StatusCandidate, Overlaps: []knowledge.Knowledge{},
-					Folder: folder{Chars: 117, Budget: knowledge.ReviewChars, Items: []string{}}, Drafted: true,
+					Folder: folder{Chars: 154, Budget: knowledge.ReviewChars, Items: []string{}}, Drafted: true,
 				},
 				approved: approval{ID: "k-meaning", Version: 1, Status: knowledge.StatusApproved, Approver: "reviewer"},
 				author:   "user",
@@ -527,7 +527,7 @@ func TestServerProposeAndApprove(t *testing.T) {
 		},
 		{
 			name: "a judgment with a veto shows the veto before approval and says so after",
-			args: args{id: "k-no-sed", kind: knowledge.KindJudgment, metric: "click_count_no_sed", veto: map[string]any{
+			args: args{id: "k-no-sed", kind: knowledge.KindJudgment, context: evidence.ContextDataAvailability, veto: map[string]any{
 				"tool":    "Bash",
 				"when":    []map[string]any{{"field": "command", "match": `sed\s+-i`}},
 				"example": map[string]any{"command": "sed -i s/a/b/ f"},
@@ -535,7 +535,7 @@ func TestServerProposeAndApprove(t *testing.T) {
 			want: want{
 				proposed: proposal{
 					ID: "k-no-sed", Version: 1, Status: knowledge.StatusCandidate, Overlaps: []knowledge.Knowledge{},
-					Folder: folder{Chars: 116, Budget: knowledge.ReviewChars, Items: []string{}}, Veto: sed, Drafted: true,
+					Folder: folder{Chars: 150, Budget: knowledge.ReviewChars, Items: []string{}}, Veto: sed, Drafted: true,
 				},
 				approved: approval{
 					ID: "k-no-sed", Version: 1, Status: knowledge.StatusApproved, Approver: "reviewer", Veto: true,
@@ -544,13 +544,16 @@ func TestServerProposeAndApprove(t *testing.T) {
 			},
 		},
 	}
+	// One ledger serves every case and each answer counts the items earlier cases approved so the cases run in turn
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			scope := knowledge.Scope{Scope: evidence.Scope{Metrics: []string{tc.args.metric}}, Dims: map[string]string{"platform": "ios"}}
+			scope := knowledge.Scope{
+				Scope: evidence.Scope{ChangeContexts: []evidence.Context{tc.args.context}, Metrics: []string{"click_count"}},
+				Dims:  map[string]string{"platform": "ios"},
+			}
 			in := map[string]any{
 				"id": tc.args.id, "kind": tc.args.kind, "content": "after a planned change check tracking first",
-				"metrics": scope.Metrics, "dims": scope.Dims, "trace_ids": []string{reviewed.TraceID},
+				"change_contexts": scope.ChangeContexts, "metrics": scope.Metrics, "dims": scope.Dims, "trace_ids": []string{reviewed.TraceID},
 				"author": tc.args.author, "veto": tc.args.veto,
 			}
 			var proposed proposal
@@ -710,12 +713,15 @@ func TestServerProposeFolder(t *testing.T) {
 	st := testkit.Open(t)
 	c := connect(t, st, "nodloop")
 	type folder struct {
-		Chars         int      `json:"chars"`
-		Budget        int      `json:"budget"`
-		Full          bool     `json:"full"`
-		Items         []string `json:"items"`
-		CompactionDue bool     `json:"compaction_due"`
+		Chars         int              `json:"chars"`
+		Budget        int              `json:"budget"`
+		ItemBudget    int              `json:"item_budget"`
+		Full          bool             `json:"full"`
+		Items         []string         `json:"items"`
+		ChangeContext evidence.Context `json:"change_context"`
+		CompactionDue bool             `json:"compaction_due"`
 	}
+	quiet := evidence.ContextNoKnownChange
 	// A fresh answer per call so a decoded list never shares an earlier one
 	call := func(tool string, in map[string]any) (folder, error) {
 		var answer struct {
@@ -765,12 +771,15 @@ func TestServerProposeFolder(t *testing.T) {
 	paragraphOnly, err := call("approve", approve("k-second"))
 	require.NoError(t, err)
 
-	assert.Equal(t, folder{Chars: 84, Budget: knowledge.ReviewChars, Items: []string{}}, first)
-	assert.Equal(t, folder{Chars: 163, Budget: knowledge.ReviewChars, Items: []string{"k-first"}}, second)
-	assert.Equal(t, folder{Chars: 70089, Budget: knowledge.ReviewChars, Full: true, Items: []string{"k-first"}}, full)
+	assert.Equal(t, folder{Chars: 84, Budget: knowledge.ReviewChars, ItemBudget: knowledge.ReviewItems, Items: []string{}, ChangeContext: quiet}, first)
+	assert.Equal(t, folder{Chars: 163, Budget: knowledge.ReviewChars, ItemBudget: knowledge.ReviewItems, Items: []string{"k-first"}, ChangeContext: quiet}, second)
+	assert.Equal(t, folder{
+		Chars: 70089, Budget: knowledge.ReviewChars, ItemBudget: knowledge.ReviewItems, Full: true, Items: []string{"k-first"},
+		ChangeContext: quiet,
+	}, full)
 	assert.ErrorIs(t, refused, testkit.ErrTool)
 	assert.EqualError(t, refused, testkit.ErrTool.Error()+
-		": knowledge: folder may outgrow the review: 70089 of 70000 chars with k-first v1 84 chars")
+		": knowledge: folder may outgrow the review: 70089 of 70000 chars 2 of 10 items in no_known_change with k-first v1 84 chars")
 	assert.False(t, fifth.CompactionDue)
 	assert.Equal(t, []string{"k-b", "k-c", "k-d", "k-e", "k-f", "k-first"}, sixth.Items)
 	assert.True(t, sixth.CompactionDue)

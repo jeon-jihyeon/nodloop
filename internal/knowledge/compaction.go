@@ -96,15 +96,23 @@ func (s Set) Compactable(anchor string) (Compactable, error) {
 	if !k.Evidence.Replayable() {
 		return Compactable{}, fmt.Errorf("%w: %s", ErrParagraphOnly, anchor)
 	}
-	out := Compactable{Items: Set{*k}, Excluded: Set{}}
-	for _, other := range s.folder(*k).Items {
-		if other.Evidence.Replayable() {
+	return s.compactable(*k), nil
+}
+
+// The approved items other than the anchor that share a folder with it across every change context it spans
+// A compaction may span change contexts so it covers their union
+func (s Set) compactable(anchor Knowledge) Compactable {
+	out := Compactable{Items: Set{anchor}, Excluded: Set{}}
+	for _, other := range s.Approved() {
+		switch {
+		case other.ID == anchor.ID || !anchor.sharesFolder(other):
+		case other.Evidence.Replayable():
 			out.Items = append(out.Items, other)
-		} else {
+		default:
 			out.Excluded = append(out.Excluded, other)
 		}
 	}
-	return out, nil
+	return out
 }
 
 // The candidates of a compaction of old built from the drafts

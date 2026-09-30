@@ -21,7 +21,7 @@ func TestFolderSize(t *testing.T) {
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			assert.Equal(t, tc.want, knowledge.Folder{Items: tc.args}.Size())
+			assert.Equal(t, tc.want, knowledge.Folder{Carried: tc.args}.Size())
 		})
 	}
 }
@@ -36,6 +36,11 @@ func TestFolderFull(t *testing.T) {
 		{"a folder under the review chars is not full", knowledge.Folder{Chars: knowledge.ReviewChars - 1}, false},
 		{"a folder at the review chars is not full", knowledge.Folder{Chars: knowledge.ReviewChars}, false},
 		{"a folder over the review chars is full", knowledge.Folder{Chars: knowledge.ReviewChars + 1}, true},
+		{"a folder at the review items is not full", knowledge.Folder{Carried: make(knowledge.Set, knowledge.ReviewItems-1)}, false},
+		{
+			"a folder over the review items is full though its text fits",
+			knowledge.Folder{Chars: 1, Carried: make(knowledge.Set, knowledge.ReviewItems)}, true,
+		},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
@@ -71,10 +76,10 @@ func TestFolderString(t *testing.T) {
 		args knowledge.Folder
 		want string
 	}{
-		{"a folder of the item alone names no other item", knowledge.Folder{Items: knowledge.Set{}}, "no other item"},
+		{"a folder of the item alone names no other item", knowledge.Folder{Carried: knowledge.Set{}}, "no other item"},
 		{
 			"every other item comes with its version and the runes of its text",
-			knowledge.Folder{Items: knowledge.Set{
+			knowledge.Folder{Carried: knowledge.Set{
 				{ID: "k-a", Version: 1, Kind: knowledge.KindMeaning, Content: "one"},
 				{ID: "k-b", Version: 2, Kind: knowledge.KindJudgment, Content: "두 개 🙂"},
 			}},
