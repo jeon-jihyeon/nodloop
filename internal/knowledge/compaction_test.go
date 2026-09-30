@@ -279,6 +279,15 @@ func TestLedgerProposeCompactionScope(t *testing.T) {
 		return d
 	}
 	keep := func(*knowledge.Knowledge) {}
+	namesBoth := func(d *knowledge.Knowledge) {
+		d.ID, d.Evidence.Knowledge = "", []knowledge.Ref{{ID: "shop", Version: 1}, {ID: "sports", Version: 1}}
+	}
+	merged := func(edit func(*knowledge.Knowledge)) []knowledge.Knowledge {
+		return []knowledge.Knowledge{draftOf(shop, func(d *knowledge.Knowledge) {
+			namesBoth(d)
+			edit(d)
+		})}
+	}
 	type want struct {
 		// Dims of every proposed item
 		dims []map[string]string
@@ -294,6 +303,44 @@ func TestLedgerProposeCompactionScope(t *testing.T) {
 			"dims keep two meanings of one folder apart",
 			[]knowledge.Knowledge{draftOf(shop, keep), draftOf(sports, keep)},
 			want{dims: []map[string]string{shopping, sporting}},
+		},
+		{
+			"a merged meaning that drops the dims is refused",
+			merged(func(d *knowledge.Knowledge) { d.Scope.Dims = nil }),
+			want{err: knowledge.ErrCompactionInvalid},
+		},
+		{
+			"a merged meaning that keeps one dim value would carry the sports fact to shopping events and is refused",
+			merged(keep),
+			want{err: knowledge.ErrCompactionInvalid},
+		},
+		{
+			"a draft that drops the exceptions its items share is refused",
+			[]knowledge.Knowledge{draftOf(shop, func(d *knowledge.Knowledge) { d.Exceptions = nil }), draftOf(sports, keep)},
+			want{err: knowledge.ErrCompactionInvalid},
+		},
+		{
+			"a draft that adds a change context is refused",
+			[]knowledge.Knowledge{
+				draftOf(shop, func(d *knowledge.Knowledge) {
+					d.Scope.ChangeContexts = append(d.Scope.ChangeContexts, evidence.ContextMeasurementChanged)
+				}),
+				draftOf(sports, keep),
+			},
+			want{err: knowledge.ErrCompactionInvalid},
+		},
+		{
+			"a draft that adds a metric is refused",
+			[]knowledge.Knowledge{
+				draftOf(shop, func(d *knowledge.Knowledge) { d.Scope.Metrics = append(d.Scope.Metrics, "order_count") }),
+				draftOf(sports, keep),
+			},
+			want{err: knowledge.ErrCompactionInvalid},
+		},
+		{
+			"a draft without metrics reaches every metric and is refused",
+			[]knowledge.Knowledge{draftOf(shop, func(d *knowledge.Knowledge) { d.Scope.Metrics = nil }), draftOf(sports, keep)},
+			want{err: knowledge.ErrCompactionInvalid},
 		},
 		{
 			"two meanings split by metrics with none in common pass",
@@ -1068,6 +1115,170 @@ func TestLedgerFolderCrowdedPerChangeContext(t *testing.T) {
 			assert.Equal(t, tc.want, want{got.Compactable, got.Crowded()})
 			assert.Equal(t, tc.want.crowded, compactable.Crowded())
 			assert.Len(t, compactable.Items, len(tc.args), "a compaction still covers the union")
+		})
+	}
+}
+
+// A compaction of the per change context folder keeps each fact on the events its item reached
+func TestLedgerProposeCompactionPerChangeContext(t *testing.T) {
+	at := time.Date(2026, 9, 28, 0, 0, 0, 0, time.UTC)
+	seeds := perContextSeeds(at)
+	general := knowledge.Ref{ID: "g", Version: 1}
+	perContext := func(withGeneral bool) []knowledge.Knowledge {
+		out := make([]knowledge.Knowledge, 0, len(seeds)-1)
+		for i, old := range seeds[1:] {
+			d := knowledge.Knowledge{
+				ID: old.ID, Kind: knowledge.KindMeaning, Content: old.Content, Scope: old.Scope, Author: "claude",
+				Evidence: knowledge.Evidence{Knowledge: []knowledge.Ref{{ID: old.ID, Version: 1}}},
+			}
+			if withGeneral {
+				d.Content += " and general fact"
+				d.Evidence.Knowledge = append(d.Evidence.Knowledge, general)
+			}
+			if i == 0 && withGeneral {
+				d.ID = "g"
+			}
+			out = append(out, d)
+		}
+		return out
+	}
+	allRefs := make([]knowledge.Ref, 0, len(seeds))
+	for _, k := range seeds {
+		allRefs = append(allRefs, knowledge.Ref{ID: k.ID, Version: 1})
+	}
+	merged := []knowledge.Knowledge{{
+		ID: "g", Kind: knowledge.KindMeaning, Content: "every fact", Author: "claude",
+		Evidence: knowledge.Evidence{Knowledge: allRefs},
+	}}
+	beside := append(perContext(false), knowledge.Knowledge{
+		ID: "g", Kind: knowledge.KindMeaning, Content: "general fact", Author: "claude",
+		Evidence: knowledge.Evidence{Knowledge: []knowledge.Ref{general}},
+	})
+	type want struct {
+		err error
+		// A part of the error text
+		message string
+		items   int
+	}
+	tcs := []struct {
+		name string
+		args []knowledge.Knowledge
+		want want
+	}{
+		{
+			"a merged unscoped draft would carry each fact to every change context and is refused",
+			merged, want{knowledge.ErrCompactionInvalid, "facts of planned_operational_change to events of change contexts no_known_change", 0},
+		},
+		{"one draft per change context that repeats the general fact passes", perContext(true), want{nil, "", 5}},
+		{"a general draft beside the change context drafts overlaps them", beside, want{knowledge.ErrCompactionOverlap, "", 0}},
+	}
+	ctx := context.Background()
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			l, _ := newTestLedger(t, t.TempDir(), at)
+			require.NoError(t, testkit.Err(l.Import(ctx, seeds)))
+
+			got, err := l.ProposeCompaction(ctx, "g", tc.args)
+
+			assert.ErrorIs(t, err, tc.want.err)
+			if tc.want.message != "" {
+				assert.ErrorContains(t, err, tc.want.message)
+			}
+			assert.Len(t, got.Items, tc.want.items)
+		})
+	}
+}
+
+// A folder of one change context whose meanings are scoped to different metrics compacts into one draft per metric
+// and the folder then takes approvals again
+func TestLedgerProposeCompactionPerMetric(t *testing.T) {
+	at := time.Date(2026, 9, 28, 0, 0, 0, 0, time.UTC)
+	quiet := []evidence.Context{evidence.ContextNoKnownChange}
+	metrics := []string{"click_count", "conversion_count", "impression_count"}
+	// Twelve approved meanings of no_known_change that cycle through the metrics
+	var seeds []knowledge.Knowledge
+	for i := range 12 {
+		seeds = append(seeds, knowledge.Knowledge{
+			ID: fmt.Sprintf("k%02d", i), Version: 1, Kind: knowledge.KindMeaning, Content: fmt.Sprintf("fact %d", i),
+			Scope:    knowledge.Scope{Scope: evidence.Scope{ChangeContexts: quiet, Metrics: []string{metrics[i%len(metrics)]}}},
+			Evidence: knowledge.Evidence{FeedbackTraceIDs: []string{fmt.Sprintf("t%d", i)}}, Basis: knowledge.BasisStated,
+			Status: knowledge.StatusApproved, Approver: "ann", ApprovedAt: at, Author: "author", Time: at,
+		})
+	}
+	// One draft over the seeds of each listed metric group scoped to the given metrics
+	draft := func(groups []string, scoped []string) knowledge.Knowledge {
+		d := knowledge.Knowledge{
+			Kind: knowledge.KindMeaning, Content: strings.Join(groups, " and ") + " facts", Author: "claude",
+			Scope: knowledge.Scope{Scope: evidence.Scope{ChangeContexts: quiet, Metrics: scoped}},
+		}
+		for _, k := range seeds {
+			if slices.Contains(groups, k.Scope.Metrics[0]) {
+				d.Evidence.Knowledge = append(d.Evidence.Knowledge, knowledge.Ref{ID: k.ID, Version: 1})
+			}
+		}
+		return d
+	}
+	perMetric := []knowledge.Knowledge{
+		draft(metrics[:1], metrics[:1]), draft(metrics[1:2], metrics[1:2]), draft(metrics[2:], metrics[2:]),
+	}
+	// The click facts split in two drafts that both name click_count
+	clicksTwice := slices.Concat(perMetric, []knowledge.Knowledge{draft(metrics[:1], metrics[:1])})
+	type want struct {
+		err error
+		// Items the compaction proposes
+		items int
+		// The error of approving one more item of the folder after the compaction was approved
+		next error
+	}
+	tcs := []struct {
+		name string
+		args []knowledge.Knowledge
+		want want
+	}{
+		{"one draft per metric passes and the folder takes the next approval", perMetric, want{nil, 3, nil}},
+		{
+			"a merged draft over every metric reaches metrics each old item never reached and is refused",
+			[]knowledge.Knowledge{draft(metrics, metrics)},
+			want{knowledge.ErrCompactionInvalid, 0, knowledge.ErrFolderFull},
+		},
+		{
+			"a merged draft without metrics reaches every metric and is refused",
+			[]knowledge.Knowledge{draft(metrics, nil)},
+			want{knowledge.ErrCompactionInvalid, 0, knowledge.ErrFolderFull},
+		},
+		{
+			"two drafts of one metric overlap and are refused",
+			clicksTwice,
+			want{knowledge.ErrCompactionOverlap, 0, knowledge.ErrFolderFull},
+		},
+	}
+	ctx := context.Background()
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			l, _ := newTestLedger(t, t.TempDir(), at)
+			require.NoError(t, testkit.Err(l.Import(ctx, seeds)))
+
+			got, err := l.ProposeCompaction(ctx, "k00", tc.args)
+			if err == nil {
+				require.NoError(t, testkit.Err(l.ApproveCompaction(ctx, got.ID, "jed", knowledge.Replay{
+					Compaction: got.ID,
+					Events:     []knowledge.ReplayEvent{{EventID: "e1", Expected: evidence.StatusHold, Got: evidence.StatusHold}},
+				})))
+			}
+			next := knowledge.Knowledge{
+				ID: "k-next", Kind: knowledge.KindMeaning, Content: "next fact", Author: "author",
+				Scope:    knowledge.Scope{Scope: evidence.Scope{ChangeContexts: quiet, Metrics: metrics[:1]}},
+				Evidence: knowledge.Evidence{FeedbackTraceIDs: []string{"t-next"}},
+			}
+			_, _, proposeErr := l.Propose(ctx, next)
+			require.NoError(t, proposeErr)
+			_, nextErr := l.Approve(ctx, "k-next", 1, "jed")
+
+			assert.ErrorIs(t, err, tc.want.err)
+			assert.Len(t, got.Items, tc.want.items)
+			assert.ErrorIs(t, nextErr, tc.want.next)
 		})
 	}
 }
