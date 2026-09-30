@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"slices"
 	"strconv"
 	"strings"
@@ -150,10 +151,16 @@ func (l layout) point(rec []string, line int) (string, evidence.Point, error) {
 		return "", evidence.Point{}, fmt.Errorf("%w: %s line %d column %s: %w",
 			evidence.ErrMalformed, eventsFile, line, columnTimestamp, err)
 	}
-	val, err := strconv.ParseFloat(rec[l.positions[columnValue]], 64)
+	raw := rec[l.positions[columnValue]]
+	val, err := strconv.ParseFloat(raw, 64)
 	if err != nil {
 		return "", evidence.Point{}, fmt.Errorf("%w: %s line %d column %s: %w",
 			evidence.ErrMalformed, eventsFile, line, columnValue, err)
+	}
+	// ParseFloat accepts NaN and Inf which no analysis can score and no trace can store
+	if math.IsNaN(val) || math.IsInf(val, 0) {
+		return "", evidence.Point{}, fmt.Errorf("%w: %s line %d column %s: not a finite number %q",
+			evidence.ErrMalformed, eventsFile, line, columnValue, raw)
 	}
 	p := evidence.Point{Time: ts.UTC(), Metric: rec[l.positions[columnMetric]], Value: val}
 	if len(l.dimensions) > 0 {
