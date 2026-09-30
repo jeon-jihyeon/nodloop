@@ -215,7 +215,7 @@ var tools = []tool{
 		"and compaction_due when a review of one change context carries more than five approved items an event can replay", (*Server).propose),
 	newTool("approve", "Approve a knowledge candidate on behalf of a named person. "+
 		"Only call it when the user explicitly approves and names themselves. "+
-		"Fails when the folder would outgrow the review and names the items to retire or replace. "+
+		"Fails when the approval would push a review past the budget or grow one already past it and names the items to retire or replace. "+
 		"Answers the folder with compaction_due like propose. "+
 		"Once the approval is recorded a failed veto export or folder read comes back as veto_export_error or folder_error "+
 		"and approving again would fail", (*Server).approve),
