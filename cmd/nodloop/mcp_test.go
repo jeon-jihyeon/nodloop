@@ -37,8 +37,11 @@ func TestRunMCP(t *testing.T) {
 	data := testkit.DemoDir(t)
 	tools := strings.Join(mcp.Tools(), "\n") + "\n"
 	at := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
-	const unset = `^nodloop mcp: ` + envFileDir + ` is not set: run nodloop setup or set the variable\. Run .* setup --data-dir <dir> ` +
-		`and reconnect the nodloop server\n$`
+	const (
+		unset = `^nodloop mcp: ` + envFileDir + ` is not set: run nodloop setup or set the variable\. Run .* setup --data-dir <dir> ` +
+			`and reconnect the nodloop server\n$`
+		fix = `\. Fix what this names or run .* setup --data-dir <dir> again and reconnect the nodloop server\n$`
+	)
 	type args struct {
 		args []string
 		// Values with the `{home}` and `{records}` placeholders
@@ -83,9 +86,21 @@ func TestRunMCP(t *testing.T) {
 			want{0, unset, "", "", os.ErrNotExist, os.ErrNotExist},
 		},
 		{
-			"broken config is reported and kept",
+			"broken config is served unconfigured and kept",
 			args{nil, map[string]string{"HOME": "{home}"}, map[string]string{".nodloop/config.json": "{broken"}},
-			want{1, `^nodloop mcp: config.json is not valid JSON: `, "", "{broken", nil, os.ErrNotExist},
+			want{0, `^nodloop mcp: config.json is not valid JSON: .*` + fix, "", "{broken", nil, os.ErrNotExist},
+		},
+		{
+			"data dir that moved away is served unconfigured",
+			args{nil, map[string]string{envFileDir: "{home}/moved", envRecordDir: "{records}"}, nil},
+			want{0, `^nodloop mcp: evidence file source: stat {home}/moved: no such file or directory` + fix, "", "",
+				os.ErrNotExist, os.ErrNotExist},
+		},
+		{
+			"broken policy is served unconfigured",
+			args{nil, map[string]string{envFileDir: "{home}/data", envRecordDir: "{records}"},
+				map[string]string{"data/policy.yaml": "version: v1\n  bad: [\n"}},
+			want{0, `^nodloop mcp: analysis: policy is not valid yaml: .*` + fix, "", "", os.ErrNotExist, os.ErrNotExist},
 		},
 		{
 			"config without a data dir is served unconfigured and kept",
@@ -98,9 +113,9 @@ func TestRunMCP(t *testing.T) {
 			want{0, unset, "", "", os.ErrNotExist, os.ErrNotExist},
 		},
 		{
-			"record dir that is a file fails",
+			"record dir that is a file is served unconfigured",
 			args{nil, map[string]string{envFileDir: data, envRecordDir: "{records}/regular"}, nil},
-			want{1, "^nodloop mcp: record dir: ", "", "", os.ErrNotExist, os.ErrNotExist},
+			want{0, "^nodloop mcp: record dir: .*" + fix, "", "", os.ErrNotExist, os.ErrNotExist},
 		},
 		{
 			"unknown flag fails",
