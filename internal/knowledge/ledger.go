@@ -38,7 +38,7 @@ type VetoSink interface {
 // 2. approve and retire need an approver and follow the allowed status changes
 // 3. the clock is read here in UTC and every record of one call carries that time
 // 4. approve and retire and import end by handing the approved vetoes to the sink
-// 5. approve refuses an item whose folder may outgrow ReviewChars and import never checks it
+// 5. approve refuses an item whose folder may outgrow ReviewChars or ReviewItems and import never checks it
 // A failed hand off returns ErrVetoExport after the records are appended so the caller knows the status changed
 type Ledger struct {
 	store  Store
@@ -143,7 +143,7 @@ func (l *Ledger) Approve(ctx context.Context, id string, version int, approver s
 	}
 	to := records[0]
 	if f := all.folder(to); f.Full() {
-		return Knowledge{}, fmt.Errorf("%w: %d of %d chars with %s", ErrFolderFull, f.Chars, ReviewChars, f)
+		return Knowledge{}, fmt.Errorf("%w: %s with %s", ErrFolderFull, f.load(), f)
 	}
 	for _, k := range records {
 		if err = l.store.Append(ctx, k); err != nil {
@@ -298,7 +298,7 @@ func (l *Ledger) ApproveCompaction(ctx context.Context, id, approver string, rep
 	}
 	for _, k := range c.Items {
 		if f := after.folder(k); f.Full() {
-			return Compaction{}, fmt.Errorf("%w: %s %d of %d chars with %s", ErrFolderFull, k.ID, f.Chars, ReviewChars, f)
+			return Compaction{}, fmt.Errorf("%w: %s %s with %s", ErrFolderFull, k.ID, f.load(), f)
 		}
 	}
 	for _, k := range records {

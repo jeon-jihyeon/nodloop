@@ -18,10 +18,11 @@ const (
 	// A quality value tuned on live runs so every correction arrives whole while long original reviews give way
 	// It leaves room for the leads that say what each correction changed
 	exampleChars = 7000
+	// Approval never grows a folder past it so only an imported ledger or one approved before the item cap overflows it
+	knowledgeItems = knowledge.ReviewItems
 	// One list Claude Code can show on one screen
-	// 1. two knowledge folders at FolderItems fit it whole
-	// 2. two crowded folders overflow it so the cut falls by id order until a compaction
-	candidates = 10
+	// No approval bounds corrections so the newest come first
+	exampleItems = 10
 )
 
 // Runes of the knowledge and examples sections as sent with heading and cut marks and notice

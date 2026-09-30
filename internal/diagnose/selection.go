@@ -386,10 +386,10 @@ func (d *Diagnoser) knowledgeCandidates(
 	}
 	applicable := all.Applicable(changeContext, moved, dims)
 	var out []KnowledgeCandidate
-	for _, k := range applicable[:min(len(applicable), candidates)] {
+	for _, k := range applicable[:min(len(applicable), knowledgeItems)] {
 		out = append(out, KnowledgeCandidate{ID: k.ID, Version: k.Version, Kind: k.Kind, Head: headline(k.Content), Scope: k.Scope})
 	}
-	return out, len(applicable) > candidates, nil
+	return out, len(applicable) > knowledgeItems, nil
 }
 
 // Short list of past corrections that could inform this review
@@ -430,7 +430,7 @@ func (d *Diagnoser) exampleCandidates(
 		if json.Unmarshal(tr.Input, &in) != nil || !in.matches(changeContext, metrics) {
 			continue
 		}
-		if len(out) == candidates {
+		if len(out) == exampleItems {
 			return out, true, nil
 		}
 		out = append(out, ExampleCandidate{TraceID: verdict.TraceID, Verdict: verdict.Verdict, Head: headline(verdict.Reason)})
