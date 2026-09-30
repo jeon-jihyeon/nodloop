@@ -264,3 +264,65 @@ func TestRecordGate(t *testing.T) {
 		})
 	}
 }
+
+// The first step of the demo investigation gets a second paragraph
+func TestRecordFirstStepSection(t *testing.T) {
+	const (
+		signal  = "metric-anomaly-investigation#Metric anomaly investigation/Confirm the signal#1"
+		second  = "metric-anomaly-investigation#Metric anomaly investigation/Confirm the signal#2"
+		segment = "metric-anomaly-investigation#Metric anomaly investigation/Check the segment#1"
+	)
+	type want struct {
+		// Revisions of the first submission
+		revisions []string
+		// The review recorded by the second submission
+		status evidence.Status
+		forced bool
+	}
+	sentBack := func(id string) []string {
+		return []string{`cause "cause x" cites ` + id + ", the first step of its procedure. " +
+			"A first step is a check and never states a cause. Cite the paragraph that states the cause"}
+	}
+	tcs := []struct {
+		name string
+		// The paragraph the cause cites
+		args string
+		want want
+	}{
+		{"a cause citing the second paragraph of a first step is sent back and then held", second, want{
+			revisions: sentBack(second), status: evidence.StatusHold, forced: true,
+		}},
+		{"a cause citing the first paragraph of a first step is sent back and then held", signal, want{
+			revisions: sentBack(signal), status: evidence.StatusHold, forced: true,
+		}},
+		{"a cause citing a later step is recorded", segment, want{status: evidence.StatusReadyForReview}},
+	}
+	ctx := context.Background()
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			s := testkit.Open(t)
+			src := editedDemo(t, "metric-anomaly-investigation.md", "\n## Check the segment",
+				"\nRead the hourly series too before trusting the mean.\n\n## Check the segment")
+			d := diagnose.New(src, testkit.Policy(t), nil, s.Traces, s.Feedback, s.Ledger, s.Clock.Now)
+			c, err := d.Prepare(ctx, "tq-005", diagnose.ModeInteractive, diagnose.Session{})
+			require.NoError(t, err)
+			require.Contains(t, c.ParagraphIDs, second)
+			review := diagnose.Diagnosis{
+				Status: evidence.StatusReadyForReview,
+				Causes: []diagnose.Cause{{Summary: "cause x", ParagraphIDs: []string{tc.args}}},
+				Checks: diagnose.Checks{{Step: "s", ParagraphIDs: []string{signal}}},
+			}
+
+			first, err := d.Record(ctx, c.PendingID, review)
+			require.NoError(t, err)
+			got := first
+			if len(first.Revisions) > 0 {
+				got, err = d.Record(ctx, c.PendingID, review)
+				require.NoError(t, err)
+			}
+
+			assert.Equal(t, tc.want, want{revisions: first.Revisions, status: got.Diagnosis.Status, forced: got.Forced})
+		})
+	}
+}

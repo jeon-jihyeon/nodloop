@@ -126,16 +126,17 @@ func (s steps) of(procedure string) (string, bool) {
 	return "", false
 }
 
-// The first section after the introduction of every included procedure in paragraph order
+// Every paragraph of the first section after the introduction of every included procedure in paragraph order
 // A procedure without a step has none
 // A later step is not a check by position because it may state a finding
 func (c Context) firstSteps() steps {
-	var procedures []string
 	var out steps
 	for _, id := range c.ParagraphIDs {
 		p := evidence.ParagraphID(id)
-		if p.IsStep() && !slices.Contains(procedures, p.Procedure()) {
-			procedures = append(procedures, p.Procedure())
+		if !p.IsStep() {
+			continue
+		}
+		if first, ok := out.of(p.Procedure()); !ok || evidence.ParagraphID(first).Section() == p.Section() {
 			out = append(out, id)
 		}
 	}
