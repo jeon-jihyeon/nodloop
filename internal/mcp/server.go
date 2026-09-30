@@ -460,7 +460,7 @@ type proposeInput struct {
 	ChangeContexts []evidence.Context `json:"change_contexts,omitempty" jsonschema:"scope: change contexts it applies to"`
 	Metrics        []string           `json:"metrics,omitempty" jsonschema:"scope: metrics it applies to"`
 	Dims           map[string]string  `json:"dims,omitempty" jsonschema:"scope: dimension values it applies to such as platform ios"`
-	Exceptions     []evidence.Context `json:"exceptions,omitempty" jsonschema:"change contexts where it must not apply"`
+	Exceptions     []evidence.Context `json:"exceptions,omitempty" jsonschema:"change contexts where it must not apply. Propose fails on a context outside the valid set or on exceptions that leave no scoped context"`
 	TraceIDs       []string           `json:"trace_ids,omitempty" jsonschema:"diagnose trace ids whose feedback is the evidence. Give at least one of trace_ids or paragraph_ids"`
 	ParagraphIDs   []string           `json:"paragraph_ids,omitempty" jsonschema:"procedure paragraph ids that support it"`
 	Author         string             `json:"author,omitempty" jsonschema:"who proposed. claude by default because the conversation proposes"`
