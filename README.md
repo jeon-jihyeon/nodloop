@@ -29,7 +29,7 @@ On first run, the plugin downloads its binary. Start Claude Code in the director
 > review event tq-024 with nodloop
 ```
 
-The second review applies the knowledge you approved. When you are done with the demo, point nodloop at your own directory the same way. It needs `events.csv`, `policy.yaml` and your procedures as Markdown files under `procedures/`.
+The second review applies the knowledge you approved. When you are done with the demo, point nodloop at your own directory the same way and ask for a new record directory too, such as `~/.nodloop/own-records`. Otherwise the demo reviews, corrections and knowledge stay in `~/.nodloop/records` and carry into reviews of your data, and setup warns about that. `NODLOOP_RECORD_DIR` wins over the record directory setup saves, so while it is set point it at a new directory instead. `NODLOOP_FILE_DIR` wins over the saved data directory the same way, and setup warns when it names another one. It needs `events.csv`, `policy.yaml` and your procedures as Markdown files under `procedures/`.
 
 ## How it works
 

@@ -21,6 +21,15 @@ func TestRunSetup(t *testing.T) {
 		args []string
 		// Empty for an unknown home
 		home string
+		// config.json under home before the run
+		// Empty means none
+		config string
+		// NODLOOP_RECORD_DIR during the run
+		recordEnv string
+		// The default records under home hold a file
+		seeded bool
+		// NODLOOP_FILE_DIR during the run
+		fileEnv string
 	}
 	type want struct {
 		code   int
@@ -28,6 +37,7 @@ func TestRunSetup(t *testing.T) {
 		// Regexp matched against stderr
 		stderr string
 		// The config a later data command resolves from HOME alone
+		// A failed run leaves the config of before
 		cfg config
 		err error
 	}
@@ -38,40 +48,187 @@ func TestRunSetup(t *testing.T) {
 	}{
 		{
 			"data dir and record dir are stored absolute",
-			args{[]string{"--data-dir", "../../examples/demo", "--record-dir", "records"}, "{home}"},
+			args{[]string{"--data-dir", "../../examples/demo", "--record-dir", "records"}, "{home}", "", "", false, ""},
 			want{
-				0, "data {demo}\nconfig {home}/.nodloop/config.json\n", `^$`,
+				0, "data {demo}\nrecords {cwd}/records\nconfig {home}/.nodloop/config.json\n", `^$`,
 				config{dataDir: "{demo}", recordDir: "{cwd}/records", home: "{home}"}, nil,
 			},
 		},
 		{
+			"records default under home",
+			args{[]string{"--data-dir", "{demo}"}, "{home}", "", "", false, ""},
+			want{
+				0, "data {demo}\nrecords {home}/.nodloop/records\nconfig {home}/.nodloop/config.json\n", `^$`,
+				config{dataDir: "{demo}", recordDir: "{home}/.nodloop/records", home: "{home}"}, nil,
+			},
+		},
+		{
+			"a rerun without a record dir keeps the saved one",
+			args{[]string{"--data-dir", "{demo}"}, "{home}", `{"file_dir":"{own}","record_dir":"{team}"}`, "", false, ""},
+			want{
+				0, "data {demo}\nrecords {team}\nconfig {home}/.nodloop/config.json\n", `^$`,
+				config{dataDir: "{demo}", recordDir: "{team}", home: "{home}"}, nil,
+			},
+		},
+		{
+			"a record dir flag replaces the saved one",
+			args{[]string{"--data-dir", "{demo}", "--record-dir", "{team}"}, "{home}", `{"file_dir":"{demo}","record_dir":"{shared}"}`, "", false, ""},
+			want{
+				0, "data {demo}\nrecords {team}\nconfig {home}/.nodloop/config.json\n", `^$`,
+				config{dataDir: "{demo}", recordDir: "{team}", home: "{home}"}, nil,
+			},
+		},
+		{
+			"a broken config without a record dir fails and stays as it was",
+			args{[]string{"--data-dir", "{demo}"}, "{home}", `{"file_dir":"{own}","record_dir":"{team}",}`, "", false, ""},
+			want{
+				1, "", `^nodloop setup: config\.json is not valid JSON: .*\. Fix it or run setup again with --record-dir <dir> ` +
+					`since the record dir saved in it cannot be read\n$`,
+				config{}, errConfigInvalid,
+			},
+		},
+		{
+			"a broken config with a record dir is replaced",
+			args{[]string{"--data-dir", "{demo}", "--record-dir", "{shared}"}, "{home}", "{broken", "", false, ""},
+			want{
+				0, "data {demo}\nrecords {shared}\nconfig {home}/.nodloop/config.json\n", `^$`,
+				config{dataDir: "{demo}", recordDir: "{shared}", home: "{home}"}, nil,
+			},
+		},
+		{
+			"NODLOOP_FILE_DIR set to another dir prints that dir and warns",
+			args{[]string{"--data-dir", "{own}"}, "{home}", "", "", false, "{demo}"},
+			want{
+				0, "data {demo}\nrecords {home}/.nodloop/records\nconfig {home}/.nodloop/config.json\n",
+				`^nodloop setup: warning: NODLOOP_FILE_DIR is {demo} and wins over the saved data dir so every command started with it ` +
+					`reviews {demo}\. Unset it to review {own}\n$`,
+				config{dataDir: "{own}", recordDir: "{home}/.nodloop/records", home: "{home}"}, nil,
+			},
+		},
+		{
+			"NODLOOP_FILE_DIR naming the same dir relative stays silent",
+			args{[]string{"--data-dir", "{demo}"}, "{home}", "", "", false, "../../examples/demo"},
+			want{
+				0, "data {demo}\nrecords {home}/.nodloop/records\nconfig {home}/.nodloop/config.json\n", `^$`,
+				config{dataDir: "{demo}", recordDir: "{home}/.nodloop/records", home: "{home}"}, nil,
+			},
+		},
+		{
+			"a new data dir over records that hold files warns",
+			args{[]string{"--data-dir", "{own}"}, "{home}", `{"file_dir":"{demo}","record_dir":"{shared}"}`, "", false, ""},
+			want{
+				0, "data {own}\nrecords {shared}\nconfig {home}/.nodloop/config.json\n",
+				`^nodloop setup: warning: {shared} holds the reviews and knowledge of {demo} and they carry into reviews of {own}\. ` +
+					`Run setup again with --record-dir <new dir> to keep them apart\n$`,
+				config{dataDir: "{own}", recordDir: "{shared}", home: "{home}"}, nil,
+			},
+		},
+		{
+			"a new data dir with a new record dir stays silent",
+			args{[]string{"--data-dir", "{own}", "--record-dir", "{team}"}, "{home}", `{"file_dir":"{demo}","record_dir":"{shared}"}`, "", false, ""},
+			want{
+				0, "data {own}\nrecords {team}\nconfig {home}/.nodloop/config.json\n", `^$`,
+				config{dataDir: "{own}", recordDir: "{team}", home: "{home}"}, nil,
+			},
+		},
+		{
+			"a new record dir under NODLOOP_RECORD_DIR still warns",
+			args{[]string{"--data-dir", "{own}", "--record-dir", "{team}"}, "{home}", `{"file_dir":"{demo}"}`, "{shared}", false, ""},
+			want{
+				0, "data {own}\nrecords {shared}\nconfig {home}/.nodloop/config.json\n",
+				`^nodloop setup: warning: {shared} holds the reviews and knowledge of {demo} and they carry into reviews of {own}\. ` +
+					`Set NODLOOP_RECORD_DIR to a new dir to keep them apart\n$`,
+				config{dataDir: "{own}", recordDir: "{team}", home: "{home}"}, nil,
+			},
+		},
+		{
+			"the default records named explicitly over a config without a record dir warn",
+			args{[]string{"--data-dir", "{own}", "--record-dir", "{home}/.nodloop/records"}, "{home}", `{"file_dir":"{demo}"}`, "", true, ""},
+			want{
+				0, "data {own}\nrecords {home}/.nodloop/records\nconfig {home}/.nodloop/config.json\n",
+				`^nodloop setup: warning: {home}/\.nodloop/records holds the reviews and knowledge of {demo} and they carry into reviews of {own}\. ` +
+					`Run setup again with --record-dir <new dir> to keep them apart\n$`,
+				config{dataDir: "{own}", recordDir: "{home}/.nodloop/records", home: "{home}"}, nil,
+			},
+		},
+		{
+			"a relative NODLOOP_RECORD_DIR fails before the config changes",
+			args{[]string{"--data-dir", "{demo}"}, "{home}", `{"file_dir":"{own}","record_dir":"{team}"}`, "records", false, ""},
+			want{
+				1, "", "^nodloop setup: the record directory must be an absolute path: NODLOOP_RECORD_DIR is \"records\"",
+				config{dataDir: "{own}", recordDir: "{team}", home: "{home}"}, nil,
+			},
+		},
+		{
+			"a rerun with the same data dir stays silent",
+			args{[]string{"--data-dir", "{demo}"}, "{home}", `{"file_dir":"{demo}","record_dir":"{shared}"}`, "", false, ""},
+			want{
+				0, "data {demo}\nrecords {shared}\nconfig {home}/.nodloop/config.json\n", `^$`,
+				config{dataDir: "{demo}", recordDir: "{shared}", home: "{home}"}, nil,
+			},
+		},
+		{
+			"a rerun through a link to the saved data dir stays silent",
+			args{[]string{"--data-dir", "{demolink}"}, "{home}", `{"file_dir":"{demo}","record_dir":"{shared}"}`, "", false, ""},
+			want{
+				0, "data {demolink}\nrecords {shared}\nconfig {home}/.nodloop/config.json\n", `^$`,
+				config{dataDir: "{demolink}", recordDir: "{shared}", home: "{home}"}, nil,
+			},
+		},
+		{
+			"a rerun through the real path of a saved linked data dir stays silent",
+			args{[]string{"--data-dir", "{demo}"}, "{home}", `{"file_dir":"{demolink}","record_dir":"{shared}"}`, "", false, ""},
+			want{
+				0, "data {demo}\nrecords {shared}\nconfig {home}/.nodloop/config.json\n", `^$`,
+				config{dataDir: "{demo}", recordDir: "{shared}", home: "{home}"}, nil,
+			},
+		},
+		{
+			"NODLOOP_FILE_DIR naming the same dir through a link stays silent",
+			args{[]string{"--data-dir", "{demo}"}, "{home}", "", "", false, "{demolink}"},
+			want{
+				0, "data {demolink}\nrecords {home}/.nodloop/records\nconfig {home}/.nodloop/config.json\n", `^$`,
+				config{dataDir: "{demo}", recordDir: "{home}/.nodloop/records", home: "{home}"}, nil,
+			},
+		},
+		{
+			"a new data dir over the saved records named through a link warns",
+			args{[]string{"--data-dir", "{own}", "--record-dir", "{shared}"}, "{home}", `{"file_dir":"{demo}","record_dir":"{sharedlink}"}`, "", false, ""},
+			want{
+				0, "data {own}\nrecords {shared}\nconfig {home}/.nodloop/config.json\n",
+				`^nodloop setup: warning: {shared} holds the reviews and knowledge of {demo} and they carry into reviews of {own}\. ` +
+					`Run setup again with --record-dir <new dir> to keep them apart\n$`,
+				config{dataDir: "{own}", recordDir: "{shared}", home: "{home}"}, nil,
+			},
+		},
+		{
 			"data dir without events fails",
-			args{[]string{"--data-dir", "{empty}"}, "{home}"},
+			args{[]string{"--data-dir", "{empty}"}, "{home}", "", "", false, ""},
 			want{1, "", "^nodloop setup: no events.csv: {empty}\n$", config{}, errDataDirUnset},
 		},
 		{
 			"data dir without a policy fails",
-			args{[]string{"--data-dir", "{events}"}, "{home}"},
+			args{[]string{"--data-dir", "{events}"}, "{home}", "", "", false, ""},
 			want{1, "", "^nodloop setup: no policy.yaml: {events}\n$", config{}, errDataDirUnset},
 		},
 		{
 			"no flags fail",
-			args{nil, "{home}"},
+			args{nil, "{home}", "", "", false, ""},
 			want{1, "", "^nodloop setup: --data-dir is required\n\nusage:", config{}, errDataDirUnset},
 		},
 		{
 			"unknown home fails",
-			args{[]string{"--data-dir", "{demo}"}, ""},
+			args{[]string{"--data-dir", "{demo}"}, "", "", "", false, ""},
 			want{1, "", "^nodloop setup: home directory unknown: HOME is not set\n$", config{}, errDataDirUnset},
 		},
 		{
 			"the removed demo flag is unknown",
-			args{[]string{"--demo"}, "{home}"},
+			args{[]string{"--demo"}, "{home}", "", "", false, ""},
 			want{1, "", "^flag provided but not defined: -demo\n", config{}, errDataDirUnset},
 		},
 		{
 			"unknown flag fails",
-			args{[]string{"--nope"}, "{home}"},
+			args{[]string{"--nope"}, "{home}", "", "", false, ""},
 			want{1, "", "^flag provided but not defined: -nope\n", config{}, errDataDirUnset},
 		},
 	}
@@ -80,16 +237,37 @@ func TestRunSetup(t *testing.T) {
 			t.Parallel()
 			events := t.TempDir()
 			require.NoError(t, os.WriteFile(filepath.Join(events, "events.csv"), nil, 0o600))
+			demo, own := testkit.DemoDir(t), filepath.Join(t.TempDir(), "own")
+			require.NoError(t, os.CopyFS(own, os.DirFS(demo)))
+			shared := t.TempDir()
+			require.NoError(t, os.WriteFile(filepath.Join(shared, "traces.jsonl"), nil, 0o600))
+			links := t.TempDir()
+			demoLink, sharedLink := filepath.Join(links, "demo"), filepath.Join(links, "shared")
+			require.NoError(t, os.Symlink(demo, demoLink))
+			require.NoError(t, os.Symlink(shared, sharedLink))
 			r := strings.NewReplacer(
+				"{demolink}", demoLink, "{sharedlink}", sharedLink,
 				"{home}", t.TempDir(), "{empty}", t.TempDir(), "{events}", events,
-				"{demo}", testkit.DemoDir(t), "{cwd}", cwd,
+				"{demo}", demo, "{own}", own, "{shared}", shared, "{team}", t.TempDir(), "{cwd}", cwd,
 			)
 			args := make([]string, 0, len(tc.args.args))
 			for _, a := range tc.args.args {
 				args = append(args, r.Replace(a))
 			}
 			home := r.Replace(tc.args.home)
-			getenv := func(k string) string { return map[string]string{"HOME": home}[k] }
+			if tc.args.config != "" {
+				require.NoError(t, os.MkdirAll(homeDir(home).dir(), 0o755))
+				require.NoError(t, os.WriteFile(homeDir(home).configPath(), []byte(r.Replace(tc.args.config)), 0o600))
+			}
+			if tc.args.seeded {
+				require.NoError(t, os.MkdirAll(homeDir(home).recordDir(), 0o755))
+				require.NoError(t, os.WriteFile(filepath.Join(homeDir(home).recordDir(), "traces.jsonl"), nil, 0o600))
+			}
+			getenv := func(k string) string {
+				return map[string]string{
+					"HOME": home, envRecordDir: r.Replace(tc.args.recordEnv), envFileDir: r.Replace(tc.args.fileEnv),
+				}[k]
+			}
 			var stdout, stderr bytes.Buffer
 
 			got := runSetup(args, getenv, &stdout, &stderr)
@@ -97,7 +275,7 @@ func TestRunSetup(t *testing.T) {
 			assert.Equal(t, tc.want.code, got)
 			assert.Equal(t, r.Replace(tc.want.stdout), stdout.String())
 			assert.Regexp(t, r.Replace(tc.want.stderr), stderr.String())
-			cfg, err := resolveConfig(getenv, "", "", "")
+			cfg, err := resolveConfig(func(k string) string { return map[string]string{"HOME": home}[k] }, "", "", "")
 			assert.ErrorIs(t, err, tc.want.err)
 			assert.Equal(t, config{
 				dataDir: r.Replace(tc.want.cfg.dataDir), recordDir: r.Replace(tc.want.cfg.recordDir),
