@@ -42,13 +42,13 @@ const (
 
 // The server over the stores as the composition root builds it
 // A test that needs another source or ledger replaces it in its copy of the stores
-func connect(t *testing.T, st testkit.Stores, exe string) testkit.Client {
+func connect(t *testing.T, st testkit.Stores, exe, dataArgs string) testkit.Client {
 	t.Helper()
 	policy := testkit.Policy(t)
 	diagnoser := diagnose.New(st.Source, policy, nil, st.Traces, st.Feedback, st.Ledger, st.Clock.Now)
 	compactor := compact.New(st.Source, st.Ledger, st.Traces, st.Feedback, st.Outcomes, st.Replays)
 	srv := mcp.New(
-		st.Source, policy, diagnoser, st.Traces, st.Feedback, st.Outcomes, st.Ledger, compactor, st.Clock.Now, "test", exe,
+		st.Source, policy, diagnoser, st.Traces, st.Feedback, st.Outcomes, st.Ledger, compactor, st.Clock.Now, "test", exe, dataArgs,
 	)
 	return testkit.Connect(t, srv.ServeTransport)
 }
@@ -56,7 +56,7 @@ func connect(t *testing.T, st testkit.Stores, exe string) testkit.Client {
 func TestServerTools(t *testing.T) {
 	t.Parallel()
 	st := testkit.Open(t)
-	c := connect(t, st, "nodloop")
+	c := connect(t, st, "nodloop", "")
 
 	assert.ElementsMatch(t, mcp.Tools(), c.Tools(t))
 }
@@ -139,7 +139,7 @@ func TestServerEvents(t *testing.T) {
 			src, err := evidencefile.New(tc.args.dataDir)
 			require.NoError(t, err)
 			st.Source = src
-			c := connect(t, st, "nodloop")
+			c := connect(t, st, "nodloop", "")
 
 			var got json.RawMessage
 			err = c.Call(t, "events", tc.args.input, &got)
@@ -161,7 +161,7 @@ func TestServerEvents(t *testing.T) {
 func TestServerObserve(t *testing.T) {
 	t.Parallel()
 	st := testkit.Open(t)
-	c := connect(t, st, "nodloop")
+	c := connect(t, st, "nodloop", "")
 	tcs := []struct {
 		name string
 		args string
@@ -194,7 +194,7 @@ func TestServerObserve(t *testing.T) {
 func TestServerContext(t *testing.T) {
 	t.Parallel()
 	st := testkit.Open(t)
-	c := connect(t, st, "nodloop")
+	c := connect(t, st, "nodloop", "")
 
 	var got struct {
 		PendingID           string                        `json:"pending_id"`
@@ -223,7 +223,7 @@ func TestServerOffers(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	st := testkit.Open(t)
-	c := connect(t, st, "nodloop")
+	c := connect(t, st, "nodloop", "")
 	b, err := os.ReadFile(reviewFile)
 	require.NoError(t, err)
 	review := json.RawMessage(b)
@@ -301,7 +301,7 @@ func TestServerOffers(t *testing.T) {
 func TestServerRecordSendsBack(t *testing.T) {
 	t.Parallel()
 	st := testkit.Open(t)
-	c := connect(t, st, "nodloop")
+	c := connect(t, st, "nodloop", "")
 	var opened struct {
 		PendingID string `json:"pending_id"`
 	}
@@ -338,7 +338,7 @@ func TestServerRecordSendsBack(t *testing.T) {
 func TestServerRecordRefusesUnknownStatus(t *testing.T) {
 	t.Parallel()
 	st := testkit.Open(t)
-	c := connect(t, st, "nodloop")
+	c := connect(t, st, "nodloop", "")
 	b, err := os.ReadFile(reviewFile)
 	require.NoError(t, err)
 	var review diagnose.Diagnosis
@@ -378,7 +378,7 @@ func TestServerRecordRefusesUnknownStatus(t *testing.T) {
 func TestServerRecord(t *testing.T) {
 	t.Parallel()
 	st := testkit.Open(t)
-	c := connect(t, st, "nodloop")
+	c := connect(t, st, "nodloop", "")
 	b, err := os.ReadFile(reviewFile)
 	require.NoError(t, err)
 	var review diagnose.Diagnosis
@@ -424,7 +424,7 @@ func TestServerFeedback(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	st := testkit.Open(t)
-	c := connect(t, st, "nodloop")
+	c := connect(t, st, "nodloop", "")
 	b, err := os.ReadFile(reviewFile)
 	require.NoError(t, err)
 	review := json.RawMessage(b)
@@ -495,7 +495,7 @@ func TestServerOutcome(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	st := testkit.Open(t)
-	c := connect(t, st, "nodloop")
+	c := connect(t, st, "nodloop", "")
 	b, err := os.ReadFile(reviewFile)
 	require.NoError(t, err)
 	review := json.RawMessage(b)
@@ -570,7 +570,7 @@ func TestServerProposeAndApprove(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	st := testkit.Open(t)
-	c := connect(t, st, "nodloop")
+	c := connect(t, st, "nodloop", "")
 	b, err := os.ReadFile(reviewFile)
 	require.NoError(t, err)
 	review := json.RawMessage(b)
@@ -734,7 +734,7 @@ func TestServerProposeFrom(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			st := testkit.Open(t)
-			c := connect(t, st, "nodloop")
+			c := connect(t, st, "nodloop", "")
 			b, err := os.ReadFile(reviewFile)
 			require.NoError(t, err)
 			var opened struct {
@@ -819,7 +819,7 @@ func TestServerApproveKeepsTheApproval(t *testing.T) {
 			}))
 			flaky := &testkit.FlakyKnowledge{Store: items, Reads: testkit.Reads{Allowed: 2, Err: assert.AnError}}
 			st.Ledger = knowledge.NewLedger(flaky, vetofile.NewApprovedFile(home, dir), st.Clock.Now, func(p string) string { return p })
-			c := connect(t, st, "nodloop")
+			c := connect(t, st, "nodloop", "")
 			var got map[string]any
 
 			require.NoError(t, c.Call(t, "approve", map[string]any{"id": "k-lag", "version": 1, "approver": "jed"}, &got))
@@ -838,7 +838,7 @@ func TestServerApproveKeepsTheApproval(t *testing.T) {
 func TestServerProposeFolder(t *testing.T) {
 	t.Parallel()
 	st := testkit.Open(t)
-	c := connect(t, st, "nodloop")
+	c := connect(t, st, "nodloop", "")
 	type folder struct {
 		Chars         int              `json:"chars"`
 		Budget        int              `json:"budget"`
@@ -963,7 +963,7 @@ func TestServerDetail(t *testing.T) {
 			src, err := evidencefile.New(tc.args.dir)
 			require.NoError(t, err)
 			st.Source = src
-			c := connect(t, st, "nodloop")
+			c := connect(t, st, "nodloop", "")
 			want, err := os.ReadFile(tc.want)
 			require.NoError(t, err)
 
@@ -979,7 +979,7 @@ func TestServerPending(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	st := testkit.Open(t)
-	c := connect(t, st, "nodloop")
+	c := connect(t, st, "nodloop", "")
 	b, err := os.ReadFile(reviewFile)
 	require.NoError(t, err)
 	review := json.RawMessage(b)
@@ -1012,7 +1012,7 @@ func TestServerPending(t *testing.T) {
 func TestServerRefusals(t *testing.T) {
 	t.Parallel()
 	st := testkit.Open(t)
-	c := connect(t, st, "nodloop")
+	c := connect(t, st, "nodloop", "")
 	b, err := os.ReadFile(reviewFile)
 	require.NoError(t, err)
 	review := json.RawMessage(b)

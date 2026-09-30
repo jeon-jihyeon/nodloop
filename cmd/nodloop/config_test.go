@@ -128,3 +128,67 @@ func TestResolveConfig(t *testing.T) {
 		})
 	}
 }
+
+// The flags a replay command carries so a shell without the server's flags or env reads the same records
+func TestConfigDataArgs(t *testing.T) {
+	demo := testkit.DemoDir(t)
+	h := homeDir(t.TempDir())
+	records := filepath.Join(t.TempDir(), "records")
+	uc, err := newUserConfig(demo, records)
+	require.NoError(t, err)
+	require.NoError(t, h.save(uc))
+	wd, err := os.Getwd()
+	require.NoError(t, err)
+	type args struct {
+		env                map[string]string
+		dataDir, recordDir string
+	}
+	tcs := []struct {
+		name string
+		args args
+		want string
+	}{
+		{
+			"flag directories are named",
+			args{nil, "/d", "/r"},
+			"--data-dir /d --record-dir /r",
+		},
+		{
+			"relative flag directories are made absolute",
+			args{nil, "data", "rec"},
+			"--data-dir " + filepath.Join(wd, "data") + " --record-dir " + filepath.Join(wd, "rec"),
+		},
+		{
+			"directories with a space are quoted",
+			args{nil, "/my data", "/my records"},
+			"--data-dir '/my data' --record-dir '/my records'",
+		},
+		{
+			"directories of the setup config are named",
+			args{map[string]string{"HOME": string(h)}, "", ""},
+			"--data-dir " + demo + " --record-dir " + records,
+		},
+		{
+			"directories of the env are named",
+			args{map[string]string{envFileDir: "/env-data", envRecordDir: "/env-records"}, "", ""},
+			"--data-dir /env-data --record-dir /env-records",
+		},
+		{
+			"no record dir without a home names only the data dir",
+			args{nil, "/d", ""},
+			"--data-dir /d",
+		},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			cfg, err := resolveConfig(func(k string) string { return tc.args.env[k] }, "", tc.args.dataDir, tc.args.recordDir)
+			require.NoError(t, err)
+
+			got, err := cfg.dataArgs()
+
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, got)
+		})
+	}
+}
