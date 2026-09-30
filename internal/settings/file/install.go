@@ -30,14 +30,47 @@ func Uninstall(path string) (changed bool, err error) {
 	return edit(path, func(d settings.Document) (bool, error) { return d.Uninstall(), nil })
 }
 
-// Whether `settings.json` registers the nodloop hook
-// A missing file registers nothing
-func Installed(path string) (bool, error) {
+// Whether `settings.json` registers the nodloop hook and whether that hook can block
+// 1. a missing file registers nothing
+// 2. a hook whose matcher leaves tools out fails with settings.ErrHookNarrow
+// 3. a hook whose absolute executable is gone fails with ErrHookMissing because the shell then exits 127 and Claude Code lets the call through
+// 4. a bare command name resolves on the PATH of the hook process and is not checked
+// 5. disableAllHooks fails with settings.ErrHooksOff because no registered hook runs then
+// 6. a hook on another binary in the folder of the stable link fails with ErrHookStale because upgrades move only the link and never rewrite settings.json
+// 7. a hook outside that folder and a missing stable link are not compared so a binary the user chose is never called stale
+func Installed(path, stable string) (bool, error) {
 	_, doc, err := load(path)
 	if err != nil {
 		return false, err
 	}
-	return len(doc.Hooks()) > 0, nil
+	hooks := doc.Hooks()
+	errs := []error{doc.CheckHooksOn()}
+	for _, h := range hooks {
+		errs = append(errs, h.CheckMatcher())
+		exe := h.Exe()
+		if !filepath.IsAbs(exe) {
+			continue
+		}
+		info, err := os.Stat(exe)
+		if err != nil || info.IsDir() {
+			errs = append(errs, fmt.Errorf("%w: %s", ErrHookMissing, exe))
+			continue
+		}
+		if staleBeside(exe, info, stable) {
+			errs = append(errs, fmt.Errorf("%w: %s runs while the stable link runs %s", ErrHookStale, exe, stable))
+		}
+	}
+	return len(hooks) > 0, errors.Join(errs...)
+}
+
+// Whether exe sits under the folder of the stable link and is not the binary the link names
+func staleBeside(exe string, running os.FileInfo, stable string) bool {
+	rel, err := filepath.Rel(filepath.Dir(stable), exe)
+	if err != nil || !filepath.IsLocal(rel) {
+		return false
+	}
+	linked, err := os.Stat(stable)
+	return err == nil && !os.SameFile(running, linked)
 }
 
 // The bytes read once are the backup so a file that changed between read and write is never backed up as something else

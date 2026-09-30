@@ -232,3 +232,56 @@ func TestDocumentHooks(t *testing.T) {
 		})
 	}
 }
+
+func TestDocumentCheckHooksOn(t *testing.T) {
+	tcs := []struct {
+		name string
+		args string
+		want error
+	}{
+		{"disableAllHooks true turns every hook off", `{"disableAllHooks":true}`, settings.ErrHooksOff},
+		{"disableAllHooks false leaves hooks on", `{"disableAllHooks":false}`, nil},
+		{"no disableAllHooks leaves hooks on", `{}`, nil},
+		{"a non boolean disableAllHooks is not read as true", `{"disableAllHooks":"true"}`, nil},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			doc := settings.Document{}
+			require.NoError(t, json.Unmarshal([]byte(tc.args), &doc))
+			assert.ErrorIs(t, doc.CheckHooksOn(), tc.want)
+		})
+	}
+}
+
+func TestHook(t *testing.T) {
+	type want struct {
+		exe string
+		err error
+	}
+	tcs := []struct {
+		name string
+		args settings.Hook
+		want want
+	}{
+		{"a hook on every tool is sound", settings.Hook{Command: "/a/nodloop guard", Matcher: "*"}, want{"/a/nodloop", nil}},
+		{"an empty matcher covers every tool", settings.Hook{Command: "/a/nodloop guard"}, want{"/a/nodloop", nil}},
+		{
+			"a quoted executable is unquoted",
+			settings.Hook{Command: `'/it'\''s/nodloop' guard`, Matcher: "*"},
+			want{"/it's/nodloop", nil},
+		},
+		{
+			"a matcher of some tools is narrow",
+			settings.Hook{Command: "/a/nodloop guard", Matcher: "Bash|Edit"},
+			want{"/a/nodloop", settings.ErrHookNarrow},
+		},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.want.exe, tc.args.Exe())
+			assert.ErrorIs(t, tc.args.CheckMatcher(), tc.want.err)
+		})
+	}
+}

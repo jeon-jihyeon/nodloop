@@ -8,4 +8,6 @@ var (
 	ErrJSONInvalid = errors.New("settings file: not valid JSON")
 	ErrBackup      = errors.New("settings file: backup failed")
 	ErrWrite       = errors.New("settings file: write failed")
+	ErrHookMissing = errors.New("hook executable missing")
+	ErrHookStale   = errors.New("hook runs another binary than the stable link")
 )

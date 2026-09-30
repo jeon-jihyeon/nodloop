@@ -32,6 +32,29 @@ type Hook struct {
 	Matcher string
 }
 
+// Unquoted executable of the hook command
+func (h Hook) Exe() string {
+	exe, _ := command(h.Command).exe()
+	return exe
+}
+
+// A matcher that leaves tools out never runs the vetoes of those tools
+// Claude Code reads an empty matcher as every tool
+func (h Hook) CheckMatcher() error {
+	if h.Matcher != allTools && h.Matcher != "" {
+		return fmt.Errorf("%w: %q", ErrHookNarrow, h.Matcher)
+	}
+	return nil
+}
+
+// Claude Code runs no hook at all while disableAllHooks is true
+func (d Document) CheckHooksOn() error {
+	if off, _ := d["disableAllHooks"].(bool); off {
+		return ErrHooksOff
+	}
+	return nil
+}
+
 // Register the PreToolUse hook of exe as the only nodloop hook
 // 1. returns false without changes when exactly that hook is the only one registered
 // 2. drops every other nodloop hook first so a stale path or a narrow matcher is replaced and never left beside it

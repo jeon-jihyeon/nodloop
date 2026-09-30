@@ -94,7 +94,7 @@ func TestRunGuard(t *testing.T) {
 		{
 			"check lists the user vetoes",
 			args{[]string{"check"}, nil, "{home}", "{}"},
-			want{0, "{home}/{rel}: 2 vetoes\nmerged: 2 vetoes\n", `^$`, "{}"},
+			want{0, "{home}/{rel}: 2 vetoes\nmerged: 2 vetoes\nguard hook not installed. Run nodloop guard install to enforce them\n", `^$`, "{}"},
 		},
 		{
 			"install registers the absolute executable",
@@ -169,10 +169,23 @@ func TestGuardCommandCheck(t *testing.T) {
 	require.NoError(t, err)
 	partial, err := os.ReadFile("testdata/partial.yaml")
 	require.NoError(t, err)
+	const (
+		unhooked = "guard hook not installed. Run nodloop guard install to enforce them\n"
+		hook     = `{"hooks":{"PreToolUse":[{"matcher":"{matcher}","hooks":[{"type":"command","command":"{exe} guard"}]}]}}`
+	)
 	type args struct {
 		// Veto file content keyed by the `{cwd}` or `{parent}` or `{home}` placeholder
 		// `{parent}` is the parent directory of the cwd
 		files map[string][]byte
+		// Content of settings.json with `{exe}` for an executable file and `{matcher}` for the matcher
+		// Empty leaves no settings file
+		settings string
+		matcher  string
+		// The hook executable with `{bin}` for the plugin folder that holds v0.4.1 and v0.5.0 and the stable link to v0.5.0
+		// Empty means an executable file under home
+		exe string
+		// Whether the home is unknown
+		homeless bool
 	}
 	type want struct {
 		stdout string
@@ -186,52 +199,122 @@ func TestGuardCommandCheck(t *testing.T) {
 	}{
 		{
 			"no file reports where it looked",
-			args{nil},
-			want{"no veto file found (looked for {rel} from {cwd} up to its project root and under {home})\n", nil},
-		},
-		{
-			"project file in a parent of the cwd is listed",
-			args{map[string][]byte{"{parent}": valid}},
-			want{"{parent}/{rel}: 2 vetoes\nmerged: 2 vetoes\n", nil},
-		},
-		{
-			"project files of the cwd and a parent are both listed nearest first",
-			args{map[string][]byte{"{cwd}": valid, "{parent}": valid}},
-			want{"{cwd}/{rel}: 2 vetoes\n{parent}/{rel}: 2 vetoes\nmerged: 2 vetoes\n", nil},
+			args{},
+			want{"no veto file found (looked for {rel} from {cwd} up to its project root and under {home})\n" + unhooked, nil},
 		},
 		{
 			"both files list their counts and the merge",
-			args{map[string][]byte{"{cwd}": valid, "{home}": valid}},
-			want{"{cwd}/{rel}: 2 vetoes\n{home}/{rel}: 2 vetoes\nmerged: 2 vetoes\n", nil},
+			args{files: map[string][]byte{"{cwd}": valid, "{home}": valid}},
+			want{"{cwd}/{rel}: 2 vetoes\n{home}/{rel}: 2 vetoes\nmerged: 2 vetoes\n" + unhooked, nil},
 		},
 		{
 			"project file alone is listed",
-			args{map[string][]byte{"{cwd}": valid}},
-			want{"{cwd}/{rel}: 2 vetoes\nmerged: 2 vetoes\n", nil},
+			args{files: map[string][]byte{"{cwd}": valid}},
+			want{"{cwd}/{rel}: 2 vetoes\nmerged: 2 vetoes\n" + unhooked, nil},
+		},
+		{
+			"project file in a parent of the cwd is listed",
+			args{files: map[string][]byte{"{parent}": valid}},
+			want{"{parent}/{rel}: 2 vetoes\nmerged: 2 vetoes\n" + unhooked, nil},
+		},
+		{
+			"project files of the cwd and a parent are both listed nearest first",
+			args{files: map[string][]byte{"{cwd}": valid, "{parent}": valid}},
+			want{"{cwd}/{rel}: 2 vetoes\n{parent}/{rel}: 2 vetoes\nmerged: 2 vetoes\n" + unhooked, nil},
 		},
 		{
 			"user file alone is listed",
-			args{map[string][]byte{"{home}": valid}},
-			want{"{home}/{rel}: 2 vetoes\nmerged: 2 vetoes\n", nil},
+			args{files: map[string][]byte{"{home}": valid}},
+			want{"{home}/{rel}: 2 vetoes\nmerged: 2 vetoes\n" + unhooked, nil},
 		},
 		{
 			"invalid regexp fails after the listing",
-			args{map[string][]byte{"{cwd}": broken}},
-			want{"merged: 0 vetoes\n", veto.ErrMatchInvalid},
+			args{files: map[string][]byte{"{cwd}": broken}},
+			want{"merged: 0 vetoes\n" + unhooked, veto.ErrMatchInvalid},
 		},
 		{
 			"broken project file still lists the user file",
-			args{map[string][]byte{"{cwd}": broken, "{home}": valid}},
-			want{"{home}/{rel}: 2 vetoes\nmerged: 2 vetoes\n", veto.ErrMatchInvalid},
+			args{files: map[string][]byte{"{cwd}": broken, "{home}": valid}},
+			want{"{home}/{rel}: 2 vetoes\nmerged: 2 vetoes\n" + unhooked, veto.ErrMatchInvalid},
 		},
 		{
 			"file with a broken entry lists its valid entries and names a veto that blocks nothing",
-			args{map[string][]byte{"{home}": partial}},
+			args{files: map[string][]byte{"{home}": partial}},
 			want{
 				"{home}/{rel}: 2 vetoes\n{home}/{rel}: veto lower-case-tool blocks nothing on [\"bash\"]: " +
-					veto.ErrToolUnknown.Error() + "\nmerged: 2 vetoes\n",
+					veto.ErrToolUnknown.Error() + "\nmerged: 2 vetoes\n" + unhooked,
 				veto.ErrMatchInvalid,
 			},
+		},
+		{
+			"a registered hook is reported installed",
+			args{files: map[string][]byte{"{home}": valid}, settings: hook, matcher: "*"},
+			want{"{home}/{rel}: 2 vetoes\nmerged: 2 vetoes\nguard hook installed\n", nil},
+		},
+		{
+			"a hook left on an older plugin binary is reported stale",
+			args{files: map[string][]byte{"{home}": valid}, settings: hook, matcher: "*", exe: "{bin}/v0.4.1/nodloop"},
+			want{
+				"{home}/{rel}: 2 vetoes\nmerged: 2 vetoes\n" +
+					"guard hook stale: hook runs another binary than the stable link: {bin}/v0.4.1/nodloop runs while the stable link runs " +
+					"{bin}/nodloop. Run {bin}/nodloop guard install so the hook follows the plugin\n",
+				nil,
+			},
+		},
+		{
+			"a hook on the stable link is reported installed",
+			args{files: map[string][]byte{"{home}": valid}, settings: hook, matcher: "*", exe: "{bin}/nodloop"},
+			want{"{home}/{rel}: 2 vetoes\nmerged: 2 vetoes\nguard hook installed\n", nil},
+		},
+		{
+			"a hook on the binary the stable link names is reported installed",
+			args{files: map[string][]byte{"{home}": valid}, settings: hook, matcher: "*", exe: "{bin}/v0.5.0/nodloop"},
+			want{"{home}/{rel}: 2 vetoes\nmerged: 2 vetoes\nguard hook installed\n", nil},
+		},
+		{
+			"a hook on Bash alone is reported broken",
+			args{files: map[string][]byte{"{home}": valid}, settings: hook, matcher: "Bash"},
+			want{
+				"{home}/{rel}: 2 vetoes\nmerged: 2 vetoes\n" +
+					"guard hook broken: hook matcher leaves tools out: \"Bash\". Run nodloop guard install to repair it\n",
+				nil,
+			},
+		},
+		{
+			"a hook whose executable is gone is reported broken",
+			args{
+				files:    map[string][]byte{"{home}": valid},
+				settings: strings.ReplaceAll(hook, "{exe}", "{home}/gone/nodloop"), matcher: "*",
+			},
+			want{
+				"{home}/{rel}: 2 vetoes\nmerged: 2 vetoes\n" +
+					"guard hook broken: hook executable missing: {home}/gone/nodloop. Run nodloop guard install to repair it\n",
+				nil,
+			},
+		},
+		{
+			"a registered hook under disableAllHooks is reported off",
+			args{
+				files:    map[string][]byte{"{home}": valid},
+				settings: `{"disableAllHooks":true,` + hook[1:], matcher: "*",
+			},
+			want{
+				"{home}/{rel}: 2 vetoes\nmerged: 2 vetoes\n" +
+					"guard hook off: disableAllHooks is true in {home}/.claude/settings.json so no hook runs. " +
+					"Remove it to enforce them\n",
+				nil,
+			},
+		},
+		{
+			"broken settings leave the hook state unknown",
+			args{files: map[string][]byte{"{home}": valid}, settings: "{"},
+			want{"{home}/{rel}: 2 vetoes\nmerged: 2 vetoes\nguard hook unknown: settings file: not valid JSON: " +
+				"{home}/.claude/settings.json: unexpected end of JSON input\n", nil},
+		},
+		{
+			"an unknown home still lists the project file",
+			args{files: map[string][]byte{"{cwd}": valid}, homeless: true},
+			want{"{cwd}/{rel}: 2 vetoes\nmerged: 2 vetoes\nguard hook unknown: home directory unknown\n", nil},
 		},
 	}
 	for _, tc := range tcs {
@@ -239,18 +322,41 @@ func TestGuardCommandCheck(t *testing.T) {
 			t.Parallel()
 			parent, home := t.TempDir(), t.TempDir()
 			cwd := filepath.Join(parent, "sub")
+			require.NoError(t, os.Mkdir(cwd, 0o755))
 			// The parent is the project root so the walk reads it
-			require.NoError(t, os.MkdirAll(filepath.Join(parent, ".git"), 0o755))
-			require.NoError(t, os.MkdirAll(cwd, 0o755))
-			r := strings.NewReplacer("{cwd}", cwd, "{parent}", parent, "{home}", home, "{rel}", vetofile.RelPath)
+			require.NoError(t, os.Mkdir(filepath.Join(parent, ".git"), 0o755))
+			bin := filepath.Dir(homeDir(home).stableBinary())
+			for _, version := range []string{"v0.4.1", "v0.5.0"} {
+				require.NoError(t, os.MkdirAll(filepath.Join(bin, version), 0o755))
+				require.NoError(t, os.WriteFile(filepath.Join(bin, version, "nodloop"), nil, 0o700))
+			}
+			require.NoError(t, os.Symlink(filepath.Join("v0.5.0", "nodloop"), homeDir(home).stableBinary()))
+			exe := filepath.Join(home, "nodloop")
+			require.NoError(t, os.WriteFile(exe, nil, 0o700))
+			if tc.args.exe != "" {
+				exe = strings.ReplaceAll(tc.args.exe, "{bin}", bin)
+			}
+			r := strings.NewReplacer(
+				"{cwd}", cwd, "{parent}", parent, "{home}", home, "{rel}", vetofile.RelPath,
+				"{exe}", exe, "{matcher}", tc.args.matcher, "{bin}", bin,
+			)
 			for base, content := range tc.args.files {
 				path := filepath.Join(r.Replace(base), vetofile.RelPath)
 				require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
 				require.NoError(t, os.WriteFile(path, content, 0o644))
 			}
+			if tc.args.settings != "" {
+				path := homeDir(home).settingsPath()
+				require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+				require.NoError(t, os.WriteFile(path, []byte(r.Replace(tc.args.settings)), 0o600))
+			}
 			var stdout bytes.Buffer
+			cmd := guardCommand{home: homeDir(home), out: &stdout}
+			if tc.args.homeless {
+				cmd.home = ""
+			}
 
-			err := guardCommand{home: homeDir(home), out: &stdout}.check(cwd)
+			err := cmd.check(cwd)
 
 			assert.ErrorIs(t, err, tc.want.err)
 			assert.Equal(t, r.Replace(tc.want.stdout), stdout.String())
