@@ -37,7 +37,7 @@ func Installed(path string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	return doc.Installed(), nil
+	return len(doc.Hooks()) > 0, nil
 }
 
 // The bytes read once are the backup so a file that changed between read and write is never backed up as something else

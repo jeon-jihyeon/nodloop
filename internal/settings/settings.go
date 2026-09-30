@@ -12,6 +12,8 @@ import (
 const (
 	hookArg   = "guard"
 	exePrefix = "nodloop"
+	// Matches every tool so a veto on any tool runs
+	allTools = "*"
 )
 
 var shellSafe = regexp.MustCompile(`^[A-Za-z0-9/._+:@%=,-]+$`)
@@ -23,27 +25,38 @@ const hookTimeout = 5
 // Decoded settings.json
 type Document map[string]any
 
-// Register the PreToolUse hook
-// 1. returns false without changes when already registered
-// 2. returns ErrHooksInvalid when hooks is not an object or PreToolUse is not an array so no user value is overwritten
+// One nodloop hook registered under PreToolUse
+type Hook struct {
+	Command string
+	// Empty when the group names none
+	Matcher string
+}
+
+// Register the PreToolUse hook of exe as the only nodloop hook
+// 1. returns false without changes when exactly that hook is the only one registered
+// 2. drops every other nodloop hook first so a stale path or a narrow matcher is replaced and never left beside it
+// 3. returns ErrHooksInvalid when hooks is not an object or PreToolUse is not an array so no user value is overwritten
 func (d Document) Install(exe string) (changed bool, err error) {
-	if d.Installed() {
+	want := Hook{Command: string(guardCommand(exe)), Matcher: allTools}
+	if slices.Equal(d.Hooks(), []Hook{want}) {
 		return false, nil
 	}
 	hooks, ok := d["hooks"].(map[string]any)
 	if !ok && d["hooks"] != nil {
 		return false, fmt.Errorf("%w: hooks is not an object", ErrHooksInvalid)
 	}
+	if _, ok := hooks["PreToolUse"].([]any); !ok && hooks["PreToolUse"] != nil {
+		return false, fmt.Errorf("%w: PreToolUse is not an array", ErrHooksInvalid)
+	}
+	d.Uninstall()
+	hooks, _ = d["hooks"].(map[string]any)
 	if hooks == nil {
 		hooks = map[string]any{}
 		d["hooks"] = hooks
 	}
-	pre, ok := hooks["PreToolUse"].([]any)
-	if !ok && hooks["PreToolUse"] != nil {
-		return false, fmt.Errorf("%w: PreToolUse is not an array", ErrHooksInvalid)
-	}
-	entry := map[string]any{"type": "command", "command": string(guardCommand(exe)), "timeout": hookTimeout}
-	hooks["PreToolUse"] = append(pre, map[string]any{"matcher": "*", "hooks": []any{entry}})
+	pre, _ := hooks["PreToolUse"].([]any)
+	entry := map[string]any{"type": "command", "command": want.Command, "timeout": hookTimeout}
+	hooks["PreToolUse"] = append(pre, map[string]any{"matcher": want.Matcher, "hooks": []any{entry}})
 	return true, nil
 }
 
@@ -82,21 +95,27 @@ func (d Document) Uninstall() (changed bool) {
 	return true
 }
 
-// Whether the hook of this binary is registered under PreToolUse
-func (d Document) Installed() bool {
+// Every nodloop hook under PreToolUse in file order
+func (d Document) Hooks() []Hook {
 	hooks, _ := d["hooks"].(map[string]any)
 	pre, _ := hooks["PreToolUse"].([]any)
-	return slices.ContainsFunc(pre, ourGroup)
-}
-
-func ourGroup(g any) bool {
-	group, _ := g.(map[string]any)
-	entries, _ := group["hooks"].([]any)
-	return slices.ContainsFunc(entries, ourEntry)
+	var found []Hook
+	for _, g := range pre {
+		group, _ := g.(map[string]any)
+		matcher, _ := group["matcher"].(string)
+		entries, _ := group["hooks"].([]any)
+		for _, e := range entries {
+			if ourEntry(e) {
+				found = append(found, Hook{Command: string(entryCommand(e)), Matcher: matcher})
+			}
+		}
+	}
+	return found
 }
 
 func ourEntry(e any) bool {
-	return entryCommand(e).ours()
+	_, ok := entryCommand(e).exe()
+	return ok
 }
 
 // Shell command of a hook entry
@@ -118,19 +137,22 @@ func entryCommand(e any) command {
 	return command(c)
 }
 
-// How our hook is recognized
+// The unquoted executable and whether the command is our hook
 // 1. the last argument is guard
 // 2. the executable basename starts with nodloop and holds no space so nodloop-darwin-arm64 matches too
 // 3. a single quoted executable path is unquoted first
 // 4. an unquoted path with spaces written by older installs still matches so uninstall can remove it
-func (c command) ours() bool {
+func (c command) exe() (string, bool) {
 	exe, found := strings.CutSuffix(string(c), " "+hookArg)
 	if !found {
-		return false
+		return "", false
 	}
 	if len(exe) >= 2 && exe[0] == '\'' && exe[len(exe)-1] == '\'' {
 		exe = strings.ReplaceAll(exe[1:len(exe)-1], `'\''`, "'")
 	}
 	base := filepath.Base(exe)
-	return strings.HasPrefix(base, exePrefix) && !strings.Contains(base, " ")
+	if !strings.HasPrefix(base, exePrefix) || strings.Contains(base, " ") {
+		return "", false
+	}
+	return exe, true
 }
