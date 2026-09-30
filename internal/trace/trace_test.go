@@ -63,6 +63,7 @@ func TestTraceCheckReview(t *testing.T) {
 		want error
 	}{
 		{"diagnose trace is a review", trace.Trace{ID: "d1", Name: trace.NameDiagnose}, nil},
+		{"failed diagnose trace is refused", trace.Trace{ID: "f1", Name: trace.NameDiagnose, Error: "model timed out"}, trace.ErrFailedReview},
 		{"revise trace is not a review", trace.Trace{ID: "r1", Name: trace.NameRevise}, trace.ErrNotReview},
 		{"context trace is not a review", trace.Trace{ID: "c1", Name: trace.NameContext}, trace.ErrNotReview},
 		{"select trace is not a review", trace.Trace{ID: "s1", Name: trace.NameSelect}, trace.ErrNotReview},
