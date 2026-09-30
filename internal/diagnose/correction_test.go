@@ -1,8 +1,12 @@
 package diagnose_test
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -205,6 +209,244 @@ func TestCorrectionRefused(t *testing.T) {
 
 			assert.ErrorIs(t, err, tc.want)
 			assert.Equal(t, diagnose.Correction{}, got)
+		})
+	}
+}
+
+const (
+	checkDecide  = "metric-anomaly-investigation#Metric anomaly investigation/Decide#1"
+	checkLanding = "landing-page-check#Landing page check/Broken landing page#1"
+	checkLoad    = "landing-page-check#Landing page check/Load the landing page#1"
+	// The new first step once a section moves in front of Confirm the signal
+	checkScope   = "metric-anomaly-investigation#Metric anomaly investigation/Scope the change#1"
+	checkShare   = "segment-concentration-review#Segment concentration review/Compare against total volume#1"
+	checkRenamed = "metric-anomaly-investigation#Metric anomaly investigation/Check conversions#1"
+)
+
+// One edit of a demo procedure file made after the review
+type procedureEdit struct {
+	file, old, replacement string
+}
+
+var (
+	// A section moved to the front makes it the first step
+	movedSection = procedureEdit{"metric-anomaly-investigation.md", "## Confirm the signal", "## Scope the change\n\nFind the window first.\n\n## Confirm the signal"}
+	// A heading rename moves the ids of its paragraphs
+	renamedHeading = procedureEdit{"metric-anomaly-investigation.md", "## Check downstream outcomes", "## Check conversions"}
+	// A front matter scope takes the procedure away from a no_known_change event
+	scopedAway = procedureEdit{"segment-concentration-review.md", "", "---\nchange_contexts: [planned_operational_change]\n---\n"}
+	// A runbook written after the review whose scope fits every event
+	landingRunbook = evidence.Procedure{Slug: "landing-page-check", Paragraphs: []evidence.Paragraph{
+		{ID: "landing-page-check#Landing page check#1"}, {ID: checkLoad}, {ID: checkLanding},
+		{ID: "landing-page-check#Landing page check/Decide#1"},
+	}}
+)
+
+// The demo procedures after the edit with the added ones at the end
+func currentProcedures(t *testing.T, edit procedureEdit, added ...evidence.Procedure) evidence.Procedures {
+	t.Helper()
+	src := editedDemo(t, cmp.Or(edit.file, "data-integrity-hold.md"), edit.old, edit.replacement)
+	ps, err := src.Procedures(context.Background())
+	require.NoError(t, err)
+	return append(ps, added...)
+}
+
+// A ready_for_review whose one cause cites ids
+func citing(ids ...string) string {
+	return fmt.Sprintf(`{"status":"ready_for_review","causes":[{"summary":"clicks that never convert","paragraph_ids":[%s]}]}`,
+		`"`+strings.Join(ids, `","`)+`"`)
+}
+
+func TestCheckEdit(t *testing.T) {
+	type args struct {
+		// The trace the edit is checked against
+		// Empty means the context trace of the recorded review
+		built string
+		// The edit of the data set after the review
+		edit procedureEdit
+		// Procedures added to the data set after the review
+		added []evidence.Procedure
+		// Set when the procedures folder could not be read so the caller passes none
+		unread bool
+		edited string
+	}
+	type want struct {
+		err error
+		// Text the refusal carries
+		text []string
+		// Text the refusal ends with
+		suffix string
+	}
+	tcs := []struct {
+		name string
+		args args
+		want want
+	}{
+		{"an edit citing a listed paragraph passes", args{edited: citing(correctionOutcome)}, want{}},
+		{"an edit of the status to hold alone passes", args{edited: `{"status":"hold"}`}, want{}},
+		{"an edit of the status to no_action alone passes", args{edited: `{"status":"no_action"}`}, want{}},
+		{"a misspelled key is refused", args{edited: `{"status":"hold","cause":[]}`}, want{err: diagnose.ErrEditInvalid}},
+		{"a status outside the valid set is refused", args{edited: `{"status":"needs-review"}`}, want{err: diagnose.ErrEditInvalid}},
+		{"a missing status is refused", args{edited: `{"observations":["x"]}`}, want{err: diagnose.ErrEditInvalid}},
+		{
+			"a paragraph id no procedure holds is refused naming the id and the procedures that apply",
+			args{edited: citing("made-up#1")},
+			want{err: diagnose.ErrEditInvalid, text: []string{
+				"paragraph ids the procedures that apply to event tq-005 do not list now: made-up#1",
+				"Procedures that apply: data-integrity-hold, metric-anomaly-investigation, outcome-rate-degradation, segment-concentration-review",
+			}},
+		},
+		{
+			"a paragraph id of a procedure added after the review passes",
+			args{added: []evidence.Procedure{landingRunbook}, edited: citing(checkLanding)}, want{},
+		},
+		{
+			"a paragraph id of a procedure added after the review is refused once the procedure is gone",
+			args{edited: citing(checkLanding)}, want{err: diagnose.ErrEditInvalid},
+		},
+		{"a cause citing only a first step is refused", args{edited: citing(correctionConfirm)}, want{err: diagnose.ErrEditInvalid}},
+		{
+			"a cause citing only the first step of a procedure added after the review is refused",
+			args{added: []evidence.Procedure{landingRunbook}, edited: citing(checkLoad)}, want{err: diagnose.ErrEditInvalid},
+		},
+		{"a cause citing only a Decide paragraph is refused", args{edited: citing(checkDecide)}, want{err: diagnose.ErrEditInvalid}},
+		{"a cause citing a first step and a later step passes", args{edited: citing(correctionConfirm, correctionSegment)}, want{}},
+		{
+			"a cause citing three ids with the stating one last is refused naming the cut",
+			args{edited: citing(correctionConfirm, checkDecide, correctionOutcome)},
+			want{err: diagnose.ErrEditInvalid, text: []string{"causes cite more than 2 paragraph ids: clicks that never convert"}},
+		},
+		{
+			"a cause citing three ids with the stating one first is refused naming the cut",
+			args{edited: citing(correctionOutcome, correctionConfirm, checkDecide)},
+			want{err: diagnose.ErrEditInvalid, text: []string{"causes cite more than 2 paragraph ids: clicks that never convert"}},
+		},
+		{
+			"a cause repeating an id within two distinct ids passes",
+			args{edited: citing(correctionOutcome, correctionOutcome, correctionSegment)}, want{},
+		},
+		{
+			"a no_action with a cause is refused",
+			args{edited: `{"status":"no_action","causes":[{"summary":"x","paragraph_ids":["` + correctionSegment + `"]}]}`},
+			want{err: diagnose.ErrEditInvalid},
+		},
+		{"a ready_for_review without a cause is refused", args{edited: `{"status":"ready_for_review"}`}, want{err: diagnose.ErrEditInvalid}},
+		{
+			"the old first step passes once a section moved in front of it",
+			args{edit: movedSection, edited: citing(correctionConfirm)}, want{},
+		},
+		{
+			"the section moved to the front is the first step and is refused alone",
+			args{edit: movedSection, edited: citing(checkScope)},
+			want{err: diagnose.ErrEditInvalid, text: []string{"the gate would hold a review that follows it"}},
+		},
+		{
+			"the id a heading rename removed is refused naming it",
+			args{edit: renamedHeading, edited: citing(correctionOutcome)},
+			want{err: diagnose.ErrEditInvalid, text: []string{"do not list now: " + correctionOutcome}},
+		},
+		{"the id a heading rename made passes", args{edit: renamedHeading, edited: citing(checkRenamed)}, want{}},
+		{
+			"a hold that keeps the id a heading rename removed is refused",
+			args{edit: renamedHeading, edited: `{"status":"hold","checks":[{"step":"s","purpose":"p","paragraph_ids":["` + correctionOutcome + `"]}]}`},
+			want{err: diagnose.ErrEditInvalid, text: []string{"cite the id the paragraph has now or drop the id"}},
+		},
+		{
+			"an id of a procedure whose scope no longer fits the event is refused",
+			args{edit: scopedAway, edited: citing(checkShare)},
+			want{err: diagnose.ErrEditInvalid, text: []string{"do not list now: " + checkShare}, suffix: "Procedures that apply: " +
+				"data-integrity-hold, metric-anomaly-investigation, outcome-rate-degradation"},
+		},
+		{
+			"an id of the context is refused when the procedures could not be read",
+			args{unread: true, edited: citing(correctionOutcome)},
+			want{err: diagnose.ErrEditInvalid, suffix: "Procedures that apply: none"},
+		},
+		{"a hold alone passes when the procedures could not be read", args{unread: true, edited: `{"status":"hold"}`}, want{}},
+		{
+			"a review trace in place of its context is refused",
+			args{built: "review", edited: `{"status":"hold"}`}, want{err: diagnose.ErrNotContext},
+		},
+	}
+	ctx := context.Background()
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			r := recordReview(t, nil)
+			built, err := r.Traces.Get(ctx, map[string]string{"": r.contextID, "review": r.traceID}[tc.args.built])
+			require.NoError(t, err)
+			var current evidence.Procedures
+			if !tc.args.unread {
+				current = currentProcedures(t, tc.args.edit, tc.args.added...)
+			}
+
+			err = diagnose.CheckEdit(built, current, json.RawMessage(tc.args.edited))
+
+			assert.ErrorIs(t, err, tc.want.err)
+			for _, text := range tc.want.text {
+				assert.ErrorContains(t, err, text)
+			}
+			if tc.want.suffix != "" {
+				require.Error(t, err)
+				assert.True(t, strings.HasSuffix(err.Error(), tc.want.suffix), err.Error())
+			}
+		})
+	}
+}
+
+// An edit passes exactly when a later review of the event that follows it is recorded without a forced hold
+// The later review reads the edited data set and is recorded after its one send back
+func TestCheckEditAgreesWithTheNextReview(t *testing.T) {
+	type args struct {
+		edit   procedureEdit
+		review diagnose.Diagnosis
+	}
+	ready := func(ids ...string) diagnose.Diagnosis {
+		return diagnose.Diagnosis{
+			Status: evidence.StatusReadyForReview,
+			Causes: []diagnose.Cause{{Summary: "clicks that never convert", ParagraphIDs: ids}},
+		}
+	}
+	tcs := []struct {
+		name string
+		args args
+		// Whether the later review is held by force
+		want bool
+	}{
+		{"a listed later step", args{review: ready(correctionOutcome)}, false},
+		{"the old first step after a section moved in front of it", args{edit: movedSection, review: ready(correctionConfirm)}, false},
+		{"the section moved to the front", args{edit: movedSection, review: ready(checkScope)}, true},
+		{"the id a heading rename removed", args{edit: renamedHeading, review: ready(correctionOutcome)}, true},
+		{"the id a heading rename made", args{edit: renamedHeading, review: ready(checkRenamed)}, false},
+		{"an id of a procedure scoped away from the event", args{edit: scopedAway, review: ready(checkShare)}, true},
+		{"the first step of the context", args{review: ready(correctionConfirm)}, true},
+		{"three ids with the stating one last", args{review: ready(correctionConfirm, checkDecide, correctionOutcome)}, true},
+	}
+	ctx := context.Background()
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			r := recordReview(t, nil)
+			built, err := r.Traces.Get(ctx, r.contextID)
+			require.NoError(t, err)
+			edited, err := json.Marshal(tc.args.review)
+			require.NoError(t, err)
+			src := editedDemo(t, cmp.Or(tc.args.edit.file, "data-integrity-hold.md"), tc.args.edit.old, tc.args.edit.replacement)
+			current, err := src.Procedures(ctx)
+			require.NoError(t, err)
+			later := diagnose.New(src, testkit.Policy(t), nil, r.Traces, r.Feedback, r.Ledger, r.Clock.Now)
+			c, err := later.Prepare(ctx, "tq-005", diagnose.ModeInteractive, diagnose.Session{})
+			require.NoError(t, err)
+
+			checkErr := diagnose.CheckEdit(built, current, edited)
+			res, err := later.Record(ctx, c.PendingID, tc.args.review)
+			require.NoError(t, err)
+			if len(res.Revisions) > 0 {
+				res, err = later.Record(ctx, c.PendingID, tc.args.review)
+				require.NoError(t, err)
+			}
+
+			assert.Equal(t, []bool{tc.want, tc.want}, []bool{errors.Is(checkErr, diagnose.ErrEditInvalid), res.Forced})
 		})
 	}
 }
