@@ -276,9 +276,16 @@ type recordInput struct {
 	UnknownIDs []string `json:"unknown_ids,omitempty"`
 }
 
-// Same change context and at least one shared metric
+// Same change context and one shared metric or no metric on both sides
+// Two quiet events carry no metric so a shared metric alone would never match them
 func (in recordInput) matches(changeContext evidence.Context, metrics []string) bool {
-	return in.ChangeContext == changeContext && slices.ContainsFunc(in.Metrics, func(m string) bool { return slices.Contains(metrics, m) })
+	if in.ChangeContext != changeContext {
+		return false
+	}
+	if len(in.Metrics) == 0 && len(metrics) == 0 {
+		return true
+	}
+	return slices.ContainsFunc(in.Metrics, func(m string) bool { return slices.Contains(metrics, m) })
 }
 
 // The diagnose trace without Output
