@@ -470,3 +470,37 @@ func TestResult(t *testing.T) {
 		})
 	}
 }
+
+// Due only when the folder is crowded and a replay could check something
+func TestFolderDue(t *testing.T) {
+	crowd := make(knowledge.Set, knowledge.FolderItems+1)
+	// An unscoped anchor and one item per change context so each review carries two
+	spread := knowledge.Set{{ID: "g"}}
+	for _, c := range evidence.Contexts() {
+		spread = append(spread, knowledge.Knowledge{
+			ID: string(c), Scope: knowledge.Scope{Scope: evidence.Scope{ChangeContexts: []evidence.Context{c}}},
+		})
+	}
+	expected := []compact.Expectation{{EventID: "e1", Expected: evidence.StatusHold, Origin: compact.OriginApproval}}
+	type args struct {
+		items  knowledge.Set
+		replay []compact.Expectation
+	}
+	tcs := []struct {
+		name string
+		args args
+		want bool
+	}{
+		{"a crowded folder with an expected status is due", args{crowd, expected}, true},
+		{"a crowded folder without any expected status is not due because the compaction would be refused", args{crowd, nil}, false},
+		{"a folder of FolderItems items is not due", args{crowd[1:], expected}, false},
+		{"a folder whose union passes FolderItems while each review carries two is not due", args{spread, expected}, false},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			f := compact.Folder{Compactable: knowledge.Compactable{Items: tc.args.items}, Replay: tc.args.replay}
+			assert.Equal(t, tc.want, f.Due())
+		})
+	}
+}

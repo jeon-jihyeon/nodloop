@@ -454,14 +454,15 @@ func (s *Server) propose(ctx context.Context, _ *sdk.CallToolRequest, in propose
 	}
 	// The veto comes back as stored so the person sees the pattern before approving it
 	return nil, map[string]any{
-		"id": k.ID, "version": k.Version, "status": k.Status, "overlaps": overlaps, "folder": newFolderAnswer(folder),
+		"id": k.ID, "version": k.Version, "status": k.Status, "overlaps": overlaps, "folder": newFolderAnswer(folder, false),
 		"veto": k.Veto, "scope": k.Scope, "drafted": k.Drafted,
 	}, nil
 }
 
 // What the person sees around an approval
 // 1. the review text and the items the item joins and whether both still fit
-// 2. whether the folder holds enough items that a compaction is due
+// 2. whether the folder holds enough items that a compaction is due and could pass its replay
+// A candidate never makes a compaction due because only an approved item anchors one
 type folderAnswer struct {
 	Chars      int      `json:"chars"`
 	Budget     int      `json:"budget"`
@@ -473,15 +474,28 @@ type folderAnswer struct {
 	CompactionDue bool             `json:"compaction_due"`
 }
 
-func newFolderAnswer(f knowledge.Folder) folderAnswer {
+func newFolderAnswer(f knowledge.Folder, compactionDue bool) folderAnswer {
 	items := make([]string, 0, len(f.Carried))
 	for _, k := range f.Carried {
 		items = append(items, k.ID)
 	}
 	return folderAnswer{
 		Chars: f.Chars, Budget: knowledge.ReviewChars, ItemBudget: knowledge.ReviewItems, Full: f.Full(), Items: items,
-		ChangeContext: f.Context, CompactionDue: f.Crowded(),
+		ChangeContext: f.Context, CompactionDue: compactionDue,
 	}
+}
+
+// Whether a compaction anchored at the approved item is due and has an event with an expected status to replay
+// The ledger folder is an upper bound so the compactor is asked only when it is crowded
+func (s *Server) compactionDue(ctx context.Context, id string, f knowledge.Folder) (bool, error) {
+	if !f.Crowded() {
+		return false, nil
+	}
+	cf, err := s.compactor.Folder(ctx, id)
+	if err != nil {
+		return false, err
+	}
+	return cf.Due(), nil
 }
 
 type approveInput struct {
@@ -507,7 +521,11 @@ func (s *Server) approve(ctx context.Context, _ *sdk.CallToolRequest, in approve
 		answer["folder_error"] = err.Error()
 		return nil, answer, nil
 	}
-	answer["folder"] = newFolderAnswer(folder)
+	due, err := s.compactionDue(ctx, k.ID, folder)
+	if err != nil {
+		answer["folder_error"] = err.Error()
+	}
+	answer["folder"] = newFolderAnswer(folder, due)
 	return nil, answer, nil
 }
 

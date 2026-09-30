@@ -759,6 +759,16 @@ func TestServerProposeFolder(t *testing.T) {
 		}
 		return k
 	}
+	// Each replayable item cites an approved review so its event has an expected status and a compaction could pass
+	for _, id := range []string{"k-b", "k-c", "k-d", "k-e", "k-f", "k-g"} {
+		require.NoError(t, st.Traces.Append(context.Background(), trace.Trace{
+			ID: "t-" + id, Name: trace.NameDiagnose, Subject: "e-" + id, Time: st.Clock.Now(),
+			Output: json.RawMessage(`{"status":"hold"}`),
+		}))
+		fb, err := feedback.New("t-"+id, feedback.VerdictApprove, "right", nil, "", st.Clock.Now())
+		require.NoError(t, err)
+		require.NoError(t, st.Feedback.Append(context.Background(), fb))
+	}
 	require.NoError(t, testkit.Err(st.Ledger.Import(context.Background(), []knowledge.Knowledge{
 		replayable("k-b", knowledge.StatusApproved), replayable("k-c", knowledge.StatusApproved),
 		replayable("k-d", knowledge.StatusApproved), replayable("k-e", knowledge.StatusApproved),
