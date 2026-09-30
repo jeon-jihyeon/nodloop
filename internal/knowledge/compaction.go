@@ -30,7 +30,8 @@ type Compactable struct {
 	Excluded Set
 }
 
-// A replacement of the approved items of one folder by fewer items that never share a folder with an item of their kind
+// A replacement of the approved items of one folder so each review carries fewer items that never share a folder with an item of their kind
+// Metrics with none in common or a dim value split two items of one kind here while folder sizing still counts them together
 // It adds no record type and maps onto candidates and approvals and retirements that carry its id
 type Compaction struct {
 	ID string
@@ -144,7 +145,8 @@ func (c Compactable) Crowded() bool {
 // 1. at least two old items and one draft
 // 2. every name is the current approved version of an old item
 // 3. every old item is named
-// 4. no two drafts of one kind share a folder
+// 4. no two drafts of one kind overlap in a folder
+// Metrics with none in common or one dim key with a different value on each keep two drafts apart
 // 5. an old veto is kept by a new veto of an item that names it and blocks the old example
 // 6. a draft id is one old id so it becomes the next version of that id or a new id and no id repeats
 // 7. evidence is the union of the named old items and basis is verified only when every named item is
@@ -250,12 +252,15 @@ func (e Evidence) union(other Evidence) Evidence {
 	return e
 }
 
-// No two items of the same kind share a folder
+// No two items of the same kind overlap in a folder
+// Metrics with none in common or one dim key with a different value on each keep two items apart as Overlaps does
+// Folder sizing still counts every metric and dim together because one event may move several metrics and carry several values of a key
 func (s Set) checkExclusive() error {
 	for i, a := range s {
 		for _, b := range s[i+1:] {
-			if a.Kind == b.Kind && a.sharesFolder(b) {
-				return fmt.Errorf("%w: %s and %s are both %s items of one folder", ErrCompactionOverlap, a.ID, b.ID, a.Kind)
+			if a.Kind == b.Kind && a.sharesFolder(b) && a.Scope.overlaps(b.Scope) {
+				return fmt.Errorf("%w: %s and %s are both %s items of one folder and no metric or dim value splits them",
+					ErrCompactionOverlap, a.ID, b.ID, a.Kind)
 			}
 		}
 	}

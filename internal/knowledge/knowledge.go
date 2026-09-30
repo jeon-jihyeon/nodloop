@@ -269,12 +269,12 @@ func (k Knowledge) Filled(scope Scope, ev Evidence, basis Basis) Knowledge {
 }
 
 // Whether one review may carry both items
-// 1. their change contexts and metrics intersect
+// 1. their change contexts intersect
 // 2. neither excepts every change context the other is scoped to
-// Dims split nothing because one review often carries several dims
+// Metrics and dims split nothing because one event often moves several metrics and carries several dims
 func (k Knowledge) sharesFolder(other Knowledge) bool {
-	return k.Scope.Intersects(other.Scope.Scope) && !k.excepts(other.Scope.ChangeContexts) &&
-		!other.excepts(k.Scope.ChangeContexts)
+	return k.Scope.Intersects(evidence.Scope{ChangeContexts: other.Scope.ChangeContexts}) &&
+		!k.excepts(other.Scope.ChangeContexts) && !other.excepts(k.Scope.ChangeContexts)
 }
 
 // An empty list is every change context and no exception covers all of them

@@ -30,7 +30,7 @@ import (
 // 2. e2 has t3 approved as hold
 // 3. tq-001 has t4 rejected and the label no_action
 // 4. e4 has t5 with an outcome and no verdict
-// Items a and b cite them while p cites a paragraph only and far cites t1 alone in another folder
+// Items a and b cite them while p cites a paragraph only and far cites t1 alone in the folder of another change context
 func seed(t *testing.T, s testkit.Stores) {
 	t.Helper()
 	ctx := context.Background()
@@ -61,7 +61,9 @@ func seed(t *testing.T, s testkit.Stores) {
 }
 
 func seedItems(at time.Time) []knowledge.Knowledge {
-	conversions := knowledge.Scope{Scope: evidence.Scope{Metrics: []string{"conversion_count"}}}
+	conversions := knowledge.Scope{Scope: evidence.Scope{
+		ChangeContexts: []evidence.Context{evidence.ContextNoKnownChange}, Metrics: []string{"conversion_count"},
+	}}
 	base := knowledge.Knowledge{
 		Version: 1, Kind: knowledge.KindMeaning, Scope: conversions, Basis: knowledge.BasisStated,
 		Status: knowledge.StatusApproved, Approver: "ann", ApprovedAt: at, Author: "author", Time: at,
@@ -75,7 +77,9 @@ func seedItems(at time.Time) []knowledge.Knowledge {
 	p.ID, p.Content, p.Evidence = "p", "paragraph only", knowledge.Evidence{ParagraphIDs: []string{"p#1"}}
 	far := base
 	far.ID, far.Content, far.Evidence = "far", "clicks", knowledge.Evidence{FeedbackTraceIDs: []string{"t1"}}
-	far.Scope = knowledge.Scope{Scope: evidence.Scope{Metrics: []string{"click_count"}}}
+	far.Scope = knowledge.Scope{Scope: evidence.Scope{
+		ChangeContexts: []evidence.Context{evidence.ContextMeasurementChanged}, Metrics: []string{"click_count"},
+	}}
 	return []knowledge.Knowledge{a, b, p, far}
 }
 
