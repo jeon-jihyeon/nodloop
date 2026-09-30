@@ -48,8 +48,7 @@ func (s *Source) Events(_ context.Context) ([]evidence.EventRef, error) {
 	}
 	refs := make([]evidence.EventRef, 0, len(events))
 	for _, ev := range events {
-		start, end := ev.Points[0].Time, ev.Points[len(ev.Points)-1].Time
-		refs = append(refs, evidence.EventRef{ID: ev.ID, Start: start, End: end})
+		refs = append(refs, ev.Ref())
 	}
 	return refs, nil
 }

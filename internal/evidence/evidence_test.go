@@ -214,6 +214,71 @@ func TestEventDims(t *testing.T) {
 	}
 }
 
+func TestEventRef(t *testing.T) {
+	at := time.Date(2026, 9, 22, 10, 0, 0, 0, time.UTC)
+	tcs := []struct {
+		name string
+		args evidence.Event
+		want evidence.EventRef
+	}{
+		{
+			name: "range spans the points and each dimension lists its distinct values in name order",
+			args: evidence.Event{ID: "e", Points: []evidence.Point{
+				{Time: at, Dims: map[string]string{"source": "b", "topic": "t"}},
+				{Time: at.Add(time.Hour), Dims: map[string]string{"source": "a", "topic": "t"}},
+				{Time: at.Add(2 * time.Hour), Dims: map[string]string{"source": "b", "topic": "t"}},
+			}},
+			want: evidence.EventRef{
+				ID: "e", Start: at, End: at.Add(2 * time.Hour),
+				Dims: map[string][]string{"source": {"a", "b"}, "topic": {"t"}},
+			},
+		},
+		{
+			name: "points without dims give an empty dimension map",
+			args: evidence.Event{ID: "e", Points: []evidence.Point{{Time: at}}},
+			want: evidence.EventRef{ID: "e", Start: at, End: at, Dims: map[string][]string{}},
+		},
+		{
+			name: "an event without points has a zero range instead of panicking",
+			args: evidence.Event{ID: "e"},
+			want: evidence.EventRef{ID: "e", Dims: map[string][]string{}},
+		},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.want, tc.args.Ref())
+		})
+	}
+}
+
+func TestEventRefCarries(t *testing.T) {
+	sources := make([]string, 12)
+	for i := range sources {
+		sources[i] = fmt.Sprintf("source-%02d", i)
+	}
+	ref := evidence.EventRef{ID: "e", Dims: map[string][]string{"source": sources, "topic": {"shopping"}}}
+	tcs := []struct {
+		name string
+		args map[string]string
+		want bool
+	}{
+		{name: "a value among the first ten", args: map[string]string{"source": "source-03"}, want: true},
+		{name: "a value past the first ten", args: map[string]string{"source": "source-11"}, want: true},
+		{name: "a value the event lacks", args: map[string]string{"source": "source-12"}},
+		{name: "a dimension the event lacks", args: map[string]string{"region": "eu"}},
+		{name: "two dimensions that both hold their value", args: map[string]string{"source": "source-10", "topic": "shopping"}, want: true},
+		{name: "two dimensions where one misses", args: map[string]string{"source": "source-10", "topic": "finance"}},
+		{name: "no dimension named carries", args: nil, want: true},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.want, ref.Carries(tc.args))
+		})
+	}
+}
+
 func TestEventSeriesCounts(t *testing.T) {
 	tcs := []struct {
 		name string
