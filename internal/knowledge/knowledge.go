@@ -208,6 +208,17 @@ func (k Knowledge) validate() error {
 	return k.Veto.check(k.ID, k.Content)
 }
 
+// A base names an earlier version so a walk down the bases always ends
+func (k Knowledge) checkVersion() error {
+	if k.Version <= 0 {
+		return ErrVersionInvalid
+	}
+	if k.Base < 0 || k.Base >= k.Version {
+		return fmt.Errorf("%w: base %d of version %d", ErrVersionInvalid, k.Base, k.Version)
+	}
+	return nil
+}
+
 // Fails with ErrScopeInvalid when no event could ever match the scope and the exceptions
 // 1. a change context or exception outside the valid set matches no event
 // 2. exceptions that cover every change context left leave the item nothing to apply to
@@ -229,15 +240,13 @@ func (k Knowledge) checkScope() error {
 	return nil
 }
 
-// A base names an earlier version so a walk down the bases always ends
-func (k Knowledge) checkVersion() error {
-	if k.Version <= 0 {
-		return ErrVersionInvalid
+// Whether the exceptions leave no change context the item could apply to
+// An item scoped to no change context may apply to every one
+func (k Knowledge) Excluded() bool {
+	if len(k.Scope.ChangeContexts) == 0 {
+		return k.excepts(evidence.Contexts())
 	}
-	if k.Base < 0 || k.Base >= k.Version {
-		return fmt.Errorf("%w: base %d of version %d", ErrVersionInvalid, k.Base, k.Version)
-	}
-	return nil
+	return k.excepts(k.Scope.ChangeContexts)
 }
 
 // Whether the veto of the item still blocks the example of the old veto
@@ -315,15 +324,6 @@ func (k Knowledge) excepts(contexts []evidence.Context) bool {
 		}
 	}
 	return true
-}
-
-// Whether the exceptions leave no change context the item could apply to
-// An item scoped to no change context may apply to every one
-func (k Knowledge) Excluded() bool {
-	if len(k.Scope.ChangeContexts) == 0 {
-		return k.excepts(evidence.Contexts())
-	}
-	return k.excepts(k.Scope.ChangeContexts)
 }
 
 func (k Knowledge) applies(changeContext evidence.Context, moved Moved, dims Dims) bool {

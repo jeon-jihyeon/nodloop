@@ -317,8 +317,9 @@ func (s Set) approval(id string, version int, approver string, now time.Time) ([
 }
 
 // The approved record and the approved record it supersedes when the id has one
-// 1. a version older than the approved one is refused so an approval never rolls the id back
-// 2. a candidate whose bases never reach the approved version is refused because it was built without that version
+// 1. the approved record is checked again so a candidate stored before a check was added cannot slip through
+// 2. a version older than the approved one is refused so an approval never rolls the id back
+// 3. a candidate whose bases never reach the approved version is refused because it was built without that version
 // Approving it would drop whatever the approved version added such as the facts a compaction merged
 func (s Set) approve(id string, version int, approver string, now time.Time) (Knowledge, *Knowledge, error) {
 	from, err := s.latest(id, version)
@@ -327,6 +328,9 @@ func (s Set) approve(id string, version int, approver string, now time.Time) (Kn
 	}
 	to, err := from.transition(StatusApproved, approver, now)
 	if err != nil {
+		return Knowledge{}, nil, err
+	}
+	if err := to.validate(); err != nil {
 		return Knowledge{}, nil, err
 	}
 	cur := s.current(id)
