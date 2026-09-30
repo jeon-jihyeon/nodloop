@@ -4,6 +4,7 @@
 # 2. the GitHub release of that version for this OS and architecture verified against its `checksums.txt`
 # 3. go install of the same version when Go is present and the release could not be fetched
 # 4. another nodloop on PATH with a warning because its version is unknown
+# Every source that runs is linked from the stable path so that path names the binary the plugin ran last
 # The version is read from the plugin manifest so the plugin and the binary it runs never drift
 set -eu
 
@@ -20,14 +21,24 @@ TAG="v${version}"
 BIN_DIR="${HOME}/.nodloop/bin/${TAG}"
 BIN="${BIN_DIR}/nodloop"
 # A stable path for the user. `~/.nodloop/bin/nodloop setup --data-dir <dir>` works after the first start
+# It may name a PATH binary of unknown version until a later run caches or fetches the plugin version
 STABLE="${HOME}/.nodloop/bin/nodloop"
 
+# The guard hook runs through the stable path so that path must never go missing while a hook starts
+# 1. a link that already names the target is left untouched so a cached start never rewrites it
+# 2. otherwise a temp link is renamed over the old one because a rename replaces it in one step
 stable() {
-  ln -sfn "$BIN" "$STABLE" 2>/dev/null || true
+  [ "$(readlink "$STABLE" 2>/dev/null || true)" = "$1" ] && return 0
+  mkdir -p "${HOME}/.nodloop/bin" 2>/dev/null || return 0
+  tmp_link="${STABLE}.$$"
+  if ln -sfn "$1" "$tmp_link" 2>/dev/null && mv -f "$tmp_link" "$STABLE" 2>/dev/null; then
+    return 0
+  fi
+  rm -f "$tmp_link" 2>/dev/null || true
 }
 
 if [ -x "$BIN" ]; then
-  stable
+  stable "$BIN"
   exec "$BIN" "$@"
 fi
 
@@ -84,25 +95,30 @@ fetch() {
 }
 
 if fetch; then
-  stable
+  stable "$BIN"
   exec "$BIN" "$@"
 fi
 
 if command -v go >/dev/null 2>&1; then
   echo "nodloop: could not fetch release ${TAG} for ${os}/${arch}, building with go install" >&2
   if GOBIN="$BIN_DIR" go install "github.com/${REPO}/cmd/nodloop@${TAG}"; then
-    stable
+    stable "$BIN"
     exec "$BIN" "$@"
   fi
 fi
 
 # command -v may name this launcher itself when the plugin bin directory is on PATH
+# The stable link is left alone when PATH finds it or its target because a link to itself would break it
+# A relative PATH entry gives a relative name that would make a dangling link
 found=$(command -v nodloop 2>/dev/null || true)
 if [ -n "$found" ] && [ ! "$found" -ef "$0" ]; then
   have=$("$found" version 2>/dev/null || echo unknown)
   case "$have" in
     "$version" | "v$version") ;;
     *) echo "nodloop: running ${found} from PATH, version ${have} where the plugin expects ${version}" >&2 ;;
+  esac
+  case "$found" in
+    /*) [ "$found" = "$STABLE" ] || [ "$found" -ef "$STABLE" ] || stable "$found" ;;
   esac
   exec "$found" "$@"
 fi
