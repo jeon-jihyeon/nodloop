@@ -288,6 +288,23 @@ func (in recordInput) matches(changeContext evidence.Context, metrics []string) 
 	return slices.ContainsFunc(in.Metrics, func(m string) bool { return slices.Contains(metrics, m) })
 }
 
+// Metrics only one of the two sets holds
+// Zero for the same set
+func (in recordInput) distance(metrics []string) int {
+	n := 0
+	for _, m := range in.Metrics {
+		if !slices.Contains(metrics, m) {
+			n++
+		}
+	}
+	for _, m := range metrics {
+		if !slices.Contains(in.Metrics, m) {
+			n++
+		}
+	}
+	return n
+}
+
 // The diagnose trace without Output
 // A context without a select trace names no knowledge and no examples
 func (c Context) diagnoseTrace(now time.Time, selected *selectInput, run modelRun, unknownIDs []string) trace.Trace {
@@ -362,7 +379,8 @@ func (d *Diagnoser) Prepare(ctx context.Context, eventID string, mode Mode, sess
 	return d.prepare(ctx, eventID, mode, session, nil)
 }
 
-// excluded names events besides eventID whose reviews are never offered as examples
+// excluded names events whose reviews are never offered as examples
+// The event under review is not among them so its own earlier correction comes back when it is reviewed again
 func (d *Diagnoser) prepare(ctx context.Context, eventID string, mode Mode, session Session, excluded []string) (Context, error) {
 	if !mode.valid() {
 		return Context{}, fmt.Errorf("%w: %q", ErrUnknownMode, mode)
@@ -388,8 +406,7 @@ func (d *Diagnoser) prepare(ctx context.Context, eventID string, mode Mode, sess
 		ProcedureChars: utf8.RuneCountInString(section),
 	}
 	var examplesOmitted, knowledgeOmitted bool
-	excluded = slices.Concat([]string{eventID}, excluded)
-	if c.ExampleCandidates, examplesOmitted, err = d.exampleCandidates(ctx, excluded, ev.ChangeContext, obs.Metrics()); err != nil {
+	if c.ExampleCandidates, examplesOmitted, err = d.exampleCandidates(ctx, eventID, excluded, ev.ChangeContext, obs.Metrics()); err != nil {
 		return Context{}, err
 	}
 	if c.KnowledgeCandidates, knowledgeOmitted, err = d.knowledgeCandidates(ctx, ev.ChangeContext, obs.Moved(), ev.Dims()); err != nil {
