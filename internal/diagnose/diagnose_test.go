@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -240,6 +241,45 @@ func TestPrepare(t *testing.T) {
 	}
 }
 
+// A context left open by an interrupted nodloop diagnose carries no session while one of eval carries its session
+func TestBatchContextRefusal(t *testing.T) {
+	rerun := " so run the batch command that built it again for the event: " +
+		"nodloop diagnose --event tq-012 or nodloop eval seed or holdout of that session with --events tq-012"
+	tcs := []struct {
+		name string
+		// Session of the batch context
+		args string
+		// What record and select both fail with
+		want string
+	}{
+		{
+			"names both reruns for a context without a session", "",
+			diagnose.ErrBatchContext.Error() + ": batch of tq-012" + rerun,
+		},
+		{
+			"names the session of an eval context", "s1",
+			diagnose.ErrBatchContext.Error() + ": batch of tq-012 in session s1" + rerun,
+		},
+	}
+	ctx := context.Background()
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			s := testkit.Open(t)
+			d := diagnose.New(s.Source, testkit.Policy(t), nil, s.Traces, s.Feedback, s.Ledger, s.Clock.Now)
+			require.NoError(t, s.Traces.Append(ctx, trace.Trace{
+				ID: "batch", Name: trace.NameContext, SessionID: tc.args, Subject: "tq-012",
+				Input: json.RawMessage(`{"mode":"batch"}`), Output: json.RawMessage(`{}`),
+			}))
+
+			_, recordErr := d.Record(ctx, "batch", diagnose.Diagnosis{Status: evidence.StatusHold})
+			_, selectErr := d.Select(ctx, "batch", diagnose.Choices{})
+
+			assert.Equal(t, []string{tc.want, tc.want}, []string{fmt.Sprint(recordErr), fmt.Sprint(selectErr)})
+		})
+	}
+}
+
 // A copy of the demo data set whose procedure file opens with the front matter
 func scopedDemo(t *testing.T, file, frontMatter string) *evidencefile.Source {
 	t.Helper()
@@ -375,6 +415,8 @@ func TestRecord(t *testing.T) {
 	type want struct {
 		outcome outcome
 		err     error
+		// The key in ids of the trace the error names
+		names string
 	}
 	agg := knowledge.Knowledge{
 		ID: "k-agg", Kind: knowledge.KindMeaning, Content: "clicks and conversions use different aggregation time bases",
@@ -715,6 +757,17 @@ func TestRecord(t *testing.T) {
 			want: want{err: diagnose.ErrMalformed},
 		},
 		{
+			name: "refuses a context the batch path left open and records nothing",
+			args: args{
+				traces: []trace.Trace{{
+					ID: "batch", Name: trace.NameContext, SessionID: "s1", Subject: "tq-012", Tags: []string{"feedback:off"},
+					Input: json.RawMessage(`{"mode":"batch"}`), Output: json.RawMessage(`{}`),
+				}},
+				pending: "batch", diag: ready,
+			},
+			want: want{err: diagnose.ErrBatchContext, names: "batch"},
+		},
+		{
 			name: "fails on a context trace whose output does not decode",
 			args: args{
 				traces: []trace.Trace{
@@ -741,7 +794,7 @@ func TestRecord(t *testing.T) {
 			d := diagnose.New(
 				s.Source, testkit.Policy(t), nil, s.Traces, s.Feedback, s.Ledger, s.Clock.Now,
 			)
-			ids := map[string]string{"no-such-id": "no-such-id", "bad": "bad", "old": "old"}
+			ids := map[string]string{"no-such-id": "no-such-id", "bad": "bad", "old": "old", "batch": "batch"}
 			for _, event := range tc.args.rejected {
 				c, err := d.Prepare(ctx, event, diagnose.ModeInteractive, diagnose.Session{})
 				require.NoError(t, err)
@@ -801,6 +854,7 @@ func TestRecord(t *testing.T) {
 
 			got, err := d.Record(ctx, ids[tc.args.pending], tc.args.diag)
 			assert.ErrorIs(t, err, tc.want.err)
+			assert.Contains(t, fmt.Sprint(err), ids[tc.want.names])
 			all, err := s.Traces.List(ctx, trace.Filter{Ref: ids[tc.args.pending]})
 			require.NoError(t, err)
 			names := map[string]trace.Name{}
@@ -890,6 +944,57 @@ func TestRecordConcurrent(t *testing.T) {
 			)
 
 			assert.Equal(t, tc.want, want{succeeded: len(succeeded), refused: len(refused), recorded: len(traces)})
+		})
+	}
+}
+
+func TestPending(t *testing.T) {
+	type want struct {
+		// Newest first
+		ids []string
+		err error
+	}
+	opened := func(id, mode string) trace.Trace {
+		return trace.Trace{
+			ID: id, Name: trace.NameContext, Subject: "tq-005",
+			Input: json.RawMessage(`{"mode":"` + mode + `"}`), Output: json.RawMessage(`{}`),
+		}
+	}
+	recorded := trace.Trace{ID: "review", Name: trace.NameDiagnose, Ref: "closed", Subject: "tq-005"}
+	tcs := []struct {
+		name string
+		args []trace.Trace
+		want want
+	}{
+		{
+			"lists the open contexts of the conversation and leaves out batch and recorded ones",
+			[]trace.Trace{opened("open", "interactive"), opened("batch", "batch"), opened("closed", "interactive"), recorded},
+			want{ids: []string{"open"}},
+		},
+		{
+			"a context that no longer decodes fails the list",
+			[]trace.Trace{opened("open", "interactive"), {ID: "bad", Name: trace.NameContext, Input: json.RawMessage(`[]`)}},
+			want{err: diagnose.ErrMalformed},
+		},
+	}
+	ctx := context.Background()
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			s := testkit.Open(t)
+			for _, tr := range tc.args {
+				require.NoError(t, s.Traces.Append(ctx, tr))
+			}
+			d := diagnose.New(s.Source, testkit.Policy(t), nil, s.Traces, s.Feedback, s.Ledger, s.Clock.Now)
+
+			got, err := d.Pending(ctx)
+
+			var ids []string
+			for _, tr := range got {
+				ids = append(ids, tr.ID)
+			}
+			assert.ErrorIs(t, err, tc.want.err)
+			assert.Equal(t, tc.want.ids, ids)
 		})
 	}
 }
@@ -1255,7 +1360,7 @@ func TestRunStoreFailure(t *testing.T) {
 			reviewer := diagnose.New(
 				s.Source, testkit.Policy(t), nil, s.Traces, verdicts, ledger, s.Clock.Now,
 			)
-			c, err := reviewer.Prepare(ctx, "tq-007", diagnose.ModeBatch, diagnose.Session{})
+			c, err := reviewer.Prepare(ctx, "tq-007", diagnose.ModeInteractive, diagnose.Session{})
 			require.NoError(t, err)
 			res, err := reviewer.Record(ctx, c.PendingID, diagnose.Diagnosis{Status: evidence.StatusNoAction})
 			require.NoError(t, err)

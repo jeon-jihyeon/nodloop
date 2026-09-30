@@ -174,8 +174,9 @@ type example struct {
 // 2. each chosen item gets a share of its cap and a cut is marked in the text and recorded
 // 3. a second select for the same context replaces the first because record reads the newest
 // 4. a context that already has a diagnose trace is refused
+// 5. a context the batch path built is refused
 func (d *Diagnoser) Select(ctx context.Context, pendingID string, choices Choices) (Selection, error) {
-	c, err := d.pending(ctx, pendingID)
+	c, err := d.conversation(ctx, pendingID)
 	if err != nil {
 		return Selection{}, err
 	}

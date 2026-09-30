@@ -974,11 +974,18 @@ func TestServerDetail(t *testing.T) {
 	}
 }
 
-// Recording a context closes it
+// A context a batch run left open when it was interrupted
+var batch = trace.Trace{
+	ID: "batch", Name: trace.NameContext, SessionID: "s3", Subject: "tq-012", Tags: []string{"feedback:off"},
+	Input: json.RawMessage(`{"mode":"batch"}`), Output: json.RawMessage(`{}`),
+}
+
+// Recording a context closes it and a context a batch run left open is never listed
 func TestServerPending(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	st := testkit.Open(t)
+	require.NoError(t, st.Traces.Append(ctx, batch))
 	c := connect(t, st, "nodloop", "")
 	b, err := os.ReadFile(reviewFile)
 	require.NoError(t, err)
@@ -1034,6 +1041,7 @@ func TestServerRefusals(t *testing.T) {
 		PendingID string `json:"pending_id"`
 	}
 	require.NoError(t, c.Call(t, "context", map[string]any{"event_id": relatedEvent}, &fresh))
+	require.NoError(t, st.Traces.Append(context.Background(), batch))
 	type args struct {
 		tool  string
 		input map[string]any
@@ -1062,6 +1070,13 @@ func TestServerRefusals(t *testing.T) {
 			name: "record refuses a context recorded before",
 			args: args{tool: "record", input: map[string]any{"pending_id": opened.PendingID, "diagnosis": review}},
 			want: diagnose.ErrRecorded.Error(),
+		},
+		{
+			name: "record refuses a context an interrupted batch run left open",
+			args: args{tool: "record", input: map[string]any{"pending_id": batch.ID, "diagnosis": review}},
+			want: diagnose.ErrBatchContext.Error() + ": " + batch.ID + " of tq-012 in session s3 so run the batch command " +
+				"that built it again for the event: nodloop diagnose --event tq-012 or nodloop eval seed or holdout " +
+				"of that session with --events tq-012",
 		},
 		{
 			name: "select refuses knowledge outside the offer",
