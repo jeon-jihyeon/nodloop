@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/jeon-jihyeon/nodloop/internal/diagnose"
@@ -182,7 +183,10 @@ func (f knowledgeFlags) runRecords(ctx context.Context, action, id string, a app
 		if err := cmd.transition(ctx, "approve", ledger.Approve, id, f.version, f.approver); err != nil {
 			return err
 		}
-		return cmd.folder(ctx, id, f.version)
+		if err := cmd.folder(ctx, id, f.version); err != nil {
+			return err
+		}
+		return cmd.compaction(ctx, id, f.version)
 	case "retire":
 		return cmd.transition(ctx, "retire", ledger.Retire, id, f.version, f.approver)
 	case "import":
@@ -280,7 +284,7 @@ func (c knowledgeCommand) propose(ctx context.Context, draft knowledge.Knowledge
 	return c.folder(ctx, k.ID, k.Version)
 }
 
-// The folder a version joins with its size and a line when a compaction is due
+// The folder a version joins with its size
 func (c knowledgeCommand) folder(ctx context.Context, id string, version int) error {
 	f, err := c.ledger.Folder(ctx, id, version)
 	if err != nil {
@@ -288,10 +292,34 @@ func (c knowledgeCommand) folder(ctx context.Context, id string, version int) er
 	}
 	fmt.Fprintf(c.out, "folder\t%d of %d chars\t%d of %d items in %s\t%s\n",
 		f.Chars, knowledge.ReviewChars, f.Size(), knowledge.ReviewItems, cmp.Or(string(f.Context), "no change context"), f)
-	if f.Crowded() {
+	return nil
+}
+
+// A line when the folder of an approved version is crowded
+// 1. compaction due when a compaction could pass its replay
+// 2. compaction blocked with the events that lack an expected status when none of them has one
+// 3. compaction unknown with the reason when the folder cannot be checked since the approval is already recorded
+func (c knowledgeCommand) compaction(ctx context.Context, id string, version int) error {
+	f, err := c.ledger.Folder(ctx, id, version)
+	if err != nil || !f.Crowded() {
+		return err
+	}
+	compactor, err := c.app.compactor(c.ledger)
+	if err != nil {
+		fmt.Fprintf(c.out, "compaction unknown\t%s\n", err)
+		return nil
+	}
+	cf, err := compactor.Folder(ctx, id)
+	switch {
+	case err != nil:
+		fmt.Fprintf(c.out, "compaction unknown\t%s\n", err)
+	case cf.Due():
 		fmt.Fprintf(c.out, "compaction due\ta review of one change context carries more than %d approved items an event can replay. "+
-			"Run nodloop knowledge compact %s\n",
-			knowledge.FolderItems, id)
+			"Run nodloop knowledge compact %s\n", knowledge.FolderItems, id)
+	default:
+		fmt.Fprintf(c.out, "compaction blocked\ta review of one change context carries more than %d approved items "+
+			"but no evidence event has a label or an edit or approve verdict: %s\n",
+			knowledge.FolderItems, strings.Join(cf.Unverifiable, ", "))
 	}
 	return nil
 }

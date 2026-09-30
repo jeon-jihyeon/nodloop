@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -17,6 +18,8 @@ import (
 
 	"github.com/jeon-jihyeon/nodloop/internal/diagnose"
 	"github.com/jeon-jihyeon/nodloop/internal/evidence"
+	"github.com/jeon-jihyeon/nodloop/internal/feedback"
+	feedbackfile "github.com/jeon-jihyeon/nodloop/internal/feedback/file"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	knowledgefile "github.com/jeon-jihyeon/nodloop/internal/knowledge/file"
 	"github.com/jeon-jihyeon/nodloop/internal/llm"
@@ -402,6 +405,19 @@ func TestRunKnowledge(t *testing.T) {
 			},
 		},
 		{
+			"approve of a crowded folder whose events have no expected status says the compaction is blocked",
+			args{
+				setup: [][]string{{"import", "--file", "testdata/crowded-rejected.jsonl"}},
+				args:  approveNamed("k-j6"),
+			},
+			want{
+				0, "^k-j6\tv1\tapproved\treviewer\nfolder\t[0-9]+ of 70000 chars\t6 of 10 items in [a-z_ ]+\t.*\n" +
+					"compaction blocked\ta review of one change context carries more than 5 approved items but no evidence event has " +
+					"a label or an edit or approve verdict: e-r-6, e-r-1, e-r-2, e-r-3, e-r-4, e-r-5\n$",
+				`^$`,
+			},
+		},
+		{
 			"an item that cites only paragraphs never makes a compaction due since it cannot anchor one",
 			args{
 				setup: [][]string{{"import", "--file", "testdata/crowded.jsonl"}, proposeNamed("k-p")},
@@ -430,6 +446,21 @@ func TestRunKnowledge(t *testing.T) {
 			require.NoError(t, err)
 			require.NoError(t, traces.Append(ctx, trace.Trace{ID: "d1", Name: trace.NameDiagnose, Time: at}))
 			require.NoError(t, traces.Append(ctx, trace.Trace{ID: "c1", Name: trace.NameContext, Time: at}))
+			// The reviews the crowded fixtures cite
+			// t-N is approved so its event has an expected status and r-N is rejected so its event has none
+			verdicts, err := feedbackfile.New(records)
+			require.NoError(t, err)
+			for i := 1; i <= 6; i++ {
+				for prefix, verdict := range map[string]feedback.Verdict{"t": feedback.VerdictApprove, "r": feedback.VerdictReject} {
+					id := fmt.Sprintf("%s-%d", prefix, i)
+					require.NoError(t, traces.Append(ctx, trace.Trace{
+						ID: id, Name: trace.NameDiagnose, Subject: "e-" + id, Time: at, Output: json.RawMessage(`{"status":"hold"}`),
+					}))
+					fb, err := feedback.New(id, verdict, "reason", nil, "", at)
+					require.NoError(t, err)
+					require.NoError(t, verdicts.Append(ctx, fb))
+				}
+			}
 			// The files always go to a temp dir and a row without a home leaves HOME empty
 			dir := t.TempDir()
 			for rel, content := range tc.args.files {
