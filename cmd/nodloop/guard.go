@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/jeon-jihyeon/nodloop/internal/guard"
@@ -16,8 +18,10 @@ import (
 )
 
 // Any first argument other than an action runs the hook so a registered hook never depends on an action name
-func runGuard(args []string, getenv func(string) string, stdin io.Reader, stdout, stderr io.Writer) int {
-	cmd := guardCommand{home: homeDir(getenv("HOME")), stdin: stdin, out: stdout, errOut: stderr}
+func runGuard(
+	args []string, getenv func(string) string, executable func() (string, error), stdin io.Reader, stdout, stderr io.Writer,
+) int {
+	cmd := guardCommand{home: homeDir(getenv("HOME")), executable: executable, stdin: stdin, out: stdout, errOut: stderr}
 	var action string
 	if len(args) > 0 {
 		action = args[0]
@@ -54,12 +58,14 @@ func currentDir(stderr io.Writer) string {
 }
 
 // The PreToolUse hook and the actions that set it up
-// The hook command install registers is the absolute path of the current executable
+// The hook command install registers is an absolute path
 // Hooks do not run in a login shell so PATH cannot be trusted
 type guardCommand struct {
-	home  homeDir
-	stdin io.Reader
-	out   io.Writer
+	home homeDir
+	// The running binary as the process resolves it
+	executable func() (string, error)
+	stdin      io.Reader
+	out        io.Writer
 	// The hook writes its block reason here
 	errOut io.Writer
 }
@@ -127,14 +133,39 @@ func hookState(settingsPath, stable string) string {
 	return "guard hook installed"
 }
 
+// The binary the hook runs
+// 1. the stable link under `~/.nodloop/bin` when it is the running binary so the hook follows the plugin through upgrades
+// 2. a go run build is refused because go deletes it on exit
+func (c guardCommand) hookExecutable() (string, error) {
+	exe, err := c.executable()
+	if err != nil {
+		return "", fmt.Errorf("cannot resolve executable: %w", err)
+	}
+	stable := c.home.stableBinary()
+	if running, err := os.Stat(exe); err == nil {
+		if linked, err := os.Stat(stable); err == nil && os.SameFile(running, linked) {
+			return stable, nil
+		}
+	}
+	if slices.ContainsFunc(strings.Split(filepath.ToSlash(exe), "/"), goBuildDir) {
+		return "", fmt.Errorf("%w: %s", errExecutableTemporary, exe)
+	}
+	return exe, nil
+}
+
+// Where go build and go run place their binaries
+func goBuildDir(element string) bool {
+	return strings.HasPrefix(element, "go-build")
+}
+
 func (c guardCommand) install() error {
 	path, err := c.settingsPath()
 	if err != nil {
 		return err
 	}
-	exe, err := os.Executable()
+	exe, err := c.hookExecutable()
 	if err != nil {
-		return fmt.Errorf("cannot resolve executable: %w", err)
+		return err
 	}
 	changed, err := settingsfile.Install(path, exe)
 	if err != nil {

@@ -592,7 +592,7 @@ func TestApprovedVetoBlocksTheCall(t *testing.T) {
 			}
 			input := `{"tool_name":"Bash","cwd":"` + t.TempDir() + `","tool_input":` + tc.args + `}`
 
-			got := runGuard(nil, getenv, strings.NewReader(input), io.Discard, &stderr)
+			got := runGuard(nil, getenv, os.Executable, strings.NewReader(input), io.Discard, &stderr)
 
 			assert.Equal(t, tc.want, got)
 		})

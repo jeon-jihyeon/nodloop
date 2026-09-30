@@ -19,8 +19,10 @@ commands:
   guard [--vetoes <path>]   PreToolUse hook. Reads hook input from stdin and blocks calls that match a veto.
                             Without --vetoes, loads .claude/nodloop/vetoes.yaml from the hook cwd or its nearest parent
                             that has one and from $HOME and then every approved veto file under $HOME/.claude/nodloop
-  guard check               Load veto files from the current directory and $HOME and report counts or errors
+  guard check               Load veto files from the current directory and $HOME, report counts or errors
+                            and whether the hook is installed
   guard install             Register this binary as a PreToolUse hook in ~/.claude/settings.json (backs up first)
+                            Registers ~/.nodloop/bin/nodloop when it links to this binary and replaces a stale hook
   guard uninstall           Remove the hook registered by guard install
   setup --data-dir <dir> [--record-dir <dir>]
                             Point nodloop at a reference data directory such as examples/demo of the repository.
@@ -132,7 +134,7 @@ func run(args []string, getenv func(string) string, stdin io.Reader, stdout io.W
 		"feedback": func(args []string) int { return runFeedback(args, getenv, time.Now, stdout, stderr) },
 		"queue":    func(args []string) int { return runQueue(args, getenv, time.Now, stdout, stderr) },
 		"report":   func(args []string) int { return runReport(args, getenv, time.Now, stdout, stderr) },
-		"guard":    func(args []string) int { return runGuard(args, getenv, stdin, stdout, stderr) },
+		"guard":    func(args []string) int { return runGuard(args, getenv, os.Executable, stdin, stdout, stderr) },
 		"setup":    func(args []string) int { return runSetup(args, getenv, stdout, stderr) },
 		"llm":      func(args []string) int { return runLLM(args, claudeCLI(getenv), time.Now, stdout, stderr) },
 		"knowledge": func(args []string) int {
