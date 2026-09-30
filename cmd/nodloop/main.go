@@ -72,7 +72,8 @@ commands:
   knowledge overlaps <id>   Current items of the same kind with an intersecting scope
   knowledge approve <id> --version <n> --approver <name>
                             Refused when its folder may outgrow the review. Retire or replace an item, narrow the scope
-                            or compact the folder. Says when the folder holds more than five items and a compaction is due
+                            or compact the folder. Refused when it was not built from the approved version
+                            Says when the folder holds more than five items and a compaction is due
   knowledge retire <id> --version <n> --approver <name>
   knowledge import --file <jsonl>
                             Append the records of a file not yet recorded, such as the knowledge.jsonl of a data set

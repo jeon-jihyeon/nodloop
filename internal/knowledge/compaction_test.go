@@ -131,7 +131,7 @@ func TestLedgerProposeCompaction(t *testing.T) {
 		Compaction: "c-1", CompactionSize: 2,
 	}
 	judgment := seeds.drafts()[1]
-	judgment.Version, judgment.Basis, judgment.Status = 2, knowledge.BasisVerified, knowledge.StatusCandidate
+	judgment.Version, judgment.Base, judgment.Basis, judgment.Status = 2, 1, knowledge.BasisVerified, knowledge.StatusCandidate
 	judgment.Time, judgment.Compaction, judgment.CompactionSize = now, "c-1", 2
 	judgment.Evidence.FeedbackTraceIDs = []string{"t3"}
 	replaced := knowledge.Set{seeds.a, seeds.b, seeds.j}
@@ -707,6 +707,67 @@ func TestReplayPassed(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			assert.Equal(t, tc.want, tc.args.Passed())
+		})
+	}
+}
+
+// A narrowed version proposed while a compaction of its id waited for the replay
+// Approving it after the compaction would drop what the compaction merged so it is refused in either order
+func TestLedgerNarrowedDuringCompaction(t *testing.T) {
+	seeds := newCompactionSeeds()
+	passed := knowledge.Replay{Compaction: "c-1", Events: []knowledge.ReplayEvent{
+		{EventID: "e1", Expected: evidence.StatusNoAction, Got: evidence.StatusNoAction, TraceID: "r1"},
+	}}
+	type want struct {
+		narrowErr, compactionErr error
+		// id version and status of the approved j in the end
+		approved string
+	}
+	tcs := []struct {
+		name string
+		// The approvals in the order they run
+		args []string
+		want want
+	}{
+		{"the compaction lands first and the narrowed version is refused", []string{"compaction", "narrowed"}, want{knowledge.ErrCandidateOutdated, nil, "j v2"}},
+		{"the narrowed version lands first and the compaction is refused", []string{"narrowed", "compaction"}, want{nil, knowledge.ErrTransitionInvalid, "j v3"}},
+	}
+	ctx := context.Background()
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			store, err := file.New(t.TempDir())
+			require.NoError(t, err)
+			now := seeds.at
+			counts := map[string]int{}
+			l := knowledge.NewLedger(store, vetofile.NewApprovedFile(t.TempDir(), "records"), func() time.Time {
+				now = now.Add(time.Minute)
+				return now
+			}, func(prefix string) string {
+				counts[prefix]++
+				return fmt.Sprintf("%s%d", prefix, counts[prefix])
+			})
+			require.NoError(t, testkit.Err(l.Import(ctx, seeds.all())))
+			_, err = l.ProposeCompaction(ctx, "a", seeds.drafts())
+			require.NoError(t, err)
+			narrowed, _, err := l.Narrow(ctx, "j", 1, []evidence.Context{evidence.ContextPlannedChange}, []string{"r9"}, "jed")
+			require.NoError(t, err)
+			require.Equal(t, 3, narrowed.Version)
+
+			approvals := map[string]func() error{
+				"narrowed":   func() error { return testkit.Err(l.Approve(ctx, "j", 3, "jed")) },
+				"compaction": func() error { return testkit.Err(l.ApproveCompaction(ctx, "c-1", "jed", passed)) },
+			}
+			errs := map[string]error{}
+			for _, step := range tc.args {
+				errs[step] = approvals[step]()
+			}
+
+			assert.ErrorIs(t, errs["narrowed"], tc.want.narrowErr)
+			assert.ErrorIs(t, errs["compaction"], tc.want.compactionErr)
+			version, err := l.ApprovedVersion(ctx, "j")
+			require.NoError(t, err)
+			assert.Equal(t, tc.want.approved, fmt.Sprintf("j v%d", version))
 		})
 	}
 }
