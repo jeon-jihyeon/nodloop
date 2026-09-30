@@ -500,7 +500,7 @@ func (d *Diagnoser) recordRun(ctx context.Context, c Context, selected selectInp
 func (d *Diagnoser) appendReview(ctx context.Context, c Context, selected *selectInput, diag Diagnosis, run modelRun) (Result, error) {
 	known := c.citable()
 	tr := c.diagnoseTrace(d.now(), selected, run, known.unknown(diag))
-	gated, forced := diag.cited(known).gate()
+	gated, forced := diag.cited(known).gate(c.firstSteps())
 	if forced {
 		tr.Tags = append(tr.Tags, TagGateHold)
 	}

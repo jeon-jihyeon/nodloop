@@ -58,16 +58,16 @@ func (diag Diagnosis) cited(known citable) Diagnosis {
 }
 
 // Forces hold when the cited review cannot stand
-// 1. ready_for_review with a cause that has no id left becomes hold naming the cause
+// 1. ready_for_review with a cause that no kept id supports becomes hold naming the cause
 // 2. ready_for_review with no causes becomes hold
 // 3. no_action with causes becomes hold because a no_action must not carry a cause
 // 4. hold drops its causes and without hold reasons gets one that says the model gave none
 // 5. every status keeps its checks so a hold still names the steps that would lift it
 // 6. a hold keeps an empty causes list so the output keeps the schema's array
-func (diag Diagnosis) gate() (Diagnosis, bool) {
+func (diag Diagnosis) gate(firstSteps steps) (Diagnosis, bool) {
 	var uncited []string
 	for _, c := range diag.Causes {
-		if len(c.ParagraphIDs) == 0 {
+		if !c.supported(firstSteps) {
 			uncited = append(uncited, c.Summary)
 		}
 	}
@@ -94,6 +94,18 @@ func (diag Diagnosis) gate() (Diagnosis, bool) {
 	default:
 		return diag.hold(fmt.Sprintf("unknown status %q", diag.Status)), true
 	}
+}
+
+// Whether one cited id may state the cause
+// A cause citing only a Decide paragraph or a first step is uncited
+func (c Cause) supported(firstSteps steps) bool {
+	return slices.ContainsFunc(c.ParagraphIDs, firstSteps.mayState)
+}
+
+// A Decide paragraph and a first step never state a cause
+func (s steps) mayState(id string) bool {
+	p := evidence.ParagraphID(id)
+	return !p.IsDecide() && !s.has(p)
 }
 
 func (diag Diagnosis) hold(reason string) Diagnosis {

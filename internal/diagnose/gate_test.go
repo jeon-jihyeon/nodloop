@@ -18,6 +18,7 @@ func TestRecordGate(t *testing.T) {
 	const (
 		segment = "metric-anomaly-investigation#Metric anomaly investigation/Check the segment#1"
 		signal  = "metric-anomaly-investigation#Metric anomaly investigation/Confirm the signal#1"
+		decide  = "metric-anomaly-investigation#Metric anomaly investigation/Decide#1"
 	)
 	type want struct {
 		// Result without its trace id
@@ -68,6 +69,49 @@ func TestRecordGate(t *testing.T) {
 				}, Forced: true},
 				traced: trace.NameDiagnose, tags: gateHold,
 			},
+		},
+		{
+			name: "cause citing only a Decide paragraph forces hold naming the cause",
+			args: diagnose.Diagnosis{
+				Status: evidence.StatusReadyForReview,
+				Causes: []diagnose.Cause{{Summary: "cause x", ParagraphIDs: []string{decide}}},
+				Checks: diagnose.Checks{{Step: "s", ParagraphIDs: []string{signal}}},
+			},
+			want: want{
+				result: diagnose.Result{Diagnosis: diagnose.Diagnosis{
+					Status: evidence.StatusHold, Causes: []diagnose.Cause{}, HoldReasons: []string{"no paragraph supports: cause x"},
+					Checks: diagnose.Checks{{Step: "s", ParagraphIDs: []string{signal}}},
+				}, Forced: true},
+				traced: trace.NameDiagnose, tags: gateHold,
+			},
+		},
+		{
+			name: "cause citing only a first step forces hold naming the cause",
+			args: diagnose.Diagnosis{
+				Status: evidence.StatusReadyForReview,
+				Causes: []diagnose.Cause{{Summary: "cause x", ParagraphIDs: []string{signal}}},
+				Checks: diagnose.Checks{{Step: "s", ParagraphIDs: []string{signal}}},
+			},
+			want: want{
+				result: diagnose.Result{Diagnosis: diagnose.Diagnosis{
+					Status: evidence.StatusHold, Causes: []diagnose.Cause{}, HoldReasons: []string{"no paragraph supports: cause x"},
+					Checks: diagnose.Checks{{Step: "s", ParagraphIDs: []string{signal}}},
+				}, Forced: true},
+				traced: trace.NameDiagnose, tags: gateHold,
+			},
+		},
+		{
+			name: "cause citing a Decide paragraph next to one that states it stays",
+			args: diagnose.Diagnosis{
+				Status: evidence.StatusReadyForReview,
+				Causes: []diagnose.Cause{{Summary: "cause x", ParagraphIDs: []string{decide, segment}}},
+				Checks: diagnose.Checks{{Step: "s", ParagraphIDs: []string{signal}}},
+			},
+			want: want{result: diagnose.Result{Diagnosis: diagnose.Diagnosis{
+				Status: evidence.StatusReadyForReview,
+				Causes: []diagnose.Cause{{Summary: "cause x", ParagraphIDs: []string{decide, segment}}},
+				Checks: diagnose.Checks{{Step: "s", ParagraphIDs: []string{signal}}},
+			}}, traced: trace.NameDiagnose},
 		},
 		{
 			name: "ready review without causes forces hold",
