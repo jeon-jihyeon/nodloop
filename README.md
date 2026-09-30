@@ -33,6 +33,8 @@ The second review applies the knowledge you approved. When you are done with the
 
 `events.csv` needs the columns `event_id`, `timestamp` in RFC 3339, `metric` and `value`, in any order. Every other named column is a dimension of the series, such as a source or a region, so its values must repeat across rows. A column that differs on every row, like a row id or a note, splits every series into single points. A row repeated with the same value is read once, and one repeated with another value fails the load with both lines named.
 
+Each procedure is a `.md` file directly under `procedures/`, and setup fails when there is none. Setup warns about Markdown it will not read, such as `.markdown` files or a subfolder that holds `.md` files at any depth or that it cannot open. The `#` heading is the title and each heading below it is a step. The first step is a check the review must list and never cites for a cause, so an overview or a list of likely causes must not come first. A heading named exactly `Decide` states the decision and is never cited for a cause, while a heading named Decision is read as an ordinary step. A paragraph id comes from its heading text and its place within the section, so renaming a heading changes its ids and moving a section to the front makes it the check. [metric-anomaly-investigation.md](examples/demo/procedures/metric-anomaly-investigation.md) shows the shape.
+
 ## How it works
 
 <picture>

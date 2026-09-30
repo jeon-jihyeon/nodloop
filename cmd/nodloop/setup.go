@@ -2,6 +2,7 @@ package main
 
 import (
 	"cmp"
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -9,8 +10,10 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/jeon-jihyeon/nodloop/internal/atomicfile"
+	evidencefile "github.com/jeon-jihyeon/nodloop/internal/evidence/file"
 )
 
 const configFile = "config.json"
@@ -99,6 +102,14 @@ func newUserConfig(dataDir, recordDir string) (userConfig, error) {
 	if _, err := os.Stat(filepath.Join(abs, "policy.yaml")); err != nil {
 		return userConfig{}, fmt.Errorf("%w: %s", errPolicyMissing, abs)
 	}
+	src, err := evidencefile.New(abs)
+	if err != nil {
+		return userConfig{}, err
+	}
+	// Procedures that would never be read fail here rather than in the first review
+	if _, err := src.Procedures(context.Background()); err != nil {
+		return userConfig{}, err
+	}
 	return userConfig{DataDir: abs, RecordDir: recordDir}, nil
 }
 
@@ -151,6 +162,7 @@ type setupCommand struct {
 // 4. NODLOOP_FILE_DIR naming another directory warns because every command started with it reviews that dir
 // 5. a data dir naming another directory over the records in use before warns when they hold files because their knowledge and corrections carry into its reviews
 // 6. two spellings of one directory are one dir so a symlinked path never splits the records
+// 7. Markdown under procedures that no review reads warns with each entry named
 func (c setupCommand) data(dataDir, recordDir string) error {
 	prior, err := c.prior(recordDir)
 	if err != nil {
@@ -176,6 +188,18 @@ func (c setupCommand) data(dataDir, recordDir string) error {
 	if !dirPath(uc.DataDir).sameAs(data) {
 		fmt.Fprintf(c.log, "nodloop setup: warning: %s is %s and wins over the saved data dir so every command started with it reviews %s. "+
 			"Unset it to review %s\n", envFileDir, c.fileEnv, data, uc.DataDir)
+	}
+	src, err := evidencefile.New(uc.DataDir)
+	if err != nil {
+		return err
+	}
+	skipped, err := src.Skipped(context.Background())
+	if err != nil {
+		return err
+	}
+	if len(skipped) > 0 {
+		fmt.Fprintf(c.log, "nodloop setup: warning: reviews never read %s. "+
+			"Only .md files directly under procedures are procedures and a folder setup cannot open is passed over\n", strings.Join(skipped, ", "))
 	}
 	c.warnCarryOver(prior, uc.DataDir, records)
 	return nil
