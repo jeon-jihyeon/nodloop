@@ -3,13 +3,16 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
 	"time"
 
+	"github.com/jeon-jihyeon/nodloop/internal/diagnose"
 	"github.com/jeon-jihyeon/nodloop/internal/feedback"
+	feedbackfile "github.com/jeon-jihyeon/nodloop/internal/feedback/file"
 )
 
 // Flags of the feedback subcommands
@@ -117,10 +120,7 @@ func (c feedbackCommand) add(
 		return err
 	}
 	fb.Audit = c.audit
-	if err := c.app.checkReviews(ctx, fb.TraceID); err != nil {
-		return err
-	}
-	store, err := c.app.feedback()
+	store, err := c.checked(ctx, fb.TraceID, fb.Edited)
 	if err != nil {
 		return err
 	}
@@ -129,6 +129,38 @@ func (c feedbackCommand) add(
 	}
 	fmt.Fprintf(c.out, "%s\t%s\t%s\n", fb.TraceID, fb.Verdict, fb.Reviewer)
 	return nil
+}
+
+// The store a verdict goes to once the review it cites passed its checks
+// An edit is checked against the current procedures that apply to the event of the context trace the review was built on
+// A verdict reads neither the policy nor the events
+// A procedures folder that cannot be read counts as empty
+// 1. an edit citing a paragraph is refused and the read error joins the refusal to say why
+// 2. an edit without citations such as a hold still passes
+func (c feedbackCommand) checked(ctx context.Context, traceID string, edited json.RawMessage) (*feedbackfile.Store, error) {
+	if err := c.app.checkReviews(ctx, traceID); err != nil {
+		return nil, err
+	}
+	if len(edited) == 0 {
+		return c.app.feedback()
+	}
+	traces, err := c.app.traces()
+	if err != nil {
+		return nil, err
+	}
+	review, err := traces.Get(ctx, traceID)
+	if err != nil {
+		return nil, err
+	}
+	built, err := traces.Get(ctx, review.Ref)
+	if err != nil {
+		return nil, err
+	}
+	procedures, readErr := c.app.procedures(ctx)
+	if err := diagnose.CheckEdit(built, procedures, edited); err != nil {
+		return nil, errors.Join(err, readErr)
+	}
+	return c.app.feedback()
 }
 
 func (c feedbackCommand) outcome(

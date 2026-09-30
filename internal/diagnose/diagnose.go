@@ -146,6 +146,19 @@ func (c Context) offered() bool {
 	return len(c.KnowledgeCandidates) > 0 || len(c.ExampleCandidates) > 0
 }
 
+// c listing the procedures of ps whose scope fits its change context and observed metrics
+// The one rule of which paragraphs a review of the event reads and may cite
+// Only the change context and the observations of c are read so a context loaded back from a trace lists what a review of the event would list now
+func (c Context) withProcedures(ps evidence.Procedures) Context {
+	included := ps.Applicable(c.ChangeContext, c.Observations.Metrics())
+	paragraphs := procedureParagraphs(included.Paragraphs())
+	section := paragraphs.render()
+	c.Procedures, c.ParagraphIDs = included.Slugs(), paragraphs.ids()
+	c.ProcedureChars = utf8.RuneCountInString(section)
+	c.Text = c.render() + section
+	return c
+}
+
 func (c Context) citable() citable {
 	known := make(citable, len(c.ParagraphIDs))
 	for _, id := range c.ParagraphIDs {
@@ -397,14 +410,10 @@ func (d *Diagnoser) prepare(ctx context.Context, eventID string, mode Mode, sess
 	if err != nil {
 		return Context{}, err
 	}
-	included := procedures.Applicable(ev.ChangeContext, obs.Metrics())
-	paragraphs := procedureParagraphs(included.Paragraphs())
-	section := paragraphs.render()
 	c := Context{
 		EventID: eventID, Mode: mode, PolicyVersion: d.policy.Version, PromptVersion: promptVersion, ChangeContext: ev.ChangeContext,
-		Session: session, Observations: obs, Procedures: included.Slugs(), ParagraphIDs: paragraphs.ids(),
-		ProcedureChars: utf8.RuneCountInString(section),
-	}
+		Session: session, Observations: obs,
+	}.withProcedures(procedures)
 	var examplesOmitted, knowledgeOmitted bool
 	if c.ExampleCandidates, examplesOmitted, err = d.exampleCandidates(ctx, eventID, excluded, ev.ChangeContext, obs.Metrics()); err != nil {
 		return Context{}, err
@@ -413,7 +422,6 @@ func (d *Diagnoser) prepare(ctx context.Context, eventID string, mode Mode, sess
 		return Context{}, err
 	}
 	c.CandidatesOmitted = examplesOmitted || knowledgeOmitted
-	c.Text = c.render() + section
 	tr, err := c.trace(d.now())
 	if err != nil {
 		return Context{}, err

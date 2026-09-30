@@ -199,7 +199,10 @@ var tools = []tool{
 		"Show the user the review this returns, never the draft", (*Server).record),
 	newTool("feedback", "Record the user's verdict on a recorded review: "+
 		"approve, edit or reject with the reason in the user's words "+
-		"and the corrected review in full when the verdict is edit", (*Server).feedback),
+		"and the corrected review in full when the verdict is edit. "+
+		"Refuses a failed review and an edited review whose keys or status are invalid, "+
+		"whose paragraph ids the procedures that apply to the event do not list now, "+
+		"or that the citation gate would hold such as a cause citing only a first step or a Decide paragraph", (*Server).feedback),
 	newTool("outcome", "Record what a real check found for a recorded review: "+
 		"confirmed, refuted or inconclusive, with the confirmed cause. "+
 		"Different from the verdict on the review", (*Server).outcome),
@@ -250,6 +253,26 @@ func (s *Server) checkReview(ctx context.Context, id string) error {
 		return err
 	}
 	return tr.CheckReview()
+}
+
+// Checks the edit against the current procedures that apply to the event of the context trace the review was built on
+// Procedures that cannot be read count as empty
+// 1. an edit citing a paragraph is refused and the read error joins the refusal to say why
+// 2. an edit without citations such as a hold still passes
+func (s *Server) checkEdit(ctx context.Context, id string, edited json.RawMessage) error {
+	review, err := s.traces.Get(ctx, id)
+	if err != nil {
+		return err
+	}
+	built, err := s.traces.Get(ctx, review.Ref)
+	if err != nil {
+		return err
+	}
+	procedures, readErr := s.src.Procedures(ctx)
+	if err := diagnose.CheckEdit(built, procedures, edited); err != nil {
+		return errors.Join(err, readErr)
+	}
+	return nil
 }
 
 type noInput struct{}
@@ -395,6 +418,11 @@ func (s *Server) feedback(ctx context.Context, _ *sdk.CallToolRequest, in feedba
 	fb, err := feedback.New(in.TraceID, in.Verdict, in.Reason, edited, in.Reviewer, s.now())
 	if err != nil {
 		return nil, nil, err
+	}
+	if len(fb.Edited) > 0 {
+		if err := s.checkEdit(ctx, fb.TraceID, fb.Edited); err != nil {
+			return nil, nil, err
+		}
 	}
 	fb.Audit = in.Audit
 	if err = s.verdicts.Append(ctx, fb); err != nil {

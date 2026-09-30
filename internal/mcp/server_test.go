@@ -1045,6 +1045,13 @@ func TestServerRefusals(t *testing.T) {
 	}
 	require.NoError(t, c.Call(t, "context", map[string]any{"event_id": relatedEvent}, &fresh))
 	require.NoError(t, st.Traces.Append(context.Background(), batch))
+	// A corrected review in full with one cause citing ids
+	editedReview := func(status evidence.Status, ids ...string) map[string]any {
+		return map[string]any{
+			"status": status, "observations": []string{"x"}, "checks": []any{}, "open_questions": []string{},
+			"causes": []any{map[string]any{"summary": "bot traffic", "paragraph_ids": ids}},
+		}
+	}
 	type args struct {
 		tool  string
 		input map[string]any
@@ -1098,6 +1105,46 @@ func TestServerRefusals(t *testing.T) {
 			name: "feedback refuses an unknown verdict",
 			args: args{tool: "feedback", input: map[string]any{"trace_id": reviewed.TraceID, "verdict": "maybe"}},
 			want: feedback.ErrVerdictUnknown.Error(),
+		},
+		{
+			name: "feedback schema refuses an edited review with a status outside the valid set",
+			args: args{tool: "feedback", input: map[string]any{
+				"trace_id": reviewed.TraceID, "verdict": feedback.VerdictEdit,
+				"edited": editedReview("needs-review", "made-up#1"),
+			}},
+			want: "/properties/edited/properties/status: enum",
+		},
+		{
+			name: "feedback refuses an edited review citing a paragraph no procedure holds",
+			args: args{tool: "feedback", input: map[string]any{
+				"trace_id": reviewed.TraceID, "verdict": feedback.VerdictEdit,
+				"edited": editedReview(evidence.StatusReadyForReview, "made-up#1"),
+			}},
+			want: diagnose.ErrEditInvalid.Error() + ": paragraph ids the procedures that apply to event " + plannedEvent +
+				" do not list now: made-up#1. The procedures may have changed since the review",
+		},
+		{
+			name: "feedback refuses an edited review whose cause cites only a first step",
+			args: args{tool: "feedback", input: map[string]any{
+				"trace_id": reviewed.TraceID, "verdict": feedback.VerdictEdit,
+				"edited": editedReview(
+					evidence.StatusReadyForReview, "metric-anomaly-investigation#Metric anomaly investigation/Confirm the signal#1",
+				),
+			}},
+			want: diagnose.ErrEditInvalid.Error() + ": the gate would hold a review that follows it: no paragraph supports: bot traffic",
+		},
+		{
+			name: "feedback refuses an edited review whose cause cites more than two paragraph ids",
+			args: args{tool: "feedback", input: map[string]any{
+				"trace_id": reviewed.TraceID, "verdict": feedback.VerdictEdit,
+				"edited": editedReview(evidence.StatusReadyForReview,
+					"metric-anomaly-investigation#Metric anomaly investigation/Check the segment#1",
+					"metric-anomaly-investigation#Metric anomaly investigation/Check downstream outcomes#1",
+					"metric-anomaly-investigation#Metric anomaly investigation/Decide#1",
+				),
+			}},
+			want: diagnose.ErrEditInvalid.Error() + ": causes cite more than 2 paragraph ids: bot traffic. " +
+				"A later review keeps only the first 2 in citation order",
 		},
 		{
 			name: "feedback refuses a context trace that is not a review",
