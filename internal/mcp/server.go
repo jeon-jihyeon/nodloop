@@ -78,15 +78,19 @@ type Server struct {
 	version string
 	// The path of the binary that commands in an answer name for the user to paste
 	exe string
+	// Flags that name the directories of this server
+	// A command in an answer ends with them so a shell without the server's flags or env reads the same records
+	dataArgs string
 }
 
 func New(
 	src Source, policy analysis.Policy, diagnoser *diagnose.Diagnoser, traces TraceStore, verdicts FeedbackStore,
-	outcomes OutcomeStore, ledger *knowledge.Ledger, compactor *compact.Compactor, now func() time.Time, version, exe string,
+	outcomes OutcomeStore, ledger *knowledge.Ledger, compactor *compact.Compactor, now func() time.Time,
+	version, exe, dataArgs string,
 ) *Server {
 	return &Server{
 		src: src, policy: policy, diagnoser: diagnoser, traces: traces, verdicts: verdicts, outcomes: outcomes,
-		ledger: ledger, compactor: compactor, now: now, version: version, exe: exe,
+		ledger: ledger, compactor: compactor, now: now, version: version, exe: exe, dataArgs: dataArgs,
 		session: diagnose.Session{ID: sessionPrefix + trace.NewID(now())},
 	}
 }
@@ -635,7 +639,8 @@ func (s *Server) proposeCompaction(
 	}
 	return nil, map[string]any{
 		"compaction": c.ID, "items": newItemAnswers(c.Items), "replaced": replaced, "replay": expected,
-		"replay_events": len(expected), "replay_command": s.exe + " knowledge replay " + c.ID,
+		// The id comes right after the verb so flags a user appends such as `--events` still parse
+		"replay_events": len(expected), "replay_command": strings.TrimSpace(s.exe + " knowledge replay " + c.ID + " " + s.dataArgs),
 	}, nil
 }
 

@@ -97,7 +97,7 @@ func TestServerCompaction(t *testing.T) {
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			c := connect(t, compactionStores(t), "nodloop")
+			c := connect(t, compactionStores(t), "nodloop", "")
 			for _, b := range tc.args.before {
 				require.NoError(t, c.Run(t, b.tool, b.input), b.tool)
 			}
@@ -178,7 +178,7 @@ func TestServerCompactionRefusals(t *testing.T) {
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			c := connect(t, compactionStores(t), "nodloop")
+			c := connect(t, compactionStores(t), "nodloop", "")
 			for _, b := range tc.args.before {
 				require.NoError(t, c.Run(t, b.tool, b.input), b.tool)
 			}
@@ -191,8 +191,12 @@ func TestServerCompactionRefusals(t *testing.T) {
 	}
 }
 
-// The replay command names the binary the server was built with so the user can paste it
+// The replay command names the binary and the directories the server was started with so the user can paste it
 func TestServerProposeCompaction(t *testing.T) {
+	type args struct {
+		exe      string
+		dataArgs string
+	}
 	type want struct {
 		Compaction    string   `json:"compaction"`
 		Replaced      []string `json:"replaced"`
@@ -201,24 +205,29 @@ func TestServerProposeCompaction(t *testing.T) {
 	}
 	tcs := []struct {
 		name string
-		args string
+		args args
 		want want
 	}{
 		{
 			"the command names the path of the binary",
-			"/home/u/.nodloop/bin/nodloop",
+			args{"/home/u/.nodloop/bin/nodloop", ""},
 			want{"c-generated", []string{"a v1", "b v1"}, 2, "/home/u/.nodloop/bin/nodloop knowledge replay c-generated"},
 		},
 		{
 			"the command names the fallback when the OS cannot tell the path",
-			"nodloop",
+			args{"nodloop", ""},
 			want{"c-generated", []string{"a v1", "b v1"}, 2, "nodloop knowledge replay c-generated"},
+		},
+		{
+			"the command ends with the directories of the server after the id",
+			args{"nodloop", "--data-dir /d --record-dir '/r s'"},
+			want{"c-generated", []string{"a v1", "b v1"}, 2, "nodloop knowledge replay c-generated --data-dir /d --record-dir '/r s'"},
 		},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			c := connect(t, compactionStores(t), tc.args)
+			c := connect(t, compactionStores(t), tc.args.exe, tc.args.dataArgs)
 			merge := mergeInto("a")
 			var got want
 
@@ -251,7 +260,7 @@ func TestServerApproveCompaction(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			st := compactionStores(t)
-			c := connect(t, st, "nodloop")
+			c := connect(t, st, "nodloop", "")
 			merge := mergeInto("a")
 			require.NoError(t, c.Run(t, merge.tool, merge.input))
 			for _, tr := range []trace.Trace{

@@ -50,7 +50,7 @@ func TestServerQueue(t *testing.T) {
 			st := testkit.Open(t)
 			review := conversationReview(t, "review", "tq-001", st.Clock.Now())
 			require.NoError(t, st.Traces.Append(ctx, review))
-			c := connect(t, st, "nodloop")
+			c := connect(t, st, "nodloop", "")
 			var got struct {
 				Items   []loop.QueueItem           `json:"items"`
 				Reviews map[string]json.RawMessage `json:"reviews"`
@@ -108,7 +108,7 @@ func TestServerKnowledgeHealthAndReaffirm(t *testing.T) {
 			require.NoError(t, st.Outcomes.Append(ctx, feedback.Outcome{
 				TraceID: "review", Result: feedback.ResultRefuted, Time: st.Clock.Now(), Reviewer: "ann",
 			}))
-			c := connect(t, st, "nodloop")
+			c := connect(t, st, "nodloop", "")
 			reaffirmed := []string{}
 			for _, in := range tc.args {
 				var answer struct {
@@ -152,7 +152,7 @@ func TestServerOutcomeAppendsNoProposal(t *testing.T) {
 			t.Parallel()
 			st := testkit.Open(t)
 			require.NoError(t, st.Traces.Append(ctx, conversationReview(t, "review", "tq-001", st.Clock.Now())))
-			c := connect(t, st, "nodloop")
+			c := connect(t, st, "nodloop", "")
 			var got map[string]any
 
 			require.NoError(t, c.Call(t, "outcome", map[string]any{"trace_id": "review", "result": tc.args}, &got))
