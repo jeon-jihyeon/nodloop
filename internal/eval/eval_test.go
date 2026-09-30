@@ -17,6 +17,7 @@ import (
 	"github.com/jeon-jihyeon/nodloop/internal/evidence"
 	evidencefile "github.com/jeon-jihyeon/nodloop/internal/evidence/file"
 	"github.com/jeon-jihyeon/nodloop/internal/feedback"
+	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	"github.com/jeon-jihyeon/nodloop/internal/testkit"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
 )
@@ -41,7 +42,21 @@ func TestReport(t *testing.T) {
 	noAction := json.RawMessage(`{"status":"no_action"}`)
 	readyBare := json.RawMessage(`{"status":"ready_for_review"}`)
 	hold := json.RawMessage(`{"status":"hold"}`)
-	knowledge := json.RawMessage(`{"knowledge":[{"id":"k-aggregation-basis","version":1},{"id":"k9","version":1}]}`)
+	carried := json.RawMessage(`{"knowledge":[{"id":"k-aggregation-basis","version":1},{"id":"k9","version":1}]}`)
+	compacted := json.RawMessage(`{"knowledge":[{"id":"k-merged","version":1}]}`)
+	// k-merged compacted the expected item of tq-005 and k-stray compacted an item no label expects
+	ledger := []knowledge.Knowledge{
+		{
+			ID: "k-merged", Version: 1, Kind: knowledge.KindMeaning, Content: "merged",
+			Evidence: knowledge.Evidence{Knowledge: []knowledge.Ref{{ID: "k-aggregation-basis", Version: 1}, {ID: "k9", Version: 1}}},
+			Basis:    knowledge.BasisStated, Status: knowledge.StatusApproved, Approver: "a", Author: "a", Time: at,
+		},
+		{
+			ID: "k-stray", Version: 1, Kind: knowledge.KindMeaning, Content: "stray",
+			Evidence: knowledge.Evidence{Knowledge: []knowledge.Ref{{ID: "k9", Version: 1}}},
+			Basis:    knowledge.BasisStated, Status: knowledge.StatusApproved, Approver: "a", Author: "a", Time: at,
+		},
+	}
 	uncompared := map[eval.Condition]eval.Comparison{}
 	none := eval.Comparison{Fixed: []string{}, Regressed: []string{}, Weakened: []string{}}
 	interval := func(reference, condition eval.Condition, metric eval.Metric, events int, bounds [3]float64) eval.Interval {
@@ -57,6 +72,7 @@ func TestReport(t *testing.T) {
 		traces    []trace.Trace
 		revisions []trace.Trace
 		feedback  []feedback.Feedback
+		knowledge []knowledge.Knowledge
 	}
 	type want struct {
 		report eval.Report
@@ -161,7 +177,7 @@ func TestReport(t *testing.T) {
 		},
 		{
 			"a failed trace given knowledge counts none of it as used",
-			args{traces: []trace.Trace{{Subject: "tq-005", Tags: off, Error: "boom", Input: knowledge}}},
+			args{traces: []trace.Trace{{Subject: "tq-005", Tags: off, Error: "boom", Input: carried}}},
 			want{report: eval.Report{
 				SessionID: "s",
 				Summaries: []eval.Summary{{
@@ -241,7 +257,7 @@ func TestReport(t *testing.T) {
 		},
 		{
 			"knowledge used partly as expected scores the hit and each misapplied id",
-			args{traces: []trace.Trace{{Subject: "tq-005", Tags: off, Output: ready, Input: knowledge}}},
+			args{traces: []trace.Trace{{Subject: "tq-005", Tags: off, Output: ready, Input: carried}}},
 			want{report: eval.Report{
 				SessionID: "s",
 				Summaries: []eval.Summary{{
@@ -255,6 +271,49 @@ func TestReport(t *testing.T) {
 					ExpectedStatus: evidence.StatusReadyForReview, Status: evidence.StatusReadyForReview, StatusOK: true,
 					CitationPrecision: 0.5, CitationRecall: 0.5, RequiredChecks: 0.5, FirstCheck: 1,
 					KnowledgeHit: 1, Misapplications: 1, KnowledgeUsed: []string{"k-aggregation-basis", "k9"},
+				}},
+			}},
+		},
+		{
+			"knowledge that compacted the expected item is a hit and never misapplied",
+			args{traces: []trace.Trace{{Subject: "tq-005", Tags: off, Output: ready, Input: compacted}}, knowledge: ledger},
+			want{report: eval.Report{
+				SessionID: "s",
+				Summaries: []eval.Summary{{
+					Condition: base, Events: 1, StatusAccuracy: 1, HoldRecall: na, HoldPrecision: na,
+					CitationPrecision: 0.5, CitationRecall: 0.5, RequiredChecks: 0.5, FirstCheck: 1,
+					KnowledgeHit: 1, EditRate: na, MeanEditWidth: na,
+				}},
+				AgainstBaseline: uncompared,
+				Scores: []eval.Score{{
+					EventID: "tq-005", Condition: base, Type: "click_spike",
+					ExpectedStatus: evidence.StatusReadyForReview, Status: evidence.StatusReadyForReview, StatusOK: true,
+					CitationPrecision: 0.5, CitationRecall: 0.5, RequiredChecks: 0.5, FirstCheck: 1,
+					KnowledgeHit: 1, KnowledgeUsed: []string{"k-merged"},
+				}},
+			}},
+		},
+		{
+			"knowledge that compacted only unexpected items stays misapplied",
+			args{
+				traces: []trace.Trace{{
+					Subject: "tq-005", Tags: off, Output: ready, Input: json.RawMessage(`{"knowledge":[{"id":"k-stray","version":1}]}`),
+				}},
+				knowledge: ledger,
+			},
+			want{report: eval.Report{
+				SessionID: "s",
+				Summaries: []eval.Summary{{
+					Condition: base, Events: 1, StatusAccuracy: 1, HoldRecall: na, HoldPrecision: na,
+					CitationPrecision: 0.5, CitationRecall: 0.5, RequiredChecks: 0.5, FirstCheck: 1,
+					Misapplications: 1, EditRate: na, MeanEditWidth: na,
+				}},
+				AgainstBaseline: uncompared,
+				Scores: []eval.Score{{
+					EventID: "tq-005", Condition: base, Type: "click_spike",
+					ExpectedStatus: evidence.StatusReadyForReview, Status: evidence.StatusReadyForReview, StatusOK: true,
+					CitationPrecision: 0.5, CitationRecall: 0.5, RequiredChecks: 0.5, FirstCheck: 1,
+					Misapplications: 1, KnowledgeUsed: []string{"k-stray"},
 				}},
 			}},
 		},
@@ -750,6 +809,7 @@ func TestReport(t *testing.T) {
 			for _, fb := range tc.args.feedback {
 				require.NoError(t, s.Feedback.Append(ctx, fb))
 			}
+			require.NoError(t, testkit.Err(s.Ledger.Import(ctx, tc.args.knowledge)))
 			rep, err := eval.New(s.Source, nil, s.Traces, s.Feedback, s.Ledger).Report(ctx, "s")
 			assert.ErrorIs(t, err, tc.want.err)
 			assert.Equal(t, tc.want.report, rep)

@@ -146,10 +146,12 @@ type Summary struct {
 // 2. citations compare the union of cause paragraph ids with the label paragraphs
 // 3. required checks are the share of the RequiredChecks of the label cited by any check and stay not applicable on a no_action label since that review carries no checks
 // 4. edit width counts the top level fields that differ between the output and the edited review
-// 5. knowledge hit and misapplied compare the ids the trace input names with the Knowledge of the label
+// 5. knowledge hit and misapplied compare the lineage of every item the trace input names with the Knowledge of the label
 // 6. a metric whose label side is empty stays not applicable
 // 7. the verdict counts on a failed trace too
-func newScore(condition Condition, l evidence.Label, tr trace.Trace, revised bool, verdict feedback.Verdict, edited json.RawMessage) Score {
+func newScore(
+	condition Condition, l evidence.Label, tr trace.Trace, used applied, revised bool, verdict feedback.Verdict, edited json.RawMessage,
+) Score {
 	s := Score{
 		EventID: l.EventID, Condition: condition, Type: l.Type, ExpectedStatus: l.Expected,
 		CitationPrecision: notApplicable, CitationRecall: notApplicable, RequiredChecks: notApplicable, FirstCheck: notApplicable, KnowledgeHit: notApplicable,
@@ -159,7 +161,6 @@ func newScore(condition Condition, l evidence.Label, tr trace.Trace, revised boo
 	}
 	var diag diagnose.Diagnosis
 	s.Failed = tr.Error != "" || len(tr.Output) == 0 || json.Unmarshal(tr.Output, &diag) != nil
-	used := diagnose.KnowledgeApplied(tr.Input)
 	if s.Failed {
 		diag, used = diagnose.Diagnosis{}, nil
 	}
@@ -177,15 +178,33 @@ func newScore(condition Condition, l evidence.Label, tr trace.Trace, revised boo
 	return s
 }
 
-func (s *Score) scoreKnowledge(used, expected []string) {
-	s.KnowledgeUsed = used
-	hit := 0
-	for _, id := range used {
-		if !slices.Contains(expected, id) {
-			s.Misapplications++
-			continue
+// Per knowledge item a review carried its own id first and then every id its compactions replaced
+// A label written before a compaction names the replaced ids so the lineage keeps the score of the item that replaced them
+type applied [][]string
+
+// 1. knowledge used lists the ids the review carried
+// 2. an item is misapplied when no id of its lineage is expected
+// 3. the hit is the share of expected ids that the lineage of some item covers
+func (s *Score) scoreKnowledge(used applied, expected []string) {
+	var covered []string
+	for _, lineage := range used {
+		s.KnowledgeUsed = append(s.KnowledgeUsed, lineage[0])
+		matched := false
+		for _, id := range lineage {
+			if slices.Contains(expected, id) {
+				matched = true
+				covered = append(covered, id)
+			}
 		}
-		hit++
+		if !matched {
+			s.Misapplications++
+		}
+	}
+	hit := 0
+	for _, id := range expected {
+		if slices.Contains(covered, id) {
+			hit++
+		}
 	}
 	if len(expected) > 0 {
 		s.KnowledgeHit = float64(hit) / float64(len(expected))

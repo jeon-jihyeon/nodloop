@@ -428,3 +428,42 @@ func (s Set) latest(id string, version int) (Knowledge, error) {
 	}
 	return Knowledge{}, fmt.Errorf("%w: %s version %d", ErrNotFound, id, version)
 }
+
+// The id of the version first and then every id its compactions replaced in first seen order
+// 1. a compaction names only its direct parents so the walk follows each of them in turn
+// 2. the earlier versions of an id are walked too
+// A revision of a compacted item carries only its own evidence and still stands for what the compaction replaced
+// 3. a version met twice is walked once so a draft that reuses an old id ends
+// 4. a version missing from the set stands for its own id alone
+func (s Set) Lineage(ref Ref) []string {
+	ids := []string{}
+	walked := map[Ref]bool{}
+	next := []Ref{ref}
+	for len(next) > 0 {
+		r := next[0]
+		next = next[1:]
+		if walked[r] {
+			continue
+		}
+		walked[r] = true
+		if !slices.Contains(ids, r.ID) {
+			ids = append(ids, r.ID)
+		}
+		if k, err := s.latest(r.ID, r.Version); err == nil {
+			next = append(next, k.Evidence.Knowledge...)
+		}
+		next = append(next, s.history(r.ID).before(r.Version)...)
+	}
+	return ids
+}
+
+// The versions below version as refs
+func (s Set) before(version int) []Ref {
+	out := []Ref{}
+	for _, k := range s {
+		if k.Version < version {
+			out = append(out, Ref{ID: k.ID, Version: k.Version})
+		}
+	}
+	return out
+}

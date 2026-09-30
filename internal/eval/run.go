@@ -414,7 +414,22 @@ func (r *Runner) Report(ctx context.Context, sessionID string) (Report, error) {
 	if err != nil {
 		return Report{}, err
 	}
-	return labelSet(labels).report(sessionID, rs, feedback.Records(all).Latest(), revisedIDs), nil
+	set, err := r.ledger.All(ctx)
+	if err != nil {
+		return Report{}, err
+	}
+	return labelSet(labels).report(sessionID, rs, feedback.Records(all).Latest(), revisedIDs, rs.knowledge(set)), nil
+}
+
+// The lineage of every knowledge item each review carried by trace id
+func (rs reviews) knowledge(set knowledge.Set) map[string]applied {
+	out := map[string]applied{}
+	for _, tr := range rs {
+		for _, ref := range diagnose.KnowledgeApplied(tr.Input) {
+			out[tr.ID] = append(out[tr.ID], set.Lineage(ref))
+		}
+	}
+	return out
 }
 
 // The diagnose traces of one session
@@ -469,7 +484,9 @@ func (rs reviews) newest() map[Condition][]trace.Trace {
 
 // One score per trace of a labeled event joined with the latest feedback on that trace
 // Traces of events outside the set are left out
-func (ls labelSet) score(byCondition map[Condition][]trace.Trace, latest feedback.Records, revised map[string]struct{}) conditionScores {
+func (ls labelSet) score(
+	byCondition map[Condition][]trace.Trace, latest feedback.Records, revised map[string]struct{}, used map[string]applied,
+) conditionScores {
 	byEvent := map[string]evidence.Label{}
 	for _, l := range ls {
 		byEvent[l.EventID] = l
@@ -487,7 +504,7 @@ func (ls labelSet) score(byCondition map[Condition][]trace.Trace, latest feedbac
 			}
 			fb := byTrace[tr.ID]
 			_, isRevised := revised[tr.ID]
-			out[cond] = append(out[cond], newScore(cond, l, tr, isRevised, fb.Verdict, fb.Edited))
+			out[cond] = append(out[cond], newScore(cond, l, tr, used[tr.ID], isRevised, fb.Verdict, fb.Edited))
 		}
 	}
 	return out

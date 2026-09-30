@@ -80,16 +80,16 @@ func (cs Checks) Paragraphs() []string {
 	return out
 }
 
-// Knowledge ids the Input of a diagnose trace names as given to the model
+// Knowledge versions the Input of a diagnose trace names as given to the model
 // Nothing for an input that is not a diagnose input
-func KnowledgeApplied(input json.RawMessage) []string {
+func KnowledgeApplied(input json.RawMessage) []knowledge.Ref {
 	var in recordInput
 	if json.Unmarshal(input, &in) != nil {
 		return nil
 	}
-	var out []string
+	var out []knowledge.Ref
 	for _, k := range in.Knowledge {
-		out = append(out, k.ID)
+		out = append(out, knowledge.Ref{ID: k.ID, Version: k.Version})
 	}
 	return out
 }
