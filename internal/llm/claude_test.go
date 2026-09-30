@@ -47,7 +47,7 @@ func TestClaudeCLIComplete(t *testing.T) {
 				res: success,
 				args: []string{
 					"-p", "--output-format", "json", "--json-schema", `{"type":"object"}`, "--max-turns", "3",
-					"--max-budget-usd", "0.5", "--no-session-persistence", "--safe-mode", "--model", "haiku",
+					"--max-budget-usd", "0.5", "--no-session-persistence", "--safe-mode", "--setting-sources", "user", "--model", "haiku",
 					"--append-system-prompt", "be terse",
 				},
 				stdin: "hello",
@@ -60,7 +60,7 @@ func TestClaudeCLIComplete(t *testing.T) {
 				res: success,
 				args: []string{
 					"-p", "--output-format", "json", "--json-schema", "{}", "--max-turns", "3", "--max-budget-usd", "0.5",
-					"--no-session-persistence", "--safe-mode", "--model", "sonnet",
+					"--no-session-persistence", "--safe-mode", "--setting-sources", "user", "--model", "sonnet",
 				},
 				stdin: "x",
 			},
@@ -77,7 +77,7 @@ func TestClaudeCLIComplete(t *testing.T) {
 				"/bin/cat > \"" + dir + "/stdin\"\n" +
 				"/bin/cat \"" + testdata + "/success.json\"\n"
 			require.NoError(t, os.WriteFile(bin, []byte(script), 0o755))
-			c := llm.NewClaudeCLI(bin, "sonnet", filepath.Join(dir, "work"), 0)
+			c := llm.NewClaudeCLI(bin, "sonnet", dir, 0)
 
 			got, err := c.Complete(ctx, tc.args)
 			require.NoError(t, err)
@@ -115,7 +115,7 @@ func TestClaudeCLICompleteFailure(t *testing.T) {
 			want: want{err: llm.ErrSchemaRequired, message: "llm: schema is required"},
 		},
 		{
-			name: "a work dir that cannot be created is refused",
+			name: "a work dir parent that cannot hold a new directory is refused",
 			args: args{req: llm.Request{Prompt: "x", Schema: schema}, script: "exit 0", workDir: "claude/work"},
 			want: want{err: llm.ErrWorkDir, message: "llm: work dir: mkdir "},
 		},
@@ -277,7 +277,7 @@ func TestClaudeCLICompleteStops(t *testing.T) {
 func TestClaudeCLICompleteDefaults(t *testing.T) {
 	testdata, err := filepath.Abs("testdata")
 	require.NoError(t, err)
-	workDir, err := filepath.EvalSymlinks(os.TempDir())
+	workParent, err := filepath.EvalSymlinks(os.TempDir())
 	require.NoError(t, err)
 	dir := t.TempDir()
 	bin := filepath.Join(dir, "claude")
@@ -293,8 +293,8 @@ func TestClaudeCLICompleteDefaults(t *testing.T) {
 		path  string
 	}
 	type want struct {
-		args    []string
-		workDir string
+		args       []string
+		workParent string
 	}
 	tcs := []struct {
 		name string
@@ -307,9 +307,9 @@ func TestClaudeCLICompleteDefaults(t *testing.T) {
 			want: want{
 				args: []string{
 					"-p", "--output-format", "json", "--json-schema", "{}", "--max-turns", "3", "--max-budget-usd", "0.5",
-					"--no-session-persistence", "--safe-mode", "--model", "opus",
+					"--no-session-persistence", "--safe-mode", "--setting-sources", "user", "--model", "opus",
 				},
-				workDir: filepath.Join(workDir, "nodloop-llm"),
+				workParent: workParent,
 			},
 		},
 		{
@@ -318,9 +318,9 @@ func TestClaudeCLICompleteDefaults(t *testing.T) {
 			want: want{
 				args: []string{
 					"-p", "--output-format", "json", "--json-schema", "{}", "--max-turns", "3", "--max-budget-usd", "0.5",
-					"--no-session-persistence", "--safe-mode", "--model", "sonnet",
+					"--no-session-persistence", "--safe-mode", "--setting-sources", "user", "--model", "sonnet",
 				},
-				workDir: filepath.Join(workDir, "nodloop-llm"),
+				workParent: workParent,
 			},
 		},
 	}
@@ -337,7 +337,89 @@ func TestClaudeCLICompleteDefaults(t *testing.T) {
 			pwd, err := os.ReadFile(filepath.Join(dir, "pwd"))
 			require.NoError(t, err)
 			assert.Equal(t, tc.want.args, strings.Split(strings.TrimSuffix(string(args), "\n"), "\n"))
-			assert.Equal(t, tc.want.workDir, strings.TrimSpace(string(pwd)))
+			cwd := strings.TrimSpace(string(pwd))
+			assert.Equal(t, tc.want.workParent, filepath.Dir(cwd))
+			assert.True(t, strings.HasPrefix(filepath.Base(cwd), "nodloop-llm-"), "cwd = %s", cwd)
+			assert.NoDirExists(t, cwd)
+		})
+	}
+}
+
+// A shared temp dir may hold a `nodloop-llm` folder or link another user planted with a `.claude` settings file
+func TestClaudeCLICompleteWorkDir(t *testing.T) {
+	t.Parallel()
+	testdata, err := filepath.Abs("testdata")
+	require.NoError(t, err)
+	type want struct {
+		// The listing of the cwd during each call
+		modes []string
+		// Whether two calls ran in distinct directories
+		distinct bool
+	}
+	tcs := []struct {
+		name string
+		args string
+		want want
+	}{
+		{
+			name: "each call runs in its own private directory under an empty parent",
+			args: "",
+			want: want{modes: []string{"drwx------", "drwx------"}, distinct: true},
+		},
+		{
+			name: "a planted directory under the parent is never the cwd",
+			args: "dir",
+			want: want{modes: []string{"drwx------", "drwx------"}, distinct: true},
+		},
+		{
+			name: "a planted link under the parent is never the cwd",
+			args: "link",
+			want: want{modes: []string{"drwx------", "drwx------"}, distinct: true},
+		},
+	}
+	ctx := context.Background()
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir, parent, planted := t.TempDir(), t.TempDir(), t.TempDir()
+			parent, err := filepath.EvalSymlinks(parent)
+			require.NoError(t, err)
+			require.NoError(t, os.MkdirAll(filepath.Join(planted, ".claude"), 0o777))
+			require.NoError(t, os.WriteFile(filepath.Join(planted, ".claude", "settings.json"), []byte(`{}`), 0o600))
+			switch tc.args {
+			case "dir":
+				require.NoError(t, os.CopyFS(filepath.Join(parent, "nodloop-llm"), os.DirFS(planted)))
+			case "link":
+				require.NoError(t, os.Symlink(planted, filepath.Join(parent, "nodloop-llm")))
+			}
+			bin := filepath.Join(dir, "claude")
+			script := "#!/bin/sh\n" +
+				"pwd -P >> \"" + dir + "/pwd\"\n" +
+				"ls -ld . | cut -c1-10 >> \"" + dir + "/mode\"\n" +
+				"/bin/cat > /dev/null\n" +
+				"/bin/cat \"" + testdata + "/success.json\"\n"
+			require.NoError(t, os.WriteFile(bin, []byte(script), 0o755))
+			c := llm.NewClaudeCLI(bin, "sonnet", parent, 0)
+
+			for range 2 {
+				_, err := c.Complete(ctx, llm.Request{Prompt: "x", Schema: json.RawMessage(`{}`)})
+				require.NoError(t, err)
+			}
+
+			pwd, err := os.ReadFile(filepath.Join(dir, "pwd"))
+			require.NoError(t, err)
+			mode, err := os.ReadFile(filepath.Join(dir, "mode"))
+			require.NoError(t, err)
+			cwds := strings.Fields(string(pwd))
+			require.Len(t, cwds, 2)
+			assert.Equal(t, tc.want.modes, strings.Fields(string(mode)))
+			assert.Equal(t, tc.want.distinct, cwds[0] != cwds[1])
+			for _, cwd := range cwds {
+				assert.Equal(t, parent, filepath.Dir(cwd))
+				assert.NotEqual(t, filepath.Join(parent, "nodloop-llm"), cwd)
+				assert.NoDirExists(t, cwd)
+			}
+			assert.FileExists(t, filepath.Join(planted, ".claude", "settings.json"))
 		})
 	}
 }
