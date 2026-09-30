@@ -619,6 +619,115 @@ func TestLedgerApproveInProposalOrder(t *testing.T) {
 	}
 }
 
+// A new version of an approved item proposed after that approval and approved with or without a retire between
+func TestLedgerApproveScopeWidened(t *testing.T) {
+	quiet, planned := evidence.ContextNoKnownChange, evidence.ContextPlannedChange
+	type reach struct {
+		contexts   []evidence.Context
+		metrics    []string
+		dims       map[string]string
+		exceptions []evidence.Context
+	}
+	clicksAndConversions := reach{contexts: []evidence.Context{quiet}, metrics: []string{"click_count", "conversion_count"}}
+	onA := map[string]string{"source": "source-a"}
+	type args struct {
+		v1, v2 reach
+		// v1 is retired by a person before v2 is approved
+		retired bool
+	}
+	type want struct {
+		err error
+		// The approved version in the end
+		approved int
+	}
+	tcs := []struct {
+		name string
+		args args
+		want want
+	}{
+		{
+			"a reword that drops the whole scope is refused and v1 stays approved",
+			args{v1: clicksAndConversions, v2: reach{}},
+			want{knowledge.ErrScopeWidened, 1},
+		},
+		{
+			"a new version that drops the metrics only is refused",
+			args{v1: clicksAndConversions, v2: reach{contexts: []evidence.Context{quiet}}},
+			want{knowledge.ErrScopeWidened, 1},
+		},
+		{
+			"a new version that moves to another change context is refused",
+			args{v1: clicksAndConversions, v2: reach{contexts: []evidence.Context{planned}, metrics: clicksAndConversions.metrics}},
+			want{knowledge.ErrScopeWidened, 1},
+		},
+		{
+			"a new version that drops an exception is refused",
+			args{v1: reach{exceptions: []evidence.Context{planned}}, v2: reach{}},
+			want{knowledge.ErrScopeWidened, 1},
+		},
+		{
+			"a new version that changes a dim value is refused",
+			args{v1: reach{dims: onA}, v2: reach{dims: map[string]string{"source": "source-b"}}},
+			want{knowledge.ErrScopeWidened, 1},
+		},
+		{
+			"a new version that restates the scope is approved",
+			args{v1: clicksAndConversions, v2: clicksAndConversions},
+			want{nil, 2},
+		},
+		{
+			"a new version that narrows its metrics and adds a dim is approved",
+			args{v1: clicksAndConversions, v2: reach{contexts: []evidence.Context{quiet}, metrics: []string{"click_count"}, dims: onA}},
+			want{nil, 2},
+		},
+		{
+			"a new version that narrows its change contexts is approved",
+			args{v1: reach{contexts: []evidence.Context{quiet, planned}}, v2: reach{contexts: []evidence.Context{planned}}},
+			want{nil, 2},
+		},
+		{
+			"a new version without a scope is approved once a person retired v1",
+			args{v1: clicksAndConversions, v2: reach{}, retired: true},
+			want{nil, 2},
+		},
+	}
+	ctx := context.Background()
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			store, err := file.New(t.TempDir())
+			require.NoError(t, err)
+			now := time.Date(2026, 9, 23, 0, 0, 0, 0, time.UTC)
+			l := knowledge.NewLedger(store, vetofile.NewApprovedFile(t.TempDir(), "records"), func() time.Time {
+				now = now.Add(time.Minute)
+				return now
+			}, func(prefix string) string { return prefix + "new" })
+			draft := func(r reach) knowledge.Knowledge {
+				return knowledge.Knowledge{
+					ID: "k1", Kind: knowledge.KindMeaning, Content: "one",
+					Scope:      knowledge.Scope{Scope: evidence.Scope{ChangeContexts: r.contexts, Metrics: r.metrics}, Dims: r.dims},
+					Exceptions: r.exceptions, Evidence: knowledge.Evidence{ParagraphIDs: []string{"p#1"}}, Author: "author",
+				}
+			}
+			_, _, err = l.Propose(ctx, draft(tc.args.v1))
+			require.NoError(t, err)
+			require.NoError(t, testkit.Err(l.Approve(ctx, "k1", 1, "ann")))
+			_, _, err = l.Propose(ctx, draft(tc.args.v2))
+			require.NoError(t, err)
+			if tc.args.retired {
+				require.NoError(t, testkit.Err(l.Retire(ctx, "k1", 1, "ann")))
+			}
+
+			_, err = l.Approve(ctx, "k1", 2, "jed")
+
+			assert.ErrorIs(t, err, tc.want.err)
+			approved, err := l.ApprovedVersion(ctx, "k1")
+			require.NoError(t, err)
+			assert.Equal(t, tc.want.approved, approved)
+		})
+	}
+}
+
 // Items that cite only a paragraph never make a compaction due so the item cap is the only bound on their folder
 // An event carries one change context so the cap counts the items of one change context and never the union
 func TestLedgerApproveItemCap(t *testing.T) {

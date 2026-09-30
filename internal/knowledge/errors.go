@@ -35,5 +35,6 @@ var (
 	ErrScopeUnobserved      = errors.New("knowledge: scope names a value no event of the data set carries")
 	ErrCandidateOutdated    = errors.New("knowledge: candidate was not built from the approved version it would replace")
 	ErrVetoLifted           = errors.New("knowledge: new version would lift the veto of the approved version")
+	ErrScopeWidened         = errors.New("knowledge: new version would reach events the approved version never reached")
 	ErrImportStale          = errors.New("knowledge: import record is older than the recorded history of its version")
 )

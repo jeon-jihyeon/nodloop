@@ -254,6 +254,8 @@ func (s Set) propose(draft Knowledge, now time.Time) (Knowledge, error) {
 // 2. a candidate built on a version that a compaction retired is refused because approving it would undo that compaction
 // 3. a new version that drops or weakens the veto of the approved version is refused with ErrVetoLifted
 // Only a retire by a named person lifts a veto
+// 4. a new version that reaches events the approved version never reached is refused with ErrScopeWidened
+// Only a retire by a named person widens the scope the same way
 func (s Set) approval(id string, version int, approver string, now time.Time) ([]Knowledge, error) {
 	history, err := s.historyOf(id)
 	if err != nil {
@@ -279,6 +281,11 @@ func (s Set) approval(id string, version int, approver string, now time.Time) ([
 		if superseded.Veto != nil && !to.keepsVeto(*superseded.Veto) {
 			return nil, fmt.Errorf("%w: %s v%d does not block what v%d blocks. Restate the veto or retire v%d first",
 				ErrVetoLifted, id, version, superseded.Version, superseded.Version)
+		}
+		if _, reached, ok := (Set{*superseded}).widened(to); ok {
+			return nil, fmt.Errorf("%w: %s v%d reaches events of %s that v%d never reached. "+
+				"Propose again with the scope of v%d or a narrower one, which is %s, propose the wider part under a new id, or retire v%d first",
+				ErrScopeWidened, id, version, reached, superseded.Version, superseded.Version, superseded.reachText(), superseded.Version)
 		}
 		records = append(records, *superseded)
 	}
