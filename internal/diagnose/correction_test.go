@@ -184,7 +184,8 @@ func TestCorrectionRefused(t *testing.T) {
 			args{verdicts: []correctionVerdict{{feedback.VerdictEdit, json.RawMessage(`"rewritten"`), ""}}},
 			diagnose.ErrMalformed,
 		},
-		{"a context trace is no review", args{id: "context"}, diagnose.ErrMalformed},
+		{"a context trace is no review", args{id: "context"}, trace.ErrNotReview},
+		{"a failed review with a reject has nothing to correct", args{id: "failed"}, trace.ErrFailedReview},
 		{"an unknown trace is not found", args{id: "nope"}, trace.ErrNotFound},
 	}
 	ctx := context.Background()
@@ -192,7 +193,13 @@ func TestCorrectionRefused(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			r := correctedReview(t, nil, tc.args.verdicts)
-			id := map[string]string{"": r.traceID, "context": r.contextID, "nope": "nope"}[tc.args.id]
+			// A review that failed on the context of another event carries a reject too
+			failed := trace.Trace{ID: "failed", Name: trace.NameDiagnose, Subject: "tq-007", Error: "model timed out", Time: r.Clock.Now()}
+			require.NoError(t, r.Traces.Append(ctx, failed))
+			fb, err := feedback.New(failed.ID, feedback.VerdictReject, "a reason", nil, "", r.Clock.Now())
+			require.NoError(t, err)
+			require.NoError(t, r.Feedback.Append(ctx, fb))
+			id := map[string]string{"": r.traceID, "context": r.contextID, "failed": failed.ID, "nope": "nope"}[tc.args.id]
 
 			got, err := r.diagnoser.Correction(ctx, id)
 
