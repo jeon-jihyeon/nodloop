@@ -5,6 +5,7 @@ import "errors"
 var (
 	ErrYAMLInvalid   = errors.New("failed to parse yaml")
 	ErrEntryInvalid  = errors.New("invalid entry")
+	ErrKeyUnknown    = errors.New("unknown key")
 	ErrIDMissing     = errors.New("missing id")
 	ErrIDDuplicate   = errors.New("duplicate id")
 	ErrToolMissing   = errors.New("missing tool")

@@ -137,6 +137,72 @@ func TestParse(t *testing.T) {
 					"  line 6: mapping key \"reason\" already defined at line 5",
 			},
 		},
+		{
+			"misspelled entry key fails",
+			"vetoes:\n  - id: a\n    tool: Bash\n    when: [{field: command, match: x}]\n    reason: r\n    enable: false",
+			want{veto.Vetoes{}, veto.ErrKeyUnknown, `vetoes[0] (a): unknown key: line 6: "enable"`},
+		},
+		{
+			"misspelled condition key fails",
+			"vetoes:\n  - id: a\n    tool: Bash\n    when: [{field: command, match: x, unles: y}]\n    reason: r",
+			want{veto.Vetoes{}, veto.ErrKeyUnknown, `vetoes[0] (a): unknown key: line 4: "unles"`},
+		},
+		{
+			"misspelled top level key fails the file",
+			"veto:\n  - id: a\n    tool: Bash\n    when: [{field: command, match: x}]\n    reason: r",
+			want{nil, veto.ErrKeyUnknown, `failed to parse yaml: unknown key: line 1: "veto"`},
+		},
+		{
+			"misspelled top level key beside a helper anchor fails the file",
+			"base: &base {tool: Bash}\nVetoes:\n  - id: a\n    tool: Bash\n    when: [{field: command, match: x}]\n    reason: r",
+			want{nil, veto.ErrYAMLInvalid, `failed to parse yaml: unknown key: line 2: "Vetoes"`},
+		},
+		{
+			"top level key beside vetoes without an anchor loads the entries and reports the key",
+			"defs: x\nvetoes:\n  - id: a\n    tool: Bash\n    when: [{field: command, match: x}]\n    reason: r",
+			want{veto.Vetoes{a}, veto.ErrKeyUnknown, `unknown key: line 1: "defs"`},
+		},
+		{
+			"version key beside vetoes is reported with the broken entries",
+			"version: 1\nvetoes:\n  - id: a\n    tool: Bash\n    when: [{field: command, match: x}]\n    reason: r\n" +
+				"  - id: b\n    tool: Bash\n    reason: r",
+			want{veto.Vetoes{a}, veto.ErrKeyUnknown, "unknown key: line 1: \"version\"\nvetoes[1] (b): missing when"},
+		},
+		{
+			"vetoes merged in at the top level count as the vetoes key",
+			"all: &all\n  vetoes:\n    - id: a\n      tool: Bash\n      when: [{field: command, match: x}]\n      reason: r\n" +
+				"<<: *all\nversion: 1",
+			want{veto.Vetoes{a}, veto.ErrKeyUnknown, `unknown key: line 8: "version"`},
+		},
+		{
+			"top level key that holds anchors shares them with the entries",
+			"defs:\n  bash: &bash Bash\n  cond: &cond {field: command, match: x}\n" +
+				"vetoes:\n  - id: a\n    tool: *bash\n    when: [*cond]\n    reason: r",
+			want{veto.Vetoes{a}, nil, "<nil>"},
+		},
+		{
+			"entry built on a merge key loads",
+			"base: &base\n  tool: Bash\n  reason: r\n" +
+				"vetoes:\n  - <<: *base\n    id: a\n    when: [{field: command, match: x}]",
+			want{veto.Vetoes{a}, nil, "<nil>"},
+		},
+		{
+			"entry that is an alias loads",
+			"base: &base\n  id: a\n  tool: Bash\n  when: [{field: command, match: x}]\n  reason: r\nvetoes:\n  - *base",
+			want{veto.Vetoes{a}, nil, "<nil>"},
+		},
+		{
+			"condition built on a merge key loads",
+			"cond: &cond {field: command}\n" +
+				"vetoes:\n  - id: a\n    tool: Bash\n    when: [{<<: *cond, match: x}]\n    reason: r",
+			want{veto.Vetoes{a}, nil, "<nil>"},
+		},
+		{
+			"misspelled key inside a merged mapping fails the entry",
+			"base: &base\n  tool: Bash\n  reasn: r\n" +
+				"vetoes:\n  - <<: *base\n    id: a\n    when: [{field: command, match: x}]\n    reason: r",
+			want{veto.Vetoes{}, veto.ErrKeyUnknown, `vetoes[0] (a): unknown key: line 3: "reasn"`},
+		},
 		{"empty input loads nothing", "", want{veto.Vetoes{}, nil, "<nil>"}},
 		{"comments alone load nothing", "# nothing yet\n", want{veto.Vetoes{}, nil, "<nil>"}},
 	}
