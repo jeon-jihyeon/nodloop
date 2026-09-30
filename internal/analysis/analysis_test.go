@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -277,6 +278,160 @@ func TestPolicyAnalyze(t *testing.T) {
 			got, err := tc.args.policy.Analyze(tc.args.event)
 			assert.ErrorIs(t, err, tc.want.err)
 			assert.Equal(t, tc.want.observations, got)
+		})
+	}
+}
+
+func TestPolicyCheckObserved(t *testing.T) {
+	policy := func(specs ...analysis.RuleSpec) analysis.Policy {
+		return analysis.Policy{Version: "t", Analyzers: specs}
+	}
+	zscore := analysis.RuleSpec{Rule: analysis.RuleZScore, Metrics: []string{"click_count"}, Baseline: 1, Window: 1}
+	proportion := analysis.RuleSpec{
+		Rule: analysis.RuleProportion, Metrics: []string{"conversion_count", "click_count"}, Baseline: 1, Window: 1,
+	}
+	concentration := analysis.RuleSpec{
+		Rule: analysis.RuleConcentration, Metrics: []string{"click_count"}, GroupBy: "source", Baseline: 1, Window: 1,
+	}
+	typo := zscore
+	typo.Metrics = []string{"click count"}
+	denominator := proportion
+	denominator.Metrics = []string{"conversion_count", "clicks"}
+	group := concentration
+	group.GroupBy = "sources"
+	type args struct {
+		policy  analysis.Policy
+		metrics []string
+		dims    []string
+	}
+	tcs := []struct {
+		name string
+		args args
+		want error
+	}{
+		{
+			name: "every metric and dimension is carried",
+			args: args{
+				policy:  policy(zscore, proportion, concentration),
+				metrics: []string{"click_count", "conversion_count"}, dims: []string{"source"},
+			},
+		},
+		{
+			name: "a misspelled metric fails",
+			args: args{policy: policy(typo), metrics: []string{"click_count"}, dims: []string{"source"}},
+			want: analysis.ErrPolicyUnobserved,
+		},
+		{
+			name: "a misspelled proportion denominator fails",
+			args: args{policy: policy(denominator), metrics: []string{"click_count", "conversion_count"}},
+			want: analysis.ErrPolicyUnobserved,
+		},
+		{
+			name: "a misspelled group dimension fails",
+			args: args{policy: policy(group), metrics: []string{"click_count"}, dims: []string{"source"}},
+			want: analysis.ErrPolicyUnobserved,
+		},
+		{
+			name: "a coverage metric the export lost fails",
+			args: args{
+				policy:  policy(analysis.RuleSpec{Rule: analysis.RuleCoverage, Metrics: []string{"click_count", "conversion_count"}, Baseline: 1, Window: 1}),
+				metrics: []string{"click_count"},
+			},
+			want: analysis.ErrPolicyUnobserved,
+		},
+		{
+			name: "metrics that only other events carry still pass",
+			args: args{
+				policy: policy(zscore, analysis.RuleSpec{
+					Rule: analysis.RuleZScore, Metrics: []string{"p99_ms"}, Baseline: 1, Window: 1,
+				}),
+				metrics: []string{"p99_ms", "click_count"}, dims: []string{"region", "source"},
+			},
+		},
+		{
+			name: "a data set without events has nothing absent",
+			args: args{policy: policy(typo, group)},
+		},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.ErrorIs(t, tc.args.policy.Observed(tc.args.metrics, tc.args.dims).CheckObserved(), tc.want)
+		})
+	}
+}
+
+func TestPolicyAnalyzeAbsent(t *testing.T) {
+	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	click := func(i int) evidence.Point {
+		return evidence.Point{Time: start.Add(time.Duration(i) * time.Hour), Metric: "click_count", Value: 10, Dims: map[string]string{"region": "kr"}}
+	}
+	conversion := evidence.Point{Time: start.Add(time.Hour), Metric: "conversion_count", Value: 1, Dims: map[string]string{"region": "kr"}}
+	demo, err := os.ReadFile(filepath.Join(testkit.DemoDir(t), "policy.yaml"))
+	require.NoError(t, err)
+	policy, err := analysis.LoadPolicy(demo)
+	require.NoError(t, err)
+	window := analysis.Window{Start: start, End: start.Add(time.Hour), Points: 2}
+	ref := analysis.Ref{EventID: "ev", Start: start, End: start.Add(time.Hour)}
+	lost := "conversion_count: no event of the data set carries this metric so a data outage or a policy name that matches no metric"
+	type args struct {
+		metrics, dims []string
+		points        []evidence.Point
+	}
+	tcs := []struct {
+		name string
+		args args
+		want analysis.Observations
+	}{
+		{
+			name: "a metric the export lost is reported once per rule that reads it",
+			args: args{metrics: []string{"click_count"}, dims: []string{"region", "source"}, points: []evidence.Point{click(0), click(1)}},
+			want: analysis.Observations{
+				{Rule: analysis.RuleProportion, Metric: "conversion_count", Window: window, Ref: ref, Summary: lost},
+				{Rule: analysis.RuleCoverage, Metric: "conversion_count", Window: window, Ref: ref, Summary: lost},
+			},
+		},
+		{
+			name: "a group dimension no event carries is reported for each metric the rule groups",
+			args: args{
+				metrics: []string{"click_count", "conversion_count"}, dims: []string{"region"},
+				points: []evidence.Point{click(0), click(1)},
+			},
+			want: analysis.Observations{{
+				Rule: analysis.RuleConcentration, Metric: "click_count", Window: window, Ref: ref,
+				Summary: "click_count: no event of the data set carries dimension source to group by",
+			}},
+		},
+		{
+			name: "an event that carries the metric after the policy was bound reports nothing absent",
+			args: args{metrics: []string{"click_count"}, dims: []string{"region", "source"}, points: []evidence.Point{click(0), conversion}},
+		},
+		{
+			name: "a data set that carries every name reports nothing absent",
+			args: args{
+				metrics: []string{"click_count", "conversion_count"}, dims: []string{"region", "source"},
+				points: []evidence.Point{click(0), click(1)},
+			},
+		},
+		{
+			name: "a data set without events reports nothing absent",
+			args: args{points: []evidence.Point{click(0), click(1)}},
+		},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := policy.Observed(tc.args.metrics, tc.args.dims).Analyze(evidence.Event{ID: "ev", Points: tc.args.points})
+			require.NoError(t, err)
+			require.GreaterOrEqual(t, len(got), len(tc.want))
+			var absent analysis.Observations
+			for _, o := range got {
+				if o.Detail.Samples == 0 && strings.Contains(o.Summary, "no event of the data set") {
+					absent = append(absent, o)
+				}
+			}
+			assert.Equal(t, tc.want, absent)
+			assert.Equal(t, tc.want, append(analysis.Observations(nil), got[len(got)-len(tc.want):]...), "absent rows sort last")
 		})
 	}
 }
