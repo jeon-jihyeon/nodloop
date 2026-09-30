@@ -50,7 +50,7 @@ func (f *knowledgeFlags) bind(fs *flag.FlagSet) {
 	fs.StringVar(&f.file, "file", "", "import: a jsonl file of knowledge records")
 	fs.Var(&f.contexts, "scope-context", "change context the item applies to. Repeatable")
 	fs.Var(&f.metrics, "scope-metric", "metric the item applies to. Repeatable")
-	fs.Var(&f.exceptions, "exception", "change context or event type where it must not apply. Repeatable")
+	fs.Var(&f.exceptions, "exception", "change context where it must not apply. Repeatable")
 	fs.Var(&f.paragraphs, "evidence-paragraph", "procedure paragraph id. Repeatable")
 	fs.Var(&f.feedbackIDs, "evidence-feedback", "diagnose trace id whose feedback supports it. Repeatable")
 	fs.Var(&f.outcomeIDs, "evidence-outcome", "diagnose trace id whose outcome supports it. Repeatable")

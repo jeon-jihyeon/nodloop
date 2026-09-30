@@ -76,6 +76,12 @@ func TestKnowledgeValidate(t *testing.T) {
 		k.Veto = &knowledge.Veto{Tool: tool, When: sed.When, Example: sed.Example}
 		return k
 	}
+	scoped := func(contexts, exceptions []evidence.Context) knowledge.Knowledge {
+		k := valid
+		k.Scope.ChangeContexts, k.Exceptions = contexts, exceptions
+		return k
+	}
+	noChange, planned := evidence.ContextNoKnownChange, evidence.ContextPlannedChange
 	tcs := []struct {
 		name string
 		args knowledge.Knowledge
@@ -106,6 +112,11 @@ func TestKnowledgeValidate(t *testing.T) {
 		{"veto on a lower case tool fails", toolVeto("bash"), veto.ErrToolUnknown},
 		{"veto on a permission rule fails", toolVeto("Bash(sed -i:*)"), veto.ErrToolUnknown},
 		{"veto with one unknown tool in its list fails", toolVeto("Edit|write"), knowledge.ErrVetoInvalid},
+		{"scope with a valid change context and exception is valid", scoped([]evidence.Context{noChange, planned}, []evidence.Context{planned}), nil},
+		{"misspelled change context fails", scoped([]evidence.Context{"no-known-change"}, nil), knowledge.ErrScopeInvalid},
+		{"misspelled exception fails", scoped(nil, []evidence.Context{"planned_change"}), knowledge.ErrScopeInvalid},
+		{"exception of the only scoped context fails", scoped([]evidence.Context{noChange}, []evidence.Context{noChange}), knowledge.ErrScopeInvalid},
+		{"exceptions of every context on an unscoped item fail", scoped(nil, evidence.Contexts()), knowledge.ErrScopeInvalid},
 	}
 	ctx := context.Background()
 	for _, tc := range tcs {
