@@ -64,6 +64,21 @@ func resolveConfig(getenv func(string) string, src, dataDir, recordDir string) (
 	}
 }
 
+// The data flags a command pasted into another shell needs to read these directories
+// 1. that shell has neither the flags nor the env of the process that resolved them
+// 2. both are absolute because it may start in another folder
+// 3. the source is left out since the file source is the one implementation
+func (c config) dataArgs() (string, error) {
+	data, err := filepath.Abs(c.dataDir)
+	if err != nil {
+		return "", err
+	}
+	if c.recordDir == "" {
+		return "--data-dir " + shellWord(data), nil
+	}
+	return "--data-dir " + shellWord(data) + " --record-dir " + shellWord(c.recordDir), nil
+}
+
 // The record dir as one clean absolute path
 // 1. a flag is relative to the working directory of the command that names it
 // 2. the variable and the setup config must be absolute because a server started in another folder would resolve them there

@@ -167,6 +167,12 @@ func TestRunCompaction(t *testing.T) {
 				`event\ttq-017\texpected hold\tgot -\t-\nreplay\tpassed=false\n$`, `tq-001\treplay\tno_action`},
 		},
 		{
+			"replay in the shape of the mcp replay command still parses events appended after it",
+			args{args: []string{"replay", "{id}", "--data-dir", "{data}", "--record-dir", "{records}", "--events", "tq-001"}},
+			want{0, `^replay\t{id}\t1 events\nevent\ttq-001\texpected no_action\tgot no_action\t\S+\n` +
+				`event\ttq-017\texpected hold\tgot -\t-\nreplay\tpassed=false\n$`, `tq-001\treplay\tno_action`},
+		},
+		{
 			"approve after the replay approves the new item and retires the old ones",
 			args{before: [][]string{{"replay", "{id}"}}, args: []string{"approve-compaction", "{id}", "--approver", "jed"}},
 			want{0, `new\tk-[0-9a-f]+\tv1\tapproved\tmeaning\tlag and basis\nold\ta\tv1\tretired\tmeaning\tlag\n` +
@@ -182,7 +188,7 @@ func TestRunCompaction(t *testing.T) {
 			require.Equal(t, 0, runKnowledge([]string{"compact", "a"}, getenv, client, now, &compacted, &stderr), stderr.String())
 			m := proposed.FindStringSubmatch(compacted.String())
 			require.Len(t, m, 2, compacted.String())
-			r := strings.NewReplacer("{id}", m[1])
+			r := strings.NewReplacer("{id}", m[1], "{data}", getenv(envFileDir), "{records}", getenv(envRecordDir))
 			withID := func(args []string) []string {
 				out := make([]string, 0, len(args))
 				for _, a := range args {

@@ -290,7 +290,12 @@ func (a app) server() (*mcp.Server, error) {
 	if err != nil {
 		return nil, err
 	}
+	dataArgs, err := a.cfg.dataArgs()
+	if err != nil {
+		return nil, err
+	}
 	return mcp.New(
-		p.src, p.policy, p.diagnoser(nil), p.traces, p.feedback, p.outcomes, p.ledger, p.compactor(), p.now, buildVersion(), executable(),
+		p.src, p.policy, p.diagnoser(nil), p.traces, p.feedback, p.outcomes, p.ledger, p.compactor(), p.now,
+		buildVersion(), executable(), dataArgs,
 	), nil
 }
