@@ -118,8 +118,14 @@ type Knowledge struct {
 // A safety cap and not a tuning knob since the compaction trigger keeps folders far smaller
 const ReviewChars = 70_000
 
+// Approved items one review offers as knowledge candidates
+// One list Claude Code can show on one screen
+// Approval never grows a change context past it so no event offers more items than the list shows
+// unless the ledger held more before the cap
+const ReviewItems = 10
+
 // Approved items a folder holds before it is crowded
-// Two crowded folders on one event fill the candidate list so above this the cut falls by id order and not by relevance
+// Half of ReviewItems so a compaction is offered while approval still has room
 const FolderItems = 5
 
 // Folders are measured with the text a review sees so the budget and the review cap count the same characters
@@ -299,8 +305,12 @@ func (k Knowledge) applies(changeContext evidence.Context, moved Moved, dims Dim
 
 // Whether the item applies to some event of the change context whatever its metrics and dims
 func (k Knowledge) mayApply(changeContext evidence.Context) bool {
-	return k.Status == StatusApproved && !slices.Contains(k.Exceptions, changeContext) &&
-		k.Scope.MatchesContext(changeContext)
+	return k.Status == StatusApproved && k.reaches(changeContext)
+}
+
+// Whether the scope and the exceptions leave the change context to the item whatever its status
+func (k Knowledge) reaches(changeContext evidence.Context) bool {
+	return !slices.Contains(k.Exceptions, changeContext) && k.Scope.MatchesContext(changeContext)
 }
 
 // Whether this version stands in for the id instead of the current one with status and version

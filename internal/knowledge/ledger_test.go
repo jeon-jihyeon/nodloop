@@ -610,6 +610,119 @@ func TestLedgerApproveInProposalOrder(t *testing.T) {
 	}
 }
 
+// Items that cite only a paragraph never make a compaction due so the item cap is the only bound on their folder
+// An event carries one change context so the cap counts the items of one change context and never the union
+func TestLedgerApproveItemCap(t *testing.T) {
+	now := time.Date(2026, 9, 23, 0, 0, 0, 0, time.UTC)
+	item := func(id string, status knowledge.Status, contexts []evidence.Context) knowledge.Knowledge {
+		k := knowledge.Knowledge{
+			ID: id, Version: 1, Kind: knowledge.KindMeaning, Content: "one",
+			Scope:    knowledge.Scope{Scope: evidence.Scope{ChangeContexts: contexts}},
+			Evidence: knowledge.Evidence{ParagraphIDs: []string{"p#1"}}, Basis: knowledge.BasisStated,
+			Status: status, Author: "author", Time: now,
+		}
+		if status == knowledge.StatusApproved {
+			k.Approver, k.ApprovedAt = "ann", now
+		}
+		return k
+	}
+	// Approved items already in the ledger
+	type group struct {
+		prefix   string
+		count    int
+		contexts []evidence.Context
+	}
+	type args struct {
+		approved []group
+		// The scope and exceptions of the candidate
+		contexts   []evidence.Context
+		exceptions []evidence.Context
+	}
+	type want struct {
+		status knowledge.Status
+		// The error text naming both caps and every carried item and empty on success
+		err string
+	}
+	quiet := []evidence.Context{evidence.ContextNoKnownChange}
+	planned := []evidence.Context{evidence.ContextPlannedChange}
+	measured := []evidence.Context{evidence.ContextMeasurementChanged}
+	split := []group{{"k-q", 5, quiet}, {"k-p", 5, planned}}
+	tcs := []struct {
+		name string
+		args args
+		want want
+	}{
+		{"the item that fills the review list is approved", args{approved: []group{{"k-", 9, nil}}}, want{status: knowledge.StatusApproved}},
+		{
+			"the item one past the review list is refused naming the items",
+			args{approved: []group{{"k-", 10, nil}}},
+			want{
+				status: knowledge.StatusCandidate,
+				err: "knowledge: folder may outgrow the review: 431 of 70000 chars 11 of 10 items in no_known_change with " +
+					"k-0 v1 39 chars, k-1 v1 39 chars, k-2 v1 39 chars, k-3 v1 39 chars, k-4 v1 39 chars, " +
+					"k-5 v1 39 chars, k-6 v1 39 chars, k-7 v1 39 chars, k-8 v1 39 chars, k-9 v1 39 chars",
+			},
+		},
+		{
+			"an unscoped item beside five items in each of two change contexts is approved",
+			args{approved: split},
+			want{status: knowledge.StatusApproved},
+		},
+		{
+			"an item scoped to two change contexts of five items each is approved",
+			args{approved: split, contexts: append(slices.Clone(quiet), planned...)},
+			want{status: knowledge.StatusApproved},
+		},
+		{
+			"an item of a change context that already carries ten items is refused naming only those",
+			args{approved: []group{{"k-q", 10, quiet}, {"k-p", 5, planned}}},
+			want{
+				status: knowledge.StatusCandidate,
+				err: "knowledge: folder may outgrow the review: 661 of 70000 chars 11 of 10 items in no_known_change with " +
+					"k-q0 v1 62 chars, k-q1 v1 62 chars, k-q2 v1 62 chars, k-q3 v1 62 chars, k-q4 v1 62 chars, " +
+					"k-q5 v1 62 chars, k-q6 v1 62 chars, k-q7 v1 62 chars, k-q8 v1 62 chars, k-q9 v1 62 chars",
+			},
+		},
+		{
+			"a change context the item excepts is never counted",
+			args{approved: append(slices.Clone(split[:1]), group{"k-m", 5, measured}, group{"k-p", 10, planned}), exceptions: planned},
+			want{status: knowledge.StatusApproved},
+		},
+	}
+	ctx := context.Background()
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			store, err := file.New(t.TempDir())
+			require.NoError(t, err)
+			l := knowledge.NewLedger(
+				store, vetofile.NewApprovedFile(t.TempDir(), "records"),
+				func() time.Time { return now }, func(prefix string) string { return prefix + "new" },
+			)
+			var records []knowledge.Knowledge
+			for _, g := range tc.args.approved {
+				for i := range g.count {
+					records = append(records, item(fmt.Sprintf("%s%d", g.prefix, i), knowledge.StatusApproved, g.contexts))
+				}
+			}
+			candidate := item("k-new", knowledge.StatusCandidate, tc.args.contexts)
+			candidate.Exceptions = tc.args.exceptions
+			require.NoError(t, testkit.Err(l.Import(ctx, append(records, candidate))))
+
+			_, err = l.Approve(ctx, "k-new", 1, "jed")
+			got := want{}
+			if err != nil {
+				got.err = err.Error()
+			}
+			history, herr := l.History(ctx, "k-new")
+			require.NoError(t, herr)
+			got.status = history[0].Status
+
+			assert.Equal(t, tc.want, got)
+		})
+	}
+}
+
 func TestLedgerRetire(t *testing.T) {
 	now := time.Date(2026, 9, 23, 0, 0, 0, 0, time.UTC)
 	at := now.Add(-time.Hour)
@@ -1147,6 +1260,9 @@ func TestLedgerFolder(t *testing.T) {
 		replayed = append(replayed, k)
 	}
 	anchor := oldVersion
+	wide := candidate
+	wide.Scope = knowledge.Scope{}
+	quiet := evidence.ContextNoKnownChange
 	anchor.Evidence = knowledge.Evidence{FeedbackTraceIDs: []string{"t-k1"}}
 	type args struct {
 		seeds   []knowledge.Knowledge
@@ -1165,67 +1281,77 @@ func TestLedgerFolder(t *testing.T) {
 		{
 			"an item of the same contexts and metrics shares the folder",
 			args{[]knowledge.Knowledge{neighbour, candidate}, 1},
-			want{knowledge.Folder{Chars: 143 + 148, Items: knowledge.Set{neighbour}}, false, nil},
+			want{knowledge.Folder{Chars: 143 + 148, Carried: knowledge.Set{neighbour}, Context: quiet}, false, nil},
 		},
 		{
-			"an item of other metrics sits in another folder",
+			"an item of other metrics shares the folder because one event may move both metrics",
 			args{[]knowledge.Knowledge{clicks, candidate}, 1},
-			want{knowledge.Folder{Chars: 143, Items: knowledge.Set{}}, false, nil},
+			want{knowledge.Folder{Chars: 143 + 111, Carried: knowledge.Set{clicks}, Context: quiet}, false, nil},
 		},
 		{
 			"an item of other change contexts sits in another folder",
 			args{[]knowledge.Knowledge{planned, candidate}, 1},
-			want{knowledge.Folder{Chars: 143, Items: knowledge.Set{}}, false, nil},
+			want{knowledge.Folder{Chars: 143, Carried: knowledge.Set{}, Context: quiet}, false, nil},
 		},
 		{
 			"an item that excepts every change context of the item never joins it",
 			args{[]knowledge.Knowledge{excepting, candidate}, 1},
-			want{knowledge.Folder{Chars: 143, Items: knowledge.Set{}}, false, nil},
+			want{knowledge.Folder{Chars: 143, Carried: knowledge.Set{}, Context: quiet}, false, nil},
 		},
 		{
 			"an item with an empty scope sits in every folder",
 			args{[]knowledge.Knowledge{everywhere, candidate}, 1},
-			want{knowledge.Folder{Chars: 143 + 98, Items: knowledge.Set{everywhere}}, false, nil},
+			want{knowledge.Folder{Chars: 143 + 98, Carried: knowledge.Set{everywhere}, Context: quiet}, false, nil},
 		},
 		{
 			"a new version is measured by its own text and replaces the approved one",
 			args{[]knowledge.Knowledge{oldVersion, longer}, 2},
-			want{knowledge.Folder{Chars: 173, Items: knowledge.Set{}}, false, nil},
+			want{knowledge.Folder{Chars: 173, Carried: knowledge.Set{}, Context: quiet}, false, nil},
 		},
 		{
 			"dims never split a folder",
 			args{[]knowledge.Knowledge{neighbour, onIOS}, 1},
-			want{knowledge.Folder{Chars: 157 + 148, Items: knowledge.Set{neighbour}}, false, nil},
+			want{knowledge.Folder{Chars: 157 + 148, Carried: knowledge.Set{neighbour}, Context: quiet}, false, nil},
 		},
 		{
 			"korean content counts one char per rune",
 			args{[]knowledge.Knowledge{korean}, 1},
-			want{knowledge.Folder{Chars: 143, Items: knowledge.Set{}}, false, nil},
+			want{knowledge.Folder{Chars: 143, Carried: knowledge.Set{}, Context: quiet}, false, nil},
 		},
 		{
 			"emoji content counts one char per rune",
 			args{[]knowledge.Knowledge{emoji}, 1},
-			want{knowledge.Folder{Chars: 143, Items: knowledge.Set{}}, false, nil},
+			want{knowledge.Folder{Chars: 143, Carried: knowledge.Set{}, Context: quiet}, false, nil},
 		},
 		{
 			"five replayable items with an approved replayable item are not crowded",
 			args{append(slices.Clone(replayed[:4]), anchor), 1},
-			want{knowledge.Folder{Chars: 143 + 4*144, Items: knowledge.Set(replayed[:4]), Compactable: 5}, false, nil},
+			want{knowledge.Folder{Chars: 143 + 4*144, Carried: knowledge.Set(replayed[:4]), Context: quiet, Compactable: 5}, false, nil},
 		},
 		{
 			"six replayable items with an approved replayable item are crowded",
 			args{append(slices.Clone(replayed), anchor), 1},
-			want{knowledge.Folder{Chars: 143 + 5*144, Items: knowledge.Set(replayed), Compactable: 6}, true, nil},
+			want{knowledge.Folder{Chars: 143 + 5*144, Carried: knowledge.Set(replayed), Context: quiet, Compactable: 6}, true, nil},
 		},
 		{
 			"items that cite only paragraphs never count toward a compaction",
 			args{append(slices.Clone(crowd), anchor), 1},
-			want{knowledge.Folder{Chars: 143 + 5*144, Items: knowledge.Set(crowd), Compactable: 1}, false, nil},
+			want{knowledge.Folder{Chars: 143 + 5*144, Carried: knowledge.Set(crowd), Context: quiet, Compactable: 1}, false, nil},
 		},
 		{
 			"a candidate is never crowded because only an approved item anchors a compaction",
 			args{append(slices.Clone(replayed), candidate), 1},
-			want{knowledge.Folder{Chars: 143 + 5*144, Items: knowledge.Set(replayed)}, false, nil},
+			want{knowledge.Folder{Chars: 143 + 5*144, Carried: knowledge.Set(replayed), Context: quiet}, false, nil},
+		},
+		{
+			"an item spanning two change contexts carries only the heavier one",
+			args{[]knowledge.Knowledge{neighbour, planned, wide}, 1},
+			want{
+				knowledge.Folder{
+					Chars: 97 + 159, Carried: knowledge.Set{planned}, Context: evidence.ContextPlannedChange,
+				},
+				false, nil,
+			},
 		},
 		{
 			"an unknown version is not found",

@@ -180,7 +180,7 @@ var tools = []tool{
 		"Pass from with the trace id of the corrected review and code fills the scope and evidence. "+
 		"The content you write is stored as a draft. "+
 		"Candidates never enter a review until a person approves them. Returns overlapping items to review "+
-		"and the folder: the approved items a review would carry with it, their size against the budget "+
+		"and the folder: the approved items a review of change_context would carry with it, their size against the budget and their count against item_budget "+
 		"and compaction_due when the folder holds more than five approved items an event can replay", (*Server).propose),
 	newTool("approve", "Approve a knowledge candidate on behalf of a named person. "+
 		"Only call it when the user explicitly approves and names themselves. "+
@@ -460,22 +460,28 @@ func (s *Server) propose(ctx context.Context, _ *sdk.CallToolRequest, in propose
 }
 
 // What the person sees around an approval
-// 1. the review text the item joins and whether it still fits
+// 1. the review text and the items the item joins and whether both still fit
 // 2. whether the folder holds enough items that a compaction is due
 type folderAnswer struct {
-	Chars         int      `json:"chars"`
-	Budget        int      `json:"budget"`
-	Full          bool     `json:"full"`
-	Items         []string `json:"items"`
-	CompactionDue bool     `json:"compaction_due"`
+	Chars      int      `json:"chars"`
+	Budget     int      `json:"budget"`
+	ItemBudget int      `json:"item_budget"`
+	Full       bool     `json:"full"`
+	Items      []string `json:"items"`
+	// The change context whose review carries the most with the item
+	ChangeContext evidence.Context `json:"change_context,omitempty"`
+	CompactionDue bool             `json:"compaction_due"`
 }
 
 func newFolderAnswer(f knowledge.Folder) folderAnswer {
-	items := make([]string, 0, len(f.Items))
-	for _, k := range f.Items {
+	items := make([]string, 0, len(f.Carried))
+	for _, k := range f.Carried {
 		items = append(items, k.ID)
 	}
-	return folderAnswer{Chars: f.Chars, Budget: knowledge.ReviewChars, Full: f.Full(), Items: items, CompactionDue: f.Crowded()}
+	return folderAnswer{
+		Chars: f.Chars, Budget: knowledge.ReviewChars, ItemBudget: knowledge.ReviewItems, Full: f.Full(), Items: items,
+		ChangeContext: f.Context, CompactionDue: f.Crowded(),
+	}
 }
 
 type approveInput struct {

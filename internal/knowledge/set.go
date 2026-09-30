@@ -105,24 +105,49 @@ func (s Set) Covers(changeContext evidence.Context) bool {
 }
 
 // The approved items one review may carry together with the item
-// An upper bound since a review loads only the items whose scope fits its event
+// 1. measured per change context the item reaches because an event carries one and a review loads only its items
+// 2. an upper bound per event since metrics and dims are left open
 // Another version of the item never counts because approval replaces it
 func (s Set) folder(item Knowledge) Folder {
-	f := Folder{Chars: utf8.RuneCountInString(item.Text()), Items: Set{}}
-	replayable := 1
-	for _, other := range s.Approved() {
-		if other.ID != item.ID && item.sharesFolder(other) {
-			f.Items = append(f.Items, other)
-			f.Chars += utf8.RuneCountInString(other.Text())
-			if other.Evidence.Replayable() {
-				replayable++
-			}
+	f := Folder{Chars: utf8.RuneCountInString(item.Text()), Carried: Set{}}
+	for _, c := range evidence.Contexts() {
+		if !item.reaches(c) {
+			continue
+		}
+		if next := s.folderIn(item, c); f.Context == "" || next.heavier(f) {
+			f = next
 		}
 	}
 	if item.Status == StatusApproved && item.Evidence.Replayable() {
-		f.Compactable = replayable
+		f.Compactable = len(s.compactable(item).Items)
 	}
 	return f
+}
+
+// The folder of the item in one change context it reaches
+func (s Set) folderIn(item Knowledge, changeContext evidence.Context) Folder {
+	carried := s.carried(item.ID, changeContext)
+	return Folder{Chars: utf8.RuneCountInString(item.Text()) + carried.runes(), Carried: carried, Context: changeContext}
+}
+
+// The approved items other than id that a review of the change context may load
+func (s Set) carried(id string, changeContext evidence.Context) Set {
+	out := Set{}
+	for _, other := range s.Approved() {
+		if other.ID != id && other.mayApply(changeContext) {
+			out = append(out, other)
+		}
+	}
+	return out
+}
+
+// Runes of the texts a review sees
+func (s Set) runes() int {
+	n := 0
+	for _, k := range s {
+		n += utf8.RuneCountInString(k.Text())
+	}
+	return n
 }
 
 // Current items other than id of the same kind whose scope overlaps scope

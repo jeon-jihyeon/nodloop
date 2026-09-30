@@ -74,7 +74,7 @@ func TestRunKnowledge(t *testing.T) {
 		hooked       = `{"hooks":{"PreToolUse":[{"matcher":"*","hooks":[{"type":"command","command":"{home}/bin/nodloop guard"}]}]}}`
 		vetoes       = "vetoes\t1 approved in .*/\\.claude/nodloop/vetoes\\.approved\\.[0-9a-f]+\\.yaml\t"
 		unhooked     = "guard hook not installed\\. Run nodloop guard install to enforce them\n"
-		folder       = "folder\t[0-9]+ of 70000 chars\t1 items\tno other item\n"
+		folder       = "folder\t[0-9]+ of 70000 chars\t1 of 10 items in [a-z_ ]+\tno other item\n"
 	)
 	type args struct {
 		// Commands that must succeed before the one under test
@@ -109,7 +109,7 @@ func TestRunKnowledge(t *testing.T) {
 		{
 			"propose adds a candidate",
 			args{args: proposeAgg},
-			want{0, "^k-agg\tv1\tcandidate\nfolder\t[0-9]+ of 70000 chars\t[0-9]+ items\tno other item\n$", `^$`},
+			want{0, "^k-agg\tv1\tcandidate\nfolder\t[0-9]+ of 70000 chars\t[0-9]+ of 10 items in [a-z_ ]+\tno other item\n$", `^$`},
 		},
 		{
 			"propose without an id generates one",
@@ -117,24 +117,24 @@ func TestRunKnowledge(t *testing.T) {
 				setup: nil,
 				args:  []string{"propose", "--kind", "meaning", "--content", "time bases differ", "--evidence-paragraph", "p#1"},
 			},
-			want{0, "^k-[0-9a-f]+\tv1\tcandidate\nfolder\t[0-9]+ of 70000 chars\t[0-9]+ items\tno other item\n$", `^$`},
+			want{0, "^k-[0-9a-f]+\tv1\tcandidate\nfolder\t[0-9]+ of 70000 chars\t[0-9]+ of 10 items in [a-z_ ]+\tno other item\n$", `^$`},
 		},
 		{
 			"propose lists overlaps",
 			args{setup: [][]string{proposeAgg}, args: proposeAgg2},
 			want{
-				0, "^k-agg2\tv1\tcandidate\noverlaps\tk-agg\tv1\tcandidate\nfolder\t[0-9]+ of 70000 chars\t[0-9]+ items\tno other item\n$", `^$`,
+				0, "^k-agg2\tv1\tcandidate\noverlaps\tk-agg\tv1\tcandidate\nfolder\t[0-9]+ of 70000 chars\t[0-9]+ of 10 items in [a-z_ ]+\tno other item\n$", `^$`,
 			},
 		},
 		{
 			"propose of a known id adds the next version",
 			args{setup: [][]string{proposeAgg}, args: proposeAggV2},
-			want{0, "^k-agg\tv2\tcandidate\nfolder\t[0-9]+ of 70000 chars\t[0-9]+ items\tno other item\n$", `^$`},
+			want{0, "^k-agg\tv2\tcandidate\nfolder\t[0-9]+ of 70000 chars\t[0-9]+ of 10 items in [a-z_ ]+\tno other item\n$", `^$`},
 		},
 		{
 			"propose takes the trace as feedback evidence",
 			args{args: append(checkTracking, "--trace", "d1", "--scope-context", "launch", "--exception", "other")},
-			want{0, "^k-t\tv1\tcandidate\nfolder\t[0-9]+ of 70000 chars\t[0-9]+ items\tno other item\n$", `^$`},
+			want{0, "^k-t\tv1\tcandidate\nfolder\t[0-9]+ of 70000 chars\t[0-9]+ of 10 items in [a-z_ ]+\tno other item\n$", `^$`},
 		},
 		{
 			"propose with an unknown trace fails",
@@ -289,7 +289,7 @@ func TestRunKnowledge(t *testing.T) {
 			want{
 				0,
 				"^k-sed\tv1\tcandidate\nveto\tBash\tcommand matches sed\\\\s\\+-i unless \"\"\n" +
-					"folder\t[0-9]+ of 70000 chars\t[0-9]+ items\tno other item\n$",
+					"folder\t[0-9]+ of 70000 chars\t[0-9]+ of 10 items in [a-z_ ]+\tno other item\n$",
 				`^$`,
 			},
 		},
@@ -375,7 +375,7 @@ func TestRunKnowledge(t *testing.T) {
 			},
 			want{
 				1, `^$`,
-				`^nodloop knowledge: knowledge: folder may outgrow the review: 70125 of 70000 chars with k-agg v1 70 chars\n$`,
+				`^nodloop knowledge: knowledge: folder may outgrow the review: 70125 of 70000 chars 2 of 10 items in no_known_change with k-agg v1 70 chars\n$`,
 			},
 		},
 		{
@@ -395,7 +395,7 @@ func TestRunKnowledge(t *testing.T) {
 				args:  approveNamed("k-r6"),
 			},
 			want{
-				0, "^k-r6\tv1\tapproved\treviewer\nfolder\t[0-9]+ of 70000 chars\t6 items\t.*\n" +
+				0, "^k-r6\tv1\tapproved\treviewer\nfolder\t[0-9]+ of 70000 chars\t6 of 10 items in [a-z_ ]+\t.*\n" +
 					"compaction due\tthe folder holds more than 5 approved items an event can replay\\. " +
 					"Run nodloop knowledge compact k-r6\n$",
 				`^$`,
@@ -407,7 +407,7 @@ func TestRunKnowledge(t *testing.T) {
 				setup: [][]string{{"import", "--file", "testdata/crowded.jsonl"}, proposeNamed("k-p")},
 				args:  approveNamed("k-p"),
 			},
-			want{0, "^k-p\tv1\tapproved\treviewer\nfolder\t[0-9]+ of 70000 chars\t6 items\t.*\n$", `^$`},
+			want{0, "^k-p\tv1\tapproved\treviewer\nfolder\t[0-9]+ of 70000 chars\t6 of 10 items in [a-z_ ]+\t.*\n$", `^$`},
 		},
 		{
 			"unknown flag fails",
@@ -493,7 +493,7 @@ func TestRunKnowledgeFrom(t *testing.T) {
 			Status: knowledge.StatusCandidate, Author: "author", Drafted: drafted,
 		}
 	}
-	candidate := "^k-[0-9a-f]+\tv1\tcandidate\nfolder\t[0-9]+ of 70000 chars\t1 items\tno other item\n"
+	candidate := "^k-[0-9a-f]+\tv1\tcandidate\nfolder\t[0-9]+ of 70000 chars\t1 of 10 items in [a-z_ ]+\tno other item\n"
 	drafting := gomock.Cond(func(r llm.Request) bool { return r.System == diagnose.DraftRules && r.Model == "haiku" })
 	drafted := llm.Response{Output: json.RawMessage(`{"content":"Clicks that never convert are no incident."}`), CostUSD: 0.0012}
 	tcs := []struct {
