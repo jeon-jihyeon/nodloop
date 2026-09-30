@@ -49,6 +49,23 @@ func (c Client) Call(t *testing.T, name string, args, out any) error {
 	return nil
 }
 
+// The text content of the answer as the model reads it
+// Its key order is kept where the structured content decodes into a map
+func (c Client) Text(t *testing.T, name string, args any) (string, error) {
+	t.Helper()
+	res, err := c.call(t, name, args)
+	if err != nil {
+		return "", err
+	}
+	var texts []string
+	for _, content := range res.Content {
+		if text, ok := content.(*sdk.TextContent); ok {
+			texts = append(texts, text.Text)
+		}
+	}
+	return strings.Join(texts, " "), nil
+}
+
 // A tool error result returns ErrTool with the text content as message
 func (c Client) call(t *testing.T, name string, args any) (*sdk.CallToolResult, error) {
 	t.Helper()

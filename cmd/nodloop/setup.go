@@ -99,15 +99,23 @@ func newUserConfig(dataDir, recordDir string) (userConfig, error) {
 	if _, err := os.Stat(filepath.Join(abs, "events.csv")); err != nil {
 		return userConfig{}, fmt.Errorf("%w: %s", errNoEvents, abs)
 	}
-	if _, err := os.Stat(filepath.Join(abs, "policy.yaml")); err != nil {
-		return userConfig{}, fmt.Errorf("%w: %s", errPolicyMissing, abs)
-	}
 	src, err := evidencefile.New(abs)
 	if err != nil {
 		return userConfig{}, err
 	}
+	// 1. a policy the server could not load fails here so rerunning setup never reports success on it
+	// 2. a name no event carries fails here too so a misspelled name never leaves reviews without their numbers
+	// 3. the server reports that name in every review instead because it cannot tell a typo from an outage
+	ctx := context.Background()
+	policy, err := (app{cfg: config{dataDir: abs}}).observedPolicy(ctx, src)
+	if err != nil {
+		return userConfig{}, err
+	}
+	if err := policy.CheckObserved(); err != nil {
+		return userConfig{}, err
+	}
 	// Procedures that would never be read fail here rather than in the first review
-	if _, err := src.Procedures(context.Background()); err != nil {
+	if _, err := src.Procedures(ctx); err != nil {
 		return userConfig{}, err
 	}
 	return userConfig{DataDir: abs, RecordDir: recordDir}, nil
