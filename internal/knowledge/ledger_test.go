@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -204,7 +205,7 @@ func TestLedgerPropose(t *testing.T) {
 	proposed.Version, proposed.Status, proposed.Basis = 1, knowledge.StatusCandidate, knowledge.BasisStated
 	proposed.Time = now
 	filled := draft
-	filled.Version, filled.Status = 7, knowledge.StatusApproved
+	filled.Version, filled.Status, filled.Base = 7, knowledge.StatusApproved, 6
 	signed := draft
 	signed.Approver, signed.ApprovedAt, signed.Supersedes = "jed", at, 2
 	verified := draft
@@ -220,7 +221,14 @@ func TestLedgerPropose(t *testing.T) {
 	v3 := v1
 	v3.Version = 3
 	proposedV4 := proposed
-	proposedV4.Version = 4
+	proposedV4.Version, proposedV4.Base = 4, 3
+	// v1 is approved and v2 a candidate so the next version is built from v1
+	v1Approved := v1
+	v1Approved.Status, v1Approved.Approver, v1Approved.ApprovedAt = knowledge.StatusApproved, "ann", at
+	v2 := v1
+	v2.Version = 2
+	proposedV3 := proposed
+	proposedV3.Version, proposedV3.Base = 3, 1
 	neighbour := v1
 	neighbour.ID = "k2"
 	empty := draft
@@ -262,6 +270,11 @@ func TestLedgerPropose(t *testing.T) {
 			"next version follows the highest version of the id",
 			args{[]knowledge.Knowledge{v1, v3}, draft},
 			want{proposedV4, none, knowledge.Set{proposedV4, v3, v1}, nil},
+		},
+		{
+			"the base is the approved version even beside a newer candidate",
+			args{[]knowledge.Knowledge{v1, v1Approved, v2}, draft},
+			want{proposedV3, none, knowledge.Set{proposedV3, v2, v1Approved, v1}, nil},
 		},
 		{
 			"current item with an intersecting scope is listed",
@@ -345,6 +358,35 @@ func TestLedgerApprove(t *testing.T) {
 	// Its text alone nearly fills ReviewChars in runes so any other item of its folder overflows it
 	large := approved
 	large.ID, large.Content = "k-large", strings.Repeat("가", knowledge.ReviewChars-50)
+	// v2 and v3 were proposed from v1 and v2 was approved after them
+	proposedAt, v2ApprovedAt := at.Add(time.Minute), at.Add(2*time.Minute)
+	v2 := candidate
+	v2.Version, v2.Base, v2.Time = 2, 1, proposedAt
+	v3 := v2
+	v3.Version = 3
+	v2Approved := v2
+	v2Approved.Status, v2Approved.Approver, v2Approved.ApprovedAt, v2Approved.Time = knowledge.StatusApproved, "ann",
+		v2ApprovedAt, v2ApprovedAt
+	v2Approved.Supersedes = 1
+	v1Superseded := approved
+	v1Superseded.Status, v1Superseded.Time = knowledge.StatusSuperseded, v2ApprovedAt
+	// v1 was reaffirmed after v2 was proposed and a reaffirm is no new approval
+	reaffirmed := approved
+	reaffirmed.ReviewedAt, reaffirmed.Time = v2ApprovedAt, v2ApprovedAt
+	v2Now := v2
+	v2Now.Status, v2Now.Approver, v2Now.ApprovedAt, v2Now.Time, v2Now.Supersedes = knowledge.StatusApproved, "jed", now, now, 1
+	reaffirmedSuperseded := reaffirmed
+	reaffirmedSuperseded.Status, reaffirmedSuperseded.Approver, reaffirmedSuperseded.Time = knowledge.StatusSuperseded, "jed", now
+	// v2 was proposed from the candidate v1 before v1 was approved
+	v1ApprovedLater := approved
+	v1ApprovedLater.ApprovedAt, v1ApprovedLater.Time = v2ApprovedAt, v2ApprovedAt
+	stacked := candidate
+	stacked.Version, stacked.Base = 2, 1
+	stackedNow := stacked
+	stackedNow.Status, stackedNow.Approver, stackedNow.ApprovedAt, stackedNow.Time = knowledge.StatusApproved, "jed", now, now
+	stackedNow.Supersedes = 1
+	v1LaterSuperseded := v1ApprovedLater
+	v1LaterSuperseded.Status, v1LaterSuperseded.Approver, v1LaterSuperseded.Time = knowledge.StatusSuperseded, "jed", now
 	type args struct {
 		seeds    []knowledge.Knowledge
 		version  int
@@ -391,6 +433,24 @@ func TestLedgerApprove(t *testing.T) {
 			"an item whose folder may outgrow the review is refused and nothing is appended",
 			args{[]knowledge.Knowledge{large, candidate}, 1, "jed"},
 			want{history: knowledge.Set{candidate}, err: knowledge.ErrFolderFull},
+		},
+		{
+			"a candidate built from a version the approved one replaced is refused",
+			args{[]knowledge.Knowledge{candidate, approved, v2, v3, v2Approved, v1Superseded}, 3, "jed"},
+			want{
+				history: knowledge.Set{v1Superseded, v2Approved, v3, v2, approved, candidate},
+				err:     knowledge.ErrCandidateOutdated,
+			},
+		},
+		{
+			"a candidate built on a candidate approved after it replaces that version",
+			args{[]knowledge.Knowledge{candidate, stacked, v1ApprovedLater}, 2, "jed"},
+			want{stackedNow, knowledge.Set{v1LaterSuperseded, stackedNow, v1ApprovedLater, stacked, candidate}, "", nil},
+		},
+		{
+			"a reaffirm after the candidate was proposed never makes it outdated",
+			args{[]knowledge.Knowledge{candidate, approved, v2, reaffirmed}, 2, "jed"},
+			want{v2Now, knowledge.Set{reaffirmedSuperseded, v2Now, reaffirmed, v2, approved, candidate}, "", nil},
 		},
 		{
 			"approving a second version appends it before superseding the first",
@@ -459,6 +519,60 @@ func TestLedgerApprove(t *testing.T) {
 			// A missing file reads as empty
 			vetoes, _ := os.ReadFile(vetofile.NewApprovedFile(home, "records").Path())
 			assert.Equal(t, tc.want.vetoes, string(vetoes))
+		})
+	}
+}
+
+// Proposals and approvals of one id in the order a person runs them with a clock that moves on every call
+func TestLedgerApproveInProposalOrder(t *testing.T) {
+	draft := knowledge.Knowledge{
+		ID: "k1", Kind: knowledge.KindMeaning, Content: "one",
+		Evidence: knowledge.Evidence{ParagraphIDs: []string{"p#1"}}, Author: "author",
+	}
+	type want struct {
+		// The error of the last step
+		err error
+		// The approved version in the end
+		approved int
+	}
+	tcs := []struct {
+		name string
+		// propose or the version to approve
+		args []string
+		want want
+	}{
+		{"a version proposed on a candidate approves after that candidate", []string{"propose", "propose", "1", "2"}, want{nil, 2}},
+		{"a version proposed after the approval replaces it", []string{"propose", "1", "propose", "2"}, want{nil, 2}},
+		{"a version proposed on a candidate of a candidate reaches the approved one", []string{"propose", "propose", "propose", "1", "3"}, want{nil, 3}},
+		{"two versions proposed from one approved version never both land", []string{"propose", "1", "propose", "propose", "2", "3"}, want{knowledge.ErrCandidateOutdated, 2}},
+	}
+	ctx := context.Background()
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			store, err := file.New(t.TempDir())
+			require.NoError(t, err)
+			now := time.Date(2026, 9, 23, 0, 0, 0, 0, time.UTC)
+			l := knowledge.NewLedger(store, vetofile.NewApprovedFile(t.TempDir(), "records"), func() time.Time {
+				now = now.Add(time.Minute)
+				return now
+			}, func(prefix string) string { return prefix + "new" })
+			var last error
+			for i, step := range tc.args {
+				require.NoError(t, last, "step %d", i)
+				if step == "propose" {
+					_, _, last = l.Propose(ctx, draft)
+					continue
+				}
+				version, err := strconv.Atoi(step)
+				require.NoError(t, err)
+				_, last = l.Approve(ctx, "k1", version, "jed")
+			}
+
+			assert.ErrorIs(t, last, tc.want.err)
+			approved, err := l.ApprovedVersion(ctx, "k1")
+			require.NoError(t, err)
+			assert.Equal(t, tc.want.approved, approved)
 		})
 	}
 }

@@ -31,5 +31,6 @@ var (
 	ErrNarrowInvalid        = errors.New("knowledge: narrowing needs a refuted change context")
 	ErrNarrowExhausted      = errors.New("knowledge: narrowing would leave no change context of the version")
 	ErrRecordsChanged       = errors.New("knowledge: records changed since they were read")
+	ErrCandidateOutdated    = errors.New("knowledge: candidate was not built from the approved version it would replace")
 	ErrImportStale          = errors.New("knowledge: import record is older than the recorded history of its version")
 )
