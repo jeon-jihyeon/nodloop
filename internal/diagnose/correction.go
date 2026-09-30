@@ -60,6 +60,9 @@ func (d *Diagnoser) Correction(ctx context.Context, traceID string) (Correction,
 	if err != nil {
 		return Correction{}, err
 	}
+	if err := tr.CheckReview(); err != nil {
+		return Correction{}, err
+	}
 	recorded, err := ReadRecorded(tr)
 	if err != nil {
 		return Correction{}, err

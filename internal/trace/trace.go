@@ -62,10 +62,16 @@ func (t Trace) isReview() bool {
 	return t.Name == NameDiagnose
 }
 
-// ErrNotReview naming the trace when feedback or an outcome or knowledge cites something that is not a review
+// Feedback and outcomes and knowledge cite only a review that was recorded
+// 1. ErrNotReview naming the trace when it is not a diagnose trace
+// 2. ErrFailedReview naming the failure when the review failed
+// A failed review still closes its context so isReview keeps it
 func (t Trace) CheckReview() error {
 	if !t.isReview() {
 		return fmt.Errorf("%w: %s is a %s trace", ErrNotReview, t.ID, t.Name)
+	}
+	if t.Error != "" {
+		return fmt.Errorf("%w: %s failed: %s", ErrFailedReview, t.ID, t.Error)
 	}
 	return nil
 }

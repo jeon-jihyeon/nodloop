@@ -48,6 +48,7 @@ func TestRunFeedback(t *testing.T) {
 		args []string
 		// `{filled}` holds two records
 		// `{traced}` is a fresh record dir with the diagnose trace d1 and the context trace c1
+		// Then the failed diagnose trace f1
 		records string
 	}
 	type want struct {
@@ -93,6 +94,16 @@ func TestRunFeedback(t *testing.T) {
 			"add of an edit reads the edited file",
 			args{[]string{"add", "--trace", "d1", "--verdict", "edit", "--edited", edited, "--reviewer", "me"}, "{traced}"},
 			want{0, "d1\tedit\tme\n", `^$`},
+		},
+		{
+			"add for a failed review names the failure",
+			args{[]string{"add", "--trace", "f1", "--verdict", "reject"}, "{traced}"},
+			want{1, "", `^nodloop feedback: ` + trace.ErrFailedReview.Error() + `: f1 failed: model timed out\n$`},
+		},
+		{
+			"outcome for a failed review names the failure",
+			args{[]string{"outcome", "--trace", "f1", "--result", "confirmed"}, "{traced}"},
+			want{1, "", `^nodloop feedback: ` + trace.ErrFailedReview.Error() + `: f1 failed: model timed out\n$`},
 		},
 		{
 			"add without a verdict fails before reading the edited file",
@@ -198,6 +209,9 @@ func TestRunFeedback(t *testing.T) {
 			require.NoError(t, err)
 			require.NoError(t, traces.Append(ctx, trace.Trace{ID: "d1", Name: trace.NameDiagnose, Time: base}))
 			require.NoError(t, traces.Append(ctx, trace.Trace{ID: "c1", Name: trace.NameContext, Time: base}))
+			require.NoError(t, traces.Append(ctx, trace.Trace{
+				ID: "f1", Name: trace.NameDiagnose, Ref: "c1", Time: base, Error: "model timed out",
+			}))
 			records := strings.NewReplacer("{filled}", dir, "{traced}", traced).Replace(tc.args.records)
 			getenv := func(k string) string {
 				return map[string]string{envFileDir: data, envRecordDir: records}[k]
