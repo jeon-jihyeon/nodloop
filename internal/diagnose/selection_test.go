@@ -135,6 +135,17 @@ func TestPrepareCandidates(t *testing.T) {
 			want: want{offer: offer{examples: manyOffered, omitted: true}},
 		},
 		{
+			name: "offers a correction of a quiet event to the next quiet event of the same context",
+			args: args{
+				reviews:  []string{"tq-001"},
+				verdicts: []verdict{{"tq-001", feedback.VerdictReject, "expected variation", nil}},
+				event:    "tq-002",
+			},
+			want: want{offer: offer{
+				examples: []diagnose.ExampleCandidate{{TraceID: "tq-001", Verdict: feedback.VerdictReject, Head: "expected variation"}},
+			}},
+		},
+		{
 			name: "skips a correction of the same context that shares no metric",
 			args: args{
 				reviews:  []string{"tq-001"},
