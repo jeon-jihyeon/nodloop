@@ -28,6 +28,13 @@ func (d Dims) Has(key, value string) bool {
 	return ok
 }
 
+// Never nil so a data set without dimensions answers an empty list and not null
+func (d Dims) Names() []string {
+	names := slices.AppendSeq(make([]string, 0, len(d)), maps.Keys(d))
+	slices.Sort(names)
+	return names
+}
+
 // Whether the event fits the procedure scope and carries every dim value the scope names
 func (s Scope) admits(changeContext evidence.Context, moved Moved, dims Dims) bool {
 	if !s.Matches(changeContext, moved) {

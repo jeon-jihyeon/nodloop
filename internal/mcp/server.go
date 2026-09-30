@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -34,6 +35,7 @@ const (
 // Events the tools list and read
 type Source interface {
 	Metrics(ctx context.Context) ([]string, error)
+	Dims(ctx context.Context) (map[string]map[string]struct{}, error)
 	Events(ctx context.Context) ([]evidence.EventRef, error)
 	Event(ctx context.Context, id string) (evidence.Event, error)
 	Procedures(ctx context.Context) (evidence.Procedures, error)
@@ -152,8 +154,11 @@ func newTool[In any](
 }
 
 var tools = []tool{
-	newTool("events", "List the registered events with their time range. "+
-		"Call this when the user names a period or a source instead of an event id", (*Server).events),
+	newTool("events", "List the registered events with their time range and the dimension names of the data set. "+
+		"Call this when the user names a period or a dimension value instead of an event id. "+
+		"For a dimension value call it with dims keyed by a name from dimensions. "+
+		"A name or value no event carries fails like propose and the error lists the dimensions. "+
+		"An empty list means no single event carries all the named values together", (*Server).events),
 	newTool("observe", "Run the analysis policy over one event and return its observations. "+
 		"Numbers come from here, never from arithmetic in the conversation", (*Server).observe),
 	newTool("context", "Build the review context for one event: observations, "+
@@ -235,16 +240,33 @@ type eventRow struct {
 	End   string `json:"end"`
 }
 
-func (s *Server) events(ctx context.Context, _ *sdk.CallToolRequest, _ noInput) (*sdk.CallToolResult, any, error) {
+type eventsInput struct {
+	Dims map[string]string `json:"dims,omitempty" jsonschema:"only events that carry each of these values such as source src-11. Each key must be a name the dimensions answer lists and each value one some event carries"`
+}
+
+// Rows stay the id and the range so the answer grows with the events and not with their values
+// The dimension names come once so a dims filter is keyed by a name the data set has
+// A filter naming a dimension or value no event carries fails like propose and lists the names
+func (s *Server) events(ctx context.Context, _ *sdk.CallToolRequest, in eventsInput) (*sdk.CallToolResult, any, error) {
 	refs, err := s.src.Events(ctx)
 	if err != nil {
 		return nil, nil, err
 	}
+	dims, err := s.src.Dims(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	names := knowledge.Dims(dims).Names()
+	if err := (knowledge.Scope{Dims: in.Dims}).Observed(nil, dims); err != nil {
+		return nil, nil, fmt.Errorf("events dims filter: %w. Dimensions: %s", err, cmp.Or(strings.Join(names, ", "), "none"))
+	}
 	rows := make([]eventRow, 0, len(refs))
 	for _, r := range refs {
-		rows = append(rows, eventRow{ID: r.ID, Start: r.Start.Format(time.RFC3339), End: r.End.Format(time.RFC3339)})
+		if r.Carries(in.Dims) {
+			rows = append(rows, eventRow{ID: r.ID, Start: r.Start.Format(time.RFC3339), End: r.End.Format(time.RFC3339)})
+		}
 	}
-	return nil, map[string]any{"events": rows}, nil
+	return nil, map[string]any{"events": rows, "dimensions": names}, nil
 }
 
 func (s *Server) observe(ctx context.Context, _ *sdk.CallToolRequest, in eventInput) (*sdk.CallToolResult, any, error) {

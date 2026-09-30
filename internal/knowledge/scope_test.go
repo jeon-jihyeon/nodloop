@@ -107,3 +107,23 @@ func TestScopeObserved(t *testing.T) {
 		})
 	}
 }
+
+func TestDimsNames(t *testing.T) {
+	tcs := []struct {
+		name string
+		args knowledge.Dims
+		want []string
+	}{
+		{"names come sorted", knowledge.Dims{"topic": {"t": {}}, "source": {"s": {}}, "Source": {"s": {}}}, []string{"Source", "source", "topic"}},
+		{"no dimensions is an empty list", knowledge.Dims{}, []string{}},
+		{"a nil set is an empty list", nil, []string{}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := tc.args.Names()
+			require.NotNil(t, got)
+			assert.Equal(t, tc.want, got)
+		})
+	}
+}

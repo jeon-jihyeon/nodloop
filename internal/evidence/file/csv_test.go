@@ -282,8 +282,19 @@ func TestSourceEvents(t *testing.T) {
 				"e1,2026-09-22T11:00:00Z,m,1\n" +
 				"e2,2026-09-22T10:00:00Z,m,1\n"},
 			want: want{refs: []evidence.EventRef{
-				{ID: "e2", Start: at, End: at.Add(2 * time.Hour)},
-				{ID: "e1", Start: at.Add(time.Hour), End: at.Add(time.Hour)},
+				{ID: "e2", Start: at, End: at.Add(2 * time.Hour), Dims: map[string][]string{}},
+				{ID: "e1", Start: at.Add(time.Hour), End: at.Add(time.Hour), Dims: map[string][]string{}},
+			}},
+		},
+		{
+			name: "refs carry the dimension values of their own event",
+			args: map[string]string{"events.csv": "event_id,timestamp,source,metric,value\n" +
+				"e1,2026-09-22T10:00:00Z,b,m,1\n" +
+				"e1,2026-09-22T10:00:00Z,a,m,1\n" +
+				"e2,2026-09-22T10:00:00Z,c,m,1\n"},
+			want: want{refs: []evidence.EventRef{
+				{ID: "e1", Start: at, End: at, Dims: map[string][]string{"source": {"a", "b"}}},
+				{ID: "e2", Start: at, End: at, Dims: map[string][]string{"source": {"c"}}},
 			}},
 		},
 		{
@@ -302,7 +313,7 @@ func TestSourceEvents(t *testing.T) {
 				"events.csv":   header + "e,2026-09-22T10:00:00Z,m,1\n",
 				"contexts.csv": "event_id,change_context\ne,bogus\n",
 			},
-			want: want{refs: []evidence.EventRef{{ID: "e", Start: at, End: at}}},
+			want: want{refs: []evidence.EventRef{{ID: "e", Start: at, End: at, Dims: map[string][]string{}}}},
 		},
 	}
 	ctx := context.Background()
