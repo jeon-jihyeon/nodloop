@@ -526,7 +526,8 @@ func TestRunKnowledge(t *testing.T) {
 	}
 }
 
-// A batch review of tq-005 is corrected and proposed as knowledge from its trace
+// A batch review is corrected and proposed as knowledge from its trace
+// tq-005 moved click_count and conversion_count and no metric moved on tq-001
 // The model answers the review and the content draft and each row checks the candidate the ledger holds
 func TestRunKnowledgeFrom(t *testing.T) {
 	review := `{"status":"ready_for_review","observations":[],"causes":[{"summary":"low quality traffic","paragraph_ids":` +
@@ -536,12 +537,9 @@ func TestRunKnowledgeFrom(t *testing.T) {
 	edited := filepath.Join(t.TempDir(), "edited.json")
 	require.NoError(t, os.WriteFile(edited, []byte(`{"status":"no_action","observations":[],"causes":[],"checks":[],"open_questions":[]}`), 0o600))
 	ctx := context.Background()
-	st := testkit.Open(t)
-	ev, err := st.Source.Event(ctx, "tq-005")
-	require.NoError(t, err)
-	obs, err := testkit.Policy(t).Analyze(ev)
-	require.NoError(t, err)
+	moved := []string{"click_count", "conversion_count"}
 	type args struct {
+		event   string
 		verdict []string
 		propose []string
 	}
@@ -576,25 +574,25 @@ func TestRunKnowledgeFrom(t *testing.T) {
 	}{
 		{
 			"content given fills scope and evidence without a model call",
-			args{[]string{"--verdict", "reject"}, []string{"--kind", "meaning", "--content", "clicks without conversions"}},
+			args{"tq-005", []string{"--verdict", "reject"}, []string{"--kind", "meaning", "--content", "clicks without conversions"}},
 			func(*llmmock.MockClient) {},
-			want{0, candidate(spike) + "$", `^$`, []knowledge.Knowledge{filled(obs.Moved(), "clicks without conversions", false)}},
+			want{0, candidate(spike) + "$", `^$`, []knowledge.Knowledge{filled(moved, "clicks without conversions", false)}},
 		},
 		{
 			"content left out is drafted by the model and marked",
-			args{[]string{"--verdict", "edit", "--edited", edited}, []string{"--kind", "meaning", "--model", "haiku"}},
+			args{"tq-005", []string{"--verdict", "edit", "--edited", edited}, []string{"--kind", "meaning", "--model", "haiku"}},
 			func(client *llmmock.MockClient) {
 				client.EXPECT().Complete(gomock.Any(), drafting).Return(drafted, nil)
 			},
 			want{
 				0, candidate(spike) + "drafted\t0.0012 usd\tClicks that never convert are no incident\\.\n$", `^$`,
-				[]knowledge.Knowledge{filled(obs.Moved(), "Clicks that never convert are no incident.", true)},
+				[]knowledge.Knowledge{filled(moved, "Clicks that never convert are no incident.", true)},
 			},
 		},
 		{
 			"a scope metric given replaces the filled metrics",
 			args{
-				[]string{"--verdict", "reject"},
+				"tq-005", []string{"--verdict", "reject"},
 				[]string{"--kind", "meaning", "--content", "c", "--scope-metric", "conversion_count"},
 			},
 			func(*llmmock.MockClient) {},
@@ -604,8 +602,53 @@ func TestRunKnowledgeFrom(t *testing.T) {
 			},
 		},
 		{
+			"a review where no metric moved and no scope given fails before anything is recorded",
+			args{"tq-001", []string{"--verdict", "reject"}, []string{"--kind", "meaning", "--content", "c"}},
+			func(*llmmock.MockClient) {},
+			want{
+				1, `^$`, `^nodloop knowledge: ` + diagnose.ErrQuietScope.Error() + ` no_known_change\. Name the change contexts of`,
+				[]knowledge.Knowledge{},
+			},
+		},
+		{
+			"a review where no metric moved and no scope given fails before the content draft",
+			args{"tq-001", []string{"--verdict", "edit", "--edited", edited}, []string{"--kind", "meaning", "--model", "haiku"}},
+			func(*llmmock.MockClient) {},
+			want{1, `^$`, `^nodloop knowledge: ` + diagnose.ErrQuietScope.Error(), []knowledge.Knowledge{}},
+		},
+		{
+			"a change context given on a review where no metric moved accepts every event of that context",
+			args{
+				"tq-001", []string{"--verdict", "reject"},
+				[]string{"--kind", "meaning", "--content", "c", "--scope-context", "no_known_change"},
+			},
+			func(*llmmock.MockClient) {},
+			want{0, candidate("change contexts no_known_change") + "$", `^$`, []knowledge.Knowledge{filled(nil, "c", false)}},
+		},
+		{
+			"a metric given on a review where no metric moved is refused before anything is recorded",
+			args{
+				"tq-001", []string{"--verdict", "reject"},
+				[]string{"--kind", "meaning", "--content", "c", "--scope-metric", "conversion_count"},
+			},
+			func(*llmmock.MockClient) {},
+			want{
+				1, `^$`, `^nodloop knowledge: ` + diagnose.ErrQuietMetricScope.Error() + `: conversion_count`,
+				[]knowledge.Knowledge{},
+			},
+		},
+		{
+			"a metric given with a change context on a review where no metric moved is refused before the content draft",
+			args{
+				"tq-001", []string{"--verdict", "edit", "--edited", edited},
+				[]string{"--kind", "meaning", "--model", "haiku", "--scope-context", "no_known_change", "--scope-metric", "conversion_count"},
+			},
+			func(*llmmock.MockClient) {},
+			want{1, `^$`, `^nodloop knowledge: ` + diagnose.ErrQuietMetricScope.Error(), []knowledge.Knowledge{}},
+		},
+		{
 			"an approved review is no correction",
-			args{[]string{"--verdict", "approve"}, []string{"--kind", "meaning", "--content", "c"}},
+			args{"tq-005", []string{"--verdict", "approve"}, []string{"--kind", "meaning", "--content", "c"}},
 			func(*llmmock.MockClient) {},
 			want{1, `^$`, `^nodloop knowledge: ` + diagnose.ErrNotCorrected.Error(), []knowledge.Knowledge{}},
 		},
@@ -623,7 +666,7 @@ func TestRunKnowledgeFrom(t *testing.T) {
 			tc.init(client)
 			now := testkit.Open(t).Clock.Now
 			var stderr bytes.Buffer
-			require.Equal(t, 0, runDiagnose([]string{"--event", "tq-005", "--knowledge", "none"}, getenv, client, now, io.Discard, &stderr), stderr.String())
+			require.Equal(t, 0, runDiagnose([]string{"--event", tc.args.event, "--knowledge", "none"}, getenv, client, now, io.Discard, &stderr), stderr.String())
 			traceID := strings.TrimSpace(strings.TrimPrefix(stderr.String(), "trace "))
 			stderr.Reset()
 			verdict := append([]string{"add", "--trace", traceID, "--reason", "clicks without conversions"}, tc.args.verdict...)

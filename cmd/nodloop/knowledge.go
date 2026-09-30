@@ -62,7 +62,9 @@ func (f *knowledgeFlags) bind(fs *flag.FlagSet) {
 	fs.StringVar(&f.vetoExample, "veto-example", "",
 		`propose: a tool_input JSON object the veto must block such as {"command":"sed -i s/a/b/ f"}`)
 	fs.StringVar(&f.from, "from", "",
-		"propose: the diagnose trace of a review corrected by edit or reject. Scope, evidence and basis come from it")
+		"propose: the diagnose trace of a review corrected by edit or reject. Scope, evidence and basis come from it. "+
+			"When no metric moved it needs --scope-context and refuses --scope-metric, "+
+			"since a metric scope would never reach an event like the corrected one")
 	fs.StringVar(&f.model, "model", "", "compact, replay and propose --from: model alias or name. Empty means the llm default")
 	fs.Var(&f.events, "events", "replay: comma separated event ids to replay again. Empty means every replay event")
 	fs.IntVar(&f.parallel, "parallel", 0, "replay: reviews in flight at once. 0 means 4")
@@ -246,8 +248,10 @@ func (c knowledgeCommand) proposeFrom(
 	if err != nil {
 		return err
 	}
-	p := correction.Proposal()
-	draft = draft.Filled(p.Scope, p.Evidence, p.Basis)
+	draft, err = correction.Proposal(draft)
+	if err != nil {
+		return err
+	}
 	if draft.Content != "" {
 		return c.propose(ctx, draft)
 	}

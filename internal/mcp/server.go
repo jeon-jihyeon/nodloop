@@ -465,7 +465,7 @@ type proposeInput struct {
 	ParagraphIDs   []string           `json:"paragraph_ids,omitempty" jsonschema:"procedure paragraph ids that support it"`
 	Author         string             `json:"author,omitempty" jsonschema:"who proposed. claude by default because the conversation proposes"`
 	Veto           *vetoInput         `json:"veto,omitempty" jsonschema:"a tool call this judgment forbids. Approval makes it a guard veto that blocks the call. Only for kind judgment"`
-	From           string             `json:"from,omitempty" jsonschema:"the trace id of a review the user corrected with edit or reject. Code fills the scope from its change context and the metrics that moved and the evidence from the trace. Scope fields given with it replace what code filled"`
+	From           string             `json:"from,omitempty" jsonschema:"the trace id of a review the user corrected with edit or reject. Code fills the scope from its change context and the metrics that moved and the evidence from the trace. Scope fields given with it replace what code filled. When no metric moved the filled scope would cover every event of the change context, so propose fails until change_contexts are given. It also refuses metrics then because a metric scope would never reach an event like the corrected one"`
 }
 
 type vetoInput struct {
@@ -515,8 +515,9 @@ func (s *Server) propose(ctx context.Context, _ *sdk.CallToolRequest, in propose
 		if err != nil {
 			return nil, nil, err
 		}
-		p := c.Proposal()
-		draft = draft.Filled(p.Scope, p.Evidence, p.Basis)
+		if draft, err = c.Proposal(draft); err != nil {
+			return nil, nil, err
+		}
 	}
 	if err := s.observed(ctx, draft.Scope); err != nil {
 		return nil, nil, err

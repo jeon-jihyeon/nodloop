@@ -35,7 +35,9 @@ const (
 	// Shares the planned change context with plannedEvent
 	relatedEvent   = "tq-011"
 	unrelatedEvent = "tq-003"
-	knownSegment   = "metric-anomaly-investigation#Metric anomaly investigation/Check the segment#1"
+	// No metric moved against the baseline
+	quietEvent   = "tq-001"
+	knownSegment = "metric-anomaly-investigation#Metric anomaly investigation/Check the segment#1"
 	// A review that cites the procedure paragraphs of every context and passes the gate
 	reviewFile = "testdata/review.json"
 )
@@ -707,29 +709,54 @@ func TestServerProposeAndApprove(t *testing.T) {
 }
 
 // A proposal from a corrected review takes its scope and evidence from code and its content from the conversation
-// The planned event moved conversion_count under a planned change
+// The planned event moved conversion_count under a planned change and no metric moved on the quiet event
 func TestServerProposeFrom(t *testing.T) {
 	type args struct {
+		event   string
 		verdict feedback.Verdict
 		edited  json.RawMessage
 		// Scope fields sent beside from
-		metrics []string
+		contexts []evidence.Context
+		metrics  []string
+	}
+	type want struct {
+		// The scopes the ledger holds
+		stored []knowledge.Scope
+		// Part of the tool error and empty when propose succeeds
+		err string
 	}
 	cleared := json.RawMessage(`{"status":"no_action","observations":[],"causes":[],"checks":[],"open_questions":[]}`)
+	planned := []evidence.Context{evidence.ContextPlannedChange}
+	quiet := []evidence.Context{evidence.ContextNoKnownChange}
 	tcs := []struct {
 		name string
 		args args
-		want []string
+		want want
 	}{
 		{
 			"an edited review fills scope and evidence",
-			args{verdict: feedback.VerdictEdit, edited: cleared},
-			[]string{"conversion_count"},
+			args{event: plannedEvent, verdict: feedback.VerdictEdit, edited: cleared},
+			want{stored: []knowledge.Scope{{Scope: evidence.Scope{ChangeContexts: planned, Metrics: []string{"conversion_count"}}}}},
 		},
 		{
 			"a metric sent beside from replaces the filled metrics",
-			args{verdict: feedback.VerdictReject, metrics: []string{"click_count"}},
-			[]string{"click_count"},
+			args{event: plannedEvent, verdict: feedback.VerdictReject, metrics: []string{"click_count"}},
+			want{stored: []knowledge.Scope{{Scope: evidence.Scope{ChangeContexts: planned, Metrics: []string{"click_count"}}}}},
+		},
+		{
+			"a review where no metric moved and no scope sent is refused",
+			args{event: quietEvent, verdict: feedback.VerdictReject},
+			want{stored: []knowledge.Scope{}, err: diagnose.ErrQuietScope.Error() + " no_known_change. Name the change contexts of"},
+		},
+		{
+			"a metric sent beside from on a quiet review is refused because it never reaches a quiet event",
+			args{event: quietEvent, verdict: feedback.VerdictReject, contexts: quiet, metrics: []string{"click_count"}},
+			want{stored: []knowledge.Scope{}, err: diagnose.ErrQuietMetricScope.Error() + ": click_count"},
+		},
+		{
+			"a change context sent beside from on a quiet review accepts every event of it",
+			args{event: quietEvent, verdict: feedback.VerdictReject, contexts: quiet},
+			want{stored: []knowledge.Scope{{Scope: evidence.Scope{ChangeContexts: quiet}}}},
 		},
 	}
 	ctx := context.Background()
@@ -743,7 +770,7 @@ func TestServerProposeFrom(t *testing.T) {
 			var opened struct {
 				PendingID string `json:"pending_id"`
 			}
-			require.NoError(t, c.Call(t, "context", map[string]any{"event_id": plannedEvent}, &opened))
+			require.NoError(t, c.Call(t, "context", map[string]any{"event_id": tc.args.event}, &opened))
 			var reviewed struct {
 				TraceID string `json:"trace_id"`
 			}
@@ -754,24 +781,27 @@ func TestServerProposeFrom(t *testing.T) {
 			}))
 			in := map[string]any{
 				"kind": knowledge.KindMeaning, "content": "a planned tracking change moves the counts", "from": reviewed.TraceID,
-				"metrics": tc.args.metrics,
+				"change_contexts": tc.args.contexts, "metrics": tc.args.metrics,
 			}
 			var proposed struct {
-				ID      string          `json:"id"`
-				Scope   knowledge.Scope `json:"scope"`
-				Drafted bool            `json:"drafted"`
+				Scope knowledge.Scope `json:"scope"`
 			}
 
-			require.NoError(t, c.Call(t, "propose", in, &proposed))
+			err = c.Call(t, "propose", in, &proposed)
 
-			stored, err := st.Ledger.History(ctx, proposed.ID)
-			require.NoError(t, err)
-			require.Len(t, stored, 1)
-			planned := []evidence.Context{evidence.ContextPlannedChange}
-			assert.Equal(t, knowledge.Scope{Scope: evidence.Scope{ChangeContexts: planned, Metrics: tc.want}}, proposed.Scope)
-			assert.True(t, proposed.Drafted)
-			assert.Equal(t, knowledge.Evidence{FeedbackTraceIDs: []string{reviewed.TraceID}}, stored[0].Evidence)
-			assert.Equal(t, knowledge.BasisStated, stored[0].Basis)
+			all, listErr := st.Ledger.All(ctx)
+			require.NoError(t, listErr)
+			stored := make([]knowledge.Scope, 0, len(all))
+			for _, k := range all {
+				assert.Equal(t, knowledge.Evidence{FeedbackTraceIDs: []string{reviewed.TraceID}}, k.Evidence)
+				assert.Equal(t, knowledge.BasisStated, k.Basis)
+				assert.True(t, k.Drafted)
+				assert.Equal(t, k.Scope, proposed.Scope)
+				stored = append(stored, k.Scope)
+			}
+			assert.Equal(t, tc.want.err == "", err == nil)
+			assert.Contains(t, fmt.Sprint(err), tc.want.err)
+			assert.Equal(t, tc.want.stored, stored)
 		})
 	}
 }

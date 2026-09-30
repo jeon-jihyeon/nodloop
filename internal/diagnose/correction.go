@@ -148,17 +148,25 @@ func CheckEdit(built trace.Trace, current evidence.Procedures, edited json.RawMe
 	return nil
 }
 
-// The fields of a knowledge candidate that code fills from the correction
+// The draft over the fields of a knowledge candidate that code fills from the correction
 // 1. scope: the change context of the review and the metrics that moved so it applies where the correction applied
 // 2. evidence: the review trace whose feedback is the correction
 // 3. basis stated because a correction is a person's word until an outcome confirms it
 // Kind and content stay with the person or the draft
-func (c Correction) Proposal() knowledge.Knowledge {
-	return knowledge.Knowledge{
-		Scope:    knowledge.Scope{Scope: evidence.Scope{ChangeContexts: []evidence.Context{c.ChangeContext}, Metrics: c.Moved}},
-		Evidence: knowledge.Evidence{FeedbackTraceIDs: []string{c.TraceID}},
-		Basis:    knowledge.BasisStated,
+// Where no metric moved the metric axis stays empty and so covers every event of the change context
+// 1. that scope is filled only when the draft names change contexts itself and otherwise fails with ErrQuietScope
+// 2. a draft naming metrics fails with ErrQuietMetricScope
+// A metric scope reaches only events where one of its metrics moved and so never an event like the corrected one
+func (c Correction) Proposal(draft knowledge.Knowledge) (knowledge.Knowledge, error) {
+	if len(c.Moved) == 0 && len(draft.Scope.Metrics) > 0 {
+		return knowledge.Knowledge{}, fmt.Errorf("%w: %s", ErrQuietMetricScope, strings.Join(draft.Scope.Metrics, ", "))
 	}
+	if len(c.Moved) == 0 && len(draft.Scope.ChangeContexts) == 0 {
+		return knowledge.Knowledge{}, fmt.Errorf("%w %s. Name the change contexts of the scope to propose it",
+			ErrQuietScope, c.ChangeContext)
+	}
+	scope := knowledge.Scope{Scope: evidence.Scope{ChangeContexts: []evidence.Context{c.ChangeContext}, Metrics: c.Moved}}
+	return draft.Filled(scope, knowledge.Evidence{FeedbackTraceIDs: []string{c.TraceID}}, knowledge.BasisStated), nil
 }
 
 // The correction as the drafter reads it
