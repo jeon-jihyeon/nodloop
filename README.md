@@ -63,7 +63,7 @@ The eval holds out 12 of the 24 demo events and reviews them with Sonnet. With n
 | knowledge:on | 12 | 1.00 | 1.00 | 0.83 | 0.92 | 1.00 | 0.88 | 1.00 | 0 | 1 | 0.0941 |
 | knowledge:all | 12 | 1.00 | 1.00 | 0.86 | 0.92 | 1.00 | 1.00 | 1.00 | 15 | 2 | 0.1037 |
 
-To reproduce it, run `~/.nodloop/bin/nodloop eval seed --session demo` from the clone, correct the seed reviews with `feedback add`, import the demo knowledge with `knowledge import --file examples/demo/knowledge.jsonl`, then run `eval holdout --session demo` and `eval report --session demo` with the same binary. eval calls the `claude` CLI for every review. holdout stops before the first review when feedback:on has no corrected seed review or the knowledge conditions have no approved item, so leave a condition out with `--conditions` to run the rest.
+To reproduce it, first set `NODLOOP_RECORD_DIR` to the absolute path of an empty directory, because the Quickstart reviewed and corrected tq-023, a holdout event, and holdout refuses records that already judge one. Then run `~/.nodloop/bin/nodloop eval seed --session demo` from the clone, correct the seed reviews with `feedback add`, import the demo knowledge with `knowledge import --file examples/demo/knowledge.jsonl`, then run `eval holdout --session demo` and `eval report --session demo` with the same binary. eval calls the `claude` CLI for every review. holdout stops before the first review when feedback:on has no corrected seed review or the knowledge conditions have no approved item, so leave a condition out with `--conditions` to run the rest.
 
 ### Beyond the demo
 

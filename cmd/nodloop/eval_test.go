@@ -126,6 +126,12 @@ func TestRunEval(t *testing.T) {
 				`so add feedback on the seed reviews or leave it out of the conditions\n$`, os.ErrNotExist},
 		},
 		{
+			"holdout over records with feedback on a holdout review names an empty record dir as the way out",
+			args{"testdata/eval-leaked", nil, []string{"holdout", "--session", "t", "--conditions", "feedback:off"}},
+			want{1, "", `^nodloop eval: eval: holdout trace has feedback: t-quickstart of tq-023\. The records in \S+ already judge ` +
+				`a holdout event\. Run the eval with --record-dir or ` + envRecordDir + ` naming an empty directory\n$`, os.ErrNotExist},
+		},
+		{
 			"holdout of an unknown condition fails",
 			args{"", nil, []string{"holdout", "--session", "t", "--conditions", "bogus"}},
 			want{1, "", `^nodloop eval: .*"bogus"\n$`, os.ErrNotExist},

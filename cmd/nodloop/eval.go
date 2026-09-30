@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -99,6 +100,11 @@ func (c evalCommand) seed(ctx context.Context, opts eval.RunOptions) error {
 func (c evalCommand) holdout(ctx context.Context, opts eval.RunOptions) error {
 	opts.Log = c.log
 	traces, err := c.runner.Holdout(ctx, opts)
+	// No command removes feedback so these records stay unusable for holdout and only a fresh record dir gets past it
+	if errors.Is(err, eval.ErrHoldoutFeedback) || errors.Is(err, eval.ErrHoldoutKnowledge) {
+		return fmt.Errorf("%w. The records in %s already judge a holdout event. "+
+			"Run the eval with --record-dir or %s naming an empty directory", err, c.recordDir, envRecordDir)
+	}
 	if err != nil {
 		return err
 	}
