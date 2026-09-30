@@ -1,0 +1,169 @@
+[
+  {
+    "ID": "data-integrity-hold#Data integrity hold#1",
+    "File": "data-integrity-hold.md",
+    "Path": [
+      "Data integrity hold"
+    ],
+    "Text": "Use this procedure when the coverage rule reports missing or late points, or when the change context is data_availability_issue or measurement_context_changed. The review holds instead of concluding because the numbers cannot be compared with their baseline."
+  },
+  {
+    "ID": "data-integrity-hold#Data integrity hold/Coverage#1",
+    "File": "data-integrity-hold.md",
+    "Path": [
+      "Data integrity hold",
+      "Coverage"
+    ],
+    "Text": "Count the missing and late points in the window. When the missing ratio is above the coverage threshold the window is incomplete and any metric movement may be an artifact of the gap. Return hold and name the gap."
+  },
+  {
+    "ID": "data-integrity-hold#Data integrity hold/Measurement changes#1",
+    "File": "data-integrity-hold.md",
+    "Path": [
+      "Data integrity hold",
+      "Measurement changes"
+    ],
+    "Text": "When the change context says the measurement or aggregation changed, the baseline was produced under different rules. Do not compare the window with the baseline. Return hold until a new baseline is collected under the new rules."
+  },
+  {
+    "ID": "data-integrity-hold#Data integrity hold/What to record#1",
+    "File": "data-integrity-hold.md",
+    "Path": [
+      "Data integrity hold",
+      "What to record"
+    ],
+    "Text": "State the hold reason, the range that is missing or changed, and the condition under which the review is run again. A hold is a complete result and is recorded like any other review."
+  },
+  {
+    "ID": "metric-anomaly-investigation#Metric anomaly investigation#1",
+    "File": "metric-anomaly-investigation.md",
+    "Path": [
+      "Metric anomaly investigation"
+    ],
+    "Text": "Use this procedure when a count metric such as click_count moves far from its baseline inside the test window. A jump is a signal to investigate, never a conclusion about fraud."
+  },
+  {
+    "ID": "metric-anomaly-investigation#Metric anomaly investigation/Confirm the signal#1",
+    "File": "metric-anomaly-investigation.md",
+    "Path": [
+      "Metric anomaly investigation",
+      "Confirm the signal"
+    ],
+    "Text": "Compare the window mean with the baseline mean and read the peak hour. Check that the window has enough samples and that the jump is not one hour of noise. A change that only shows in one hour is treated as normal variation."
+  },
+  {
+    "ID": "metric-anomaly-investigation#Metric anomaly investigation/Check the segment#1",
+    "File": "metric-anomaly-investigation.md",
+    "Path": [
+      "Metric anomaly investigation",
+      "Check the segment"
+    ],
+    "Text": "Find which source or topic carries the change. A spike confined to one source points at that source's traffic and the review names the source. A spike across every source points at a global cause such as a campaign launch."
+  },
+  {
+    "ID": "metric-anomaly-investigation#Metric anomaly investigation/Check downstream outcomes#1",
+    "File": "metric-anomaly-investigation.md",
+    "Path": [
+      "Metric anomaly investigation",
+      "Check downstream outcomes"
+    ],
+    "Text": "Compare conversion_count over the same window. Clicks rising while conversions stay flat means the extra clicks did not convert and the source is a low quality traffic candidate. Clicks and conversions rising together means demand grew."
+  },
+  {
+    "ID": "metric-anomaly-investigation#Metric anomaly investigation/Decide#1",
+    "File": "metric-anomaly-investigation.md",
+    "Path": [
+      "Metric anomaly investigation",
+      "Decide"
+    ],
+    "Text": "Return ready_for_review with the cause candidates in order of likelihood and the checks above as the check order. Blocking, billing changes and account actions are outside this procedure and are escalated to the traffic quality owner."
+  },
+  {
+    "ID": "outcome-rate-degradation#Outcome rate degradation#1",
+    "File": "outcome-rate-degradation.md",
+    "Path": [
+      "Outcome rate degradation"
+    ],
+    "Text": "Use this procedure when the conversion rate, conversion_count over click_count, falls below its control limit inside the test window. The rate is always read with its denominator."
+  },
+  {
+    "ID": "outcome-rate-degradation#Outcome rate degradation/Confirm the rate#1",
+    "File": "outcome-rate-degradation.md",
+    "Path": [
+      "Outcome rate degradation",
+      "Confirm the rate"
+    ],
+    "Text": "Recompute the window rate from the summed counts and compare it with the baseline rate and the control limit. A rate computed from fewer than the minimum samples is inadequate and the review says so instead of concluding."
+  },
+  {
+    "ID": "outcome-rate-degradation#Outcome rate degradation/Separate numerator from denominator#1",
+    "File": "outcome-rate-degradation.md",
+    "Path": [
+      "Outcome rate degradation",
+      "Separate numerator from denominator"
+    ],
+    "Text": "Decide whether conversions fell or clicks rose. Conversions falling with flat clicks points at the outcome side such as a broken landing page or tracking. Clicks rising with flat conversions points at the traffic side and continues in the metric anomaly investigation."
+  },
+  {
+    "ID": "outcome-rate-degradation#Outcome rate degradation/Check tracking changes#1",
+    "File": "outcome-rate-degradation.md",
+    "Path": [
+      "Outcome rate degradation",
+      "Check tracking changes"
+    ],
+    "Text": "When the change context is planned_operational_change or measurement_context_changed, verify the conversion tracking before any traffic conclusion. A tracking change explains a rate drop without any change in traffic quality."
+  },
+  {
+    "ID": "outcome-rate-degradation#Outcome rate degradation/Decide#1",
+    "File": "outcome-rate-degradation.md",
+    "Path": [
+      "Outcome rate degradation",
+      "Decide"
+    ],
+    "Text": "Return ready_for_review with the side of the rate that moved as the first cause candidate. Tracking that is not verified yet is the first check, not a reason to hold. Return hold only when the window itself cannot be trusted, such as missing points or a measurement context change, and name what is missing."
+  },
+  {
+    "ID": "segment-concentration-review#Segment concentration review#1",
+    "File": "segment-concentration-review.md",
+    "Path": [
+      "Segment concentration review"
+    ],
+    "Text": "Use this procedure when one source's share of click_count moves by more than the share threshold inside the test window while other sources lose share."
+  },
+  {
+    "ID": "segment-concentration-review#Segment concentration review/Measure the share shift#1",
+    "File": "segment-concentration-review.md",
+    "Path": [
+      "Segment concentration review",
+      "Measure the share shift"
+    ],
+    "Text": "Read the window share and the baseline share of the concentrated source and of the sources that lost share. The shift is the delta in share, not the change in the source's own count."
+  },
+  {
+    "ID": "segment-concentration-review#Segment concentration review/Compare against total volume#1",
+    "File": "segment-concentration-review.md",
+    "Path": [
+      "Segment concentration review",
+      "Compare against total volume"
+    ],
+    "Text": "Compare the total click_count of the window with the baseline total. When the window mean of the total is at least 1.5 times its baseline mean, one source grew on its own and the metric anomaly investigation applies to that source. A total below 1.5 times its baseline with a shifted share means traffic was redistributed between sources."
+  },
+  {
+    "ID": "segment-concentration-review#Segment concentration review/Check the concentrated segment#1",
+    "File": "segment-concentration-review.md",
+    "Path": [
+      "Segment concentration review",
+      "Check the concentrated segment"
+    ],
+    "Text": "Read the conversion rate of the concentrated source. A source that gains share while its conversion rate falls is a low quality traffic candidate. A source that gains share with a stable conversion rate is a distribution change."
+  },
+  {
+    "ID": "segment-concentration-review#Segment concentration review/Decide#1",
+    "File": "segment-concentration-review.md",
+    "Path": [
+      "Segment concentration review",
+      "Decide"
+    ],
+    "Text": "Return ready_for_review naming the concentrated source and whether the shift is redistribution or growth. Pausing or reweighting a source is outside this procedure."
+  }
+]

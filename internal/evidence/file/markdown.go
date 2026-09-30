@@ -5,8 +5,13 @@ import (
 	"fmt"
 	"io"
 	"slices"
+	"sort"
 	"strings"
 
+	"github.com/yuin/goldmark"
+	"github.com/yuin/goldmark/ast"
+	"github.com/yuin/goldmark/extension"
+	"github.com/yuin/goldmark/text"
 	"go.yaml.in/yaml/v3"
 
 	"github.com/jeon-jihyeon/nodloop/internal/evidence"
@@ -24,7 +29,9 @@ func parseProcedure(fileName, content string) (evidence.Procedure, error) {
 		return evidence.Procedure{}, fmt.Errorf("%s: %w", fileName, err)
 	}
 	return evidence.Procedure{
-		Slug: strings.TrimSuffix(fileName, ".md"), File: fileName, Scope: scope, Paragraphs: splitParagraphs(fileName, body),
+		Slug:  strings.TrimSuffix(fileName, procedureExt),
+		File:  fileName,
+		Scope: scope, Paragraphs: splitParagraphs(fileName, body),
 	}, nil
 }
 
@@ -62,47 +69,128 @@ func decodeScope(head, body string) (evidence.Scope, string, error) {
 	return scope, body, nil
 }
 
-// Split by heading and blank line
-// 1. a heading replaces the path at its level and drops deeper levels
-// 2. blank lines separate paragraphs inside a section
-// 3. fenced code stays in one paragraph
-// 4. the index restarts at 1 for every heading
+// Split the raw lines by the blocks a CommonMark parser finds
+// 1. only a heading at the top level replaces the path at its level and drops deeper levels
+// 2. a blank line inside fenced code or an HTML block stays and any other blank line ends a paragraph
+// 3. the index restarts at 1 for every heading and counts on under a repeated heading path so no id names two paragraphs
 func splitParagraphs(fileName, content string) []evidence.Paragraph {
-	s := splitter{file: fileName, slug: strings.TrimSuffix(fileName, ".md")}
-	for line := range strings.SplitSeq(content, "\n") {
-		s.read(line)
+	src := newSource(content)
+	doc := src.parse()
+	s := splitter{
+		file: fileName, slug: strings.TrimSuffix(fileName, procedureExt),
+		headings: src.headings(doc), kept: src.kept(doc), skip: -1,
+		ids: map[evidence.ParagraphID]struct{}{},
+	}
+	for i, line := range strings.Split(content, "\n") {
+		s.read(i, line)
 	}
 	s.flush()
 	return s.out
 }
 
+// The procedure body with the offset where each of its lines starts
+type source struct {
+	text   []byte
+	starts []int
+}
+
+func newSource(content string) source {
+	starts := []int{0}
+	for i := range len(content) {
+		if content[i] == '\n' {
+			starts = append(starts, i+1)
+		}
+	}
+	return source{text: []byte(content), starts: starts}
+}
+
+// A parser per call because the parser does not document that it is safe for concurrent use
+// Tables are parsed so a rule right under a table is a break and never a setext underline
+func (s source) parse() ast.Node {
+	return goldmark.New(goldmark.WithExtensions(extension.Table)).Parser().Parse(text.NewReader(s.text))
+}
+
+// Index of the line that holds the byte at offset
+func (s source) line(offset int) int {
+	return sort.SearchInts(s.starts, offset+1) - 1
+}
+
+// A heading that moves the path keyed by the line it starts on
+// A heading nested in a list or a quote and an ATX heading without a title stay text
+func (s source) headings(doc ast.Node) map[int]heading {
+	out := map[int]heading{}
+	for n := doc.FirstChild(); n != nil; n = n.NextSibling() {
+		h, ok := n.(*ast.Heading)
+		if !ok || h.Lines().Len() == 0 {
+			continue
+		}
+		parts := make([]string, h.Lines().Len())
+		for i := range parts {
+			segment := h.Lines().At(i)
+			parts[i] = string(segment.Value(s.text))
+		}
+		title := strings.TrimSpace(strings.Join(parts, " "))
+		last := s.line(h.Lines().At(h.Lines().Len() - 1).Start)
+		// A setext heading starts where its text starts while an ATX heading starts at its hashes
+		if h.Lines().At(0).Start == h.Pos() {
+			title = strings.Join(strings.Fields(title), " ")
+			last++
+		}
+		out[s.line(h.Pos())] = heading{level: h.Level, title: title, last: last}
+	}
+	return out
+}
+
+// Lines of fenced code and HTML blocks where a blank line does not end the paragraph
+// Indented code is left out so a blank line inside it still splits as it always did
+func (s source) kept(doc ast.Node) map[int]bool {
+	out := map[int]bool{}
+	_ = ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
+		if !entering || (n.Kind() != ast.KindFencedCodeBlock && n.Kind() != ast.KindHTMLBlock) {
+			return ast.WalkContinue, nil
+		}
+		for i := range n.Lines().Len() {
+			out[s.line(n.Lines().At(i).Start)] = true
+		}
+		return ast.WalkSkipChildren, nil
+	})
+	return out
+}
+
+type heading struct {
+	level int
+	title string
+	// Last line the heading takes
+	// A setext heading also takes its underline
+	last int
+}
+
 // Position inside one procedure while its lines are read in order
 type splitter struct {
-	file string
-	slug string
+	file     string
+	slug     string
+	headings map[int]heading
+	kept     map[int]bool
+	// Last line of the heading being passed over
+	skip int
 	path []string
 	buf  []string
 	// Paragraphs under the current heading so far
-	index  int
-	fenced bool
-	out    []evidence.Paragraph
+	index int
+	ids   map[evidence.ParagraphID]struct{}
+	out   []evidence.Paragraph
 }
 
-func (s *splitter) read(line string) {
-	trimmed := strings.TrimSpace(line)
-	fence := strings.HasPrefix(trimmed, "```")
-	if fence {
-		s.fenced = !s.fenced
-	}
-	if fence || s.fenced {
-		s.buf = append(s.buf, line)
+func (s *splitter) read(i int, line string) {
+	if h, ok := s.headings[i]; ok {
+		s.enter(h.level, h.title)
+		s.skip = h.last
 		return
 	}
-	if level, title, ok := heading(trimmed); ok {
-		s.enter(level, title)
+	if i <= s.skip {
 		return
 	}
-	if trimmed == "" {
+	if strings.TrimSpace(line) == "" && !s.kept[i] {
 		s.flush()
 		return
 	}
@@ -127,21 +215,14 @@ func (s *splitter) flush() {
 	if text == "" {
 		return
 	}
-	s.index++
-	s.out = append(s.out, evidence.Paragraph{
-		ID:   evidence.NewParagraphID(s.slug, s.path, s.index),
-		File: s.file,
-		Path: slices.Clone(s.path),
-		Text: text,
-	})
-}
-
-func heading(line string) (level int, title string, ok bool) {
-	for level < len(line) && line[level] == '#' {
-		level++
+	var id evidence.ParagraphID
+	for {
+		s.index++
+		id = evidence.NewParagraphID(s.slug, s.path, s.index)
+		if _, taken := s.ids[id]; !taken {
+			break
+		}
 	}
-	if level == 0 || level > 6 || level == len(line) || line[level] != ' ' {
-		return 0, "", false
-	}
-	return level, strings.TrimSpace(line[level:]), true
+	s.ids[id] = struct{}{}
+	s.out = append(s.out, evidence.Paragraph{ID: id, File: s.file, Path: slices.Clone(s.path), Text: text})
 }
