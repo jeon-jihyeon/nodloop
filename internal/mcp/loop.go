@@ -55,7 +55,11 @@ func (s *Server) knowledgeHealth(ctx context.Context, _ *sdk.CallToolRequest, _ 
 	if err != nil {
 		return nil, nil, err
 	}
-	return nil, map[string]any{"items": h.Health(s.now()), "issues": h.BrokenReferences(procedures, metrics)}, nil
+	dims, err := s.src.Dims(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	return nil, map[string]any{"items": h.Health(s.now()), "issues": h.BrokenReferences(procedures, metrics, dims)}, nil
 }
 
 type reaffirmInput struct {

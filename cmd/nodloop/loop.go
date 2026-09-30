@@ -61,7 +61,11 @@ func (c knowledgeCommand) audit(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	return json.NewEncoder(c.out).Encode(h.BrokenReferences(procedures, metrics))
+	dims, err := src.Dims(ctx)
+	if err != nil {
+		return err
+	}
+	return json.NewEncoder(c.out).Encode(h.BrokenReferences(procedures, metrics, dims))
 }
 
 // Without a version the approved version of the id is the one reaffirmed

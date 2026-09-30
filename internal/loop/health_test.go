@@ -211,6 +211,17 @@ func TestHistoryBrokenReferences(t *testing.T) {
 			},
 		},
 		{
+			"a dim key and a dim value no event carries",
+			args{
+				evidence: knowledge.Evidence{ParagraphIDs: []string{"p#1"}},
+				scope:    knowledge.Scope{Dims: map[string]string{"source": "source_a", "platform": "ios"}},
+			},
+			[]loop.Issue{
+				{ID: "k", Version: 2, Field: "dims", Reference: "platform=ios"},
+				{ID: "k", Version: 2, Field: "dims", Reference: "source=source_a"},
+			},
+		},
+		{
 			"exceptions that cover every scoped change context",
 			args{
 				evidence:   knowledge.Evidence{ParagraphIDs: []string{"p#1"}},
@@ -233,7 +244,7 @@ func TestHistoryBrokenReferences(t *testing.T) {
 				knowledge.Set{audited, superseded},
 			)
 			require.NoError(t, err)
-			assert.Equal(t, tc.want, h.BrokenReferences(procedures, []string{"clicks"}))
+			assert.Equal(t, tc.want, h.BrokenReferences(procedures, []string{"clicks"}, knowledge.Dims{"source": {"source-a": {}}}))
 		})
 	}
 }
