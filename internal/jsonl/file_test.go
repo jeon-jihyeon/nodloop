@@ -118,6 +118,11 @@ func TestFileAppendMendsTheTail(t *testing.T) {
 		},
 		{"torn first line is cut", args{"{\"id", row{"b", 1}}, "{\"id\":\"b\",\"n\":1}\n"},
 		{
+			"one record after a byte order mark without a newline is kept",
+			args{"\uFEFF{\"id\":\"a\",\"n\":0}", row{"b", 1}},
+			"\uFEFF{\"id\":\"a\",\"n\":0}\n{\"id\":\"b\",\"n\":1}\n",
+		},
+		{
 			"tail that is JSON but no record is cut like a torn one",
 			args{"{\"id\":\"a\",\"n\":0}\n[1]", row{"b", 1}},
 			"{\"id\":\"a\",\"n\":0}\n{\"id\":\"b\",\"n\":1}\n",
@@ -226,6 +231,8 @@ func TestFileAll(t *testing.T) {
 		{"torn last line is skipped", "{\"id\":\"a\"}\n{\"id\":\"b\",\"n", []row{{"a", 0}}},
 		{"last line that is JSON but no record is skipped", "{\"id\":\"a\"}\n[1]", []row{{"a", 0}}},
 		{"last line missing only its newline is read", "{\"id\":\"a\"}\n{\"id\":\"b\",\"n\":1}", []row{{"a", 0}, {"b", 1}}},
+		{"a byte order mark before the first record is dropped", "\uFEFF{\"id\":\"a\"}\n{\"id\":\"b\"}\n", []row{{"a", 0}, {"b", 0}}},
+		{"one record after a byte order mark without a newline is read", "\uFEFF{\"id\":\"a\"}", []row{{"a", 0}}},
 		{
 			"line longer than any scanner buffer is read",
 			"{\"id\":\"" + strings.Repeat("x", 17<<20) + "\"}\n",

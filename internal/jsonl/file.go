@@ -16,6 +16,9 @@ import (
 // Nobody else on the machine reads them
 const perms = 0o600
 
+// A file saved by an editor that writes one still reads
+var byteOrderMark = []byte("\uFEFF")
+
 // Every read walks the whole file because the data is small
 // 1. Append holds an exclusive flock so writers in any process such as the MCP server and the CLI take turns
 // 2. Append writes one record in one syscall with O_APPEND
@@ -123,7 +126,7 @@ func (f File[T]) All(checks ...func(T) error) ([]T, error) {
 func (f File[T]) decode(data []byte, checks ...func(T) error) ([]T, error) {
 	var all []T
 	line := 0
-	for raw := range bytes.Lines(data) {
+	for raw := range bytes.Lines(bytes.TrimPrefix(data, byteOrderMark)) {
 		line++
 		if !bytes.HasSuffix(raw, []byte{'\n'}) && f.torn(raw) {
 			continue
@@ -167,9 +170,10 @@ func (f File[T]) Newest(keep func(T) bool, limit int) ([]T, error) {
 }
 
 // Whether an unterminated last line fails to decode as a record
+// A file holding one record after a byte order mark keeps it
 func (File[T]) torn(tail []byte) bool {
 	var v T
-	return json.Unmarshal(tail, &v) != nil
+	return json.Unmarshal(bytes.TrimPrefix(tail, byteOrderMark), &v) != nil
 }
 
 func (f File[T]) name() string {
