@@ -157,7 +157,9 @@ type Stability struct {
 // 1. the first repeat gives the summaries and scores and comparison and condition pairs so a single run reports as before
 // 2. a repeated session adds one run report per repeat and the stability across them
 // 3. the paired bootstrap spans every repeat with each event as one cluster
-func (ls labelSet) report(session string, rs reviews, latest feedback.Records, revised map[string]struct{}) Report {
+func (ls labelSet) report(
+	session string, rs reviews, latest feedback.Records, revised map[string]struct{}, used map[string]applied,
+) Report {
 	byRepeat := map[repeat]reviews{}
 	for _, tr := range rs {
 		n := repeatOf(tr.Tags)
@@ -166,7 +168,7 @@ func (ls labelSet) report(session string, rs reviews, latest feedback.Records, r
 	var rep Report
 	var all runs
 	for i, n := range slices.Sorted(maps.Keys(byRepeat)) {
-		run := ls.score(byRepeat[n].newest(), latest, revised).report(session)
+		run := ls.score(byRepeat[n].newest(), latest, revised, used).report(session)
 		if i == 0 {
 			rep = run
 		}

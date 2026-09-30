@@ -624,7 +624,7 @@ func TestRunSelection(t *testing.T) {
 		// Text the prompt must and must not carry
 		present []string
 		absent  []string
-		used    []string
+		used    []knowledge.Ref
 	}
 	tcs := []struct {
 		name string
@@ -646,7 +646,7 @@ func TestRunSelection(t *testing.T) {
 			want: want{
 				present: []string{"aggregation time bases differ"},
 				absent:  []string{"only for planned changes"},
-				used:    []string{"k-agg"},
+				used:    []knowledge.Ref{{ID: "k-agg", Version: 1}},
 			},
 		},
 		{
@@ -654,7 +654,7 @@ func TestRunSelection(t *testing.T) {
 			args: args{mode: diagnose.KnowledgeAll},
 			want: want{
 				present: []string{"aggregation time bases differ", "only for planned changes"},
-				used:    []string{"k-agg", "k-planned"},
+				used:    []knowledge.Ref{{ID: "k-agg", Version: 1}, {ID: "k-planned", Version: 1}},
 			},
 		},
 		{
