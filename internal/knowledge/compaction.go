@@ -145,11 +145,12 @@ func (c Compactable) Crowded() bool {
 // 1. at least two old items and one draft
 // 2. every name is the current approved version of an old item
 // 3. every old item is named
-// 4. no two drafts of one kind overlap in a folder
+// 4. no draft reaches an event that an old item it names does not reach
+// 5. no two drafts of one kind overlap in a folder
 // Metrics with none in common or one dim key with a different value on each keep two drafts apart
-// 5. an old veto is kept by a new veto of an item that names it and blocks the old example
-// 6. a draft id is one old id so it becomes the next version of that id or a new id and no id repeats
-// 7. evidence is the union of the named old items and basis is verified only when every named item is
+// 6. an old veto is kept by a new veto of an item that names it and blocks the old example
+// 7. a draft id is one old id so it becomes the next version of that id or a new id and no id repeats
+// 8. evidence is the union of the named old items and basis is verified only when every named item is
 func (s Set) compact(id string, old Set, drafts []Knowledge, now time.Time) (Set, error) {
 	if len(old) < 2 || len(drafts) == 0 {
 		return nil, fmt.Errorf("%w: %d old items and %d drafts", ErrCompactionInvalid, len(old), len(drafts))
@@ -162,6 +163,9 @@ func (s Set) compact(id string, old Set, drafts []Knowledge, now time.Time) (Set
 		named, err := old.named(draft.Evidence.Knowledge)
 		if err != nil {
 			return nil, err
+		}
+		if err := named.checkWidening(draft); err != nil {
+			return nil, fmt.Errorf("draft %d: %w", i+1, err)
 		}
 		draft = named.draft(draft)
 		if slices.ContainsFunc(out, draft.hasID) {
@@ -250,6 +254,58 @@ func (e Evidence) union(other Evidence) Evidence {
 	e.OutcomeTraceIDs = add(e.OutcomeTraceIDs, other.OutcomeTraceIDs)
 	e.ParagraphIDs = add(e.ParagraphIDs, other.ParagraphIDs)
 	return e
+}
+
+// Fails with ErrCompactionInvalid naming the first event the draft reaches and an item it names does not reach
+// The draft carries the facts of every item it names so a wider draft would carry a fact to events its item never reached
+// and a replay of the old events never shows it
+func (s Set) checkWidening(d Knowledge) error {
+	k, reached, ok := s.widened(d)
+	if !ok {
+		return nil
+	}
+	return fmt.Errorf("%w: it carries the facts of %s to events of %s that %s never reached. "+
+		"Give each draft only the change contexts, exceptions, metrics and dims every item it names reaches, "+
+		"and repeat a general fact in each draft that needs it",
+		ErrCompactionInvalid, k.ID, reached, k.ID)
+}
+
+// The first item of the set that d reaches past and the events it reaches there
+// 1. the change contexts are the valid ones the scope and the exceptions of d leave
+// 2. d without metrics reaches every metric
+// 3. a dim value of d must be one every item keeps because a dim holds one value per key
+func (s Set) widened(d Knowledge) (Knowledge, Scope, bool) {
+	metrics := d.Scope.Metrics
+	if len(metrics) == 0 {
+		metrics = []string{""}
+	}
+	for _, c := range evidence.Contexts() {
+		if !d.reaches(c) {
+			continue
+		}
+		for _, m := range metrics {
+			k, ok := s.uncovering(c, m, d.Scope.Dims)
+			if !ok {
+				continue
+			}
+			reached := Scope{Scope: evidence.Scope{ChangeContexts: []evidence.Context{c}}, Dims: d.Scope.Dims}
+			if m != "" {
+				reached.Metrics = []string{m}
+			}
+			return k, reached, true
+		}
+	}
+	return Knowledge{}, Scope{}, false
+}
+
+// The first item that does not cover the change context and the metric that carries the dims
+func (s Set) uncovering(changeContext evidence.Context, metric string, dims map[string]string) (Knowledge, bool) {
+	for _, k := range s {
+		if !k.covers(changeContext, metric, dims) {
+			return k, true
+		}
+	}
+	return Knowledge{}, false
 }
 
 // No two items of the same kind overlap in a folder
