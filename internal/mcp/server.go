@@ -103,9 +103,9 @@ func (s *Server) ServeTransport(ctx context.Context, t sdk.Transport) error {
 	return srv.Run(ctx, t)
 }
 
-// A server without reference data
+// A server whose config or reference data could not be opened
 // It offers the tools of Server with their input schemas and every call answers the reason
-// So the conversation can tell the user how to set the data up
+// So the conversation can tell the user what to fix
 type Unconfigured struct {
 	reason  error
 	version string
