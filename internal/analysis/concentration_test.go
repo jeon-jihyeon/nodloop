@@ -29,6 +29,8 @@ func TestAnalyzeConcentrationChange(t *testing.T) {
 		Rule: analysis.RuleConcentration, Metrics: metrics, GroupBy: "source",
 		Baseline: 24, Window: 6, Threshold: threshold, MinSamples: 12,
 	}
+	pair := spec
+	pair.Metrics = []string{"click_count", "conversion_count"}
 	a := map[string]string{"source": "a"}
 	b := map[string]string{"source": "b"}
 	c := map[string]string{"source": "c"}
@@ -80,6 +82,31 @@ func TestAnalyzeConcentrationChange(t *testing.T) {
 					Current: 0.25, Baseline: 0.5, Change: -0.25, Severity: 0.25 / (2 * threshold), Adequate: true,
 					Detail: analysis.Detail{PeakTime: t0.Add(24 * time.Hour), PeakValue: 100, Samples: 60}, Ref: ref,
 					Summary: "click_count source=b: window share 0.25 against baseline 0.5, delta -0.25, " +
+						"peak 100 at 2026-09-23T00:00:00Z, total window mean 400 against baseline 200",
+				},
+			},
+		},
+		{
+			name: "every metric the analyzer lists is read",
+			args: args{spec: pair, points: slices.Concat(
+				hourly("click_count", a, steady),
+				hourly("click_count", b, steady),
+				hourly("conversion_count", a, shifted(300)),
+				hourly("conversion_count", b, steady),
+			)},
+			want: analysis.Observations{
+				{
+					Rule: analysis.RuleConcentration, Target: a, Metric: "conversion_count", Window: windowOf(12),
+					Current: 0.75, Baseline: 0.5, Change: 0.25, Severity: 0.25 / (2 * threshold), Adequate: true,
+					Detail: analysis.Detail{PeakTime: t0.Add(24 * time.Hour), PeakValue: 300, Samples: 60}, Ref: ref,
+					Summary: "conversion_count source=a: window share 0.75 against baseline 0.5, delta 0.25, " +
+						"peak 300 at 2026-09-23T00:00:00Z, total window mean 400 against baseline 200",
+				},
+				{
+					Rule: analysis.RuleConcentration, Target: b, Metric: "conversion_count", Window: windowOf(12),
+					Current: 0.25, Baseline: 0.5, Change: -0.25, Severity: 0.25 / (2 * threshold), Adequate: true,
+					Detail: analysis.Detail{PeakTime: t0.Add(24 * time.Hour), PeakValue: 100, Samples: 60}, Ref: ref,
+					Summary: "conversion_count source=b: window share 0.25 against baseline 0.5, delta -0.25, " +
 						"peak 100 at 2026-09-23T00:00:00Z, total window mean 400 against baseline 200",
 				},
 			},
