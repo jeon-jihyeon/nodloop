@@ -64,6 +64,7 @@ func (diag Diagnosis) cited(known citable) Diagnosis {
 // 4. hold drops its causes and without hold reasons gets one that says the model gave none
 // 5. every status keeps its checks so a hold still names the steps that would lift it
 // 6. a hold keeps an empty causes list so the output keeps the schema's array
+// Revisions send each of 1 to 3 back once so the gate holds only what a second submission left
 func (diag Diagnosis) gate(firstSteps steps) (Diagnosis, bool) {
 	var uncited []string
 	for _, c := range diag.Causes {

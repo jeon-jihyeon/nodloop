@@ -215,7 +215,7 @@ func TestPrepare(t *testing.T) {
 				EventID:        tc.args.event,
 				Mode:           tc.args.mode,
 				PolicyVersion:  "demo-1",
-				PromptVersion:  "diagnose/v12",
+				PromptVersion:  "diagnose/v13",
 				ChangeContext:  ev.ChangeContext,
 				Session:        tc.args.session,
 				Observations:   observations,
@@ -229,7 +229,7 @@ func TestPrepare(t *testing.T) {
 				Input: tr.Input, Output: tr.Output, Tags: tc.args.session.Tags,
 			}, tr)
 			assert.Equal(t, input{
-				Mode: tc.args.mode, PolicyVersion: "demo-1", PromptVersion: "diagnose/v12", Procedures: tc.want.procedures,
+				Mode: tc.args.mode, PolicyVersion: "demo-1", PromptVersion: "diagnose/v13", Procedures: tc.want.procedures,
 				ParagraphIDs: ids, ProcedureChars: tc.want.procedureChars,
 			}, in)
 			assert.Equal(t, output{
@@ -484,6 +484,14 @@ func TestRecord(t *testing.T) {
 		Checks: checks,
 	}
 	citesNone := `cause "worn trim" cites no paragraph id from the list. Cite the paragraph that states it or return hold`
+	// Status and cause defects the model can fix
+	typo := diagnose.Diagnosis{Status: "ready-for-review", Causes: ready.Causes, Checks: checks}
+	typoStatus := `status "ready-for-review" is not one of no_action, ready_for_review or hold`
+	causeless := diagnose.Diagnosis{Status: evidence.StatusReadyForReview, Checks: checks}
+	noCause := "ready_for_review gives no cause. Give the cause with the paragraph that states it or return hold"
+	noActionCause := diagnose.Diagnosis{Status: evidence.StatusNoAction, Causes: ready.Causes, Checks: checks}
+	noActionDecide := diagnose.Diagnosis{Status: evidence.StatusNoAction, Causes: decideCause.Causes}
+	withCauses := "no_action carries causes. Return ready_for_review with the causes or no_action without them"
 	twoProcedures := diagnose.Diagnosis{
 		Status: evidence.StatusReadyForReview,
 		Causes: []diagnose.Cause{{Summary: "c", ParagraphIDs: []string{segment, ordSplit}}},
@@ -493,7 +501,7 @@ func TestRecord(t *testing.T) {
 	oldReady := ready
 	recorded := input{
 		SessionID: "s1", Subject: "tq-005", Tags: []string{"feedback:off"},
-		Mode: diagnose.ModeInteractive, PolicyVersion: "demo-1", PromptVersion: "diagnose/v12",
+		Mode: diagnose.ModeInteractive, PolicyVersion: "demo-1", PromptVersion: "diagnose/v13",
 		ChangeContext: evidence.ContextNoKnownChange, Metrics: []string{"click_count", "conversion_count"},
 		Procedures: demoProcedures, Knowledge: []diagnose.AppliedKnowledge{}, Examples: []example{},
 		Chars: sections{Procedures: demoProcedureChars},
@@ -648,6 +656,50 @@ func TestRecord(t *testing.T) {
 				}, Forced: true},
 				traced: trace.NameDiagnose, inputs: []input{heldUnknown},
 				revised: []revised{{Subject: "tq-005", Reasons: []string{citesNone}, Review: madeUp}},
+			}},
+		},
+		{
+			name: "sends back a status outside the valid set",
+			args: args{pending: "context", diag: typo},
+			want: want{outcome: outcome{
+				result: diagnose.Result{Revisions: []string{typoStatus}}, traced: trace.NameRevise,
+				revised: []revised{{Subject: "tq-005", Reasons: []string{typoStatus}, Review: typo}},
+			}},
+		},
+		{
+			name: "sends back a ready_for_review without a cause",
+			args: args{pending: "context", diag: causeless},
+			want: want{outcome: outcome{
+				result: diagnose.Result{Revisions: []string{noCause}}, traced: trace.NameRevise,
+				revised: []revised{{Subject: "tq-005", Reasons: []string{noCause}, Review: causeless}},
+			}},
+		},
+		{
+			name: "sends back a no_action with causes",
+			args: args{pending: "context", diag: noActionCause},
+			want: want{outcome: outcome{
+				result: diagnose.Result{Revisions: []string{withCauses}}, traced: trace.NameRevise,
+				revised: []revised{{Subject: "tq-005", Reasons: []string{withCauses}, Review: noActionCause}},
+			}},
+		},
+		{
+			name: "sends back a no_action citing a Decide paragraph naming both defects",
+			args: args{pending: "context", diag: noActionDecide},
+			want: want{outcome: outcome{
+				result: diagnose.Result{Revisions: []string{withCauses, citesDecide}}, traced: trace.NameRevise,
+				revised: []revised{{Subject: "tq-005", Reasons: []string{withCauses, citesDecide}, Review: noActionDecide}},
+			}},
+		},
+		{
+			name: "records the forced hold of a no_action still carrying causes after the send back",
+			args: args{records: []diagnose.Diagnosis{noActionCause}, pending: "context", diag: noActionCause},
+			want: want{outcome: outcome{
+				result: diagnose.Result{Diagnosis: diagnose.Diagnosis{
+					Status: evidence.StatusHold, Causes: []diagnose.Cause{}, Checks: checks,
+					HoldReasons: []string{"no_action was returned together with causes"},
+				}, Forced: true},
+				traced: trace.NameDiagnose, inputs: []input{heldRecorded},
+				revised: []revised{{Subject: "tq-005", Reasons: []string{withCauses}, Review: noActionCause}},
 			}},
 		},
 		{
@@ -1084,6 +1136,19 @@ func TestRun(t *testing.T) {
 	missing := "check " + confirm + " is missing. The first step of the lead procedure is always a check"
 	revisePrompt := text + "\n\n## Your previous review\n\n" + string(incompleteOutput) +
 		"\n\n## Revise\n\nReturn the review again with only these defects fixed:\n- " + missing + "\n"
+	// A no_action with causes the model returns twice
+	contradicted := diagnose.Diagnosis{Status: evidence.StatusNoAction, Causes: ready.Causes, Checks: ready.Checks}
+	contradictedOutput, err := json.Marshal(contradicted)
+	require.NoError(t, err)
+	withCauses := "no_action carries causes. Return ready_for_review with the causes or no_action without them"
+	contradictedPrompt := text + "\n\n## Your previous review\n\n" + string(contradictedOutput) +
+		"\n\n## Revise\n\nReturn the review again with only these defects fixed:\n- " + withCauses + "\n"
+	held := diagnose.Diagnosis{
+		Status: evidence.StatusHold, Causes: []diagnose.Cause{}, Checks: ready.Checks,
+		HoldReasons: []string{"no_action was returned together with causes"},
+	}
+	heldOutput, err := json.Marshal(held)
+	require.NoError(t, err)
 	maxTurns := &llm.ResultError{Subtype: "error_max_turns", CostUSD: 0.01}
 	step := testkit.ClockStep.Milliseconds()
 	// A select trace input names its selector under mode
@@ -1174,6 +1239,25 @@ func TestRun(t *testing.T) {
 						Tags:      []string{"feedback:off"},
 						Mode:      diagnose.Mode(diagnose.SelectByCode),
 					},
+				},
+			}},
+		},
+		{
+			name: "sends a no_action with causes back once and holds it when the second call keeps them",
+			args: args{calls: []call{
+				{prompt: text, response: llm.Response{Output: contradictedOutput}},
+				{prompt: contradictedPrompt, response: llm.Response{Output: contradictedOutput}},
+			}},
+			want: want{outcome: outcome{
+				result: diagnose.Result{Diagnosis: held, Forced: true},
+				traced: trace.NameDiagnose,
+				traces: []recorded{
+					{
+						Name: trace.NameDiagnose, Output: string(heldOutput), DurationMS: step, Tags: []string{diagnose.TagGateHold},
+						Mode: diagnose.ModeBatch, Selector: diagnose.SelectByCode,
+					},
+					{Name: trace.NameRevise, Output: string(contradictedOutput), DurationMS: step, Reasons: []string{withCauses}},
+					selectedByCode,
 				},
 			}},
 		},
