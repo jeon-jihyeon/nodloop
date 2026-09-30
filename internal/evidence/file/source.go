@@ -19,6 +19,8 @@ const (
 	proceduresDir = "procedures"
 	runbooksDir   = "runbooks"
 	labelsFile    = "labels.jsonl"
+	// Some editors and spreadsheet exports write it before Unicode text
+	byteOrderMark = "\uFEFF"
 )
 
 // Stateless
