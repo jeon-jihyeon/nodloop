@@ -1,8 +1,11 @@
 package veto
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
+	"io"
+	"slices"
 
 	"go.yaml.in/yaml/v3"
 )
@@ -34,6 +37,13 @@ type When struct {
 	Unless string `yaml:"unless,omitempty"`
 }
 
+// Keys an entry and a condition may hold
+// A misspelled key such as unles fails the entry instead of silently changing what it blocks
+var (
+	specKeys = []string{"id", "tool", "when", "reason", "source", "enabled"}
+	whenKeys = []string{"field", "match", "unless"}
+)
+
 // Errors name the condition index
 func (s Spec) Veto() (Veto, error) {
 	when := make([]Condition, 0, len(s.When))
@@ -49,15 +59,23 @@ func (s Spec) Veto() (Veto, error) {
 
 // Every entry that builds comes back with the joined errors of the rest
 // 1. a document that is not valid YAML fails with ErrYAMLInvalid and returns no vetoes
-// 2. a broken entry is left out and its error names the index and id so the other entries still apply
-// 3. the first entry of an id wins and a later one is reported as a duplicate
+// 2. a top level key other than vetoes is unknown unless its value defines an anchor for entries to share
+// 3. without a vetoes key an unknown top level key fails the file like invalid YAML so a misspelled vetoes never loads as an empty file
+// 4. beside vetoes an unknown top level key is reported like a broken entry and every entry still applies
+// 5. a broken entry is left out and its error names the index and id so the other entries still apply
+// 6. the first entry of an id wins and a later one is reported as a duplicate
+// 7. an empty document holds no vetoes
 func Parse(b []byte) (Vetoes, error) {
 	var d document
-	if err := yaml.Unmarshal(b, &d); err != nil {
+	root, err := d.decode(b)
+	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrYAMLInvalid, err)
 	}
+	errs := root.unknownTopKeys()
+	if len(errs) > 0 && !root.has("vetoes") {
+		return nil, fmt.Errorf("%w: %w", ErrYAMLInvalid, errors.Join(errs...))
+	}
 	vetoes := make(Vetoes, 0, len(d.Vetoes))
-	var errs []error
 	for i := range d.Vetoes {
 		n := node{&d.Vetoes[i]}
 		v, err := entry(n)
@@ -73,10 +91,57 @@ func Parse(b []byte) (Vetoes, error) {
 	return vetoes, errors.Join(errs...)
 }
 
+// Returns the top level node of the document
+// An empty input or one of comments alone leaves the document and the node empty
+func (d *document) decode(b []byte) (node, error) {
+	var root yaml.Node
+	err := yaml.NewDecoder(bytes.NewReader(b)).Decode(&root)
+	if errors.Is(err, io.EOF) {
+		return node{&yaml.Node{}}, nil
+	}
+	if err != nil {
+		return node{}, err
+	}
+	if err := root.Decode(d); err != nil {
+		return node{}, err
+	}
+	return node{root.Content[0]}, nil
+}
+
+// Every top level key other than vetoes whose value defines no anchor
+func (n node) unknownTopKeys() []error {
+	var errs []error
+	for _, f := range n.fields() {
+		if f.key.Value != "vetoes" && !f.value.anchored() {
+			errs = append(errs, fmt.Errorf("%w: line %d: %q", ErrKeyUnknown, f.key.Line, f.key.Value))
+		}
+	}
+	return errs
+}
+
+// Merged fields count because the decoder reads them too
+func (n node) has(key string) bool {
+	for _, f := range n.fields() {
+		if f.key.Value == key {
+			return true
+		}
+	}
+	return false
+}
+
+// Keys are checked after aliases and merge keys resolve so an entry built from a shared anchor passes
 func entry(n node) (Veto, error) {
 	var s Spec
 	if err := n.Decode(&s); err != nil {
 		return Veto{}, fmt.Errorf("%w: %w", ErrEntryInvalid, err)
+	}
+	if err := n.knownKeys(specKeys); err != nil {
+		return Veto{}, err
+	}
+	for _, when := range n.value("when").Content {
+		if err := (node{when}).knownKeys(whenKeys); err != nil {
+			return Veto{}, err
+		}
 	}
 	return s.Veto()
 }
@@ -131,6 +196,15 @@ func (n node) merge() bool {
 	return n.Kind == yaml.ScalarNode && n.Value == "<<" && n.ShortTag() == "!!merge"
 }
 
+func (n node) knownKeys(keys []string) error {
+	for _, f := range n.fields() {
+		if !slices.Contains(keys, f.key.Value) {
+			return fmt.Errorf("%w: line %d: %q", ErrKeyUnknown, f.key.Line, f.key.Value)
+		}
+	}
+	return nil
+}
+
 // An empty node when the mapping lacks the key
 func (n node) value(key string) node {
 	for _, f := range n.fields() {
@@ -139,4 +213,17 @@ func (n node) value(key string) node {
 		}
 	}
 	return node{&yaml.Node{}}
+}
+
+// Whether the value or anything inside it defines an anchor
+func (n node) anchored() bool {
+	if n.Anchor != "" {
+		return true
+	}
+	for _, c := range n.Content {
+		if (node{c}).anchored() {
+			return true
+		}
+	}
+	return false
 }
