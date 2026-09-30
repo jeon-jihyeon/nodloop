@@ -312,34 +312,65 @@ func TestObservationsMetrics(t *testing.T) {
 }
 
 func TestObservationsMoved(t *testing.T) {
+	type want struct {
+		metrics []string
+		series  []evidence.SeriesRef
+	}
+	onA := map[string]string{"source": "source-a", "topic": "shopping"}
+	group := map[string]string{"source": "source-a"}
 	tcs := []struct {
 		name string
 		args analysis.Observations
-		want []string
+		want want
 	}{
 		{
-			name: "adequate observations name their metric once",
+			name: "adequate observations name their metric once and each series with its target",
 			args: analysis.Observations{
-				{Rule: analysis.RuleZScore, Metric: "click_count", Adequate: true},
-				{Rule: analysis.RuleConcentration, Metric: "click_count", Adequate: true},
+				{Rule: analysis.RuleZScore, Metric: "click_count", Target: onA, Adequate: true},
+				{Rule: analysis.RuleConcentration, Metric: "click_count", Target: group, Adequate: true},
 			},
-			want: []string{"click_count"},
+			want: want{
+				metrics: []string{"click_count"},
+				series:  []evidence.SeriesRef{{Metric: "click_count", Dims: onA}, {Metric: "click_count", Dims: group}},
+			},
+		},
+		{
+			name: "a diluted group names no moved series beside an undiluted one",
+			args: analysis.Observations{
+				{Rule: analysis.RuleConcentration, Metric: "click_count", Target: group, Adequate: true},
+				{
+					Rule: analysis.RuleConcentration, Metric: "click_count", Target: map[string]string{"source": "source-b"},
+					Adequate: true, Detail: analysis.Detail{Diluted: true},
+				},
+			},
+			want: want{
+				metrics: []string{"click_count"},
+				series:  []evidence.SeriesRef{{Metric: "click_count", Dims: group}},
+			},
+		},
+		{
+			name: "a metric whose only group is diluted still moves but names no series",
+			args: analysis.Observations{
+				{
+					Rule: analysis.RuleConcentration, Metric: "click_count", Target: map[string]string{"source": "source-d"},
+					Adequate: true, Detail: analysis.Detail{Diluted: true},
+				},
+			},
+			want: want{metrics: []string{"click_count"}},
 		},
 		{
 			name: "inadequate observations do not move a metric",
-			args: analysis.Observations{{Rule: analysis.RuleProportion, Metric: "conversion_count"}},
-			want: nil,
+			args: analysis.Observations{{Rule: analysis.RuleProportion, Metric: "conversion_count", Target: onA}},
 		},
 		{
 			name: "coverage gaps do not move a metric",
-			args: analysis.Observations{{Rule: analysis.RuleCoverage, Metric: "conversion_count", Adequate: true}},
-			want: nil,
+			args: analysis.Observations{{Rule: analysis.RuleCoverage, Metric: "conversion_count", Target: onA, Adequate: true}},
 		},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			assert.Equal(t, tc.want, tc.args.Moved())
+			assert.Equal(t, tc.want, want{metrics: tc.args.Moved(), series: tc.args.MovedSeries()})
 		})
 	}
 }
