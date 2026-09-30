@@ -69,6 +69,12 @@ type TraceStore interface {
 	List(ctx context.Context, f trace.Filter) (trace.Traces, error)
 }
 
+// Outcomes of the evidence traces
+// Newest first
+type OutcomeStore interface {
+	List(ctx context.Context, traceID string) ([]feedback.Outcome, error)
+}
+
 // The labels that give an event its expected status first
 type Source interface {
 	Labels(ctx context.Context) ([]evidence.Label, error)
@@ -81,11 +87,14 @@ type Compactor struct {
 	ledger   *knowledge.Ledger
 	traces   TraceStore
 	feedback FeedbackStore
+	outcomes OutcomeStore
 	replays  TraceStore
 }
 
-func New(src Source, ledger *knowledge.Ledger, traces TraceStore, verdicts FeedbackStore, replays TraceStore) *Compactor {
-	return &Compactor{src: src, ledger: ledger, traces: traces, feedback: verdicts, replays: replays}
+func New(
+	src Source, ledger *knowledge.Ledger, traces TraceStore, verdicts FeedbackStore, outcomes OutcomeStore, replays TraceStore,
+) *Compactor {
+	return &Compactor{src: src, ledger: ledger, traces: traces, feedback: verdicts, outcomes: outcomes, replays: replays}
 }
 
 // The anchor and its folder items split by whether an event can replay them
@@ -191,16 +200,17 @@ func (fs replayFailures) String() string {
 	return strings.Join(parts, ", ")
 }
 
-// One evidence trace of an old item with its latest verdict
+// One evidence trace of an old item with its latest verdict and its latest outcome
 type review struct {
 	trace   trace.Trace
 	verdict *feedback.Feedback
+	outcome *feedback.Outcome
 }
 
 // The evidence traces of the items in the order the items name them
 type reviews []review
 
-// Every feedback and outcome trace the items cite once with its latest verdict
+// Every feedback and outcome trace the items cite once with its latest verdict and outcome
 // One read of each store serves every trace
 // The first listed record of a trace is its newest
 func (c *Compactor) evidence(ctx context.Context, items knowledge.Set) (reviews, error) {
@@ -220,6 +230,10 @@ func (c *Compactor) evidence(ctx context.Context, items knowledge.Set) (reviews,
 	if err != nil {
 		return nil, err
 	}
+	outcomes, err := c.outcomes.List(ctx, "")
+	if err != nil {
+		return nil, err
+	}
 	out := make(reviews, 0, len(ids))
 	for _, id := range ids {
 		i := slices.IndexFunc(traces, trace.Filter{ID: id}.Matches)
@@ -229,6 +243,9 @@ func (c *Compactor) evidence(ctx context.Context, items knowledge.Set) (reviews,
 		r := review{trace: traces[i]}
 		if j := slices.IndexFunc(verdicts, feedback.Filter{TraceID: id}.Matches); j >= 0 {
 			r.verdict = &verdicts[j]
+		}
+		if j := slices.IndexFunc(outcomes, feedback.OutcomeFilter{TraceID: id}.Matches); j >= 0 {
+			r.outcome = &outcomes[j]
 		}
 		out = append(out, r)
 	}
@@ -284,6 +301,7 @@ func (ls labelSet) expected(event string) (evidence.Status, bool) {
 // 1. the label of the event when the data set has one
 // 2. otherwise the latest verdict on the newest evidence trace: edit gives the corrected status and approve the recorded one
 // 3. otherwise none because a reject or an outcome says what was wrong and not what is right
+// An approve followed by a refuted outcome gives none because a check showed the approved cause did not hold
 func (c *Compactor) expectations(ctx context.Context, rs reviews) ([]Expectation, []string, error) {
 	all, err := c.src.Labels(ctx)
 	if err != nil {
@@ -319,6 +337,9 @@ func (r review) expectation() (Expectation, bool) {
 	case feedback.VerdictEdit:
 		origin, review = OriginEdit, r.verdict.Edited
 	case feedback.VerdictApprove:
+		if r.refutedSinceVerdict() {
+			return Expectation{}, false
+		}
 		origin, review = OriginApproval, r.trace.Output
 	default:
 		return Expectation{}, false
@@ -330,4 +351,10 @@ func (r review) expectation() (Expectation, bool) {
 		return Expectation{}, false
 	}
 	return Expectation{EventID: r.trace.Subject, Expected: status.Status, Origin: origin, TraceID: r.trace.ID}, true
+}
+
+// Whether the latest outcome refuted the review at or after its latest verdict
+// A person who approves again after the refutation stands behind the status once more
+func (r review) refutedSinceVerdict() bool {
+	return r.outcome != nil && r.outcome.Result == feedback.ResultRefuted && !r.outcome.Time.Before(r.verdict.Time)
 }

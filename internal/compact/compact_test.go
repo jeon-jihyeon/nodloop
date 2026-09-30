@@ -133,7 +133,7 @@ func TestFolder(t *testing.T) {
 			s := testkit.Open(t)
 			seed(t, s)
 
-			got, err := compact.New(s.Source, s.Ledger, s.Traces, s.Feedback, s.Replays).Folder(ctx, tc.args)
+			got, err := compact.New(s.Source, s.Ledger, s.Traces, s.Feedback, s.Outcomes, s.Replays).Folder(ctx, tc.args)
 			view := want{
 				corrections: got.Corrections, replay: got.Replay, unverifiable: got.Unverifiable,
 				line: tc.want.line, err: tc.want.err,
@@ -217,7 +217,7 @@ func TestPropose(t *testing.T) {
 			t.Parallel()
 			s := testkit.Open(t)
 			seed(t, s)
-			c := compact.New(s.Source, s.Ledger, s.Traces, s.Feedback, s.Replays)
+			c := compact.New(s.Source, s.Ledger, s.Traces, s.Feedback, s.Outcomes, s.Replays)
 			for _, d := range tc.args.first {
 				_, _, err := c.Propose(ctx, "a", d, "")
 				require.NoError(t, err)
@@ -311,7 +311,7 @@ func TestDraft(t *testing.T) {
 			t.Parallel()
 			s := testkit.Open(t)
 			seed(t, s)
-			c := compact.New(s.Source, s.Ledger, s.Traces, s.Feedback, s.Replays)
+			c := compact.New(s.Source, s.Ledger, s.Traces, s.Feedback, s.Outcomes, s.Replays)
 			for _, d := range tc.args.first {
 				_, _, err := c.Propose(ctx, "a", d, "")
 				require.NoError(t, err)
@@ -407,7 +407,7 @@ func TestReplay(t *testing.T) {
 			items[0].Evidence = knowledge.Evidence{FeedbackTraceIDs: []string{"t1"}}
 			items[1].Evidence = knowledge.Evidence{FeedbackTraceIDs: []string{"t2"}}
 			require.NoError(t, testkit.Err(s.Ledger.Import(ctx, items)))
-			c := compact.New(s.Source, s.Ledger, s.Traces, s.Feedback, s.Replays)
+			c := compact.New(s.Source, s.Ledger, s.Traces, s.Feedback, s.Outcomes, s.Replays)
 			proposed, _, err := c.Propose(ctx, "a", merged, "")
 			require.NoError(t, err)
 			answers := tc.args.first
@@ -478,7 +478,7 @@ func TestResult(t *testing.T) {
 			t.Parallel()
 			s := testkit.Open(t)
 			seed(t, s)
-			c := compact.New(s.Source, s.Ledger, s.Traces, s.Feedback, s.Replays)
+			c := compact.New(s.Source, s.Ledger, s.Traces, s.Feedback, s.Outcomes, s.Replays)
 			_, _, err := c.Propose(ctx, "a", merged, "")
 			require.NoError(t, err)
 
@@ -486,6 +486,69 @@ func TestResult(t *testing.T) {
 
 			assert.ErrorIs(t, err, tc.want.err)
 			assert.Equal(t, tc.want.events, got.Events)
+		})
+	}
+}
+
+// The approval of t3 on e2 stands until a real check refutes it
+// A refuted cause does not prove the status wrong so e2 turns unverifiable and never gets another status
+func TestFolderOutcomes(t *testing.T) {
+	type step struct {
+		// An outcome result or a verdict on t3 in the order they are recorded
+		result  feedback.Result
+		verdict feedback.Verdict
+	}
+	type want struct {
+		replay       []string
+		unverifiable []string
+	}
+	tcs := []struct {
+		name string
+		args []step
+		want want
+	}{
+		{
+			"a refuted outcome after the approval leaves e2 unverifiable",
+			[]step{{result: feedback.ResultRefuted}},
+			want{[]string{"e1", "tq-001"}, []string{"e2", "e4"}},
+		},
+		{
+			"an approval again after the refutation restores the expectation",
+			[]step{{result: feedback.ResultRefuted}, {verdict: feedback.VerdictApprove}},
+			want{[]string{"e1", "e2", "tq-001"}, []string{"e4"}},
+		},
+		{
+			"a confirmed outcome keeps the expectation",
+			[]step{{result: feedback.ResultConfirmed}},
+			want{[]string{"e1", "e2", "tq-001"}, []string{"e4"}},
+		},
+	}
+	ctx := context.Background()
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			s := testkit.Open(t)
+			seed(t, s)
+			for _, st := range tc.args {
+				if st.verdict != "" {
+					fb, err := feedback.New("t3", st.verdict, "approved again", nil, "", s.Clock.Now())
+					require.NoError(t, err)
+					require.NoError(t, s.Feedback.Append(ctx, fb))
+					continue
+				}
+				o, err := feedback.NewOutcome("t3", st.result, "", "checked", "ann", s.Clock.Now())
+				require.NoError(t, err)
+				require.NoError(t, s.Outcomes.Append(ctx, o))
+			}
+
+			got, err := compact.New(s.Source, s.Ledger, s.Traces, s.Feedback, s.Outcomes, s.Replays).Folder(ctx, "a")
+			require.NoError(t, err)
+			var replay []string
+			for _, e := range got.Replay {
+				replay = append(replay, e.EventID)
+			}
+
+			assert.Equal(t, tc.want, want{replay: replay, unverifiable: got.Unverifiable})
 		})
 	}
 }
