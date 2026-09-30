@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/jeon-jihyeon/nodloop/internal/atomicfile"
 	"github.com/jeon-jihyeon/nodloop/internal/settings"
 )
 
@@ -40,8 +41,13 @@ func Installed(path string) (bool, error) {
 }
 
 // The bytes read once are the backup so a file that changed between read and write is never backed up as something else
+// A symlinked settings.json is read and written at its target so the link stays and the backup stays beside the link
 func edit(path string, change func(settings.Document) (bool, error)) (bool, error) {
-	raw, doc, err := load(path)
+	target, err := atomicfile.Resolve(path)
+	if err != nil {
+		return false, fmt.Errorf("%w: %w", ErrRead, err)
+	}
+	raw, doc, err := load(target)
 	if err != nil {
 		return false, err
 	}
@@ -49,7 +55,7 @@ func edit(path string, change func(settings.Document) (bool, error)) (bool, erro
 	if err != nil || !changed {
 		return false, err
 	}
-	if err = save(path, raw, doc); err != nil {
+	if err = save(path, target, raw, doc); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -75,8 +81,9 @@ func load(path string) ([]byte, settings.Document, error) {
 }
 
 // Nil bytes mean the file did not exist and there is nothing to back up
-func save(path string, raw []byte, doc settings.Document) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+// The backup goes beside path and the document replaces target
+func save(path, target string, raw []byte, doc settings.Document) error {
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 		return fmt.Errorf("%w: %w", ErrWrite, err)
 	}
 	if raw != nil {
@@ -86,36 +93,8 @@ func save(path string, raw []byte, doc settings.Document) error {
 	}
 	// A decoded document holds only JSON values so encoding cannot fail
 	b, _ := json.MarshalIndent(doc, "", "  ")
-	if err := replace(path, append(b, '\n')); err != nil {
+	if err := atomicfile.Replace(target, append(b, '\n')); err != nil {
 		return fmt.Errorf("%w: %w", ErrWrite, err)
 	}
 	return nil
-}
-
-// Write to a temp file in the same directory and rename it so a crash never leaves a partial file
-// 1. the temp file is synced before the rename so the rename never outlives its content
-// 2. the temp file is removed on any failure
-func replace(path string, b []byte) (err error) {
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".settings-*.json")
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if err != nil {
-			_ = os.Remove(tmp.Name())
-		}
-	}()
-	if _, err = tmp.Write(b); err != nil {
-		return errors.Join(err, tmp.Close())
-	}
-	if err = tmp.Sync(); err != nil {
-		return errors.Join(err, tmp.Close())
-	}
-	if err = tmp.Close(); err != nil {
-		return err
-	}
-	if err = os.Chmod(tmp.Name(), 0o600); err != nil {
-		return err
-	}
-	return os.Rename(tmp.Name(), path)
 }
