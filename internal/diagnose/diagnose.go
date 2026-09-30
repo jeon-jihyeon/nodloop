@@ -528,14 +528,15 @@ func (d *Diagnoser) recordFailure(ctx context.Context, c Context, selected *sele
 	return Result{TraceID: tr.ID}, failure
 }
 
-// ErrRecorded when a diagnose trace already refers to the pending id
+// ErrRecorded naming the diagnose trace that already refers to the pending id
+// A caller that lost the answer of its record finds the trace id of the review in the error
 func (d *Diagnoser) ensureOpen(ctx context.Context, pendingID string) error {
 	recorded, err := d.traces.List(ctx, trace.Filter{Name: trace.NameDiagnose, Ref: pendingID, Limit: 1})
 	if err != nil {
 		return err
 	}
 	if len(recorded) > 0 {
-		return fmt.Errorf("%w: %s", ErrRecorded, pendingID)
+		return fmt.Errorf("%w: %s by trace %s", ErrRecorded, pendingID, recorded[0].ID)
 	}
 	return nil
 }
