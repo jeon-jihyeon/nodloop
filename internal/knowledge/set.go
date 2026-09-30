@@ -224,6 +224,36 @@ func (s Set) propose(draft Knowledge, now time.Time) (Knowledge, error) {
 	return draft, nil
 }
 
+// The records of an approval with the approved record first and the record it supersedes after it
+// 1. a candidate of a compaction is refused because only ApproveCompaction checks its replay
+// 2. a candidate built on a version that a compaction retired is refused because approving it would undo that compaction
+func (s Set) approval(id string, version int, approver string, now time.Time) ([]Knowledge, error) {
+	history, err := s.historyOf(id)
+	if err != nil {
+		return nil, err
+	}
+	from, err := history.latest(id, version)
+	if err != nil {
+		return nil, err
+	}
+	if from.Status == StatusCandidate && from.Compaction != "" {
+		return nil, fmt.Errorf("%w: approve compaction %s with a passing replay", ErrCompactionInvalid, from.Compaction)
+	}
+	if retired, ok := s.compactedBase(from); ok {
+		return nil, fmt.Errorf("%w: %s v%d was built on v%d, which compaction %s retired. Retire v%d and propose the change on the item that replaced v%d",
+			ErrCandidateOutdated, id, version, retired.Version, retired.Compaction, version, retired.Version)
+	}
+	to, superseded, err := history.approve(id, version, approver, now)
+	if err != nil {
+		return nil, err
+	}
+	records := []Knowledge{to}
+	if superseded != nil {
+		records = append(records, *superseded)
+	}
+	return records, nil
+}
+
 // The approved record and the approved record it supersedes when the id has one
 // 1. a version older than the approved one is refused so an approval never rolls the id back
 // 2. a candidate whose bases never reach the approved version is refused because it was built without that version
@@ -274,6 +304,25 @@ func (s Set) builtOn(k Knowledge, version int) bool {
 		base = b.Base
 	}
 	return false
+}
+
+// The latest record of the first version under k that a compaction retired
+// 1. the walk follows the bases of k and a base missing from the set ends it
+// 2. a version counts when its latest record is retired under a compaction whose candidates name that version
+// A person who retires a compacted version or abandons a compaction candidate keeps its compaction id
+// so only the names of the candidates tell the two apart
+func (s Set) compactedBase(k Knowledge) (Knowledge, bool) {
+	for base := k.Base; base > 0; {
+		b, err := s.latest(k.ID, base)
+		if err != nil {
+			return Knowledge{}, false
+		}
+		if b.Status == StatusRetired && b.Compaction != "" && s.proposedUnder(b.Compaction).replaces(Set{b}) {
+			return b, true
+		}
+		base = b.Base
+	}
+	return Knowledge{}, false
 }
 
 // The records of an import that the set does not hold yet in their order

@@ -132,33 +132,18 @@ func (l *Ledger) Propose(ctx context.Context, draft Knowledge) (Knowledge, Set, 
 
 // The approved record is appended before the superseded one
 // A failure between the two leaves two approved versions and Current still picks the newer
-// A candidate of a compaction is refused because only ApproveCompaction checks its replay
 func (l *Ledger) Approve(ctx context.Context, id string, version int, approver string) (Knowledge, error) {
 	all, err := l.All(ctx)
 	if err != nil {
 		return Knowledge{}, err
 	}
-	history, err := all.historyOf(id)
+	records, err := all.approval(id, version, approver, l.now().UTC())
 	if err != nil {
 		return Knowledge{}, err
 	}
-	from, err := history.latest(id, version)
-	if err != nil {
-		return Knowledge{}, err
-	}
-	if from.Status == StatusCandidate && from.Compaction != "" {
-		return Knowledge{}, fmt.Errorf("%w: approve compaction %s with a passing replay", ErrCompactionInvalid, from.Compaction)
-	}
-	to, superseded, err := history.approve(id, version, approver, l.now().UTC())
-	if err != nil {
-		return Knowledge{}, err
-	}
+	to := records[0]
 	if f := all.folder(to); f.Full() {
 		return Knowledge{}, fmt.Errorf("%w: %d of %d chars with %s", ErrFolderFull, f.Chars, ReviewChars, f)
-	}
-	records := []Knowledge{to}
-	if superseded != nil {
-		records = append(records, *superseded)
 	}
 	for _, k := range records {
 		if err = l.store.Append(ctx, k); err != nil {
