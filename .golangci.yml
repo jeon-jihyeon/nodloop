@@ -44,6 +44,7 @@ linters:
             - "**/internal/veto/**"
             - "**/internal/settings/**"
             - "**/internal/jsonl/**"
+            - "**/internal/atomicfile/**"
           deny:
             - pkg: github.com/jeon-jihyeon/nodloop/internal/analysis
               desc: domain packages do not import analysis
