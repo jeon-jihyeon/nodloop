@@ -168,14 +168,8 @@ func (f knowledgeFlags) runRecords(ctx context.Context, action, id string, a app
 	switch action {
 	case "list":
 		return cmd.list(ctx, f.filter(a.now()))
-	case "health":
-		return cmd.health(ctx)
-	case "audit":
-		return cmd.audit(ctx)
-	case "reaffirm":
-		return cmd.reaffirm(ctx, id, f.version, f.approver)
-	case "narrow":
-		return cmd.narrow(ctx, id, f.version, f.author)
+	case "health", "audit", "reaffirm", "narrow", "promote":
+		return f.runHealth(ctx, action, id, cmd)
 	case "show":
 		return cmd.show(ctx, id)
 	case "overlaps":
@@ -196,6 +190,22 @@ func (f knowledgeFlags) runRecords(ctx context.Context, action, id string, a app
 		return cmd.export(ctx)
 	default:
 		return fmt.Errorf("%w %q", errUnknownAction, action)
+	}
+}
+
+// The actions that read how the reviews of a version held up and the ones that act on it
+func (f knowledgeFlags) runHealth(ctx context.Context, action, id string, cmd knowledgeCommand) error {
+	switch action {
+	case "health":
+		return cmd.health(ctx)
+	case "audit":
+		return cmd.audit(ctx)
+	case "reaffirm":
+		return cmd.reaffirm(ctx, id, f.version, f.approver)
+	case "narrow":
+		return cmd.narrow(ctx, id, f.version, f.author)
+	default:
+		return cmd.promote(ctx, id, f.version, f.author)
 	}
 }
 

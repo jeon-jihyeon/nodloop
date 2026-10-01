@@ -343,3 +343,82 @@ func TestLedgerNarrow(t *testing.T) {
 		})
 	}
 }
+
+func TestLedgerPromote(t *testing.T) {
+	at := time.Date(2026, 9, 28, 0, 0, 0, 0, time.UTC)
+	stated := knowledge.Knowledge{
+		ID: "item", Version: 1, Kind: knowledge.KindJudgment, Content: "lag",
+		Scope:    knowledge.Scope{Scope: evidence.Scope{ChangeContexts: []evidence.Context{evidence.ContextPlannedChange}}},
+		Evidence: knowledge.Evidence{FeedbackTraceIDs: []string{"f1"}, OutcomeTraceIDs: []string{"r0"}}, Basis: knowledge.BasisStated,
+		Status: knowledge.StatusApproved, Author: "author", Approver: "ann", ApprovedAt: at, Time: at,
+	}
+	verified := stated
+	verified.Basis = knowledge.BasisVerified
+	candidate := stated
+	candidate.Status, candidate.Approver, candidate.ApprovedAt = knowledge.StatusCandidate, "", time.Time{}
+	type args struct {
+		item     knowledge.Knowledge
+		version  int
+		traceIDs []string
+	}
+	// The fields a promotion sets on the candidate
+	type candidateView struct {
+		version  int
+		status   knowledge.Status
+		basis    knowledge.Basis
+		author   string
+		content  string
+		contexts []evidence.Context
+		outcomes []string
+	}
+	type want struct {
+		candidate candidateView
+		// Records of the id after the promotion
+		records int
+		// The version an approval of version 2 supersedes
+		supersedes int
+		err        error
+	}
+	tcs := []struct {
+		name string
+		args args
+		want want
+	}{
+		{
+			"a stated version becomes a verified candidate with the confirmed reviews",
+			args{stated, 1, []string{"r1", "r2"}},
+			want{
+				candidateView{
+					version: 2, status: knowledge.StatusCandidate, basis: knowledge.BasisVerified, author: "jed", content: "lag",
+					contexts: []evidence.Context{evidence.ContextPlannedChange}, outcomes: []string{"r0", "r1", "r2"},
+				},
+				2, 1, nil,
+			},
+		},
+		{"no confirmed review is refused", args{stated, 1, nil}, want{records: 1, err: knowledge.ErrPromoteInvalid}},
+		{"a verified version is refused", args{verified, 1, []string{"r1"}}, want{records: 1, err: knowledge.ErrPromoteVerified}},
+		{"a version that is not approved is refused", args{candidate, 1, []string{"r1"}}, want{records: 1, err: knowledge.ErrVersionUnapproved}},
+		{"a version that is not current is refused", args{stated, 2, []string{"r1"}}, want{records: 1, err: knowledge.ErrVersionUnapproved}},
+	}
+	ctx := context.Background()
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ledger, _ := newTestLedger(t, t.TempDir(), at.Add(time.Hour))
+			require.NoError(t, testkit.Err(ledger.Import(ctx, []knowledge.Knowledge{tc.args.item})))
+
+			got, _, err := ledger.Promote(ctx, "item", tc.args.version, tc.args.traceIDs, "jed")
+			history, historyErr := ledger.History(ctx, "item")
+			require.NoError(t, historyErr)
+			approved, _ := ledger.Approve(ctx, "item", 2, "ann")
+
+			assert.ErrorIs(t, err, tc.want.err)
+			assert.Equal(t, tc.want.candidate, candidateView{
+				version: got.Version, status: got.Status, basis: got.Basis, author: got.Author, content: got.Content,
+				contexts: got.Scope.ChangeContexts, outcomes: got.Evidence.OutcomeTraceIDs,
+			})
+			assert.Len(t, history, tc.want.records)
+			assert.Equal(t, tc.want.supersedes, approved.Supersedes)
+		})
+	}
+}
