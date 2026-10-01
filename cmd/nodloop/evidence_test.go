@@ -57,9 +57,9 @@ func TestRunEvidence(t *testing.T) {
 			want{1, "", `^nodloop evidence: open {empty}/events.csv: no such file or directory\n$`},
 		},
 		{
-			"event prints the context and the series",
+			"event prints its range and dimension values without its id then the context and the series",
 			args{[]string{"event", "--id", "tq-019"}, withDir},
-			want{0, "tq-019\tcontext=measurement_context_changed\n" + series, `^$`},
+			want{0, "2026-09-10T00:00:00Z to 2026-09-11T23:00:00Z source=source-a,source-b,source-c topic=shopping\tcontext=measurement_context_changed\n" + series, `^$`},
 		},
 		{
 			"event without an id fails",

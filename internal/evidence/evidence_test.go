@@ -291,6 +291,37 @@ func TestEventRefCarries(t *testing.T) {
 	}
 }
 
+func TestEventRefName(t *testing.T) {
+	at := time.Date(2026, 9, 22, 10, 0, 0, 0, time.UTC)
+	tcs := []struct {
+		name string
+		args evidence.EventRef
+		want string
+	}{
+		{
+			name: "range in UTC then each dimension in name order with its values",
+			args: evidence.EventRef{
+				ID: "tq-001", Start: at.In(time.FixedZone("KST", 9*3600)), End: at.Add(47 * time.Hour),
+				Dims: map[string][]string{"topic": {"shopping"}, "source": {"source-a", "source-b"}},
+			},
+			want: "2026-09-22T10:00:00Z to 2026-09-24T09:00:00Z source=source-a,source-b topic=shopping",
+		},
+		{
+			name: "an event without dimensions is named by its range alone",
+			args: evidence.EventRef{ID: "e", Start: at, End: at, Dims: map[string][]string{}},
+			want: "2026-09-22T10:00:00Z to 2026-09-22T10:00:00Z",
+		},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := tc.args.Name()
+			assert.Equal(t, tc.want, got)
+			assert.NotContains(t, got, tc.args.ID)
+		})
+	}
+}
+
 func TestEventSeriesCounts(t *testing.T) {
 	tcs := []struct {
 		name string

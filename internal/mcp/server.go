@@ -144,7 +144,8 @@ func enumSchemas() map[reflect.Type]*jsonschema.Schema {
 
 var tools = []tool{
 	newTool("events", "List the registered events with their time range and the dimension names of the data set. "+
-		"Call this when the user names a period or a dimension value instead of an event id. "+
+		"Call this to find the event the user names by a period or a dimension value. "+
+		"The id is for tool calls only: name an event to the user by its range and dimension values. "+
 		"For a dimension value call it with dims keyed by a name from dimensions. "+
 		"A name or value no event carries fails like propose and the error lists the dimensions. "+
 		"An empty list means no single event carries all the named values together", (*Server).events),

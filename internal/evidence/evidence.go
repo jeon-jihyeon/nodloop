@@ -121,6 +121,16 @@ func (r EventRef) Carries(dims map[string]string) bool {
 	return true
 }
 
+// How a person names the event: its range in UTC and the values of each dimension in name order
+// The event id is left out because it is a key of the data set and not something a person recalls
+func (r EventRef) Name() string {
+	parts := []string{r.Start.UTC().Format(time.RFC3339) + " to " + r.End.UTC().Format(time.RFC3339)}
+	for _, name := range slices.Sorted(maps.Keys(r.Dims)) {
+		parts = append(parts, name+"="+strings.Join(r.Dims[name], ","))
+	}
+	return strings.Join(parts, " ")
+}
+
 type Event struct {
 	ID string
 	// ContextUnknown when the source has no context for the event

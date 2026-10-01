@@ -44,16 +44,16 @@ On first run, the plugin downloads its binary. Start Claude Code in the director
 
 ```
 > set up nodloop with the demo in ./nodloop/examples/demo
-> review event tq-023 with nodloop
+> review the conversions of September 18 to 19 with nodloop
 > That is attribution lag. Conversions arrive up to 4 hours after the click, so the newest 4 hours always read low. Record that as feedback and propose it as knowledge.
 > approve it, approver <your name>
-> review event tq-024 with nodloop
+> review the conversions of September 20 to 21 with nodloop
 ```
 
-The second review applies the knowledge you approved.
+The second review applies the knowledge you approved. Each demo event spans its own two days, so you name an event by when it happened, and by a source when one matters, never by an id.
 
 > [!TIP]
-> Setup runs `nodloop check` and `nodloop setup` through Bash, so Claude Code asks for permission the first time. To skip that prompt, add `"Bash(*/bin/nodloop check *)"` and `"Bash(*/bin/nodloop setup *)"` to `permissions.allow` in `~/.claude/settings.json`.
+> Setup runs `~/.nodloop/bin/nodloop check` and `~/.nodloop/bin/nodloop setup` through Bash, so Claude Code asks for permission the first time. To skip that prompt, add `"Bash(~/.nodloop/bin/nodloop check *)"` and `"Bash(~/.nodloop/bin/nodloop setup *)"` to `permissions.allow` in `~/.claude/settings.json`. The plugin keeps that path linked to the binary it runs, so the rules hold across updates.
 
 <details>
 <summary>Moving from the demo to your own data and record directory</summary>
@@ -120,13 +120,13 @@ The eval holds out 12 of the 24 demo events and reviews them with Sonnet. With n
 
 | condition | events | status acc | hold acc | citation p | citation r | required checks | first check | knowledge hit | misapplied | revised | mean cost usd |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| seed | 12 | 0.83 | 1.00 | 0.86 | 1.00 | 1.00 | 0.75 | 0.00 | 0 | 0 | 0.1433 |
-| feedback:off | 12 | 0.83 | 1.00 | 1.00 | 1.00 | 1.00 | 0.75 | 0.00 | 0 | 0 | 0.1121 |
-| feedback:on | 12 | 1.00 | 1.00 | 0.92 | 1.00 | 1.00 | 1.00 | 0.00 | 0 | 0 | 0.0690 |
-| knowledge:on | 12 | 1.00 | 1.00 | 0.94 | 1.00 | 1.00 | 0.88 | 1.00 | 0 | 2 | 0.0974 |
-| knowledge:all | 12 | 1.00 | 1.00 | 0.94 | 1.00 | 1.00 | 0.50 | 1.00 | 15 | 1 | 0.0911 |
+| seed | 12 | 0.83 | 1.00 | 0.94 | 1.00 | 1.00 | 1.00 | 0.00 | 0 | 0 | 0.1045 |
+| feedback:off | 12 | 0.83 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | 0.00 | 0 | 1 | 0.1098 |
+| feedback:on | 12 | 1.00 | 1.00 | 0.92 | 1.00 | 1.00 | 0.75 | 0.00 | 0 | 0 | 0.0784 |
+| knowledge:on | 12 | 1.00 | 1.00 | 0.86 | 1.00 | 1.00 | 0.75 | 1.00 | 0 | 2 | 0.1142 |
+| knowledge:all | 12 | 1.00 | 1.00 | 0.78 | 0.92 | 1.00 | 0.75 | 1.00 | 15 | 1 | 0.1046 |
 
-To reproduce it, first set `NODLOOP_RECORD_DIR` to the absolute path of an empty directory, because the Quickstart reviewed and corrected tq-023, a holdout event, and holdout refuses records that already judge one. Then run `~/.nodloop/bin/nodloop eval seed --session demo` from the clone, correct the seed reviews with `feedback add`, import the demo knowledge with `knowledge import --file examples/demo/knowledge.jsonl`, then run `eval holdout --session demo` and `eval report --session demo` with the same binary. eval calls the `claude` CLI for every review. holdout stops before the first review when feedback:on has no corrected seed review or the knowledge conditions have no approved item, so leave a condition out with `--conditions` to run the rest. After a compaction, knowledge that replaced an item a label expects still counts as a hit.
+To reproduce it, first set `NODLOOP_RECORD_DIR` to the absolute path of an empty directory, because the Quickstart reviewed and corrected the event of September 18 to 19, a holdout event, and holdout refuses records that already judge one. Then run `~/.nodloop/bin/nodloop eval seed --session demo` from the clone, correct the seed reviews with `feedback add`, import the demo knowledge with `knowledge import --file examples/demo/knowledge.jsonl`, then run `eval holdout --session demo` and `eval report --session demo` with the same binary. eval calls the `claude` CLI for every review. holdout stops before the first review when feedback:on has no corrected seed review or the knowledge conditions have no approved item, so leave a condition out with `--conditions` to run the rest. After a compaction, knowledge that replaced an item a label expects still counts as a hit.
 
 </details>
 
