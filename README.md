@@ -61,11 +61,11 @@ The eval holds out 12 of the 24 demo events and reviews them with Sonnet. With n
 
 | condition | events | status acc | hold acc | citation p | citation r | required checks | first check | knowledge hit | misapplied | revised | mean cost usd |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| seed | 12 | 0.83 | 1.00 | 0.89 | 0.92 | 1.00 | 0.75 | 0.00 | 0 | 1 | 0.1394 |
-| feedback:off | 12 | 0.83 | 1.00 | 0.58 | 0.67 | 0.94 | 0.75 | 0.00 | 0 | 1 | 0.1032 |
-| feedback:on | 12 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | 0.00 | 0 | 0 | 0.0680 |
-| knowledge:on | 12 | 1.00 | 1.00 | 0.69 | 0.83 | 1.00 | 0.75 | 1.00 | 0 | 1 | 0.0964 |
-| knowledge:all | 12 | 1.00 | 1.00 | 0.72 | 0.83 | 0.94 | 0.75 | 1.00 | 15 | 0 | 0.0948 |
+| seed | 12 | 0.83 | 1.00 | 1.00 | 1.00 | 1.00 | 0.88 | 0.00 | 0 | 0 | 0.1082 |
+| feedback:off | 12 | 0.83 | 1.00 | 1.00 | 1.00 | 1.00 | 0.50 | 0.00 | 0 | 0 | 0.1137 |
+| feedback:on | 12 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | 0.00 | 0 | 0 | 0.0760 |
+| knowledge:on | 12 | 1.00 | 1.00 | 0.92 | 1.00 | 1.00 | 0.75 | 1.00 | 0 | 0 | 0.0976 |
+| knowledge:all | 12 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | 0.75 | 1.00 | 15 | 0 | 0.1023 |
 
 To reproduce it, first set `NODLOOP_RECORD_DIR` to the absolute path of an empty directory, because the Quickstart reviewed and corrected tq-023, a holdout event, and holdout refuses records that already judge one. Then run `~/.nodloop/bin/nodloop eval seed --session demo` from the clone, correct the seed reviews with `feedback add`, import the demo knowledge with `knowledge import --file examples/demo/knowledge.jsonl`, then run `eval holdout --session demo` and `eval report --session demo` with the same binary. eval calls the `claude` CLI for every review. holdout stops before the first review when feedback:on has no corrected seed review or the knowledge conditions have no approved item, so leave a condition out with `--conditions` to run the rest. After a compaction, knowledge that replaced an item a label expects still counts as a hit.
 
@@ -75,11 +75,11 @@ Nothing in the core knows about the demo's domain. The same loop ran on 300 even
 
 | condition | events | status acc | hold acc | citation p | citation r | required checks | first check | knowledge hit | misapplied | revised | mean cost usd |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| seed | 150 | 0.76 | 0.60 | 0.77 | 0.97 | 0.87 | 0.82 | 0.00 | 0 | 8 | 0.0801 |
-| feedback:off | 150 | 0.75 | 0.60 | 0.78 | 0.98 | 0.86 | 0.80 | 0.00 | 0 | 21 | 0.0822 |
-| feedback:on | 150 | 0.99 | 1.00 | 0.95 | 0.97 | 0.97 | 0.98 | 0.00 | 0 | 1 | 0.0615 |
-| knowledge:on | 150 | 0.99 | 1.00 | 0.85 | 0.98 | 0.99 | 0.95 | 1.00 | 0 | 9 | 0.0688 |
-| knowledge:all | 150 | 1.00 | 1.00 | 0.86 | 1.00 | 1.00 | 0.97 | 1.00 | 548 | 17 | 0.0796 |
+| seed | 150 | 0.75 | 0.60 | 0.75 | 0.98 | 0.86 | 0.80 | 0.00 | 0 | 12 | 0.0830 |
+| feedback:off | 150 | 0.76 | 0.60 | 0.75 | 1.00 | 0.88 | 0.72 | 0.00 | 0 | 15 | 0.0886 |
+| feedback:on | 150 | 0.99 | 1.00 | 0.94 | 0.95 | 0.97 | 0.97 | 0.00 | 0 | 0 | 0.0608 |
+| knowledge:on | 150 | 0.99 | 1.00 | 0.85 | 0.98 | 0.99 | 0.81 | 1.00 | 0 | 10 | 0.0715 |
+| knowledge:all | 150 | 0.99 | 1.00 | 0.85 | 1.00 | 0.97 | 0.80 | 1.00 | 548 | 14 | 0.0855 |
 
 In 36 held-out events a trap decides the status. With no feedback, none of them got it right. With corrections all 36 did, and with scoped knowledge 35 did, which never landed on an event outside its scope. Applying every item regardless of scope landed 548 items that don't belong.
 

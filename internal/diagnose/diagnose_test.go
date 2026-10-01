@@ -215,7 +215,7 @@ func TestPrepare(t *testing.T) {
 				EventID:        tc.args.event,
 				Mode:           tc.args.mode,
 				PolicyVersion:  "demo-1",
-				PromptVersion:  "diagnose/v13",
+				PromptVersion:  "diagnose/v14",
 				ChangeContext:  ev.ChangeContext,
 				Session:        tc.args.session,
 				Observations:   observations,
@@ -229,7 +229,7 @@ func TestPrepare(t *testing.T) {
 				Input: tr.Input, Output: tr.Output, Tags: tc.args.session.Tags,
 			}, tr)
 			assert.Equal(t, input{
-				Mode: tc.args.mode, PolicyVersion: "demo-1", PromptVersion: "diagnose/v13", Procedures: tc.want.procedures,
+				Mode: tc.args.mode, PolicyVersion: "demo-1", PromptVersion: "diagnose/v14", Procedures: tc.want.procedures,
 				ParagraphIDs: ids, ProcedureChars: tc.want.procedureChars,
 			}, in)
 			assert.Equal(t, output{
@@ -483,14 +483,39 @@ func TestRecord(t *testing.T) {
 		Causes: []diagnose.Cause{{Summary: "worn trim", ParagraphIDs: []string{"made-up"}}},
 		Checks: checks,
 	}
+	unlisted := func(summary, ids string) string {
+		return `cause "` + summary + `" cites ` + ids + `, which the list does not hold. ` +
+			`Cite the listed paragraph id that states it or return hold`
+	}
+	citesUnlisted := unlisted("worn trim", "made-up")
+	bare := diagnose.Diagnosis{
+		Status: evidence.StatusReadyForReview, Causes: []diagnose.Cause{{Summary: "worn trim"}}, Checks: checks,
+	}
 	citesNone := `cause "worn trim" cites no paragraph id from the list. Cite the paragraph that states it or return hold`
+	// A misspelled id beside a first step and beside a Decide paragraph
+	typoStep := diagnose.Diagnosis{
+		Status: evidence.StatusReadyForReview,
+		Causes: []diagnose.Cause{{Summary: "c", ParagraphIDs: []string{segment + "x", confirm}}},
+		Checks: checks,
+	}
+	typoDecide := diagnose.Diagnosis{
+		Status: evidence.StatusReadyForReview,
+		Causes: []diagnose.Cause{{Summary: "c", ParagraphIDs: []string{segment + "x", decide}}},
+		Checks: checks,
+	}
 	// Status and cause defects the model can fix
 	typo := diagnose.Diagnosis{Status: "ready-for-review", Causes: ready.Causes, Checks: checks}
 	typoStatus := `status "ready-for-review" is not one of no_action, ready_for_review or hold`
 	causeless := diagnose.Diagnosis{Status: evidence.StatusReadyForReview, Checks: checks}
-	noCause := "ready_for_review gives no cause. Give the cause with the paragraph that states it or return hold"
+	noCause := "ready_for_review gives no cause. Give the cause with the paragraph that states it " +
+		"and keep the first step of its procedure as a check, or return hold"
 	noActionCause := diagnose.Diagnosis{Status: evidence.StatusNoAction, Causes: ready.Causes, Checks: checks}
 	noActionDecide := diagnose.Diagnosis{Status: evidence.StatusNoAction, Causes: decideCause.Causes}
+	// Turns ready_for_review with these causes so its causes and checks are judged as ready
+	noActionStep := diagnose.Diagnosis{
+		Status: evidence.StatusNoAction, Causes: []diagnose.Cause{{Summary: "c", ParagraphIDs: []string{confirm}}},
+	}
+	noActionBare := diagnose.Diagnosis{Status: evidence.StatusNoAction, Causes: bare.Causes, Checks: checks}
 	withCauses := "no_action carries causes. Return ready_for_review with the causes or no_action without them"
 	twoProcedures := diagnose.Diagnosis{
 		Status: evidence.StatusReadyForReview,
@@ -501,7 +526,7 @@ func TestRecord(t *testing.T) {
 	oldReady := ready
 	recorded := input{
 		SessionID: "s1", Subject: "tq-005", Tags: []string{"feedback:off"},
-		Mode: diagnose.ModeInteractive, PolicyVersion: "demo-1", PromptVersion: "diagnose/v13",
+		Mode: diagnose.ModeInteractive, PolicyVersion: "demo-1", PromptVersion: "diagnose/v14",
 		ChangeContext: evidence.ContextNoKnownChange, Metrics: []string{"click_count", "conversion_count"},
 		Procedures: demoProcedures, Knowledge: []diagnose.AppliedKnowledge{}, Examples: []example{},
 		Chars: sections{Procedures: demoProcedureChars},
@@ -639,11 +664,41 @@ func TestRecord(t *testing.T) {
 			}},
 		},
 		{
-			name: "sends back a cause left without a listed paragraph",
+			name: "sends back a cause left without a listed paragraph naming the ids the list does not hold",
 			args: args{pending: "context", diag: madeUp},
 			want: want{outcome: outcome{
+				result: diagnose.Result{Revisions: []string{citesUnlisted}}, traced: trace.NameRevise,
+				revised: []revised{{Subject: "tq-005", Reasons: []string{citesUnlisted}, Review: madeUp}},
+			}},
+		},
+		{
+			name: "sends back a cause without any paragraph id",
+			args: args{pending: "context", diag: bare},
+			want: want{outcome: outcome{
 				result: diagnose.Result{Revisions: []string{citesNone}}, traced: trace.NameRevise,
-				revised: []revised{{Subject: "tq-005", Reasons: []string{citesNone}, Review: madeUp}},
+				revised: []revised{{Subject: "tq-005", Reasons: []string{citesNone}, Review: bare}},
+			}},
+		},
+		{
+			name: "sends back a misspelled id beside a first step naming both",
+			args: args{pending: "context", diag: typoStep},
+			want: want{outcome: outcome{
+				result: diagnose.Result{Revisions: []string{firstStepCause("c", confirm), unlisted("c", segment+"x")}},
+				traced: trace.NameRevise,
+				revised: []revised{{
+					Subject: "tq-005", Reasons: []string{firstStepCause("c", confirm), unlisted("c", segment+"x")}, Review: typoStep,
+				}},
+			}},
+		},
+		{
+			name: "sends back a misspelled id beside a Decide paragraph naming both",
+			args: args{pending: "context", diag: typoDecide},
+			want: want{outcome: outcome{
+				result: diagnose.Result{Revisions: []string{citesDecide, unlisted("c", segment+"x")}},
+				traced: trace.NameRevise,
+				revised: []revised{{
+					Subject: "tq-005", Reasons: []string{citesDecide, unlisted("c", segment+"x")}, Review: typoDecide,
+				}},
 			}},
 		},
 		{
@@ -655,7 +710,7 @@ func TestRecord(t *testing.T) {
 					HoldReasons: []string{"no paragraph supports: worn trim"},
 				}, Forced: true},
 				traced: trace.NameDiagnose, inputs: []input{heldUnknown},
-				revised: []revised{{Subject: "tq-005", Reasons: []string{citesNone}, Review: madeUp}},
+				revised: []revised{{Subject: "tq-005", Reasons: []string{citesUnlisted}, Review: madeUp}},
 			}},
 		},
 		{
@@ -683,11 +738,30 @@ func TestRecord(t *testing.T) {
 			}},
 		},
 		{
-			name: "sends back a no_action citing a Decide paragraph naming both defects",
+			name: "sends back a no_action citing a Decide paragraph naming every defect",
 			args: args{pending: "context", diag: noActionDecide},
 			want: want{outcome: outcome{
-				result: diagnose.Result{Revisions: []string{withCauses, citesDecide}}, traced: trace.NameRevise,
-				revised: []revised{{Subject: "tq-005", Reasons: []string{withCauses, citesDecide}, Review: noActionDecide}},
+				result: diagnose.Result{Revisions: []string{withCauses, citesDecide, missing}}, traced: trace.NameRevise,
+				revised: []revised{{Subject: "tq-005", Reasons: []string{withCauses, citesDecide, missing}, Review: noActionDecide}},
+			}},
+		},
+		{
+			name: "sends back a no_action whose cause cites a first step naming the defects of the ready review it turns into",
+			args: args{pending: "context", diag: noActionStep},
+			want: want{outcome: outcome{
+				result: diagnose.Result{Revisions: []string{withCauses, firstStepCause("c", confirm), missing}},
+				traced: trace.NameRevise,
+				revised: []revised{{
+					Subject: "tq-005", Reasons: []string{withCauses, firstStepCause("c", confirm), missing}, Review: noActionStep,
+				}},
+			}},
+		},
+		{
+			name: "sends back a no_action whose cause cites nothing naming the missing citation",
+			args: args{pending: "context", diag: noActionBare},
+			want: want{outcome: outcome{
+				result: diagnose.Result{Revisions: []string{withCauses, citesNone}}, traced: trace.NameRevise,
+				revised: []revised{{Subject: "tq-005", Reasons: []string{withCauses, citesNone}, Review: noActionBare}},
 			}},
 		},
 		{
@@ -1164,12 +1238,13 @@ func TestRun(t *testing.T) {
 				calls: []call{{
 					prompt: text,
 					response: llm.Response{
-						Output:       output,
-						CostUSD:      0.02,
-						InputTokens:  100,
-						OutputTokens: 30,
-						CacheRead:    7,
-						CacheCreate:  5,
+						Output:         output,
+						CostUSD:        0.02,
+						InputTokens:    100,
+						OutputTokens:   30,
+						ThinkingTokens: 20,
+						CacheRead:      7,
+						CacheCreate:    5,
 					},
 				}},
 				opts: diagnose.BatchOptions{
@@ -1186,6 +1261,7 @@ func TestRun(t *testing.T) {
 						Usage: trace.Usage{
 							InputTokens:       100,
 							OutputTokens:      30,
+							ThinkingTokens:    20,
 							CacheReadTokens:   7,
 							CacheCreateTokens: 5,
 							CostUSD:           0.02,
@@ -1684,7 +1760,8 @@ func TestRecordExcludedProcedure(t *testing.T) {
 			excluded,
 			want{
 				revisions: []string{
-					`cause "low quality source" cites no paragraph id from the list. Cite the paragraph that states it or return hold`,
+					`cause "low quality source" cites ` + excluded + `, which the list does not hold. ` +
+						`Cite the listed paragraph id that states it or return hold`,
 				},
 				forced: true, status: evidence.StatusHold, unknown: []string{excluded},
 			},
