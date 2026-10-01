@@ -236,7 +236,7 @@ func TestRecordGate(t *testing.T) {
 			t.Parallel()
 			s := testkit.Open(t)
 			d := diagnose.New(
-				s.Source, testkit.Policy(t), nil, s.Traces, s.Feedback, s.Ledger, s.Clock.Now,
+				s.Source, testkit.Policy(t), nil, s.Traces, s.Feedback, s.Outcomes, s.Ledger, s.Clock.Now,
 			)
 			c, err := d.Prepare(ctx, "tq-005", diagnose.ModeInteractive, diagnose.Session{})
 			require.NoError(t, err)
@@ -304,7 +304,7 @@ func TestRecordFirstStepSection(t *testing.T) {
 			s := testkit.Open(t)
 			src := editedDemo(t, "metric-anomaly-investigation.md", "\n## Check the segment",
 				"\nRead the hourly series too before trusting the mean.\n\n## Check the segment")
-			d := diagnose.New(src, testkit.Policy(t), nil, s.Traces, s.Feedback, s.Ledger, s.Clock.Now)
+			d := diagnose.New(src, testkit.Policy(t), nil, s.Traces, s.Feedback, s.Outcomes, s.Ledger, s.Clock.Now)
 			c, err := d.Prepare(ctx, "tq-005", diagnose.ModeInteractive, diagnose.Session{})
 			require.NoError(t, err)
 			require.Contains(t, c.ParagraphIDs, second)

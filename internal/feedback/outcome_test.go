@@ -154,3 +154,27 @@ func TestOutcomesLatest(t *testing.T) {
 		})
 	}
 }
+
+func TestOutcomeRefutedSince(t *testing.T) {
+	base := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
+	type args struct {
+		result feedback.Result
+		at     time.Time
+	}
+	tcs := []struct {
+		name string
+		args args
+		want bool
+	}{
+		{"a refutation after the time counts", args{feedback.ResultRefuted, base.Add(-time.Minute)}, true},
+		{"a refutation at the time counts", args{feedback.ResultRefuted, base}, true},
+		{"a refutation before the time does not count", args{feedback.ResultRefuted, base.Add(time.Minute)}, false},
+		{"a confirmation never counts", args{feedback.ResultConfirmed, base.Add(-time.Minute)}, false},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.want, feedback.Outcome{Result: tc.args.result, Time: base}.RefutedSince(tc.args.at))
+		})
+	}
+}

@@ -61,6 +61,12 @@ func (f OutcomeFilter) Matches(o Outcome) bool {
 	return f.TraceID == "" || o.TraceID == f.TraceID
 }
 
+// Whether the check refuted the review at or after at such as the time of a verdict on it
+// A person who judged the review again after the refutation stands behind the review once more
+func (o Outcome) RefutedSince(at time.Time) bool {
+	return o.Result == ResultRefuted && !o.Time.Before(at)
+}
+
 // Whether a session recorded the outcome instead of a person
 func (o Outcome) Implicit() bool {
 	return o.Reviewer == ReviewerSession

@@ -171,7 +171,7 @@ func TestPrepareText(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			s := testkit.Open(t)
-			d := diagnose.New(s.Source, tc.args.policy, nil, s.Traces, s.Feedback, s.Ledger, s.Clock.Now)
+			d := diagnose.New(s.Source, tc.args.policy, nil, s.Traces, s.Feedback, s.Outcomes, s.Ledger, s.Clock.Now)
 
 			got, err := d.Prepare(ctx, tc.args.event, diagnose.ModeBatch, diagnose.Session{})
 			require.NoError(t, err)

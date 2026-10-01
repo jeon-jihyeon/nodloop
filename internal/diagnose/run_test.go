@@ -115,7 +115,7 @@ func TestRunAll(t *testing.T) {
 			// The revise runs under the record lock so the panic lands where a held lock would block every later review
 			traces := testkit.PanickingTraces{Store: s.Traces, Name: trace.NameRevise}
 			d := diagnose.New(
-				s.Source, testkit.Policy(t), client, traces, s.Feedback, s.Ledger,
+				s.Source, testkit.Policy(t), client, traces, s.Feedback, s.Outcomes, s.Ledger,
 				func() time.Time { return at },
 			)
 			var jobs []diagnose.Job

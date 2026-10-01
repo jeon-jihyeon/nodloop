@@ -114,7 +114,7 @@ func TestCaps(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			s := testkit.Open(t)
-			d := diagnose.New(s.Source, testkit.Policy(t), nil, s.Traces, s.Feedback, s.Ledger, s.Clock.Now)
+			d := diagnose.New(s.Source, testkit.Policy(t), nil, s.Traces, s.Feedback, s.Outcomes, s.Ledger, s.Clock.Now)
 			importApproved(t, s, tc.args.items, strings.Repeat(tc.args.unit, tc.args.chars))
 
 			c, err := d.Prepare(ctx, "tq-005", diagnose.ModeInteractive, diagnose.Session{})
@@ -232,7 +232,7 @@ func TestCandidatesOmittedTraces(t *testing.T) {
 			s := testkit.Open(t)
 			client := llmmock.NewMockClient(gomock.NewController(t))
 			client.EXPECT().Complete(gomock.Any(), gomock.Any()).Return(llm.Response{Output: output}, nil).AnyTimes()
-			d := diagnose.New(s.Source, testkit.Policy(t), client, s.Traces, s.Feedback, s.Ledger, s.Clock.Now)
+			d := diagnose.New(s.Source, testkit.Policy(t), client, s.Traces, s.Feedback, s.Outcomes, s.Ledger, s.Clock.Now)
 			importApproved(t, s, tc.args.items, "one")
 
 			tc.args.review(ctx, t, d)
