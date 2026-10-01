@@ -1,6 +1,6 @@
 ---
 name: setup
-description: Point nodloop at a data directory, propose its policy.yaml, and repair a broken config, asking the user only what the files and nodloop check cannot answer. Use when a nodloop tool answers that no data directory is configured or names a config or data error, when the user asks to set up nodloop or to switch it to other data or records, and when a review found something on an event whose change context is unknown or does not break the baseline.
+description: Point nodloop at a data directory, convert an export in another shape into its layout, propose its policy.yaml, import runbooks as procedures, and repair a broken config, asking the user only what the files and nodloop check cannot answer. Use when a nodloop tool answers that no data directory is configured or names a config or data error, when the user asks to set up nodloop, to switch it to other data or records or to import runbooks, and when a review found something on an event whose change context is unknown or does not break the baseline.
 ---
 
 # Set up nodloop
@@ -46,6 +46,19 @@ nodloop reads only the canonical layout and never runs a conversion. You write `
 3. Write the draft to a file outside the data directory and run check with `--policy <draft>` until it passes.
 4. Show the user the draft and the profile it came from, then ask whether to save it. Options: Save it, Change a value first, I will write my own. On Save it write it as policy.yaml of the data directory with Write and run check again. On a change edit only what the user names and ask again. On I will write my own stop and say check names what is still wrong.
 5. When check stops on a contexts.csv value outside the declared set before any policy exists, the profile is missing. Write a draft with only the version and that contexts list, run check with `--policy` on it to get the profile, then draft the analyzers.
+
+## Procedures
+
+Reviews cite paragraphs of the procedures under `procedures/`. When the user has runbooks in another form, such as Markdown of another shape, a wiki export or a PDF, draft one procedure per runbook. Never edit the original runbook.
+
+1. Read the runbook with Read and keep its wording. Write one `.md` file directly under `procedures/` named after the runbook in lower case words joined by hyphens, because the file name starts every paragraph id.
+2. The draft takes this shape
+   1. optional front matter between `---` lines with only `change_contexts` and `metrics`, each a list. A change context must be one the policy declares and a metric one that `profile` of check lists. Leave a key out to reach every event. Front matter refuses any other key, so name the source of the runbook in your reply and never in the file
+   2. one `#` title, then one `##` heading per step in the order the runbook acts. The first step is a check the review must list and never cites for a cause, so an overview or a list of likely causes never comes first
+   3. a step named exactly `Decide` states the decision and is never cited for a cause
+   4. each paragraph under a heading is one citable unit, so split a step that states two separate facts into two paragraphs
+3. Show each draft as a diff against the procedure file it would replace, or whole when it is new, and ask whether to save it. Options: Save it, Change it first, Skip this runbook. Write it with Write only on Save it.
+4. Run check after each saved procedure. A refusal, such as a scope naming an undeclared context or a metric no event carries, goes back into the draft. Renaming a heading changes the ids of its paragraphs, so a draft that replaces a procedure keeps its headings unless the user asks to rename them.
 
 ## Records
 
