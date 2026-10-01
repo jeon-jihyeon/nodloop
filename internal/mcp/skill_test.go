@@ -53,9 +53,27 @@ func TestSkillTools(t *testing.T) {
 				assert.True(t, named[name], name)
 			}
 			for _, command := range tc.want.commands {
-				assert.Contains(t, text, "${CLAUDE_PLUGIN_ROOT}/bin/"+command)
+				assert.Contains(t, text, "`~/.nodloop/bin/"+command)
 			}
 			assert.Empty(t, removed.FindAllString(text, -1))
+		})
+	}
+}
+
+// Every Bash allow rule README offers covers a command the setup skill runs
+// 1. the rule starts with the command text so no wildcard comes before the subcommand
+// 2. the command text is the stable link and not the versioned plugin path that changes on update
+func TestReadmeAllowRules(t *testing.T) {
+	readme, err := os.ReadFile("../../README.md")
+	require.NoError(t, err)
+	skill, err := os.ReadFile("../../plugin/skills/setup/SKILL.md")
+	require.NoError(t, err)
+	rules := regexp.MustCompile(`"Bash\(([^)]*) \*\)"`).FindAllStringSubmatch(string(readme), -1)
+	require.Len(t, rules, 2)
+	for _, rule := range rules {
+		t.Run(rule[1], func(t *testing.T) {
+			assert.NotContains(t, rule[1], "*")
+			assert.Contains(t, string(skill), "`"+rule[1]+" ")
 		})
 	}
 }

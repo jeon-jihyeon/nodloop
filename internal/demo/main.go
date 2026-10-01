@@ -41,7 +41,7 @@ func demoKnowledge() []knowledge.Knowledge {
 			Scope:    knowledge.Scope{Scope: evidence.Scope{Metrics: []string{"conversion_count"}}},
 			Evidence: knowledge.Evidence{ParagraphIDs: []string{rateConfirm, rateTracking}},
 			Basis:    knowledge.BasisStated, Status: knowledge.StatusApproved,
-			Approver: "demo", ApprovedAt: start, Time: start, Author: "demo",
+			Approver: "demo", ApprovedAt: approved, Time: approved, Author: "demo",
 		},
 		{
 			ID: knowledgeMeasurement, Version: 1, Kind: knowledge.KindJudgment,
@@ -52,7 +52,7 @@ func demoKnowledge() []knowledge.Knowledge {
 			Scope:    knowledge.Scope{Scope: evidence.Scope{ChangeContexts: []evidence.Context{evidence.ContextPlannedChange}}},
 			Evidence: knowledge.Evidence{ParagraphIDs: []string{rateTracking, holdMeasurement}},
 			Basis:    knowledge.BasisStated, Status: knowledge.StatusApproved,
-			Approver: "demo", ApprovedAt: start, Time: start, Author: "demo",
+			Approver: "demo", ApprovedAt: approved, Time: approved, Author: "demo",
 		},
 	}
 }
@@ -124,7 +124,7 @@ const (
 var (
 	baseClicks = map[string]float64{"source-a": 1000, "source-b": 800, "source-c": 600}
 	sources    = slices.Sorted(maps.Keys(baseClicks))
-	start      = time.Date(2026, 9, 20, 0, 0, 0, 0, time.UTC)
+	approved   = time.Date(2026, 9, 20, 0, 0, 0, 0, time.UTC)
 )
 
 // Paragraph ids of the demo procedures
@@ -151,6 +151,7 @@ var holdChecks = map[evidence.Context]evidence.ParagraphID{
 
 type event struct {
 	id      string
+	start   time.Time
 	kind    evidence.EventType
 	context evidence.Context
 	seed    bool
@@ -189,8 +190,11 @@ func plan() []event {
 		batch(kindAttributionLag, event{conversionFactor: 1, lag: []float64{0.5, 0.3, 0.15, 0.05}},
 			none, none, none, none),
 	)
+	// Every event spans its own hours so a person can name it by time
+	// The last event starts the day the demo knowledge was approved
 	for i := range out {
 		out[i].id = fmt.Sprintf("tq-%03d", i+1)
+		out[i].start = approved.Add(time.Duration((i+1-len(out))*hours) * time.Hour)
 		out[i].seed = i%perKind < seeds
 	}
 	return out
@@ -327,7 +331,7 @@ func (e event) rows(rng *rand.Rand) [][]string {
 			continue
 		}
 		inWindow := h >= hours-windowSize
-		ts := start.Add(time.Duration(h) * time.Hour).Format(time.RFC3339)
+		ts := e.start.Add(time.Duration(h) * time.Hour).Format(time.RFC3339)
 		for _, s := range sources {
 			clicks := baseClicks[s] * (1 + (rng.Float64()-0.5)*0.08)
 			conversions := clicks * rate * (1 + (rng.Float64()-0.5)*0.2)

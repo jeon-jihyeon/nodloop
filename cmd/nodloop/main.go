@@ -33,8 +33,8 @@ commands:
                             their profile, the declared change contexts, the procedures, the policy and the warnings
                             as JSON and exits 1 on the error that stopped it. --policy checks a draft in place of policy.yaml
   llm probe [--model <m>]   Send a minimal structured-output request through claude -p and print cost
-  evidence events           List events from the configured source
-  evidence event --id <id>  Print the change context and the series of one event
+  evidence events           List events by their time range and dimension values. Event ids stay in events.csv
+  evidence event --id <id>  Print the time range, dimension values, change context and series of one event
   evidence procedures       List procedures with their scope and paragraph count
   evidence paragraphs       List procedure paragraph ids
   evidence labels           List ground truth labels. Empty when the data directory has none

@@ -990,14 +990,14 @@ func TestServerDetail(t *testing.T) {
 		{
 			name: "one metric from a start time returns its rows to the event end",
 			args: args{dir: demo, input: map[string]any{
-				"event_id": spikeEvent, "metric": "click_count", "start": "2026-09-21T12:00:00Z",
+				"event_id": spikeEvent, "metric": "click_count", "start": "2026-08-14T12:00:00Z",
 			}},
 			want: "testdata/detail-from-start.json",
 		},
 		{
 			name: "an end time bounds the range inclusively",
 			args: args{dir: demo, input: map[string]any{
-				"event_id": spikeEvent, "metric": "click_count", "start": "2026-09-21T12:00:00Z", "end": "2026-09-21T13:00:00Z",
+				"event_id": spikeEvent, "metric": "click_count", "start": "2026-08-14T12:00:00Z", "end": "2026-08-14T13:00:00Z",
 			}},
 			want: "testdata/detail-bounded.json",
 		},

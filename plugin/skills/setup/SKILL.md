@@ -5,18 +5,20 @@ description: Point nodloop at a data directory, convert an export in another sha
 
 # Set up nodloop
 
-nodloop reads one layout in the data directory: events.csv, contexts.csv, policy.yaml, procedures/*.md and, for eval only, labels.jsonl. A `convert.py` sits beside them when the data came in another shape, and nodloop never reads it. nodloop never writes there. You make every edit of the data directory with Write, and only after you showed it to the user and the user approved it. Run `${CLAUDE_PLUGIN_ROOT}/bin/nodloop check --data-dir <dir>` through Bash after every edit you make, so a broken file is caught before the next review.
+nodloop reads one layout in the data directory: events.csv, contexts.csv, policy.yaml, procedures/*.md and, for eval only, labels.jsonl. A `convert.py` sits beside them when the data came in another shape, and nodloop never reads it. nodloop never writes there. You make every edit of the data directory with Write, and only after you showed it to the user and the user approved it. Run `~/.nodloop/bin/nodloop check --data-dir <dir>` through Bash after every edit you make, so a broken file is caught before the next review.
 
 Every question below goes through AskUserQuestion with the options named, because the user can always pick Other and type an answer. Ask nothing that the files, a command or the user already answered. Never ask the user to reconnect the nodloop server: every tool call reads the saved config, policy.yaml and contexts.csv again, so neither a setup nor an edit needs a reconnect, and an edit of policy.yaml or contexts.csv needs no setup either.
 
-The first Bash call of the plugin binary asks the user for permission. Say before that call that `nodloop check` only reads the data and `nodloop setup` saves the directory in `~/.nodloop/config.json`.
+Run nodloop through `~/.nodloop/bin/nodloop`, the link the plugin keeps to the binary its server runs, so the command text stays the same across plugin updates. When that link is missing, run `${CLAUDE_PLUGIN_ROOT}/bin/nodloop version` once to create it. The first Bash call of it asks the user for permission. Say before that call that `nodloop check` only reads the data and `nodloop setup` saves the directory in `~/.nodloop/config.json`, and that the allow rules `Bash(~/.nodloop/bin/nodloop check *)` and `Bash(~/.nodloop/bin/nodloop setup *)` in `permissions.allow` of `~/.claude/settings.json` skip the prompt.
+
+Name events to the user by their time range and dimension values, never by their event id. Event ids belong in tool calls, commands and convert.py.
 
 ## Data directory
 
 1. When the user named no directory, ask which data nodloop reviews. Options: the `examples/demo` folder of a nodloop clone when one sits in the working directory, and Other for a path the user types. A user who wants to try nodloop first can clone https://github.com/jeon-jihyeon/nodloop and pick its `examples/demo` folder.
-2. Run `${CLAUDE_PLUGIN_ROOT}/bin/nodloop check --data-dir <dir>`. It prints one JSON object with `events`, the `profile` of the events, the declared `contexts`, the `procedures` with their scope, the `policy` when one loaded, the `warnings` and the `error` that stopped it, and exits 1 on an error. A relative path resolves against the working directory, which is the one the user meant.
+2. Run `~/.nodloop/bin/nodloop check --data-dir <dir>`. It prints one JSON object with `events`, the `profile` of the events, the declared `contexts`, the `procedures` with their scope, the `policy` when one loaded, the `warnings` and the `error` that stopped it, and exits 1 on an error. A relative path resolves against the working directory, which is the one the user meant.
 3. When the data the user named is not in this layout, such as an export with other columns, several files, Parquet or a continuous series without events, follow Conversion below before anything else. When check stops because the directory has no policy.yaml, follow Policy below. When it stops on anything else, show the error and fix it with the user. Every events.csv column other than event_id, timestamp, metric and value is a series dimension, so tell a user whose export carries a per row column such as a row id or a note to drop it.
-4. When check passes, run `${CLAUDE_PLUGIN_ROOT}/bin/nodloop setup --data-dir <dir>` and show the user the data and record directories it prints and every warning, word for word.
+4. When check passes, run `~/.nodloop/bin/nodloop setup --data-dir <dir>` and show the user the data and record directories it prints and every warning, word for word.
 5. Call `events` once and compare its number of events with `events` of check. When they differ, the nodloop server starts with another `NODLOOP_FILE_DIR` or `NODLOOP_RECORD_DIR` than your shell, so show the user both directories and tell them to unset the variable where the server starts.
 
 ## Conversion

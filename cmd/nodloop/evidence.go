@@ -60,18 +60,20 @@ type evidenceCommand struct {
 	out io.Writer
 }
 
+// One line per event named by its range and dimension values
+// A person names an event by when it happened and where so the event id stays out of the output
 func (c evidenceCommand) events(ctx context.Context) error {
 	refs, err := c.src.Events(ctx)
 	if err != nil {
 		return err
 	}
 	for _, r := range refs {
-		fmt.Fprintf(c.out, "%s\t%s\t%s\n", r.ID, r.Start.Format(time.RFC3339), r.End.Format(time.RFC3339))
+		fmt.Fprintln(c.out, r.Name())
 	}
 	return nil
 }
 
-// The change context and one line per series with its point count
+// The range, dimension values and change context of the event and one line per series with its point count
 func (c evidenceCommand) event(ctx context.Context, id string) error {
 	if id == "" {
 		return fmt.Errorf("--id %w", errRequired)
@@ -80,7 +82,7 @@ func (c evidenceCommand) event(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(c.out, "%s\tcontext=%s\n", ev.ID, ev.ChangeContext)
+	fmt.Fprintf(c.out, "%s\tcontext=%s\n", ev.Ref().Name(), ev.ChangeContext)
 	counts := ev.SeriesCounts()
 	for _, k := range slices.Sorted(maps.Keys(counts)) {
 		fmt.Fprintf(c.out, "%s\tpoints=%d\n", k, counts[k])
