@@ -1,6 +1,6 @@
 {
   "name": "nodloop",
-  "version": "0.4.5",
+  "version": "0.5.0",
   "description": "Procedure-grounded incident reviews inside Claude Code. Your corrections become approved knowledge that feeds the next review.",
   "author": {
     "name": "jeon-jihyeon"
