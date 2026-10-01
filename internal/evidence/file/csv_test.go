@@ -352,3 +352,55 @@ func TestSourceEvents(t *testing.T) {
 		})
 	}
 }
+
+func TestSourceAll(t *testing.T) {
+	at := time.Date(2026, 9, 22, 10, 0, 0, 0, time.UTC)
+	const events = "event_id,timestamp,metric,value\ne2,2026-09-22T10:00:00Z,m,1\ne1,2026-09-22T10:00:00Z,m,2\n"
+	type want struct {
+		// Change context per event in first seen order
+		contexts []evidence.Context
+		err      error
+	}
+	tcs := []struct {
+		name string
+		args map[string]string
+		want want
+	}{
+		{
+			"every event carries its context and one without a row reads unknown",
+			map[string]string{"events.csv": events, "contexts.csv": "event_id,change_context\ne1,deploy\n"},
+			want{contexts: []evidence.Context{evidence.ContextUnknown, "deploy"}},
+		},
+		{"no contexts file reads unknown everywhere", map[string]string{"events.csv": events}, want{contexts: []evidence.Context{evidence.ContextUnknown, evidence.ContextUnknown}}},
+		{
+			"an undeclared context fails",
+			map[string]string{"events.csv": events, "contexts.csv": "event_id,change_context\ne1,campaign\n"},
+			want{err: evidence.ErrUnknownContext},
+		},
+	}
+	declared := evidence.Contexts{{Name: "deploy"}, {Name: evidence.ContextUnknown}}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			for name, content := range tc.args {
+				require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte(content), 0o600))
+			}
+			src, err := file.New(dir, declared)
+			require.NoError(t, err)
+
+			got, err := src.All(t.Context())
+
+			require.ErrorIs(t, err, tc.want.err)
+			if tc.want.err != nil {
+				return
+			}
+			var contexts []evidence.Context
+			for _, ev := range got {
+				contexts = append(contexts, ev.ChangeContext)
+			}
+			assert.Equal(t, tc.want.contexts, contexts)
+			assert.Equal(t, []evidence.Point{{Time: at, Metric: "m", Value: 2}}, got[1].Points)
+		})
+	}
+}
