@@ -10,11 +10,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/jeon-jihyeon/nodloop/internal/atomicfile"
-	"github.com/jeon-jihyeon/nodloop/internal/evidence"
-	evidencefile "github.com/jeon-jihyeon/nodloop/internal/evidence/file"
 )
 
 const configFile = "config.json"
@@ -87,7 +84,7 @@ func (h homeDir) readConfig() (userConfig, error) {
 }
 
 // Both directories are stored absolute because the plugin's MCP server starts in the plugin directory
-func newUserConfig(ctx context.Context, dataDir, recordDir string) (userConfig, error) {
+func newUserConfig(dataDir, recordDir string) (userConfig, error) {
 	abs, err := filepath.Abs(dataDir)
 	if err != nil {
 		return userConfig{}, err
@@ -96,29 +93,6 @@ func newUserConfig(ctx context.Context, dataDir, recordDir string) (userConfig, 
 		if recordDir, err = filepath.Abs(recordDir); err != nil {
 			return userConfig{}, err
 		}
-	}
-	if _, err := os.Stat(filepath.Join(abs, "events.csv")); err != nil {
-		return userConfig{}, fmt.Errorf("%w: %s", errNoEvents, abs)
-	}
-	a := app{cfg: config{dataDir: abs}}
-	src, err := a.source()
-	if err != nil {
-		return userConfig{}, err
-	}
-	// 1. a policy the server could not load fails here so rerunning setup never reports success on it
-	// 2. a name no event carries fails here too so a misspelled name never leaves reviews without their numbers
-	// 3. the server reports that name in every review instead because it cannot tell a typo from an outage
-	// 4. a contexts.csv value or procedure scope the policy does not declare fails through the source
-	policy, err := a.observedPolicy(ctx, src)
-	if err != nil {
-		return userConfig{}, err
-	}
-	if err := policy.CheckObserved(); err != nil {
-		return userConfig{}, err
-	}
-	// Procedures that would never be read fail here rather than in the first review
-	if _, err := src.Procedures(ctx); err != nil {
-		return userConfig{}, err
 	}
 	return userConfig{DataDir: abs, RecordDir: recordDir}, nil
 }
@@ -197,14 +171,21 @@ type setupReport struct {
 // 3. NODLOOP_FILE_DIR naming another directory warns because every command started with it reviews that dir
 // 4. a data dir naming another directory over the records in use before warns when they hold files because their knowledge and corrections carry into its reviews
 // 5. two spellings of one directory are one dir so a symlinked path never splits the records
-// 6. Markdown under procedures that no review reads warns with each entry named
-// 7. a data dir without contexts.csv warns because every event then reads change context unknown
+// 6. the warnings of check follow
 func (c setupCommand) prepare(ctx context.Context, dataDir, recordDir string) (userConfig, setupReport, error) {
 	prior, err := c.prior(recordDir)
 	if err != nil {
 		return userConfig{}, setupReport{}, err
 	}
-	uc, err := newUserConfig(ctx, dataDir, cmp.Or(recordDir, prior.RecordDir))
+	uc, err := newUserConfig(dataDir, cmp.Or(recordDir, prior.RecordDir))
+	if err != nil {
+		return userConfig{}, setupReport{}, err
+	}
+	// 1. a policy the server could not load fails here so rerunning setup never reports success on it
+	// 2. a name no event carries fails here too so a misspelled name never leaves reviews without their numbers
+	// 3. the server reports that name in every review instead because it cannot tell a typo from an outage
+	// 4. a contexts.csv value or procedure scope the policy does not declare fails here as check fails it
+	data, err := dataCheck{dir: uc.DataDir}.run(ctx)
 	if err != nil {
 		return userConfig{}, setupReport{}, err
 	}
@@ -220,23 +201,7 @@ func (c setupCommand) prepare(ctx context.Context, dataDir, recordDir string) (u
 		report.warnings = append(report.warnings, fmt.Sprintf("%s is %s and wins over the saved data dir so every command started with it reviews %s. "+
 			"Unset it to review %s", envFileDir, c.fileEnv, report.data, uc.DataDir))
 	}
-	// Skipped reads no change context so the default declaration serves
-	src, err := evidencefile.New(uc.DataDir, evidence.DefaultContexts())
-	if err != nil {
-		return userConfig{}, setupReport{}, err
-	}
-	skipped, err := src.Skipped(ctx)
-	if err != nil {
-		return userConfig{}, setupReport{}, err
-	}
-	if len(skipped) > 0 {
-		report.warnings = append(report.warnings, fmt.Sprintf("reviews never read %s. "+
-			"Only .md files directly under procedures are procedures and a folder setup cannot open is passed over", strings.Join(skipped, ", ")))
-	}
-	if _, err := os.Stat(filepath.Join(uc.DataDir, "contexts.csv")); errors.Is(err, os.ErrNotExist) {
-		report.warnings = append(report.warnings, fmt.Sprintf("%s has no contexts.csv so every event reads change context unknown. "+
-			"Add one with the columns event_id and change_context to name what changed around each event", uc.DataDir))
-	}
+	report.warnings = append(report.warnings, data.Warnings...)
 	if w := c.carryOver(prior, uc.DataDir, report.records); w != "" {
 		report.warnings = append(report.warnings, w)
 	}
