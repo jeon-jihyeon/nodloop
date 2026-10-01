@@ -12,11 +12,12 @@ import (
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/jeon-jihyeon/nodloop/internal/diagnose"
 	"github.com/jeon-jihyeon/nodloop/internal/mcp"
 )
 
-// A server whose config or data cannot be opened still starts so the conversation can tell the user what to fix
-// Every tool of that server answers the error because a client never shows the model what a server printed on stderr
+// The server starts whatever its config so the conversation can tell the user what to fix
+// Every call opens the config of that moment so a setup run through the CLI needs no reconnect
 func runMCP(
 	args []string, getenv func(string) string, now func() time.Time,
 	stdin io.Reader, stdout io.WriteCloser, stderr io.Writer,
@@ -34,18 +35,8 @@ func runMCP(
 		cmd.list()
 		return 0
 	}
-	ctx := context.Background()
-	a, err := data.app(getenv, now)
-	var s *mcp.Server
-	if err == nil {
-		s, err = a.server()
-	}
-	if err != nil {
-		err = cmd.serveUnconfigured(ctx, err)
-	} else {
-		err = s.ServeTransport(ctx, cmd.transport())
-	}
-	if err != nil {
+	open := mcpOpen{flags: data, getenv: getenv, now: now, session: mcp.NewSession(now())}.open
+	if err := mcp.NewHost(open, buildVersion()).ServeTransport(context.Background(), cmd.transport()); err != nil {
 		return fail(stderr, "mcp", err)
 	}
 	return 0
@@ -87,14 +78,29 @@ func (c mcpCommand) transport() sdk.Transport {
 	return &sdk.IOTransport{Reader: io.NopCloser(c.stdin), Writer: c.out}
 }
 
+// What every tool call of one server process opens
+// The flags and variables of the process still win over the saved config
+type mcpOpen struct {
+	flags  dataFlags
+	getenv func(string) string
+	now    func() time.Time
+	// Made once at start so a change of record dir between calls keeps one session
+	session diagnose.Session
+}
+
 // The cause comes first and then the way out
-// Only a missing data dir is fixed by setup alone so any other cause asks to fix what it names first
-func (c mcpCommand) serveUnconfigured(ctx context.Context, cause error) error {
-	reason := fmt.Errorf("%w. Run %s setup --data-dir <dir> and reconnect the nodloop server", cause, executable())
-	if !errors.Is(cause, errDataDirUnset) {
-		reason = fmt.Errorf("%w. Fix what this names or run %s setup --data-dir <dir> again and reconnect the nodloop server",
-			cause, executable())
+// 1. only a missing data dir is fixed by setup alone so any other cause asks to fix what it names first
+// 2. the next call reads the saved config so no reconnect is ever asked
+func (o mcpOpen) open(context.Context) (*mcp.Server, error) {
+	a, err := o.flags.app(o.getenv, o.now)
+	if err == nil {
+		var s *mcp.Server
+		if s, err = a.server(o.session); err == nil {
+			return s, nil
+		}
 	}
-	fmt.Fprintf(c.log, "nodloop mcp: %v\n", reason)
-	return mcp.NewUnconfigured(reason, buildVersion()).ServeTransport(ctx, c.transport())
+	if errors.Is(err, errDataDirUnset) {
+		return nil, fmt.Errorf("%w. Run %s setup --data-dir <dir>", err, executable())
+	}
+	return nil, fmt.Errorf("%w. Fix what this names or run %s setup --data-dir <dir> again", err, executable())
 }

@@ -72,10 +72,8 @@ type Server struct {
 	ledger    *knowledge.Ledger
 	compactor *compact.Compactor
 	now       func() time.Time
-	session   diagnose.Session
-	// Reported to the client in the MCP handshake
-	// The build version of the binary
-	version string
+	// One per process so the traces of every call keep one session while the server opens per call
+	session diagnose.Session
 	// The path of the binary that commands in an answer name for the user to paste
 	exe string
 	// Flags that name the directories of this server
@@ -86,41 +84,17 @@ type Server struct {
 func New(
 	src Source, policy analysis.Policy, diagnoser *diagnose.Diagnoser, traces TraceStore, verdicts FeedbackStore,
 	outcomes OutcomeStore, ledger *knowledge.Ledger, compactor *compact.Compactor, now func() time.Time,
-	version, exe, dataArgs string,
+	session diagnose.Session, exe, dataArgs string,
 ) *Server {
 	return &Server{
 		src: src, policy: policy, diagnoser: diagnoser, traces: traces, verdicts: verdicts, outcomes: outcomes,
-		ledger: ledger, compactor: compactor, now: now, version: version, exe: exe, dataArgs: dataArgs,
-		session: diagnose.Session{ID: sessionPrefix + trace.NewID(now())},
+		ledger: ledger, compactor: compactor, now: now, session: session, exe: exe, dataArgs: dataArgs,
 	}
 }
 
-func (s *Server) ServeTransport(ctx context.Context, t sdk.Transport) error {
-	srv := sdk.NewServer(&sdk.Implementation{Name: "nodloop", Version: s.version}, nil)
-	for _, tl := range tools {
-		tl.serve(srv, s)
-	}
-	return srv.Run(ctx, t)
-}
-
-// A server whose config or reference data could not be opened
-// It offers the tools of Server with their input schemas and every call answers the reason
-// So the conversation can tell the user what to fix
-type Unconfigured struct {
-	reason  error
-	version string
-}
-
-func NewUnconfigured(reason error, version string) *Unconfigured {
-	return &Unconfigured{reason: reason, version: version}
-}
-
-func (u *Unconfigured) ServeTransport(ctx context.Context, t sdk.Transport) error {
-	srv := sdk.NewServer(&sdk.Implementation{Name: "nodloop", Version: u.version}, nil)
-	for _, tl := range tools {
-		tl.refuse(srv, u.reason)
-	}
-	return srv.Run(ctx, t)
+// The session of one server process
+func NewSession(now time.Time) diagnose.Session {
+	return diagnose.Session{ID: sessionPrefix + trace.NewID(now)}
 }
 
 // Needs no store so a caller can list the tools before any setup
@@ -133,11 +107,10 @@ func Tools() []string {
 }
 
 // One tool with its input type bound to its handler
-// Both server shapes add the same tools so the list and the served tools never drift
+// The host adds every tool whatever its config so the list and the served tools never drift
 type tool struct {
-	name   string
-	serve  func(srv *sdk.Server, s *Server)
-	refuse func(srv *sdk.Server, reason error)
+	name string
+	add  func(srv *sdk.Server, h *Host)
 }
 
 func newTool[In any](
@@ -151,14 +124,9 @@ func newTool[In any](
 	t := &sdk.Tool{Name: name, Description: description, InputSchema: schema}
 	return tool{
 		name: name,
-		serve: func(srv *sdk.Server, s *Server) {
+		add: func(srv *sdk.Server, host *Host) {
 			sdk.AddTool(srv, t, func(ctx context.Context, req *sdk.CallToolRequest, in In) (*sdk.CallToolResult, any, error) {
-				return h(s, ctx, req, in)
-			})
-		},
-		refuse: func(srv *sdk.Server, reason error) {
-			sdk.AddTool(srv, t, func(context.Context, *sdk.CallToolRequest, In) (*sdk.CallToolResult, any, error) {
-				return nil, nil, reason
+				return host.call(ctx, func(s *Server) (*sdk.CallToolResult, any, error) { return h(s, ctx, req, in) })
 			})
 		},
 	}

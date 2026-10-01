@@ -82,10 +82,12 @@ func (a app) procedures(ctx context.Context) (evidence.Procedures, error) {
 	return src.Procedures(ctx)
 }
 
+const policyFile = "policy.yaml"
+
 // `policy.yaml` in the reference directory
 // The data set owns its analyzers so a directory without the file cannot be analyzed
 func (a app) policy() (analysis.Policy, error) {
-	b, err := os.ReadFile(filepath.Join(a.cfg.dataDir, "policy.yaml"))
+	b, err := os.ReadFile(filepath.Join(a.cfg.dataDir, policyFile))
 	if errors.Is(err, os.ErrNotExist) {
 		return analysis.Policy{}, fmt.Errorf("%w: %s", errPolicyMissing, a.cfg.dataDir)
 	}
@@ -316,7 +318,7 @@ func (a app) runner(client llm.Client) (*eval.Runner, error) {
 }
 
 // The server never calls a model and passes no client
-func (a app) server() (*mcp.Server, error) {
+func (a app) server(session diagnose.Session) (*mcp.Server, error) {
 	p, err := a.pipeline()
 	if err != nil {
 		return nil, err
@@ -327,6 +329,6 @@ func (a app) server() (*mcp.Server, error) {
 	}
 	return mcp.New(
 		p.src, p.policy, p.diagnoser(nil), p.traces, p.feedback, p.outcomes, p.ledger, p.compactor(), p.now,
-		buildVersion(), executable(), dataArgs,
+		session, executable(), dataArgs,
 	), nil
 }
