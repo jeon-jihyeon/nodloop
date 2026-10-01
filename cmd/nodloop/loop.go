@@ -121,6 +121,27 @@ func (c knowledgeCommand) narrow(ctx context.Context, id string, version int, au
 	return c.folder(ctx, k.ID, k.Version)
 }
 
+// Proposes the next version with basis verified on the reviews whose outcome confirmed it
+// Prints the candidate like narrow so the person sees what approval would change
+func (c knowledgeCommand) promote(ctx context.Context, id string, version int, author string) error {
+	if id == "" || version <= 0 {
+		return fmt.Errorf("promote: an id and --version %w", errRequired)
+	}
+	h, err := c.app.history(ctx)
+	if err != nil {
+		return err
+	}
+	k, overlaps, err := c.ledger.Promote(ctx, id, version, h.ConfirmedTraces(id, version), author)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(c.out, "%s\tv%d\t%s\tbasis %s\toutcomes %v\n", k.ID, k.Version, k.Status, k.Basis, k.Evidence.OutcomeTraceIDs)
+	for _, o := range overlaps {
+		fmt.Fprintf(c.out, "overlaps\t%s\tv%d\t%s\n", o.ID, o.Version, o.Status)
+	}
+	return c.folder(ctx, k.ID, k.Version)
+}
+
 // The queue and the online report print JSON
 type loopCommand struct {
 	app app

@@ -34,18 +34,23 @@ type Health struct {
 	// An approved version with a refuted outcome and no more confirmed than refuted
 	// Carried outcomes count with its own
 	// A flag for a person and never a retire
-	RetireCandidate bool      `json:"retire_candidate"`
-	LastReviewed    time.Time `json:"last_reviewed,omitzero"`
-	Stale           bool      `json:"stale"`
+	RetireCandidate bool `json:"retire_candidate"`
+	// An approved version of basis stated with a confirmed outcome and none refuted
+	// Carried outcomes count with its own
+	// A flag for a person and never an approval
+	PromotionCandidate bool      `json:"promotion_candidate"`
+	LastReviewed       time.Time `json:"last_reviewed,omitzero"`
+	Stale              bool      `json:"stale"`
 }
 
 // One row per recorded id and version sorted by id then version
 func (h *History) Health(now time.Time) []Health {
 	rows := map[knowledge.Ref]*Health{}
+	stated := map[knowledge.Ref]bool{}
 	for _, k := range h.knowledge.Versions() {
-		rows[knowledge.Ref{ID: k.ID, Version: k.Version}] = &Health{
-			ID: k.ID, Version: k.Version, Status: k.Status, LastReviewed: k.LastReviewed(), Stale: k.Stale(now),
-		}
+		ref := knowledge.Ref{ID: k.ID, Version: k.Version}
+		rows[ref] = &Health{ID: k.ID, Version: k.Version, Status: k.Status, LastReviewed: k.LastReviewed(), Stale: k.Stale(now)}
+		stated[ref] = k.Basis == knowledge.BasisStated
 	}
 	for _, r := range h.reviews {
 		for _, ref := range r.applied() {
@@ -61,6 +66,7 @@ func (h *History) Health(now time.Time) []Health {
 		}
 		refuted, confirmed := row.Refuted+row.CarriedRefuted, row.Confirmed+row.CarriedConfirmed
 		row.RetireCandidate = row.Status == knowledge.StatusApproved && refuted > 0 && refuted >= confirmed
+		row.PromotionCandidate = row.Status == knowledge.StatusApproved && stated[ref] && confirmed > 0 && refuted == 0
 		out = append(out, *row)
 	}
 	slices.SortFunc(out, Health.compare)
@@ -194,7 +200,7 @@ func (is *issues) check(field, ref string, resolved bool) {
 // Sorted once each so a narrowing proposal reads the same whatever the record order
 func (h *History) RefutedContexts(id string, version int, contexts evidence.Contexts) []evidence.Context {
 	var out []evidence.Context
-	for _, r := range h.refuted(knowledge.Ref{ID: id, Version: version}) {
+	for _, r := range h.resulted(knowledge.Ref{ID: id, Version: version}, feedback.ResultRefuted) {
 		if contexts.Valid(r.ChangeContext) && !slices.Contains(out, r.ChangeContext) {
 			out = append(out, r.ChangeContext)
 		}
@@ -206,24 +212,34 @@ func (h *History) RefutedContexts(id string, version int, contexts evidence.Cont
 // The trace ids of the conversation reviews that applied the version or passed their outcome to it and were refuted
 // Sorted so a narrowing proposal reads the same whatever the record order
 func (h *History) RefutedTraces(id string, version int) []string {
+	return h.traces(knowledge.Ref{ID: id, Version: version}, feedback.ResultRefuted)
+}
+
+// The trace ids of the conversation reviews that applied the version or passed their outcome to it and were confirmed
+// Sorted so a promotion proposal reads the same whatever the record order
+func (h *History) ConfirmedTraces(id string, version int) []string {
+	return h.traces(knowledge.Ref{ID: id, Version: version}, feedback.ResultConfirmed)
+}
+
+func (h *History) traces(ref knowledge.Ref, result feedback.Result) []string {
 	var out []string
-	for _, r := range h.refuted(knowledge.Ref{ID: id, Version: version}) {
+	for _, r := range h.resulted(ref, result) {
 		out = append(out, r.trace.ID)
 	}
 	slices.Sort(out)
 	return out
 }
 
-// The conversation reviews that applied the version or passed their outcome to it and whose latest outcome refuted them
-func (h *History) refuted(ref knowledge.Ref) []review {
+// The conversation reviews that applied the version or passed their outcome to it and whose latest outcome is result
+func (h *History) resulted(ref knowledge.Ref, result feedback.Result) []review {
 	var out []review
 	for _, r := range h.reviews {
-		if h.outcomes[r.trace.ID].Result == feedback.ResultRefuted && slices.Contains(r.applied(), ref) {
+		if h.outcomes[r.trace.ID].Result == result && slices.Contains(r.applied(), ref) {
 			out = append(out, r)
 		}
 	}
 	for _, r := range h.inherited(ref) {
-		if h.outcomes[r.trace.ID].Result == feedback.ResultRefuted {
+		if h.outcomes[r.trace.ID].Result == result {
 			out = append(out, r)
 		}
 	}

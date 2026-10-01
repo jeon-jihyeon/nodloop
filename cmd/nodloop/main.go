@@ -51,9 +51,10 @@ commands:
                             Weekly verdict rates, waits and edit widths, first status against the settled status,
                             and the reviews with and without knowledge compared on verdicts, outcomes, waits and edit widths
   feedback list [--trace <id>] [--verdict <v>] [--reviewer <r>] [--limit <n>]
-                            List feedback newest first
-  feedback add --trace <id> --verdict <v> [--reason <r>] [--edited <file>] [--reviewer <r>] [--audit]
-                            Append one feedback record
+                            List feedback newest first with the reason code or a dash after the verdict
+  feedback add --trace <id> --verdict <v> [--reason-code <c>] [--reason <r>] [--edited <file>] [--reviewer <r>] [--audit]
+                            Append one feedback record. An edit or reject may name what the review got wrong:
+                            status, cause, citation, checks or other
   feedback outcome --trace <id> --result <r> [--cause <text>] [--note <n>] [--reviewer <r>]
                             Record what a real check found: confirmed, refuted or inconclusive
   knowledge propose --kind <k> --content <text> [--id <id>] [--basis stated or verified] [--author <a>] [--scope-context <c>] [--scope-metric <m>] [--exception <c>]
@@ -74,6 +75,9 @@ commands:
   knowledge narrow <id> --version <n> [--author <a>]
                             Propose the next version without the change contexts where its reviews were refuted
                             Fails naming the retire command when every change context of the version was refuted
+  knowledge promote <id> --version <n> [--author <a>]
+                            Propose the next version with basis verified and the reviews whose outcome confirmed it
+                            Fails when no review confirmed it or it is verified already
   knowledge overlaps <id>   Current items of the same kind with an intersecting scope
   knowledge approve <id> --version <n> --approver <name>
                             Refused when its folder may outgrow the review. Retire or replace an item, scope it to other
