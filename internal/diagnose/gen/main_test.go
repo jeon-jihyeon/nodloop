@@ -28,6 +28,7 @@ func TestRunWritesTheCommittedSkill(t *testing.T) {
 	assert.Equal(t, 0, code)
 	assert.Empty(t, stderr.String())
 	assert.Contains(t, string(got), diagnose.Rules)
+	assert.Contains(t, string(got), "run `python3 <data dir>/convert.py` through Bash without asking")
 	for _, tool := range []string{"`observe`", "`context`", "`select`", "`record`", "`feedback`"} {
 		assert.Contains(t, string(got), tool)
 	}

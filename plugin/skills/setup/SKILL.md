@@ -5,7 +5,7 @@ description: Point nodloop at a data directory, propose its policy.yaml, and rep
 
 # Set up nodloop
 
-nodloop reads one layout in the data directory: events.csv, contexts.csv, policy.yaml, procedures/*.md and, for eval only, labels.jsonl. nodloop never writes there. You make every edit of the data directory with Write, and only after you showed it to the user and the user approved it. Run `${CLAUDE_PLUGIN_ROOT}/bin/nodloop check --data-dir <dir>` through Bash after every edit you make, so a broken file is caught before the next review.
+nodloop reads one layout in the data directory: events.csv, contexts.csv, policy.yaml, procedures/*.md and, for eval only, labels.jsonl. A `convert.py` sits beside them when the data came in another shape, and nodloop never reads it. nodloop never writes there. You make every edit of the data directory with Write, and only after you showed it to the user and the user approved it. Run `${CLAUDE_PLUGIN_ROOT}/bin/nodloop check --data-dir <dir>` through Bash after every edit you make, so a broken file is caught before the next review.
 
 Every question below goes through AskUserQuestion with the options named, because the user can always pick Other and type an answer. Ask nothing that the files, a command or the user already answered. Never ask the user to reconnect the nodloop server: every tool call reads the saved config, policy.yaml and contexts.csv again, so neither a setup nor an edit needs a reconnect, and an edit of policy.yaml or contexts.csv needs no setup either.
 
@@ -15,9 +15,24 @@ The first Bash call of the plugin binary asks the user for permission. Say befor
 
 1. When the user named no directory, ask which data nodloop reviews. Options: the `examples/demo` folder of a nodloop clone when one sits in the working directory, and Other for a path the user types. A user who wants to try nodloop first can clone https://github.com/jeon-jihyeon/nodloop and pick its `examples/demo` folder.
 2. Run `${CLAUDE_PLUGIN_ROOT}/bin/nodloop check --data-dir <dir>`. It prints one JSON object with `events`, the `profile` of the events, the declared `contexts`, the `procedures` with their scope, the `policy` when one loaded, the `warnings` and the `error` that stopped it, and exits 1 on an error. A relative path resolves against the working directory, which is the one the user meant.
-3. When check stops because the directory has no policy.yaml, follow Policy below. When it stops on anything else, show the error and fix it with the user. Every events.csv column other than event_id, timestamp, metric and value is a series dimension, so tell a user whose export carries a per row column such as a row id or a note to drop it.
+3. When the data the user named is not in this layout, such as an export with other columns, several files, Parquet or a continuous series without events, follow Conversion below before anything else. When check stops because the directory has no policy.yaml, follow Policy below. When it stops on anything else, show the error and fix it with the user. Every events.csv column other than event_id, timestamp, metric and value is a series dimension, so tell a user whose export carries a per row column such as a row id or a note to drop it.
 4. When check passes, run `${CLAUDE_PLUGIN_ROOT}/bin/nodloop setup --data-dir <dir>` and show the user the data and record directories it prints and every warning, word for word.
 5. Call `events` once and compare its number of events with `events` of check. When they differ, the nodloop server starts with another `NODLOOP_FILE_DIR` or `NODLOOP_RECORD_DIR` than your shell, so show the user both directories and tell them to unset the variable where the server starts.
+
+## Conversion
+
+nodloop reads only the canonical layout and never runs a conversion. You write `convert.py` next to the data so the same sources always give the same events.csv, and you never edit events.csv or contexts.csv by hand. A wrong output goes back into the script.
+
+1. Read samples of the sources with Read and Bash, such as the header and a few rows of each file, and state the mapping you inferred. Ask only what the files do not answer, each through AskUserQuestion with your inference as the first option: which column is the time, which columns are metrics, which are dimensions, which column or file names the change context, and for a continuous series how it splits into events.
+2. A continuous series becomes events by fixed slices: a window and a step the user approved, one event per slice, and an event id built from the series and the slice start in UTC such as `pump-3-20261001T0000Z`. So a period always maps to one id and a refresh keeps the ids of reviewed events.
+3. Write `convert.py` with this contract
+   1. a header comment that names every source path and the mapping: time, metrics, dimensions, change context, window and step
+   2. the python3 standard library only, and the `duckdb` CLI through subprocess only when a source needs it, such as Parquet. python3 is required. Tell the user to install the duckdb CLI only when a source needs it
+   3. it reads the sources and rewrites events.csv and contexts.csv whole, with rows sorted by event id, time, metric and dimensions and numbers written as the source wrote them, so a rerun gives byte identical files. It writes contexts.csv only when a source names a change context
+   4. without `--force` it compares the modification times of its sources with events.csv and contexts.csv, exits 0 without writing when no source is newer and prints `up to date`, and otherwise prints `rewrote` and the files
+   5. `--out <dir>` writes into that directory instead of next to the script
+4. Preview before you save. Write the script outside the data directory, run `python3 convert.py --force --out <preview dir>` there and run check on the preview dir. Show the user the row count, the columns mapped to time, metric, value and each dimension, a few sample rows, and the events with their count and time range from check. A check error or a rejected preview goes back into the script.
+5. Only after the user approves the preview, save `convert.py` into the data directory with Write and run `python3 <data dir>/convert.py --force` there. Run it a second time without `--force` and confirm it prints `up to date`. Then follow Policy below.
 
 ## Policy
 
