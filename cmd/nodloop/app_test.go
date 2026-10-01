@@ -72,7 +72,62 @@ func TestAppPolicy(t *testing.T) {
 			policy, err := app{cfg: config{dataDir: dir}}.policy()
 
 			assert.ErrorIs(t, err, tc.want.err)
-			assert.Equal(t, tc.want.policy, policy)
+			// The runner of the data directory is checked by TestCommandRunner
+			read := analysis.Policy{Version: policy.Version, Contexts: policy.Contexts, Analyzers: policy.Analyzers}
+			assert.Equal(t, tc.want.policy, read)
+		})
+	}
+}
+
+func TestCommandRunner(t *testing.T) {
+	type args struct {
+		argv    []string
+		timeout time.Duration
+	}
+	type want struct {
+		stdout string
+		err    error
+		// Regexp matched against the error text
+		msg string
+	}
+	tcs := []struct {
+		name string
+		args args
+		want want
+	}{
+		{
+			"a relative script resolves against the data directory and reads stdin",
+			args{[]string{"./analyzers/echo.sh", "first"}, time.Minute},
+			want{stdout: "first {\"event_id\":\"ev-1\"}\n", msg: `^$`},
+		},
+		{
+			"a non zero exit names stderr",
+			args{[]string{"./analyzers/fail.sh"}, time.Minute},
+			want{err: analysis.ErrCommandFailed, msg: `exit status 3: no data for ev-1$`},
+		},
+		{
+			"a run past its timeout names the timeout",
+			args{[]string{"./analyzers/slow.sh"}, 50 * time.Millisecond},
+			want{err: analysis.ErrCommandTimeout, msg: `timed out: after 50ms$`},
+		},
+		{
+			"a command that does not exist fails",
+			args{[]string{"./analyzers/missing.sh"}, time.Minute},
+			want{err: analysis.ErrCommandFailed, msg: `no such file or directory`},
+		},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			out, err := commandRunner{dir: "testdata/commands"}.Run(tc.args.argv, []byte(`{"event_id":"ev-1"}`), tc.args.timeout)
+
+			assert.ErrorIs(t, err, tc.want.err)
+			assert.Equal(t, tc.want.stdout, string(out))
+			msg := ""
+			if err != nil {
+				msg = err.Error()
+			}
+			assert.Regexp(t, tc.want.msg, msg)
 		})
 	}
 }
