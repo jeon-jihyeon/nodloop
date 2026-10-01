@@ -42,9 +42,18 @@ type Verdicts struct {
 	ApproveRate *float64 `json:"approve_rate"`
 	EditRate    *float64 `json:"edit_rate"`
 	RejectRate  *float64 `json:"reject_rate"`
+	// Counts per reason code over the corrections that carry one
+	ReasonCodes map[feedback.ReasonCode]int `json:"reason_codes,omitempty"`
 }
 
-func (v *Verdicts) add(verdict feedback.Verdict) {
+// An empty code counts only in the verdict counts
+func (v *Verdicts) add(verdict feedback.Verdict, code feedback.ReasonCode) {
+	if code != "" {
+		if v.ReasonCodes == nil {
+			v.ReasonCodes = map[feedback.ReasonCode]int{}
+		}
+		v.ReasonCodes[code]++
+	}
 	v.Total++
 	switch verdict {
 	case feedback.VerdictApprove:
@@ -143,7 +152,7 @@ func (h *History) Report(since time.Time) Report {
 		if !ok || fb.Time.Before(since) {
 			continue
 		}
-		cohort.Verdicts.add(fb.Verdict)
+		cohort.Verdicts.add(fb.Verdict, fb.ReasonCode)
 		h.agree(&rep.Agreement, r, fb)
 		start := weekOf(fb.Time)
 		if weeks[start] == nil {
@@ -152,9 +161,9 @@ func (h *History) Report(since time.Time) Report {
 		if byCohort[cohort] == nil {
 			byCohort[cohort] = &measures{}
 		}
-		weeks[start].Verdicts.add(fb.Verdict)
+		weeks[start].Verdicts.add(fb.Verdict, fb.ReasonCode)
 		if fb.Audit {
-			weeks[start].Audit.add(fb.Verdict)
+			weeks[start].Audit.add(fb.Verdict, fb.ReasonCode)
 		}
 		if fb.Verdict == feedback.VerdictEdit {
 			width := float64(fb.EditWidth(r.trace.Output))

@@ -980,7 +980,7 @@ func TestRecord(t *testing.T) {
 				res, err := d.Record(ctx, c.PendingID, ready)
 				require.NoError(t, err)
 				ids[event] = res.TraceID
-				fb, err := feedback.New(res.TraceID, feedback.VerdictReject, "wrong segment", nil, "", s.Clock.Now())
+				fb, err := feedback.New(res.TraceID, feedback.VerdictReject, "", "wrong segment", nil, "", s.Clock.Now())
 				require.NoError(t, err)
 				require.NoError(t, s.Feedback.Append(ctx, fb))
 			}
@@ -1577,7 +1577,7 @@ func TestRunStoreFailure(t *testing.T) {
 			require.NoError(t, err)
 			res, err := reviewer.Record(ctx, c.PendingID, diagnose.Diagnosis{Status: evidence.StatusNoAction})
 			require.NoError(t, err)
-			fb, err := feedback.New(res.TraceID, feedback.VerdictReject, "wrong cause", nil, "", s.Clock.Now())
+			fb, err := feedback.New(res.TraceID, feedback.VerdictReject, "", "wrong cause", nil, "", s.Clock.Now())
 			require.NoError(t, err)
 			require.NoError(t, verdicts.Append(ctx, fb))
 			_, _, err = ledger.Propose(ctx, knowledge.Knowledge{

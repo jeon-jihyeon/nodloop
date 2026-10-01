@@ -46,6 +46,11 @@ func audited(traceID string, v feedback.Verdict, at time.Time) feedback.Feedback
 	return fb
 }
 
+func coded(fb feedback.Feedback, code feedback.ReasonCode) feedback.Feedback {
+	fb.ReasonCode = code
+	return fb
+}
+
 func TestHistoryReport(t *testing.T) {
 	sunday := monday.Add(-10 * time.Hour)
 	nextMonday := monday.AddDate(0, 0, 7)
@@ -100,6 +105,39 @@ func TestHistoryReport(t *testing.T) {
 						Total: 3, Approve: 2, Reject: 1, ApproveRate: ptr(2.0 / 3), EditRate: ptr(0), RejectRate: ptr(1.0 / 3),
 					},
 					MedianWaitSeconds: ptr(180),
+				},
+			},
+		},
+		{
+			"reason codes count per week audit and cohort and a correction without one counts only as a verdict",
+			args{
+				reviews: []review{{id: "r1", at: monday}, {id: "r2", at: monday}, {id: "r3", at: monday}},
+				verdicts: feedback.Records{
+					coded(verdict("r1", feedback.VerdictReject, monday), feedback.ReasonCause),
+					coded(audited("r2", feedback.VerdictReject, monday), feedback.ReasonCause),
+					verdict("r3", feedback.VerdictReject, monday),
+				},
+			},
+			loop.Report{
+				Weeks: []loop.Week{{
+					Start: monday.Truncate(24 * time.Hour),
+					Verdicts: loop.Verdicts{
+						Total: 3, Reject: 3, ApproveRate: ptr(0), EditRate: ptr(0), RejectRate: ptr(1),
+						ReasonCodes: map[feedback.ReasonCode]int{feedback.ReasonCause: 2},
+					},
+					Audit: loop.Verdicts{
+						Total: 1, Reject: 1, ApproveRate: ptr(0), EditRate: ptr(0), RejectRate: ptr(1),
+						ReasonCodes: map[feedback.ReasonCode]int{feedback.ReasonCause: 1},
+					},
+					MedianWaitSeconds: ptr(0),
+				}},
+				Agreement: loop.Agreement{Excluded: 3, Confusion: map[evidence.Status]map[evidence.Status]int{}},
+				WithoutKnowledge: loop.Cohort{
+					Verdicts: loop.Verdicts{
+						Total: 3, Reject: 3, ApproveRate: ptr(0), EditRate: ptr(0), RejectRate: ptr(1),
+						ReasonCodes: map[feedback.ReasonCode]int{feedback.ReasonCause: 2},
+					},
+					MedianWaitSeconds: ptr(0),
 				},
 			},
 		},

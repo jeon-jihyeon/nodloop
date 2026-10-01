@@ -27,7 +27,7 @@ func compactionStores(t *testing.T) testkit.Stores {
 	for _, tr := range []trace.Trace{{ID: "t1", Subject: "tq-001"}, {ID: "t2", Subject: "tq-017"}} {
 		tr.Name, tr.Time, tr.Output = trace.NameDiagnose, at, json.RawMessage(`{"status":"hold"}`)
 		require.NoError(t, st.Traces.Append(ctx, tr))
-		fb, err := feedback.New(tr.ID, feedback.VerdictReject, "wrong", nil, "", at)
+		fb, err := feedback.New(tr.ID, feedback.VerdictReject, "", "wrong", nil, "", at)
 		require.NoError(t, err)
 		require.NoError(t, st.Feedback.Append(ctx, fb))
 	}

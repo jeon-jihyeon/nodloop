@@ -53,7 +53,7 @@ func seed(t *testing.T, s testkit.Stores) {
 		{"t1", feedback.VerdictReject, nil}, {"t2", feedback.VerdictEdit, json.RawMessage(`{"status":"no_action"}`)},
 		{"t3", feedback.VerdictApprove, nil}, {"t4", feedback.VerdictReject, nil},
 	} {
-		fb, err := feedback.New(v.trace, v.verdict, "reason of "+v.trace, v.edited, "", s.Clock.Now())
+		fb, err := feedback.New(v.trace, v.verdict, "", "reason of "+v.trace, v.edited, "", s.Clock.Now())
 		require.NoError(t, err)
 		require.NoError(t, s.Feedback.Append(ctx, fb))
 	}
@@ -539,7 +539,7 @@ func TestFolderOutcomes(t *testing.T) {
 			seed(t, s)
 			for _, st := range tc.args {
 				if st.verdict != "" {
-					fb, err := feedback.New("t3", st.verdict, "approved again", nil, "", s.Clock.Now())
+					fb, err := feedback.New("t3", st.verdict, "", "approved again", nil, "", s.Clock.Now())
 					require.NoError(t, err)
 					require.NoError(t, s.Feedback.Append(ctx, fb))
 					continue

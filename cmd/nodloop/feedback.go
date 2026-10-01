@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -18,9 +19,9 @@ import (
 // Flags of the feedback subcommands
 // Each action reads the ones it needs
 type feedbackFlags struct {
-	traceID, verdict, reviewer, reason, edited, result, cause, note string
-	limit                                                           int
-	audit                                                           bool
+	traceID, verdict, reviewer, code, reason, edited, result, cause, note string
+	limit                                                                 int
+	audit                                                                 bool
 }
 
 func (f *feedbackFlags) bind(fs *flag.FlagSet) {
@@ -28,6 +29,8 @@ func (f *feedbackFlags) bind(fs *flag.FlagSet) {
 	fs.StringVar(&f.verdict, "verdict", "", "approve or edit or reject")
 	fs.StringVar(&f.reviewer, "reviewer", "", "reviewer such as author")
 	fs.IntVar(&f.limit, "limit", 0, "newest n records. 0 means all")
+	fs.StringVar(&f.code, "reason-code", "",
+		"add: what the corrected review got wrong with edit or reject. status, cause, citation, checks or other")
 	fs.StringVar(&f.reason, "reason", "", "add: why the verdict was given")
 	fs.StringVar(&f.edited, "edited", "", "add: file holding the corrected output JSON")
 	fs.StringVar(&f.result, "result", "", "outcome: confirmed, refuted or inconclusive")
@@ -67,7 +70,7 @@ func runFeedback(args []string, getenv func(string) string, now func() time.Time
 	case "list":
 		err = cmd.list(ctx, flags.filter())
 	case "add":
-		err = cmd.add(ctx, flags.traceID, feedback.Verdict(flags.verdict), flags.reason, flags.edited, flags.reviewer)
+		err = cmd.add(ctx, flags.traceID, feedback.Verdict(flags.verdict), feedback.ReasonCode(flags.code), flags.reason, flags.edited, flags.reviewer)
 	case "outcome":
 		err = cmd.outcome(ctx, flags.traceID, feedback.Result(flags.result), flags.cause, flags.note, flags.reviewer)
 	default:
@@ -95,14 +98,16 @@ func (c feedbackCommand) list(ctx context.Context, f feedback.Filter) error {
 	if err != nil {
 		return err
 	}
+	// A record without a code prints a dash so the reason stays in the last column
 	for _, fb := range records {
-		fmt.Fprintf(c.out, "%s\t%s\t%s\t%s\t%s\n", fb.TraceID, fb.Time.Format(time.RFC3339), fb.Verdict, fb.Reviewer, fb.Reason)
+		fmt.Fprintf(c.out, "%s\t%s\t%s\t%s\t%s\t%s\n",
+			fb.TraceID, fb.Time.Format(time.RFC3339), fb.Verdict, cmp.Or(string(fb.ReasonCode), "-"), fb.Reviewer, fb.Reason)
 	}
 	return nil
 }
 
 func (c feedbackCommand) add(
-	ctx context.Context, traceID string, verdict feedback.Verdict, reason, editedPath, reviewer string,
+	ctx context.Context, traceID string, verdict feedback.Verdict, code feedback.ReasonCode, reason, editedPath, reviewer string,
 ) error {
 	if traceID == "" || verdict == "" {
 		return fmt.Errorf("add: --trace and a --verdict of approve or edit or reject %w", errRequired)
@@ -115,7 +120,7 @@ func (c feedbackCommand) add(
 		}
 		edited = b
 	}
-	fb, err := feedback.New(traceID, verdict, reason, edited, reviewer, c.app.now())
+	fb, err := feedback.New(traceID, verdict, code, reason, edited, reviewer, c.app.now())
 	if err != nil {
 		return err
 	}

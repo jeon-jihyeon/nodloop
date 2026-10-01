@@ -522,7 +522,7 @@ func TestRunKnowledge(t *testing.T) {
 					require.NoError(t, traces.Append(ctx, trace.Trace{
 						ID: id, Name: trace.NameDiagnose, Subject: "e-" + id, Time: at, Output: json.RawMessage(`{"status":"hold"}`),
 					}))
-					fb, err := feedback.New(id, verdict, "reason", nil, "", at)
+					fb, err := feedback.New(id, verdict, "", "reason", nil, "", at)
 					require.NoError(t, err)
 					require.NoError(t, verdicts.Append(ctx, fb))
 				}
