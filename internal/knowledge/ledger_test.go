@@ -1407,21 +1407,21 @@ func TestLedgerFailsOnBrokenStore(t *testing.T) {
 			args{blocked(), func(ctx context.Context, l *knowledge.Ledger) (any, error) {
 				return l.Import(ctx, []knowledge.Knowledge{third})
 			}},
-			want{knowledge.Set{third}, knowledge.ErrVetoExport},
+			want{knowledge.Set{third}, knowledge.ErrExport},
 		},
 		{
 			"approve fails to export the vetoes and still returns the approved record",
 			args{blocked(), func(ctx context.Context, l *knowledge.Ledger) (any, error) {
 				return l.Approve(ctx, "k1", 1, "jed")
 			}},
-			want{approvedNow, knowledge.ErrVetoExport},
+			want{approvedNow, knowledge.ErrExport},
 		},
 		{
 			"retire fails to export the vetoes and still returns the retired record",
 			args{blocked(), func(ctx context.Context, l *knowledge.Ledger) (any, error) {
 				return l.Retire(ctx, "k2", 1, "jed")
 			}},
-			want{retiredNow, knowledge.ErrVetoExport},
+			want{retiredNow, knowledge.ErrExport},
 		},
 		{
 			"propose fails to append",
@@ -1508,7 +1508,7 @@ func TestLedgerRefusedRetryExportsVetoes(t *testing.T) {
 				require.NoError(t, tc.args.before(ctx, working))
 			}
 			blocked := knowledge.NewLedger(store, vetofile.NewApprovedFile(blockedHome, dir), evidence.DefaultContexts(), now, newID)
-			require.ErrorIs(t, tc.args.lost(ctx, blocked), knowledge.ErrVetoExport)
+			require.ErrorIs(t, tc.args.lost(ctx, blocked), knowledge.ErrExport)
 
 			err = tc.args.lost(ctx, working)
 
