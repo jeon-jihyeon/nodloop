@@ -862,7 +862,7 @@ func TestServerApproveKeepsTheApproval(t *testing.T) {
 		{
 			"a failed veto export and folder read answer the approval and both errors",
 			args{map[string]string{".claude": ""}, 0},
-			want{[]string{"id", "version", "status", "approver", "veto", "veto_export_error", "folder_error"}, knowledge.StatusApproved},
+			want{[]string{"id", "version", "status", "approver", "veto", "export_error", "folder_error"}, knowledge.StatusApproved},
 		},
 	}
 	ctx := context.Background()

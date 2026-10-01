@@ -19,7 +19,7 @@ var (
 	ErrVetoInvalid          = errors.New("knowledge: invalid veto")
 	ErrVetoExample          = errors.New("knowledge: veto does not block its example")
 	ErrFolderFull           = errors.New("knowledge: folder may outgrow the review")
-	ErrVetoExport           = errors.New("knowledge: vetoes were not exported")
+	ErrExport               = errors.New("knowledge: approved knowledge was not exported")
 	ErrCompactionInvalid    = errors.New("knowledge: invalid compaction")
 	ErrCompactionIncomplete = errors.New("knowledge: incomplete compaction; propose again")
 	ErrCompactionOverlap    = errors.New("knowledge: two new items of one kind share a folder")

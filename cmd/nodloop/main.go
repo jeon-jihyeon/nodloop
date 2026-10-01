@@ -100,7 +100,8 @@ commands:
                             Review every event the old items came from again with the new items through claude -p
   knowledge approve-compaction <compaction id> --approver <name>
                             Approve the new items and retire the old ones once the replay passed
-  knowledge export          Write the approved vetoes again after a failed export
+  knowledge export          Write the approved vetoes and approved.md of the record directory again after a failed export
+                            and print the line that imports approved.md from a CLAUDE.md
   diagnose --event <id> [--examples <n>] [--knowledge none or selected or all] [--model <m>] [--session <s>] [--tag <t>]
                             Batch review of one event through claude -p. JSON on stdout and the trace id on stderr
   mcp                       Serve the MCP tools on stdio. --list prints the tool names without opening any data
