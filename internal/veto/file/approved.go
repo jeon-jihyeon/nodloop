@@ -39,10 +39,12 @@ type ApprovedFile struct {
 	recordDir string
 }
 
+// Two spellings of one record directory such as a symlinked path name one file and one lock
 func NewApprovedFile(home, recordDir string) *ApprovedFile {
 	if home == "" {
 		return &ApprovedFile{}
 	}
+	recordDir = resolved(recordDir)
 	sum := sha256.Sum256([]byte(recordDir))
 	name := approvedPrefix + hex.EncodeToString(sum[:6]) + approvedSuffix
 	return &ApprovedFile{path: filepath.Join(home, dir, name), recordDir: recordDir}
@@ -121,7 +123,7 @@ func (f *ApprovedFile) untouched() bool {
 }
 
 // Removes the approved files an older spelling of the same record directory wrote
-// 1. a file is the same ledger only when its first line names an absolute directory that cleans to this one
+// 1. a file is the same ledger only when its first line names an absolute directory that resolves to this one
 // 2. a relative or missing name is kept because the directory it meant is unknown and removing it could drop vetoes of another ledger
 // 3. a file that cannot be read is kept so an unrelated file never fails the write
 // 4. the lock files beside them stay because another process may hold one
@@ -145,7 +147,27 @@ func (f *ApprovedFile) removeSpellings() error {
 
 // Whether recordDir is another spelling of the record directory of this file
 func (f *ApprovedFile) spelledBy(recordDir string) bool {
-	return filepath.IsAbs(recordDir) && filepath.Clean(recordDir) == f.recordDir
+	return filepath.IsAbs(recordDir) && resolved(recordDir) == f.recordDir
+}
+
+// The absolute directory with every symlink of its existing part resolved
+// 1. the part that does not exist yet is kept as written so a directory made later resolves to the same path
+// 2. a relative directory is kept as written because it never names another spelling
+func resolved(dir string) string {
+	if !filepath.IsAbs(dir) {
+		return dir
+	}
+	dir = filepath.Clean(dir)
+	rest := ""
+	for existing := dir; ; existing = filepath.Dir(existing) {
+		if target, err := filepath.EvalSymlinks(existing); err == nil {
+			return filepath.Join(target, rest)
+		}
+		if filepath.Dir(existing) == existing {
+			return dir
+		}
+		rest = filepath.Join(filepath.Base(existing), rest)
+	}
 }
 
 func (f *ApprovedFile) write(specs []veto.Spec) error {

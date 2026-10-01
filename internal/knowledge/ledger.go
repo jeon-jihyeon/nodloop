@@ -2,6 +2,7 @@ package knowledge
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"time"
@@ -38,6 +39,7 @@ type VetoSink interface {
 // 2. approve and retire need an approver and follow the allowed status changes
 // 3. the clock is read here in UTC and every record of one call carries that time
 // 4. approve and retire and import end by handing the approved vetoes to the sink
+// A refused approve or retire hands them too so its retry repairs a sink a killed call left behind
 // 5. approve refuses an approval that pushes a review past ReviewChars or ReviewItems or grows one already past them
 // and import never checks it
 // 6. every write decides under the store lock on the records as they are then
@@ -154,7 +156,7 @@ func (l *Ledger) Approve(ctx context.Context, id string, version int, approver s
 		return records, nil
 	})
 	if err != nil {
-		return Knowledge{}, err
+		return Knowledge{}, l.refused(ctx, err)
 	}
 	return to, l.exportVetoes(ctx, to)
 }
@@ -172,9 +174,17 @@ func (l *Ledger) Retire(ctx context.Context, id string, version int, approver st
 		return []Knowledge{to}, nil
 	})
 	if err != nil {
-		return Knowledge{}, err
+		return Knowledge{}, l.refused(ctx, err)
 	}
 	return to, l.exportVetoes(ctx, to)
+}
+
+// The refusal of an approve or a retire after the approved vetoes are handed to the sink again
+// A call killed between its append and its hand off leaves the sink behind the records and its retry is refused
+// so the refused retry brings the sink back in step
+// A failed hand off joins the refusal without ErrVetoExport because no status changed
+func (l *Ledger) refused(ctx context.Context, err error) error {
+	return errors.Join(err, l.ExportVetoes(ctx))
 }
 
 // Appends in one write the records of a file that the ledger does not hold yet and returns them

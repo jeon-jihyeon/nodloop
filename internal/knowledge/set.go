@@ -111,7 +111,7 @@ func (s Set) Covers(changeContext evidence.Context) bool {
 func (s Set) folder(item Knowledge) Folder {
 	f := Folder{Chars: utf8.RuneCountInString(item.Text()), Carried: Set{}}
 	for _, c := range evidence.Contexts() {
-		if !item.reaches(c) {
+		if !item.carriedIn(c) {
 			continue
 		}
 		if next := s.folderIn(item, c); f.Context == "" || next.heavier(f) {
@@ -134,10 +134,10 @@ func (s Set) folderIn(item Knowledge, changeContext evidence.Context) Folder {
 // 1. a review past ReviewChars grows when its chars grow and a review past ReviewItems when its items grow
 // 2. each cap is judged alone so a review with fewer items and more chars passes while its chars stay under the cap
 // 3. a review already past a cap that does not grow passes so a replacement never needs a retire first
-// Only a change context the item reaches can grow because every other change between the sets retires or supersedes
+// Only a change context whose review carries the item can grow because every other change between the sets retires or supersedes
 func (s Set) outgrows(before Set, item Knowledge) (Folder, bool) {
 	for _, c := range evidence.Contexts() {
-		if !item.reaches(c) {
+		if !item.carriedIn(c) {
 			continue
 		}
 		f := s.folderIn(item, c)
@@ -505,13 +505,14 @@ func (s Set) before(version int) []Ref {
 
 // Whether ref takes over the outcome of a review that applied the versions in applied under the change context
 // 1. the review applied a version a compaction merged into ref and never ref itself
-// 2. ref still reaches the change context of the review
+// 2. ref still reaches the change context of the review and its metrics admit one metric the review moved
+// Dims are left open because the review does not record them
 // 3. neither ref nor a merged version cites the review as outcome evidence
 // A narrowing cites the refuted reviews it answers so they stop counting against the version
 // A compaction restates the facts of the versions it merged so their open outcomes stay with the fact
-func (s Set) Inherits(ref Ref, traceID string, applied []Ref, changeContext evidence.Context) bool {
+func (s Set) Inherits(ref Ref, traceID string, applied []Ref, changeContext evidence.Context, moved []string) bool {
 	k, err := s.latest(ref.ID, ref.Version)
-	if err != nil || slices.Contains(applied, ref) || !k.reaches(changeContext) {
+	if err != nil || slices.Contains(applied, ref) || !k.reaches(changeContext) || !k.Scope.Matches(changeContext, moved) {
 		return false
 	}
 	merged := s.merged(ref)

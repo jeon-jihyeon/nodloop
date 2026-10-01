@@ -453,6 +453,7 @@ func TestSetLineage(t *testing.T) {
 
 // k-c v1 compacts k-a v1 and k-b v1 and k-d v1 compacts k-c v1
 // k-e v1 cites k-a v1 as evidence without a compaction
+// k-f v1 compacts k-a v1 and narrows it to one metric
 func TestSetInherits(t *testing.T) {
 	ref := func(id string, version int) knowledge.Ref { return knowledge.Ref{ID: id, Version: version} }
 	quiet := knowledge.Scope{Scope: evidence.Scope{ChangeContexts: []evidence.Context{evidence.ContextNoKnownChange}}}
@@ -465,12 +466,17 @@ func TestSetInherits(t *testing.T) {
 		},
 		{ID: "k-d", Version: 1, Compaction: "c-2", Evidence: knowledge.Evidence{Knowledge: []knowledge.Ref{ref("k-c", 1)}}},
 		{ID: "k-e", Version: 1, Evidence: knowledge.Evidence{Knowledge: []knowledge.Ref{ref("k-a", 1)}}},
+		{
+			ID: "k-f", Version: 1, Compaction: "c-3", Evidence: knowledge.Evidence{Knowledge: []knowledge.Ref{ref("k-a", 1)}},
+			Scope: knowledge.Scope{Scope: evidence.Scope{Metrics: []string{"conversion_count"}}},
+		},
 	}
 	type args struct {
 		ref           knowledge.Ref
 		traceID       string
 		applied       []knowledge.Ref
 		changeContext evidence.Context
+		moved         []string
 	}
 	quietly := evidence.ContextNoKnownChange
 	tcs := []struct {
@@ -478,27 +484,38 @@ func TestSetInherits(t *testing.T) {
 		args args
 		want bool
 	}{
-		{"a review of a merged version passes to the compaction", args{ref("k-c", 1), "r", []knowledge.Ref{ref("k-a", 1)}, quietly}, true},
-		{"a review of a version merged two compactions back passes on", args{ref("k-d", 1), "r", []knowledge.Ref{ref("k-b", 1)}, quietly}, true},
+		{"a review of a merged version passes to the compaction", args{ref("k-c", 1), "r", []knowledge.Ref{ref("k-a", 1)}, quietly, nil}, true},
+		{"a review of a version merged two compactions back passes on", args{ref("k-d", 1), "r", []knowledge.Ref{ref("k-b", 1)}, quietly, nil}, true},
 		{
 			"a review that applied the version itself is its own",
-			args{ref("k-c", 1), "r", []knowledge.Ref{ref("k-a", 1), ref("k-c", 1)}, quietly},
+			args{ref("k-c", 1), "r", []knowledge.Ref{ref("k-a", 1), ref("k-c", 1)}, quietly, nil},
 			false,
 		},
-		{"a review the version cites is answered", args{ref("k-c", 1), "cited", []knowledge.Ref{ref("k-a", 1)}, quietly}, false},
-		{"a review a merged version cites is answered", args{ref("k-d", 1), "cited", []knowledge.Ref{ref("k-a", 1)}, quietly}, false},
+		{"a review the version cites is answered", args{ref("k-c", 1), "cited", []knowledge.Ref{ref("k-a", 1)}, quietly, nil}, false},
+		{"a review a merged version cites is answered", args{ref("k-d", 1), "cited", []knowledge.Ref{ref("k-a", 1)}, quietly, nil}, false},
 		{
 			"a review of a change context the version no longer reaches stays behind",
-			args{ref("k-c", 1), "r", []knowledge.Ref{ref("k-a", 1)}, evidence.ContextPlannedChange},
+			args{ref("k-c", 1), "r", []knowledge.Ref{ref("k-a", 1)}, evidence.ContextPlannedChange, nil},
 			false,
 		},
-		{"evidence without a compaction merges nothing", args{ref("k-e", 1), "r", []knowledge.Ref{ref("k-a", 1)}, quietly}, false},
-		{"an unknown version inherits nothing", args{ref("k-z", 1), "r", []knowledge.Ref{ref("k-a", 1)}, quietly}, false},
+		{"evidence without a compaction merges nothing", args{ref("k-e", 1), "r", []knowledge.Ref{ref("k-a", 1)}, quietly, nil}, false},
+		{"an unknown version inherits nothing", args{ref("k-z", 1), "r", []knowledge.Ref{ref("k-a", 1)}, quietly, nil}, false},
+		{
+			"a review that moved a metric of a version narrowed by metric passes to it",
+			args{ref("k-f", 1), "r", []knowledge.Ref{ref("k-a", 1)}, quietly, []string{"conversion_count", "cost"}},
+			true,
+		},
+		{
+			"a review that moved no metric of a version narrowed by metric stays behind",
+			args{ref("k-f", 1), "r", []knowledge.Ref{ref("k-a", 1)}, quietly, []string{"cost"}},
+			false,
+		},
+		{"a quiet review stays behind a version narrowed by metric", args{ref("k-f", 1), "r", []knowledge.Ref{ref("k-a", 1)}, quietly, nil}, false},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			assert.Equal(t, tc.want, set.Inherits(tc.args.ref, tc.args.traceID, tc.args.applied, tc.args.changeContext))
+			assert.Equal(t, tc.want, set.Inherits(tc.args.ref, tc.args.traceID, tc.args.applied, tc.args.changeContext, tc.args.moved))
 		})
 	}
 }

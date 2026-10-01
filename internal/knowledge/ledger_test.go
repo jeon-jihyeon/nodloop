@@ -734,12 +734,18 @@ func TestLedgerApproveScopeWidened(t *testing.T) {
 // An event carries one change context so the cap counts the items of one change context and never the union
 func TestLedgerApproveItemCap(t *testing.T) {
 	now := time.Date(2026, 9, 23, 0, 0, 0, 0, time.UTC)
-	item := func(id string, status knowledge.Status, contexts []evidence.Context) knowledge.Knowledge {
+	item := func(id string, status knowledge.Status, contexts []evidence.Context, vetoed bool) knowledge.Knowledge {
 		k := knowledge.Knowledge{
 			ID: id, Version: 1, Kind: knowledge.KindMeaning, Content: "one",
 			Scope:    knowledge.Scope{Scope: evidence.Scope{ChangeContexts: contexts}},
 			Evidence: knowledge.Evidence{ParagraphIDs: []string{"p#1"}}, Basis: knowledge.BasisStated,
 			Status: status, Author: "author", Time: now,
+		}
+		if vetoed {
+			k.Kind, k.Veto = knowledge.KindJudgment, &knowledge.Veto{
+				Tool: "Bash", When: []knowledge.VetoCondition{{Field: "command", Match: "^" + id + `\b`}},
+				Example: map[string]any{"command": id + " now"},
+			}
 		}
 		if status == knowledge.StatusApproved {
 			k.Approver, k.ApprovedAt = "ann", now
@@ -751,12 +757,14 @@ func TestLedgerApproveItemCap(t *testing.T) {
 		prefix   string
 		count    int
 		contexts []evidence.Context
+		vetoed   bool
 	}
 	type args struct {
 		approved []group
 		// The scope and exceptions of the candidate
 		contexts   []evidence.Context
 		exceptions []evidence.Context
+		vetoed     bool
 	}
 	type want struct {
 		status knowledge.Status
@@ -766,16 +774,17 @@ func TestLedgerApproveItemCap(t *testing.T) {
 	quiet := []evidence.Context{evidence.ContextNoKnownChange}
 	planned := []evidence.Context{evidence.ContextPlannedChange}
 	measured := []evidence.Context{evidence.ContextMeasurementChanged}
-	split := []group{{"k-q", 5, quiet}, {"k-p", 5, planned}}
+	split := []group{{"k-q", 5, quiet, false}, {"k-p", 5, planned, false}}
+	vetoes := []group{{"k-v", 10, nil, true}}
 	tcs := []struct {
 		name string
 		args args
 		want want
 	}{
-		{"the item that fills the review list is approved", args{approved: []group{{"k-", 9, nil}}}, want{status: knowledge.StatusApproved}},
+		{"the item that fills the review list is approved", args{approved: []group{{"k-", 9, nil, false}}}, want{status: knowledge.StatusApproved}},
 		{
 			"the item one past the review list is refused naming the items",
-			args{approved: []group{{"k-", 10, nil}}},
+			args{approved: []group{{"k-", 10, nil, false}}},
 			want{
 				status: knowledge.StatusCandidate,
 				err: "knowledge: folder may outgrow the review: 431 of 70000 chars 11 of 10 items in no_known_change with " +
@@ -795,7 +804,7 @@ func TestLedgerApproveItemCap(t *testing.T) {
 		},
 		{
 			"an item of a change context that already carries ten items is refused naming only those",
-			args{approved: []group{{"k-q", 10, quiet}, {"k-p", 5, planned}}},
+			args{approved: []group{{"k-q", 10, quiet, false}, {"k-p", 5, planned, false}}},
 			want{
 				status: knowledge.StatusCandidate,
 				err: "knowledge: folder may outgrow the review: 661 of 70000 chars 11 of 10 items in no_known_change with " +
@@ -805,7 +814,14 @@ func TestLedgerApproveItemCap(t *testing.T) {
 		},
 		{
 			"a change context the item excepts is never counted",
-			args{approved: append(slices.Clone(split[:1]), group{"k-m", 5, measured}, group{"k-p", 10, planned}), exceptions: planned},
+			args{approved: append(slices.Clone(split[:1]), group{"k-m", 5, measured, false}, group{"k-p", 10, planned, false}), exceptions: planned},
+			want{status: knowledge.StatusApproved},
+		},
+		{"an item beside ten unscoped vetoes is approved", args{approved: vetoes, contexts: quiet}, want{status: knowledge.StatusApproved}},
+		{"an eleventh veto is approved", args{approved: vetoes, vetoed: true}, want{status: knowledge.StatusApproved}},
+		{
+			"a veto beside a change context that already carries ten items is approved",
+			args{approved: []group{{"k-q", 10, quiet, false}}, vetoed: true},
 			want{status: knowledge.StatusApproved},
 		},
 	}
@@ -822,10 +838,10 @@ func TestLedgerApproveItemCap(t *testing.T) {
 			var records []knowledge.Knowledge
 			for _, g := range tc.args.approved {
 				for i := range g.count {
-					records = append(records, item(fmt.Sprintf("%s%d", g.prefix, i), knowledge.StatusApproved, g.contexts))
+					records = append(records, item(fmt.Sprintf("%s%d", g.prefix, i), knowledge.StatusApproved, g.contexts, g.vetoed))
 				}
 			}
-			candidate := item("k-new", knowledge.StatusCandidate, tc.args.contexts)
+			candidate := item("k-new", knowledge.StatusCandidate, tc.args.contexts, tc.args.vetoed)
 			candidate.Exceptions = tc.args.exceptions
 			require.NoError(t, testkit.Err(l.Import(ctx, append(records, candidate))))
 
@@ -1371,6 +1387,75 @@ func TestLedgerFailsOnBrokenStore(t *testing.T) {
 			got, err := tc.args.call(ctx, tc.args.ledger)
 			assert.ErrorIs(t, err, tc.want.err)
 			assert.Equal(t, tc.want.value, got)
+		})
+	}
+}
+
+// A call killed between its append and its hand off leaves the vetoes behind the way a failed hand off does
+// Its retry is refused and still brings the vetoes in step
+func TestLedgerRefusedRetryExportsVetoes(t *testing.T) {
+	ctx := context.Background()
+	now := func() time.Time { return time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC) }
+	newID := func(prefix string) string { return prefix + "new" }
+	judgment := knowledge.Knowledge{
+		ID: "v", Version: 1, Kind: knowledge.KindJudgment, Content: "never run cmd",
+		Evidence: knowledge.Evidence{ParagraphIDs: []string{"p#1"}}, Basis: knowledge.BasisStated,
+		Status: knowledge.StatusCandidate, Author: "author", Time: now(),
+		Veto: &knowledge.Veto{
+			Tool: "Bash", When: []knowledge.VetoCondition{{Field: "command", Match: `^cmd\b`}},
+			Example: map[string]any{"command": "cmd now"},
+		},
+	}
+	type call func(context.Context, *knowledge.Ledger) error
+	approve := func(ctx context.Context, l *knowledge.Ledger) error {
+		_, err := l.Approve(ctx, "v", 1, "jed")
+		return err
+	}
+	retire := func(ctx context.Context, l *knowledge.Ledger) error {
+		_, err := l.Retire(ctx, "v", 1, "jed")
+		return err
+	}
+	type args struct {
+		// Runs with a working hand off before the lost one
+		before call
+		// Loses its hand off and then runs again with a working one
+		lost call
+	}
+	tcs := []struct {
+		name string
+		args args
+		// Veto ids in the approved file after the retry
+		want []string
+	}{
+		{"a refused approve exports the veto its lost hand off left out", args{nil, approve}, []string{"v"}},
+		{"a refused retire removes the veto its lost hand off left in", args{approve, retire}, []string{}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir, home, blockedHome := t.TempDir(), t.TempDir(), t.TempDir()
+			require.NoError(t, os.WriteFile(filepath.Join(blockedHome, ".claude"), nil, 0o600))
+			store, err := file.New(dir)
+			require.NoError(t, err)
+			working := knowledge.NewLedger(store, vetofile.NewApprovedFile(home, dir), now, newID)
+			require.NoError(t, testkit.Err(working.Import(ctx, []knowledge.Knowledge{judgment})))
+			if tc.args.before != nil {
+				require.NoError(t, tc.args.before(ctx, working))
+			}
+			blocked := knowledge.NewLedger(store, vetofile.NewApprovedFile(blockedHome, dir), now, newID)
+			require.ErrorIs(t, tc.args.lost(ctx, blocked), knowledge.ErrVetoExport)
+
+			err = tc.args.lost(ctx, working)
+
+			assert.ErrorIs(t, err, knowledge.ErrTransitionInvalid)
+			b, _ := os.ReadFile(vetofile.NewApprovedFile(home, dir).Path())
+			vetoes, err := veto.Parse(b)
+			require.NoError(t, err)
+			ids := []string{}
+			for _, v := range vetoes {
+				ids = append(ids, v.ID())
+			}
+			assert.Equal(t, tc.want, ids)
 		})
 	}
 }

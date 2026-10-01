@@ -40,6 +40,22 @@ func TestReadRecorded(t *testing.T) {
 				Forced:    true,
 			}},
 		},
+		{
+			"a quiet review moved no metric of those it measured",
+			args{trace.NameDiagnose, json.RawMessage(`{"change_context":"unknown","metrics":["cost"],"moved":[]}`), output, nil},
+			want{recorded: diagnose.Recorded{
+				ChangeContext: evidence.ContextUnknown, Moved: []string{},
+				Diagnosis: diagnose.Diagnosis{Status: evidence.StatusHold, Causes: []diagnose.Cause{}, Checks: diagnose.Checks{}},
+			}},
+		},
+		{
+			"a review recorded before moved metrics reads every measured metric as moved",
+			args{trace.NameDiagnose, json.RawMessage(`{"change_context":"unknown","metrics":["cost"]}`), output, nil},
+			want{recorded: diagnose.Recorded{
+				ChangeContext: evidence.ContextUnknown, Moved: []string{"cost"},
+				Diagnosis: diagnose.Diagnosis{Status: evidence.StatusHold, Causes: []diagnose.Cause{}, Checks: diagnose.Checks{}},
+			}},
+		},
 		{"another trace name", args{trace.NameContext, input, output, nil}, want{err: diagnose.ErrMalformed}},
 		{
 			"an input that does not decode",

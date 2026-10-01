@@ -81,6 +81,7 @@ func TestRunKnowledge(t *testing.T) {
 		vetoes       = "vetoes\t1 approved in .*/\\.claude/nodloop/vetoes\\.approved\\.[0-9a-f]+\\.yaml\t"
 		unhooked     = "guard hook not installed\\. Run nodloop guard install to enforce them\n"
 		folder       = "folder\t[0-9]+ of 70000 chars\t1 of 10 items in [a-z_]+\tno other item\n"
+		vetoFolder   = "folder\tnone because no review carries a veto\n"
 	)
 	type args struct {
 		// Commands that must succeed before the one under test
@@ -330,8 +331,7 @@ func TestRunKnowledge(t *testing.T) {
 			args{args: proposeSed},
 			want{
 				0,
-				"^k-sed\tv1\tcandidate\nscope\tany event\nveto\tBash\tcommand matches sed\\\\s\\+-i unless \"\"\n" +
-					"folder\t[0-9]+ of 70000 chars\t[0-9]+ of 10 items in [a-z_]+\tno other item\n$",
+				"^k-sed\tv1\tcandidate\nscope\tany event\nveto\tBash\tcommand matches sed\\\\s\\+-i unless \"\"\n" + vetoFolder + "$",
 				`^$`,
 			},
 		},
@@ -348,7 +348,7 @@ func TestRunKnowledge(t *testing.T) {
 		{
 			"approve of a veto says the guard hook is not installed",
 			args{setup: [][]string{proposeSed}, args: approveSed, home: "{home}"},
-			want{0, "^k-sed\tv1\tapproved\treviewer\n" + vetoes + unhooked + folder + "$", `^$`},
+			want{0, "^k-sed\tv1\tapproved\treviewer\n" + vetoes + unhooked + vetoFolder + "$", `^$`},
 		},
 		{
 			"approve of a veto says the guard hook is installed",
@@ -356,7 +356,7 @@ func TestRunKnowledge(t *testing.T) {
 				setup: [][]string{proposeSed}, args: approveSed, home: "{home}",
 				files: map[string]string{".claude/settings.json": hooked, "bin/nodloop": ""},
 			},
-			want{0, "^k-sed\tv1\tapproved\treviewer\n" + vetoes + "guard hook installed\n" + folder + "$", `^$`},
+			want{0, "^k-sed\tv1\tapproved\treviewer\n" + vetoes + "guard hook installed\n" + vetoFolder + "$", `^$`},
 		},
 		{
 			"approve of a veto says a hook whose executable is gone is broken",
@@ -366,7 +366,7 @@ func TestRunKnowledge(t *testing.T) {
 			},
 			want{
 				0, "^k-sed\tv1\tapproved\treviewer\n" + vetoes +
-					"guard hook broken: hook executable missing: .*/bin/nodloop\\. Run nodloop guard install to repair it\n" + folder + "$",
+					"guard hook broken: hook executable missing: .*/bin/nodloop\\. Run nodloop guard install to repair it\n" + vetoFolder + "$",
 				`^$`,
 			},
 		},
@@ -383,7 +383,7 @@ func TestRunKnowledge(t *testing.T) {
 			want{
 				0, "^k-sed\tv1\tapproved\treviewer\n" + vetoes +
 					"guard hook stale: hook runs another binary than the stable link: .*/v0\\.4\\.1/nodloop runs while the stable link runs " +
-					".*/\\.nodloop/bin/nodloop\\. Run .*/\\.nodloop/bin/nodloop guard install so the hook follows the plugin\n" + folder + "$",
+					".*/\\.nodloop/bin/nodloop\\. Run .*/\\.nodloop/bin/nodloop guard install so the hook follows the plugin\n" + vetoFolder + "$",
 				`^$`,
 			},
 		},
@@ -418,7 +418,7 @@ func TestRunKnowledge(t *testing.T) {
 		{
 			"approve of a veto without a home says it was not exported",
 			args{setup: [][]string{proposeSed}, args: approveSed},
-			want{0, "^k-sed\tv1\tapproved\treviewer\nvetoes\tnot exported because the home directory is unknown\n" + folder + "$", `^$`},
+			want{0, "^k-sed\tv1\tapproved\treviewer\nvetoes\tnot exported because the home directory is unknown\n" + vetoFolder + "$", `^$`},
 		},
 		{
 			"approve of a veto whose export fails prints the approval and the error",
