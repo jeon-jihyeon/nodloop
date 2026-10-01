@@ -16,4 +16,5 @@ var (
 	ErrMatchMissing  = errors.New("missing match")
 	ErrMatchInvalid  = errors.New("invalid match regexp")
 	ErrUnlessInvalid = errors.New("invalid unless regexp")
+	ErrActionUnknown = errors.New("action must be block or ask")
 )

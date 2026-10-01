@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -15,6 +16,7 @@ import (
 )
 
 func TestRunGuard(t *testing.T) {
+	at := time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)
 	valid, err := os.ReadFile("testdata/valid.yaml")
 	require.NoError(t, err)
 	sed, err := os.ReadFile("testdata/bash_sed.json")
@@ -319,7 +321,7 @@ func TestRunGuard(t *testing.T) {
 			var stdout, stderr bytes.Buffer
 
 			stdin := strings.NewReader(r.Replace(string(tc.args.stdin)))
-			got := runGuard(args, getenv, executable, stdin, &stdout, &stderr)
+			got := runGuard(args, getenv, executable, func() time.Time { return at }, stdin, &stdout, &stderr)
 
 			assert.Equal(t, tc.want.code, got)
 			assert.Equal(t, r.Replace(tc.want.stdout), stdout.String())
@@ -327,6 +329,78 @@ func TestRunGuard(t *testing.T) {
 			settings, err := os.ReadFile(path)
 			require.NoError(t, err)
 			assert.Equal(t, r.Replace(tc.want.settings), string(settings))
+		})
+	}
+}
+
+// The hook logs every block and ask under home and guard log reads them back newest first
+func TestRunGuardDecisionLog(t *testing.T) {
+	at := time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)
+	const vetoes = "vetoes:\n" +
+		"  - {id: no-sed, tool: Bash, when: [{field: command, match: 'sed -i'}], reason: use Edit}\n" +
+		"  - {id: no-rm, tool: Bash, action: ask, when: [{field: command, match: 'rm -rf'}], reason: deletes files}\n"
+	type call struct {
+		args    []string
+		command string
+	}
+	type want struct {
+		// Exit code of each call
+		codes  []int
+		stdout string
+		// Regexp matched against stderr
+		stderr string
+	}
+	sed, rm, ls := call{command: "sed -i s/a/b/ f"}, call{command: "rm -rf build"}, call{command: "ls"}
+	ask := `{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"ask",` +
+		`"permissionDecisionReason":"nodloop veto no-rm: deletes files"}}` + "\n"
+	tcs := []struct {
+		name string
+		args []call
+		// Whether a file stands where the nodloop directory of home goes
+		blocked bool
+		want    want
+	}{
+		{
+			"a block and an ask log one line each and a pass logs none",
+			[]call{sed, rm, ls, {args: []string{"log"}}}, false,
+			want{
+				[]int{2, 0, 0, 0},
+				ask + "2026-10-01T09:00:00Z\task\tno-rm\tBash\t{cwd}\n2026-10-01T09:00:00Z\tblock\tno-sed\tBash\t{cwd}\n",
+				`^nodloop guard: Bash call blocked by veto no-sed\nuse Edit\n$`,
+			},
+		},
+		{
+			"the limit keeps the newest decisions",
+			[]call{sed, rm, {args: []string{"log", "--limit", "1"}}}, false,
+			want{[]int{2, 0, 0}, ask + "2026-10-01T09:00:00Z\task\tno-rm\tBash\t{cwd}\n", `^nodloop guard: Bash call blocked`},
+		},
+		{"no decision yet prints nothing", []call{{args: []string{"log"}}}, false, want{[]int{0}, "", `^$`}},
+		{
+			"a log that cannot be written warns and keeps the block",
+			[]call{sed}, true,
+			want{[]int{2}, "", `^nodloop guard: Bash call blocked by veto no-sed\nuse Edit\nnodloop guard: decision not logged: `},
+		},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			home, cwd := t.TempDir(), t.TempDir()
+			require.NoError(t, os.MkdirAll(filepath.Join(home, ".claude", "nodloop"), 0o755))
+			require.NoError(t, os.WriteFile(filepath.Join(home, vetofile.RelPath), []byte(vetoes), 0o600))
+			if tc.blocked {
+				require.NoError(t, os.WriteFile(filepath.Join(home, ".nodloop"), nil, 0o600))
+			}
+			getenv := func(k string) string { return map[string]string{"HOME": home}[k] }
+			var stdout, stderr bytes.Buffer
+			var codes []int
+			for _, c := range tc.args {
+				stdin := strings.NewReader(`{"tool_name":"Bash","tool_input":{"command":"` + c.command + `"},"cwd":"` + cwd + `"}`)
+				codes = append(codes, runGuard(c.args, getenv, os.Executable, func() time.Time { return at }, stdin, &stdout, &stderr))
+			}
+
+			assert.Equal(t, tc.want.codes, codes)
+			assert.Equal(t, strings.ReplaceAll(tc.want.stdout, "{cwd}", cwd), stdout.String())
+			assert.Regexp(t, tc.want.stderr, stderr.String())
 		})
 	}
 }

@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -188,14 +189,80 @@ func TestRun(t *testing.T) {
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			var stderr bytes.Buffer
+			var stdout, stderr bytes.Buffer
 			var cwd string
 			load := func(c string) (veto.Vetoes, error) {
 				cwd = c
 				return tc.args.vetoes, tc.args.err
 			}
-			got := guard.Run(strings.NewReader(tc.args.stdin), &stderr, load, tc.args.named)
-			assert.Equal(t, tc.want, want{got, cwd, stderr.String()})
+			got := guard.Run(strings.NewReader(tc.args.stdin), &stdout, &stderr, load, tc.args.named, time.Time{})
+			assert.Equal(t, tc.want, want{got.Exit, cwd, stderr.String()})
+			assert.Empty(t, stdout.String())
+		})
+	}
+}
+
+// A matched veto decides with a log entry and only an ask writes the hook output
+func TestRunDecision(t *testing.T) {
+	at := time.Date(2026, 10, 1, 9, 0, 0, 0, time.FixedZone("KST", 9*60*60))
+	condition, err := veto.NewCondition("command", "rm -rf", "")
+	require.NoError(t, err)
+	vetoOf := func(action veto.Action) veto.Vetoes {
+		v, err := veto.New("no-rm", "Bash", []veto.Condition{condition}, "Ask before deleting", action, true)
+		require.NoError(t, err)
+		return veto.Vetoes{v}
+	}
+	unreadable := fmt.Errorf("%w: broken", veto.ErrYAMLInvalid)
+	removal := `{"session_id":"s1","tool_name":"Bash","tool_input":{"command":"rm -rf build"},"cwd":"/repo"}`
+	entry := func(action veto.Action) *guard.Entry {
+		return &guard.Entry{Time: at.UTC(), Session: "s1", Cwd: "/repo", Tool: "Bash", Veto: "no-rm", Action: action}
+	}
+	type args struct {
+		stdin  string
+		vetoes veto.Vetoes
+		err    error
+	}
+	type want struct {
+		decision guard.Decision
+		stdout   string
+	}
+	tcs := []struct {
+		name string
+		args args
+		want want
+	}{
+		{
+			"an ask veto passes with the hook output and an entry",
+			args{removal, vetoOf(veto.ActionAsk), nil},
+			want{
+				guard.Decision{Exit: guard.ExitPass, Entry: entry(veto.ActionAsk)},
+				`{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"ask",` +
+					`"permissionDecisionReason":"nodloop veto no-rm: Ask before deleting"}}` + "\n",
+			},
+		},
+		{
+			"a block veto blocks with an entry and no hook output",
+			args{removal, vetoOf(veto.ActionBlock), nil},
+			want{guard.Decision{Exit: guard.ExitBlock, Entry: entry(veto.ActionBlock)}, ""},
+		},
+		{
+			"a call no veto matches carries no entry",
+			args{`{"tool_name":"Bash","tool_input":{"command":"ls"}}`, vetoOf(veto.ActionAsk), nil},
+			want{guard.Decision{Exit: guard.ExitPass}, ""},
+		},
+		{
+			"the lockout of an invalid veto file carries no entry",
+			args{`{"tool_name":"Bash","tool_input":{"command":"ls"}}`, nil, unreadable},
+			want{guard.Decision{Exit: guard.ExitBlock}, ""},
+		},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var stdout bytes.Buffer
+			load := func(string) (veto.Vetoes, error) { return tc.args.vetoes, tc.args.err }
+			got := guard.Run(strings.NewReader(tc.args.stdin), &stdout, io.Discard, load, "", at)
+			assert.Equal(t, tc.want, want{got, stdout.String()})
 		})
 	}
 }
@@ -210,7 +277,7 @@ func BenchmarkRunWithFiftyVetoes(b *testing.B) {
 	load := func(string) (veto.Vetoes, error) { return veto.Parse(yamlBytes) }
 	b.ReportAllocs()
 	for b.Loop() {
-		code := guard.Run(bytes.NewReader(input), io.Discard, load, "")
-		require.Equal(b, guard.ExitBlock, code, "exit code")
+		got := guard.Run(bytes.NewReader(input), io.Discard, io.Discard, load, "", time.Time{})
+		require.Equal(b, guard.ExitBlock, got.Exit, "exit code")
 	}
 }
