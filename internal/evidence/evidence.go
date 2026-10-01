@@ -24,9 +24,9 @@ const (
 
 // One change context a data set declares
 type DeclaredContext struct {
-	Name Context
+	Name Context `json:"name"`
 	// The baseline comparison is untrusted around such a change
-	BreaksBaseline bool
+	BreaksBaseline bool `json:"breaks_baseline"`
 }
 
 // The change contexts of one data set in declaration order
