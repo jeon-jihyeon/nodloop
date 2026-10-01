@@ -504,7 +504,7 @@ func (ls labelSet) score(
 			}
 			fb := byTrace[tr.ID]
 			_, isRevised := revised[tr.ID]
-			out[cond] = append(out[cond], newScore(cond, l, tr, used[tr.ID], isRevised, fb.Verdict, fb.Edited))
+			out[cond] = append(out[cond], newScore(cond, l, tr, used[tr.ID], isRevised, fb.Verdict, fb.EditWidth(tr.Output)))
 		}
 	}
 	return out

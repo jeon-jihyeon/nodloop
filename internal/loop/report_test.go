@@ -28,6 +28,18 @@ func edited(t *testing.T, traceID string, status evidence.Status, at time.Time) 
 	return fb
 }
 
+// An edit that changes only the status of a review the helper builds
+func statusOnly(t *testing.T, traceID string, at time.Time) feedback.Feedback {
+	t.Helper()
+	fb := verdict(traceID, feedback.VerdictEdit, at)
+	var err error
+	fb.Edited, err = json.Marshal(diagnose.Diagnosis{
+		Status: evidence.StatusNoAction, Causes: []diagnose.Cause{{Summary: "cause", ParagraphIDs: []string{"p#1"}}}, Checks: diagnose.Checks{},
+	})
+	require.NoError(t, err)
+	return fb
+}
+
 func audited(traceID string, v feedback.Verdict, at time.Time) feedback.Feedback {
 	fb := verdict(traceID, v, at)
 	fb.Audit = true
@@ -83,9 +95,12 @@ func TestHistoryReport(t *testing.T) {
 					Samples: 2, Matches: 2, Rate: ptr(1), Excluded: 1,
 					Confusion: map[evidence.Status]map[evidence.Status]int{evidence.StatusReadyForReview: {evidence.StatusReadyForReview: 2}},
 				},
-				WithoutKnowledge: loop.Cohort{Verdicts: loop.Verdicts{
-					Total: 3, Approve: 2, Reject: 1, ApproveRate: ptr(2.0 / 3), EditRate: ptr(0), RejectRate: ptr(1.0 / 3),
-				}},
+				WithoutKnowledge: loop.Cohort{
+					Verdicts: loop.Verdicts{
+						Total: 3, Approve: 2, Reject: 1, ApproveRate: ptr(2.0 / 3), EditRate: ptr(0), RejectRate: ptr(1.0 / 3),
+					},
+					MedianWaitSeconds: ptr(180),
+				},
 			},
 		},
 		{
@@ -121,17 +136,53 @@ func TestHistoryReport(t *testing.T) {
 					Start:             monday.Truncate(24 * time.Hour),
 					Verdicts:          loop.Verdicts{Total: 2, Edit: 2, ApproveRate: ptr(0), EditRate: ptr(1), RejectRate: ptr(0)},
 					MedianWaitSeconds: ptr(0),
+					MedianEditWidth:   ptr(3),
 				}},
 				Agreement: loop.Agreement{
 					Samples: 1, Rate: ptr(0), Excluded: 1,
 					Confusion: map[evidence.Status]map[evidence.Status]int{evidence.StatusHold: {evidence.StatusNoAction: 1}},
 				},
 				KnowledgeApplied: loop.Cohort{
-					Verdicts: loop.Verdicts{Total: 1, Edit: 1, ApproveRate: ptr(0), EditRate: ptr(1), RejectRate: ptr(0)},
-					Outcomes: loop.Outcomes{Total: 1, Confirmed: 1, ConfirmedRate: ptr(1), RefutedRate: ptr(0), InconclusiveRate: ptr(0)},
+					Verdicts:          loop.Verdicts{Total: 1, Edit: 1, ApproveRate: ptr(0), EditRate: ptr(1), RejectRate: ptr(0)},
+					Outcomes:          loop.Outcomes{Total: 1, Confirmed: 1, ConfirmedRate: ptr(1), RefutedRate: ptr(0), InconclusiveRate: ptr(0)},
+					MedianWaitSeconds: ptr(0), MedianEditWidth: ptr(3),
 				},
 				WithoutKnowledge: loop.Cohort{
-					Verdicts: loop.Verdicts{Total: 1, Edit: 1, ApproveRate: ptr(0), EditRate: ptr(1), RejectRate: ptr(0)},
+					Verdicts:          loop.Verdicts{Total: 1, Edit: 1, ApproveRate: ptr(0), EditRate: ptr(1), RejectRate: ptr(0)},
+					MedianWaitSeconds: ptr(0), MedianEditWidth: ptr(3),
+				},
+			},
+		},
+		{
+			"edit widths and waits split into the week and the cohorts and an approve adds a wait but no width",
+			args{
+				reviews: []review{{id: "r1", at: monday, knowledge: uses}, {id: "r2", at: monday}, {id: "r3", at: monday}},
+				verdicts: feedback.Records{
+					statusOnly(t, "r1", monday.Add(time.Minute)),
+					edited(t, "r2", evidence.StatusHold, monday.Add(2*time.Minute)),
+					verdict("r3", feedback.VerdictApprove, monday.Add(30*time.Second)),
+				},
+			},
+			loop.Report{
+				Weeks: []loop.Week{{
+					Start:             monday.Truncate(24 * time.Hour),
+					Verdicts:          loop.Verdicts{Total: 3, Approve: 1, Edit: 2, ApproveRate: ptr(1.0 / 3), EditRate: ptr(2.0 / 3), RejectRate: ptr(0)},
+					MedianWaitSeconds: ptr(60),
+					MedianEditWidth:   ptr(2),
+				}},
+				Agreement: loop.Agreement{
+					Samples: 3, Matches: 1, Rate: ptr(1.0 / 3),
+					Confusion: map[evidence.Status]map[evidence.Status]int{evidence.StatusReadyForReview: {
+						evidence.StatusReadyForReview: 1, evidence.StatusNoAction: 1, evidence.StatusHold: 1,
+					}},
+				},
+				KnowledgeApplied: loop.Cohort{
+					Verdicts:          loop.Verdicts{Total: 1, Edit: 1, ApproveRate: ptr(0), EditRate: ptr(1), RejectRate: ptr(0)},
+					MedianWaitSeconds: ptr(60), MedianEditWidth: ptr(1),
+				},
+				WithoutKnowledge: loop.Cohort{
+					Verdicts:          loop.Verdicts{Total: 2, Approve: 1, Edit: 1, ApproveRate: ptr(0.5), EditRate: ptr(0.5), RejectRate: ptr(0)},
+					MedianWaitSeconds: ptr(75), MedianEditWidth: ptr(3),
 				},
 			},
 		},

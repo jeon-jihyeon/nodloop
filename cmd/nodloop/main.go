@@ -48,7 +48,8 @@ commands:
   queue [--limit <n>] [--audit-rate <share>] [--seed <n>]
                             Conversation reviews without a verdict in the order to check them, with a random audit share
   report online [--since <RFC3339>]
-                            Weekly verdict rates and waits, first status against the settled status, knowledge cohorts
+                            Weekly verdict rates, waits and edit widths, first status against the settled status,
+                            and the reviews with and without knowledge compared on verdicts, outcomes, waits and edit widths
   feedback list [--trace <id>] [--verdict <v>] [--reviewer <r>] [--limit <n>]
                             List feedback newest first
   feedback add --trace <id> --verdict <v> [--reason <r>] [--edited <file>] [--reviewer <r>] [--audit]
