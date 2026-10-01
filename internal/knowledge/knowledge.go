@@ -332,7 +332,14 @@ func (k Knowledge) applies(changeContext evidence.Context, moved Moved, dims Dim
 
 // Whether the item applies to some event of the change context whatever its metrics and dims
 func (k Knowledge) mayApply(changeContext evidence.Context) bool {
-	return k.Status == StatusApproved && k.reaches(changeContext)
+	return k.Status == StatusApproved && k.carriedIn(changeContext)
+}
+
+// Whether a review of the change context may carry the item whatever its status
+// A judgment with a veto acts on tool calls through the guard so no review carries it
+// Otherwise vetoes would fill the review caps and a compaction could never free them because it keeps every veto apart
+func (k Knowledge) carriedIn(changeContext evidence.Context) bool {
+	return k.Veto == nil && k.reaches(changeContext)
 }
 
 // The scope and the exceptions in one line so a refusal can quote what a new version must keep

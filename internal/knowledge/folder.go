@@ -19,7 +19,7 @@ type Folder struct {
 	// The other approved items a review of Context carries with the item
 	Carried Set
 	// The change context the item reaches whose review carries the most
-	// Empty when the item reaches no change context
+	// Empty when no review carries the item such as a judgment with a veto
 	Context evidence.Context
 	// Replayable approved items the heaviest review carries with the item counting the item
 	// Zero unless the item is approved and an event can replay it because only such an anchor can be compacted

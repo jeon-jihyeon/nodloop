@@ -884,15 +884,16 @@ func TestLedgerApproveCompaction(t *testing.T) {
 	large := seeds.p
 	large.ID, large.Content = "large", strings.Repeat("가", knowledge.ReviewChars)
 	// Fills the review of the folder up to the char cap exactly
+	// No review carries the veto of j
 	filling := seeds.p
 	filling.ID, filling.Content = "filling", ""
 	used := utf8.RuneCountInString(filling.Text())
-	for _, k := range []knowledge.Knowledge{seeds.a, seeds.b, seeds.j, seeds.p} {
+	for _, k := range []knowledge.Knowledge{seeds.a, seeds.b, seeds.p} {
 		used += utf8.RuneCountInString(k.Text())
 	}
 	filling.Content = strings.Repeat("가", knowledge.ReviewChars-used)
 	longer := seeds.drafts()
-	longer[0].Content += strings.Repeat("x", 100)
+	longer[0].Content += strings.Repeat("x", 300)
 	// Nine items that cite only paragraphs push the review of the folder past the item cap before the compaction
 	var crowd []knowledge.Knowledge
 	for i := range 9 {
