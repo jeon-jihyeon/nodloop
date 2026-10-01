@@ -74,5 +74,5 @@ func (s series) absenceObservation(eventID string, a absence) Observation {
 	if a.dim != "" {
 		summary = a.metric + ": no event of the data set carries dimension " + a.dim + " to group by"
 	}
-	return Observation{Rule: a.rule, Metric: a.metric, Window: s.window(), Ref: s.ref(eventID), Summary: summary}
+	return Observation{Rule: a.rule, Metric: a.metric, Window: s.window(), Ref: s.ref(eventID), Summary: summary, Absent: true}
 }

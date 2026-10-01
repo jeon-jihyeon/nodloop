@@ -24,8 +24,10 @@ var monday = time.Date(2026, 9, 28, 9, 0, 0, 0, time.UTC)
 // One diagnose trace as the conversation records it
 // The zero value is a conversation review under no known change that applied nothing and cites one paragraph
 type review struct {
-	id, ref   string
-	batch     bool
+	id, ref string
+	batch   bool
+	// Empty for a conversation review and a one-off batch review
+	session   string
 	failed    bool
 	context   evidence.Context
 	knowledge []diagnose.AppliedKnowledge
@@ -58,7 +60,8 @@ func (r review) trace(t *testing.T) trace.Trace {
 	})
 	require.NoError(t, err)
 	tr := trace.Trace{
-		ID: r.id, Name: trace.NameDiagnose, Subject: "ev-" + r.id, Ref: r.ref, Time: r.at, Input: in, Output: out, Tags: r.tags,
+		ID: r.id, Name: trace.NameDiagnose, SessionID: r.session, Subject: "ev-" + r.id, Ref: r.ref, Time: r.at, Input: in, Output: out,
+		Tags: r.tags,
 	}
 	if tr.Ref == "" {
 		tr.Ref = "ctx-" + r.id
@@ -139,7 +142,8 @@ func TestNew(t *testing.T) {
 	}{
 		{"a failed review is never read", args{traces: trace.Traces{failed}}, 0},
 		{"a revise output that does not read is skipped", args{traces: trace.Traces{brokenRevise}}, 0},
-		{"a batch review stays out of the queue", args{traces: traces(t, review{id: "r4", batch: true})}, 0},
+		{"a batch review of an eval session stays out of the queue", args{traces: traces(t, review{id: "r4", batch: true, session: "s1"})}, 0},
+		{"a one-off batch review without a session joins the queue", args{traces: traces(t, review{id: "r7", batch: true})}, 1},
 		{
 			"a session verdict leaves the review pending",
 			args{
@@ -199,7 +203,7 @@ func TestLoad(t *testing.T) {
 }
 
 func TestHistoryReviews(t *testing.T) {
-	all := traces(t, review{id: "r1"}, review{id: "r2"}, review{id: "batch", batch: true})
+	all := traces(t, review{id: "r1"}, review{id: "r2"}, review{id: "batch", batch: true, session: "s1"})
 	h, err := loop.New(all, nil, nil, nil)
 	require.NoError(t, err)
 	tcs := []struct {

@@ -440,6 +440,8 @@ func TestSourceSkipped(t *testing.T) {
 		files   map[string]string
 		// Folders that cannot be opened during the run
 		locked []string
+		// Links made after the files keyed by path with their target
+		links map[string]string
 	}
 	type want struct {
 		// Paths relative to the data directory
@@ -487,6 +489,22 @@ func TestSourceSkipped(t *testing.T) {
 			want{skipped: []string{"procedures/archive"}},
 		},
 		{
+			"a link to a folder that holds Markdown is named",
+			args{
+				folders: []string{"procedures", "shared/team"}, files: map[string]string{"procedures/r.md": "current", "shared/team/t.md": "team"},
+				links: map[string]string{"procedures/team": "shared/team"},
+			},
+			want{skipped: []string{"procedures/team"}},
+		},
+		{
+			"a link to a folder without Markdown and a dangling link are not named",
+			args{
+				folders: []string{"procedures", "shared/images"}, files: map[string]string{"procedures/r.md": "current", "shared/images/a.png": "png"},
+				links: map[string]string{"procedures/images": "shared/images", "procedures/gone": "shared/none"},
+			},
+			want{},
+		},
+		{
 			"procedures alone name nothing",
 			args{folders: []string{"procedures"}, files: map[string]string{"procedures/r.md": "current"}},
 			want{},
@@ -506,6 +524,9 @@ func TestSourceSkipped(t *testing.T) {
 			}
 			for _, folder := range tc.args.locked {
 				lock(t, filepath.Join(dir, folder))
+			}
+			for link, target := range tc.args.links {
+				require.NoError(t, os.Symlink(filepath.Join(dir, target), filepath.Join(dir, link)))
 			}
 			src, err := file.New(dir)
 			require.NoError(t, err)

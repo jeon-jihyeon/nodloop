@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -80,16 +81,94 @@ func lostMetricDir(t *testing.T, metric string) string {
 	t.Helper()
 	dir := filepath.Join(t.TempDir(), "lost")
 	require.NoError(t, os.CopyFS(dir, os.DirFS(testkit.DemoDir(t))))
+	dropMetric(t, dir, metric)
+	return dir
+}
+
+// Removes every events.csv row of metric
+// An empty metric keeps every row
+func dropMetric(t *testing.T, dir, metric string) {
+	t.Helper()
 	b, err := os.ReadFile(filepath.Join(dir, "events.csv"))
 	require.NoError(t, err)
 	var kept []string
 	for _, line := range strings.SplitAfter(string(b), "\n") {
-		if !strings.Contains(line, ","+metric+",") {
+		if metric == "" || !strings.Contains(line, ","+metric+",") {
 			kept = append(kept, line)
 		}
 	}
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "events.csv"), []byte(strings.Join(kept, "")), 0o600))
-	return dir
+}
+
+// The server reads the events per call and never at start
+func TestAppServerReadsEventsPerCall(t *testing.T) {
+	at := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
+	badEvent := "tq-001,yesterday,source-a,shopping,click_count,1\n"
+	type args struct {
+		// Rows appended before the server starts keyed by file name
+		rows map[string]string
+		// The metric an export loses after the server started
+		lost  string
+		tool  string
+		input map[string]any
+	}
+	type want struct {
+		// Regexp matched against the text answer followed by the error
+		answer string
+		err    error
+	}
+	tcs := []struct {
+		name string
+		args args
+		want want
+	}{
+		{
+			name: "a bad events row leaves queue answering",
+			args: args{rows: map[string]string{"events.csv": badEvent}, tool: "queue", input: map[string]any{}},
+			want: want{answer: `^\{"items"`},
+		},
+		{
+			name: "a bad events row fails events naming its line",
+			args: args{rows: map[string]string{"events.csv": badEvent}, tool: "events", input: map[string]any{}},
+			want: want{answer: `events.csv line \d+ column timestamp`, err: testkit.ErrTool},
+		},
+		{
+			name: "a bad contexts row leaves queue answering",
+			args: args{rows: map[string]string{"contexts.csv": "tq-001,not_a_context\n"}, tool: "queue", input: map[string]any{}},
+			want: want{answer: `^\{"items"`},
+		},
+		{
+			name: "a metric lost after the start is named by observe",
+			args: args{lost: "conversion_count", tool: "observe", input: map[string]any{"event_id": "tq-017"}},
+			want: want{answer: `conversion_count: no event of the data set carries this metric`},
+		},
+		{
+			name: "a metric lost after the start is named in the context",
+			args: args{lost: "conversion_count", tool: "context", input: map[string]any{"event_id": "tq-017"}},
+			want: want{answer: `conversion_count: no event of the data set carries this metric`},
+		},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir := filepath.Join(t.TempDir(), "data")
+			require.NoError(t, os.CopyFS(dir, os.DirFS(testkit.DemoDir(t))))
+			for name, rows := range tc.args.rows {
+				b, err := os.ReadFile(filepath.Join(dir, name))
+				require.NoError(t, err)
+				require.NoError(t, os.WriteFile(filepath.Join(dir, name), append(b, rows...), 0o600))
+			}
+			s, err := app{cfg: config{dataDir: dir, recordDir: t.TempDir()}, now: func() time.Time { return at }}.server()
+			require.NoError(t, err)
+			c := testkit.Connect(t, s.ServeTransport)
+			dropMetric(t, dir, tc.args.lost)
+
+			got, err := c.Text(t, tc.args.tool, tc.args.input)
+
+			assert.ErrorIs(t, err, tc.want.err)
+			assert.Regexp(t, tc.want.answer, fmt.Sprint(got, err))
+		})
+	}
 }
 
 func TestAppServerLostMetric(t *testing.T) {

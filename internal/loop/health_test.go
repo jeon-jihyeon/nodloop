@@ -96,9 +96,9 @@ func TestHistoryHealth(t *testing.T) {
 			loop.Health{ID: "k", Version: 1, Status: knowledge.StatusApproved, Applied: 3, Confirmed: 2, Refuted: 1, LastReviewed: monday},
 		},
 		{
-			"a session outcome and a batch review are left out",
+			"a session outcome and a batch review of an eval session are left out",
 			args{
-				reviews: []review{{id: "r1", knowledge: uses}, {id: "r2", knowledge: uses, batch: true}},
+				reviews: []review{{id: "r1", knowledge: uses}, {id: "r2", knowledge: uses, batch: true, session: "s1"}},
 				outcomes: feedback.Outcomes{{
 					TraceID: "r1", Result: feedback.ResultRefuted, Time: monday, Reviewer: feedback.ReviewerSession,
 				}},

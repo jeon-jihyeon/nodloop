@@ -72,13 +72,16 @@ func executable() string {
 	return shellWord(exe)
 }
 
-// A path with a space or a quote in single quotes so a shell reads it as one word
+// A path with any character outside the safe set in single quotes so a shell reads it as one word
+// The safe set is listed rather than the metacharacters so no separator or glob or redirection is ever missed
 func shellWord(path string) string {
-	if !strings.ContainsAny(path, " \t'\"$`") {
+	if path != "" && strings.Trim(path, shellSafe) == "" {
 		return path
 	}
 	return "'" + strings.ReplaceAll(path, "'", `'\''`) + "'"
 }
+
+const shellSafe = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_@%+=:,./-"
 
 func (c mcpCommand) transport() sdk.Transport {
 	return &sdk.IOTransport{Reader: io.NopCloser(c.stdin), Writer: c.out}
