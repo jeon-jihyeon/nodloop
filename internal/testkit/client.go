@@ -83,6 +83,26 @@ func (c Client) call(t *testing.T, name string, args any) (*sdk.CallToolResult, 
 	return nil, fmt.Errorf("%w: %s", ErrTool, strings.Join(texts, " "))
 }
 
+// The names of the prompts the server lists and the text of the user message of the one named
+func (c Client) Prompt(t *testing.T, name string) ([]string, string) {
+	t.Helper()
+	list, err := c.session.ListPrompts(t.Context(), nil)
+	require.NoError(t, err)
+	names := make([]string, 0, len(list.Prompts))
+	for _, p := range list.Prompts {
+		names = append(names, p.Name)
+	}
+	res, err := c.session.GetPrompt(t.Context(), &sdk.GetPromptParams{Name: name})
+	require.NoError(t, err)
+	var texts []string
+	for _, m := range res.Messages {
+		if text, ok := m.Content.(*sdk.TextContent); ok && m.Role == "user" {
+			texts = append(texts, text.Text)
+		}
+	}
+	return names, strings.Join(texts, " ")
+}
+
 func (c Client) Tools(t *testing.T) []string {
 	t.Helper()
 	res, err := c.session.ListTools(t.Context(), nil)

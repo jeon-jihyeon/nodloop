@@ -1,7 +1,7 @@
 // Package diagnose builds the review context and validates the review an AI wrote and records both as traces
 package diagnose
 
-//go:generate go run ./gen -out ../../plugin/skills/review/SKILL.md
+//go:generate go run ./gen -out ../../plugin/skills/review/SKILL.md -prompt ../mcp/review.md
 
 import (
 	"cmp"

@@ -46,6 +46,21 @@ func TestHostOpenFails(t *testing.T) {
 	}
 }
 
+// The review prompt is the generated file and reads no config so a client gets it before any setup
+func TestHostServesReviewPrompt(t *testing.T) {
+	t.Parallel()
+	reason := errors.New("NODLOOP_FILE_DIR is not set")
+	c := testkit.Connect(t, mcp.NewHost(func(context.Context) (*mcp.Server, error) { return nil, reason }, "test").ServeTransport)
+	generated, err := os.ReadFile("review.md")
+	require.NoError(t, err)
+
+	names, text := c.Prompt(t, "review")
+
+	assert.Equal(t, []string{"review"}, names)
+	assert.Equal(t, string(generated), text)
+	assert.Contains(t, text, diagnose.Rules)
+}
+
 // A Diagnoser per call guards nothing on its own so the host lock must keep one record per pending id
 func TestHostSerializesCalls(t *testing.T) {
 	t.Parallel()
