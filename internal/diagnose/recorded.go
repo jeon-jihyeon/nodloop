@@ -13,6 +13,9 @@ import (
 type Recorded struct {
 	Mode          Mode
 	ChangeContext evidence.Context
+	// The metrics the observations moved
+	// The measured metrics for a record written before moved metrics were recorded since they hold every moved one
+	Moved []string
 	// The knowledge that reached the model
 	Knowledge []AppliedKnowledge
 	Diagnosis Diagnosis
@@ -40,8 +43,11 @@ func ReadRecorded(tr trace.Trace) (Recorded, error) {
 	if !diag.Status.Valid() {
 		return Recorded{}, fmt.Errorf("%w: review %s status %q", ErrMalformed, tr.ID, diag.Status)
 	}
+	if in.Moved == nil {
+		in.Moved = in.Metrics
+	}
 	return Recorded{
-		Mode: in.Mode, ChangeContext: in.ChangeContext, Knowledge: in.Knowledge, Diagnosis: diag,
+		Mode: in.Mode, ChangeContext: in.ChangeContext, Moved: in.Moved, Knowledge: in.Knowledge, Diagnosis: diag,
 		Forced: slices.Contains(tr.Tags, TagGateHold),
 	}, nil
 }

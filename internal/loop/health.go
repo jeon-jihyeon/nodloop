@@ -28,7 +28,7 @@ type Health struct {
 	Refuted      int `json:"refuted"`
 	Inconclusive int `json:"inconclusive"`
 	// Outcomes the version takes over from reviews of the versions a compaction merged into it
-	// Only reviews of a change context it still reaches that no narrowing answered
+	// Only reviews of a change context and a moved metric it still reaches that no narrowing answered
 	CarriedConfirmed int `json:"carried_confirmed,omitempty"`
 	CarriedRefuted   int `json:"carried_refuted,omitempty"`
 	// An approved version with a refuted outcome and no more confirmed than refuted
@@ -231,7 +231,7 @@ func (h *History) refuted(ref knowledge.Ref) []review {
 func (h *History) inherited(ref knowledge.Ref) []review {
 	var out []review
 	for _, r := range h.reviews {
-		if _, ok := h.outcomes[r.trace.ID]; ok && h.knowledge.Inherits(ref, r.trace.ID, r.applied(), r.ChangeContext) {
+		if _, ok := h.outcomes[r.trace.ID]; ok && h.knowledge.Inherits(ref, r.trace.ID, r.applied(), r.ChangeContext, r.Moved) {
 			out = append(out, r)
 		}
 	}

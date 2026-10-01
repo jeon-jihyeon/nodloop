@@ -272,7 +272,10 @@ type recordInput struct {
 	// Copied so example candidates read diagnose traces alone
 	ChangeContext evidence.Context `json:"change_context"`
 	// Without the absent rows so a correction written during an outage still matches quiet events
-	Metrics  []string `json:"metrics"`
+	Metrics []string `json:"metrics"`
+	// The metrics the observations moved as knowledge selection reads them
+	// Never null so a record written before the field reads as missing
+	Moved    []string `json:"moved"`
 	Selector Selector `json:"select_mode,omitempty"`
 	// Copied from the context trace
 	Procedures []string `json:"procedures"`
@@ -328,7 +331,8 @@ func (c Context) diagnoseTrace(now time.Time, selected *selectInput, run modelRu
 	tr := c.runTrace(trace.NameDiagnose, now, run)
 	in := recordInput{
 		Mode: c.Mode, PolicyVersion: c.PolicyVersion, PromptVersion: c.PromptVersion, ChangeContext: c.ChangeContext,
-		Metrics: c.Observations.Measured(), Selector: selected.Selector, Procedures: c.Procedures, Knowledge: selected.givenKnowledge(),
+		Metrics: c.Observations.Measured(), Moved: append([]string{}, c.Observations.Moved()...), Selector: selected.Selector,
+		Procedures: c.Procedures, Knowledge: selected.givenKnowledge(),
 		Examples: slices.DeleteFunc(append([]appliedExample{}, selected.Examples...), appliedExample.dropped), Omitted: selected.Omitted,
 		CandidatesOmitted: c.CandidatesOmitted,
 		Chars:             promptChars{Procedures: c.ProcedureChars, sectionChars: selected.Chars},

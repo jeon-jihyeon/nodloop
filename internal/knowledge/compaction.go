@@ -119,15 +119,16 @@ func (s Set) compactable(anchor Knowledge) Compactable {
 
 // The most items one review of a change context the anchor reaches carries
 // Crowding counts one review and never the union because an event carries one change context
+// No review carries a veto so vetoes never make a compaction due
 func (c Compactable) heaviest() int {
 	n := 0
 	for _, changeContext := range evidence.Contexts() {
-		if !c.Items[0].reaches(changeContext) {
+		if !c.Items[0].carriedIn(changeContext) {
 			continue
 		}
 		carried := 0
 		for _, k := range c.Items {
-			if k.reaches(changeContext) {
+			if k.carriedIn(changeContext) {
 				carried++
 			}
 		}
