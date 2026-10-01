@@ -117,11 +117,11 @@ The eval holds out 12 of the 24 demo events and reviews them with Sonnet. With n
 
 | condition | events | status acc | hold acc | citation p | citation r | required checks | first check | knowledge hit | misapplied | revised | mean cost usd |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| seed | 12 | 0.83 | 1.00 | 1.00 | 1.00 | 1.00 | 0.88 | 0.00 | 0 | 0 | 0.1082 |
-| feedback:off | 12 | 0.83 | 1.00 | 1.00 | 1.00 | 1.00 | 0.50 | 0.00 | 0 | 0 | 0.1137 |
-| feedback:on | 12 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | 0.00 | 0 | 0 | 0.0760 |
-| knowledge:on | 12 | 1.00 | 1.00 | 0.92 | 1.00 | 1.00 | 0.75 | 1.00 | 0 | 0 | 0.0976 |
-| knowledge:all | 12 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | 0.75 | 1.00 | 15 | 0 | 0.1023 |
+| seed | 12 | 0.83 | 1.00 | 0.86 | 1.00 | 1.00 | 1.00 | 0.00 | 0 | 1 | 0.1364 |
+| feedback:off | 12 | 0.83 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | 0.00 | 0 | 2 | 0.1176 |
+| feedback:on | 12 | 1.00 | 1.00 | 0.92 | 1.00 | 1.00 | 1.00 | 0.00 | 0 | 1 | 0.0786 |
+| knowledge:on | 12 | 1.00 | 1.00 | 0.86 | 1.00 | 1.00 | 0.75 | 1.00 | 0 | 0 | 0.0967 |
+| knowledge:all | 12 | 1.00 | 1.00 | 0.78 | 0.92 | 1.00 | 0.75 | 1.00 | 15 | 1 | 0.0918 |
 
 To reproduce it, first set `NODLOOP_RECORD_DIR` to the absolute path of an empty directory, because the Quickstart reviewed and corrected tq-023, a holdout event, and holdout refuses records that already judge one. Then run `~/.nodloop/bin/nodloop eval seed --session demo` from the clone, correct the seed reviews with `feedback add`, import the demo knowledge with `knowledge import --file examples/demo/knowledge.jsonl`, then run `eval holdout --session demo` and `eval report --session demo` with the same binary. eval calls the `claude` CLI for every review. holdout stops before the first review when feedback:on has no corrected seed review or the knowledge conditions have no approved item, so leave a condition out with `--conditions` to run the rest. After a compaction, knowledge that replaced an item a label expects still counts as a hit.
 
@@ -138,11 +138,11 @@ Five procedures, four planted traps and a scripted reviewer stood in for a plant
 
 | condition | events | status acc | hold acc | citation p | citation r | required checks | first check | knowledge hit | misapplied | revised | mean cost usd |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| seed | 150 | 0.75 | 0.60 | 0.75 | 0.98 | 0.86 | 0.80 | 0.00 | 0 | 12 | 0.0830 |
-| feedback:off | 150 | 0.76 | 0.60 | 0.75 | 1.00 | 0.88 | 0.72 | 0.00 | 0 | 15 | 0.0886 |
-| feedback:on | 150 | 0.99 | 1.00 | 0.94 | 0.95 | 0.97 | 0.97 | 0.00 | 0 | 0 | 0.0608 |
-| knowledge:on | 150 | 0.99 | 1.00 | 0.85 | 0.98 | 0.99 | 0.81 | 1.00 | 0 | 10 | 0.0715 |
-| knowledge:all | 150 | 0.99 | 1.00 | 0.85 | 1.00 | 0.97 | 0.80 | 1.00 | 548 | 14 | 0.0855 |
+| seed | 150 | 0.76 | 0.60 | 0.73 | 1.00 | 0.88 | 0.81 | 0.00 | 0 | 25 | 0.0893 |
+| feedback:off | 150 | 0.75 | 0.60 | 0.73 | 0.95 | 0.84 | 0.81 | 0.00 | 0 | 34 | 0.0902 |
+| feedback:on | 150 | 0.99 | 1.00 | 0.96 | 0.97 | 0.99 | 1.00 | 0.00 | 0 | 0 | 0.0585 |
+| knowledge:on | 150 | 0.99 | 1.00 | 0.84 | 1.00 | 0.99 | 0.94 | 1.00 | 0 | 20 | 0.0752 |
+| knowledge:all | 150 | 1.00 | 1.00 | 0.87 | 1.00 | 1.00 | 0.91 | 1.00 | 548 | 24 | 0.0824 |
 
 </details>
 

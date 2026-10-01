@@ -41,9 +41,8 @@ func TestRules(t *testing.T) {
 			"Lead with the one procedure that fits the event and cite its paragraphs",
 		},
 		{
-			"hands the lead to the procedure a paragraph names when its condition holds",
-			"When a paragraph says that another procedure applies and its condition holds, that procedure leads " +
-				"and the paragraph that hands over is a check",
+			"hands the lead to the procedure a step names when its condition holds",
+			"When a step hands the event to another procedure and its condition holds, lead with that procedure",
 		},
 		{
 			"cites another procedure only for a cause the lead procedure does not state",
