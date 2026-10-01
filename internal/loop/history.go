@@ -141,10 +141,10 @@ func New(traces trace.Traces, verdicts feedback.Records, outcomes feedback.Outco
 	for _, o := range outcomes {
 		h.withOutcome[o.TraceID] = recorded[o.TraceID]
 	}
-	for _, fb := range slices.DeleteFunc(slices.Clone(verdicts), feedback.Feedback.Implicit).Latest() {
+	for _, fb := range verdicts.Human().Latest() {
 		h.verdicts[fb.TraceID] = fb
 	}
-	for _, o := range slices.DeleteFunc(slices.Clone(outcomes), feedback.Outcome.Implicit).Latest() {
+	for _, o := range outcomes.Human().Latest() {
 		h.outcomes[o.TraceID] = o
 	}
 	return h, nil

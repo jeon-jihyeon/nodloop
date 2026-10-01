@@ -393,14 +393,15 @@ func (d *Diagnoser) joinExample(ctx context.Context, traceID string) (example, e
 	if err != nil {
 		return example{}, err
 	}
-	records, err := d.feedback.List(ctx, feedback.Filter{TraceID: traceID, Limit: 1})
+	records, err := d.feedback.List(ctx, feedback.Filter{TraceID: traceID})
 	if err != nil {
 		return example{}, err
 	}
-	if len(records) == 0 {
+	human := feedback.Records(records).Human().Latest()
+	if len(human) == 0 {
 		return example{}, fmt.Errorf("%w: %s", ErrNoFeedback, traceID)
 	}
-	latest := records[0]
+	latest := human[0]
 	return example{TraceID: traceID, Original: tr.Output, Verdict: latest.Verdict, Reason: latest.Reason, Edited: latest.Edited}, nil
 }
 
@@ -423,7 +424,8 @@ func (d *Diagnoser) knowledgeCandidates(
 // Short list of past corrections that could inform this review
 // Text comes later through Select
 // The bool reports whether the cap left out one more candidate
-// 1. the latest verdict per trace decides so a trace later approved is skipped
+// 1. the latest verdict a person gave per trace decides so a trace later approved is skipped
+// A session verdict is not a person's word so it neither teaches a review nor hides a correction
 // 2. the trace must be a diagnose trace whose recordInput decodes
 // A hand edited trace that no longer decodes is skipped so one bad line never blocks every later review
 // 3. same change context and one shared metric or no metric on both sides
@@ -443,7 +445,7 @@ func (d *Diagnoser) exampleCandidates(
 		return nil, false, err
 	}
 	var found exampleMatches
-	for _, verdict := range feedback.Records(all).Latest() {
+	for _, verdict := range feedback.Records(all).Human().Latest() {
 		if !verdict.Corrects() {
 			continue
 		}

@@ -55,16 +55,20 @@ func revisePrompt(prompt string, diag Diagnosis, reasons []string) string {
 
 // Reasons a review must be revised before it is recorded
 // Each reason names one defect the model can fix without new information
+// The review is sent back once so every reason judges the review its shape fix leaves
+// A no_action with causes keeps them only as a ready_for_review so its causes are judged as ready
 // 1. the status and the causes agree as the shape reasons say
 // 2. a Decide paragraph never states a cause
-// 3. a ready_for_review cause cites no first step because a first step is a check
-// 4. a ready_for_review cause keeps a listed paragraph id because the gate holds a cause without one
-// 5. a ready_for_review keeps the first step of the lead procedure as a check
-// A hold loses its causes at the gate so 3 and 4 never cost it a second model call
-func (diag Diagnosis) revisions(firstSteps steps) []string {
+// 3. a ready cause cites no first step because a first step is a check
+// 4. a ready cause that no listed id may state names the ids the list does not hold because the cut drops them
+// 5. a ready cause keeps a listed paragraph id because the gate holds a cause without one
+// 6. a ready review keeps the first step of the lead procedure as a check
+// A hold loses its causes at the gate so 3 to 5 never cost it a second model call
+func (diag Diagnosis) revisions(known citable, firstSteps steps) []string {
 	out := diag.shapeDefects()
-	ready := diag.Status == evidence.StatusReadyForReview
-	for _, c := range diag.Causes {
+	ready := diag.Status == evidence.StatusReadyForReview || diag.Status == evidence.StatusNoAction && len(diag.Causes) > 0
+	cited := diag.cited(known)
+	for i, c := range cited.Causes {
 		if id, ok := c.cites(evidence.ParagraphID.IsDecide); ok {
 			out = append(out, fmt.Sprintf("cause %q cites the Decide paragraph %s. A Decide paragraph states no cause", c.Summary, id))
 		}
@@ -72,12 +76,20 @@ func (diag Diagnosis) revisions(firstSteps steps) []string {
 			out = append(out, fmt.Sprintf("cause %q cites %s, the first step of its procedure. "+
 				"A first step is a check and never states a cause. Cite the paragraph that states the cause", c.Summary, id))
 		}
-		if ready && len(c.ParagraphIDs) == 0 {
+		if !ready || c.supported(firstSteps) {
+			continue
+		}
+		if unlisted := known.unlisted(diag.Causes[i].ParagraphIDs); len(unlisted) > 0 {
+			out = append(out, fmt.Sprintf("cause %q cites %s, which the list does not hold. "+
+				"Cite the listed paragraph id that states it or return hold", c.Summary, strings.Join(unlisted, ", ")))
+			continue
+		}
+		if len(c.ParagraphIDs) == 0 {
 			out = append(out, fmt.Sprintf("cause %q cites no paragraph id from the list. Cite the paragraph that states it or return hold", c.Summary))
 		}
 	}
-	step, ok := firstSteps.of(diag.leadProcedure())
-	if !ready || !ok || slices.Contains(diag.Checks.Paragraphs(), step) {
+	step, ok := firstSteps.of(cited.leadProcedure())
+	if !ready || !ok || slices.Contains(cited.Checks.Paragraphs(), step) {
 		return out
 	}
 	return append(out, fmt.Sprintf("check %s is missing. The first step of the lead procedure is always a check", step))
@@ -94,7 +106,8 @@ func (diag Diagnosis) shapeDefects() []string {
 		return []string{fmt.Sprintf("status %q is not one of %s, %s or %s",
 			diag.Status, evidence.StatusNoAction, evidence.StatusReadyForReview, evidence.StatusHold)}
 	case diag.Status == evidence.StatusReadyForReview && len(diag.Causes) == 0:
-		return []string{"ready_for_review gives no cause. Give the cause with the paragraph that states it or return hold"}
+		return []string{"ready_for_review gives no cause. Give the cause with the paragraph that states it " +
+			"and keep the first step of its procedure as a check, or return hold"}
 	case diag.Status == evidence.StatusNoAction && len(diag.Causes) > 0:
 		return []string{"no_action carries causes. Return ready_for_review with the causes or no_action without them"}
 	}

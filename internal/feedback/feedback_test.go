@@ -213,3 +213,31 @@ func TestRecordsLatest(t *testing.T) {
 		})
 	}
 }
+
+func TestRecordsHuman(t *testing.T) {
+	base := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
+	edited := feedback.Feedback{TraceID: "t1", Time: base, Verdict: feedback.VerdictEdit, Reviewer: feedback.ReviewerAuthor}
+	session := feedback.Feedback{
+		TraceID: "t1", Time: base.Add(time.Minute), Verdict: feedback.VerdictApprove, Reviewer: feedback.ReviewerSession,
+	}
+	named := feedback.Feedback{TraceID: "t2", Time: base, Verdict: feedback.VerdictReject, Reviewer: "jed"}
+	tcs := []struct {
+		name string
+		args feedback.Records
+		want feedback.Records
+	}{
+		{"no records give nothing", nil, nil},
+		{"a session record is dropped", feedback.Records{session, edited, named}, feedback.Records{edited, named}},
+		{
+			"a later session record never replaces a record of a person",
+			feedback.Records{session, edited}, feedback.Records{edited},
+		},
+		{"only session records give nothing", feedback.Records{session}, nil},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.want, tc.args.Human().Latest())
+		})
+	}
+}

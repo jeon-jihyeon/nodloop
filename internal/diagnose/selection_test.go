@@ -43,7 +43,9 @@ func TestPrepareCandidates(t *testing.T) {
 		// Appended as they are so a verdict can name them by id
 		traces   []trace.Trace
 		verdicts []verdict
-		event    string
+		// Appended after verdicts with the session reviewer
+		sessionVerdicts []verdict
+		event           string
 		// Added to the demo policy that is bound to the demo data before the diagnoser gets it
 		analyzers []analysis.RuleSpec
 	}
@@ -241,6 +243,26 @@ func TestPrepareCandidates(t *testing.T) {
 			}},
 		},
 		{
+			name: "skips a correction a session gave",
+			args: args{
+				reviews:         []string{"tq-005"},
+				sessionVerdicts: []verdict{{"tq-005", feedback.VerdictReject, "mined from a session", nil}},
+				event:           "tq-008",
+			},
+		},
+		{
+			name: "a later session approval never hides a correction a person gave",
+			args: args{
+				reviews:         []string{"tq-005"},
+				verdicts:        []verdict{{"tq-005", feedback.VerdictReject, "person reason", nil}},
+				sessionVerdicts: []verdict{{"tq-005", feedback.VerdictApprove, "", nil}},
+				event:           "tq-008",
+			},
+			want: want{offer: offer{
+				examples: []diagnose.ExampleCandidate{{TraceID: "tq-005", Verdict: feedback.VerdictReject, Head: "person reason"}},
+			}},
+		},
+		{
 			name: "skips a correction of the same context that shares no metric",
 			args: args{
 				reviews:  []string{"tq-001"},
@@ -315,6 +337,11 @@ func TestPrepareCandidates(t *testing.T) {
 			}
 			for _, v := range tc.args.verdicts {
 				fb, err := feedback.New(ids[v.review], v.verdict, v.reason, v.edited, "", s.Clock.Now())
+				require.NoError(t, err)
+				require.NoError(t, s.Feedback.Append(ctx, fb))
+			}
+			for _, v := range tc.args.sessionVerdicts {
+				fb, err := feedback.New(ids[v.review], v.verdict, v.reason, v.edited, feedback.ReviewerSession, s.Clock.Now())
 				require.NoError(t, err)
 				require.NoError(t, s.Feedback.Append(ctx, fb))
 			}
@@ -451,6 +478,8 @@ func TestSelect(t *testing.T) {
 		verdicts []verdict
 		// Verdicts given after the context was built
 		later []verdict
+		// Verdicts a session gave after the context was built
+		laterSession []verdict
 		// Reviews recorded on the context before the select under test
 		records []diagnose.Diagnosis
 		pending string
@@ -659,6 +688,23 @@ func TestSelect(t *testing.T) {
 			},
 		},
 		{
+			name: "renders an example a session approved after the context was built by the verdict a person gave",
+			args: args{
+				reviews: reviews, verdicts: verdicts, pending: "context",
+				laterSession: []verdict{{"tq-005", feedback.VerdictApprove, "mined approval", nil}},
+				choices:      diagnose.Choices{Examples: []diagnose.Choice{{ID: "tq-005"}}},
+			},
+			want: want{
+				selected: selected{applied: none, inputs: []input{{
+					Selector: diagnose.SelectByClaude, Knowledge: none,
+					Examples: []example{{TraceID: "tq-005", Chars: 682}},
+					Chars:    sections{Examples: examplesHeading + 682},
+				}}},
+				present: []string{"Verdict: reject\nReason: older reason\n"},
+				absent:  []string{"mined approval"},
+			},
+		},
+		{
 			name: "renders an edited review that is no review without the change",
 			args: args{
 				reviews: reviews, verdicts: handEdit, pending: "context",
@@ -800,6 +846,11 @@ func TestSelect(t *testing.T) {
 			ids["context"] = c.PendingID
 			for _, v := range tc.args.later {
 				fb, err := feedback.New(ids[v.review], v.verdict, v.reason, v.edited, "", s.Clock.Now())
+				require.NoError(t, err)
+				require.NoError(t, s.Feedback.Append(ctx, fb))
+			}
+			for _, v := range tc.args.laterSession {
+				fb, err := feedback.New(ids[v.review], v.verdict, v.reason, v.edited, feedback.ReviewerSession, s.Clock.Now())
 				require.NoError(t, err)
 				require.NoError(t, s.Feedback.Append(ctx, fb))
 			}
