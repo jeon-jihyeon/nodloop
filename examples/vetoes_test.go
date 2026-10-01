@@ -104,6 +104,7 @@ func TestVetoes(t *testing.T) {
 			args{"no-sed-inplace", "Bash", `git commit -m "then sed -i note"`},
 			true,
 		},
+		{"start character inside quoted text is blocked as a stated limit", args{"no-sed-inplace", "Bash", "echo 'a; sed -i b'"}, true},
 		{"eval in an if condition is blocked", args{"no-eval", "Bash", "if ! eval x; then ls; fi"}, true},
 		{"eval in an if body is blocked", args{"no-eval", "Bash", "if true; then eval echo hi; fi"}, true},
 		{"eval in a while body is blocked", args{"no-eval", "Bash", `while read l; do eval "$l"; done`}, true},

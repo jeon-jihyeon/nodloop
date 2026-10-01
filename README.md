@@ -19,7 +19,7 @@ git clone https://github.com/jeon-jihyeon/nodloop
 /plugin install nodloop@nodloop
 ```
 
-On first run, the plugin downloads its binary. Start Claude Code in the directory you cloned into, so `./nodloop/examples/demo` resolves. Ask Claude Code to point nodloop at the demo, reconnect the server with `/mcp` when it asks, then run one full loop:
+On first run, the plugin downloads its binary. Start Claude Code in the directory where you ran `git clone`, so `./nodloop/examples/demo` resolves. Ask Claude Code to point nodloop at the demo, reconnect the server with `/mcp` when it asks, then run one full loop:
 
 ```
 > set up nodloop with the demo in ./nodloop/examples/demo
@@ -29,7 +29,7 @@ On first run, the plugin downloads its binary. Start Claude Code in the director
 > review event tq-024 with nodloop
 ```
 
-The second review applies the knowledge you approved. When you are done with the demo, point nodloop at your own directory the same way and ask for a new record directory too, such as `~/.nodloop/own-records`. Otherwise the demo reviews, corrections and knowledge stay in `~/.nodloop/records` and carry into reviews of your data, and setup warns about that. `NODLOOP_RECORD_DIR` wins over the record directory setup saves, so while it is set point it at a new directory instead. `NODLOOP_FILE_DIR` wins over the saved data directory the same way, and setup warns when it names another one. It needs `events.csv`, `policy.yaml` and your procedures as Markdown files under `procedures/`. Setup fails when `policy.yaml` names a metric or dimension that no event carries, so a misspelled name never leaves reviews without their numbers. A running server instead reports such a name in every review, so an export taken during an outage still gets reviewed.
+The second review applies the knowledge you approved. The last part of the recording, where the guard blocks `sed -i`, needs the hook and vetoes from the [Guard](#guard) steps below. When you are done with the demo, point nodloop at your own directory the same way and ask for a new record directory too, such as `~/.nodloop/own-records`. Otherwise the demo reviews, corrections and knowledge stay in `~/.nodloop/records` and carry into reviews of your data, and setup warns about that. `NODLOOP_RECORD_DIR` wins over the record directory setup saves, so while it is set point it at a new directory instead. `NODLOOP_FILE_DIR` wins over the saved data directory the same way, and setup warns when it names another one. It needs `events.csv`, `policy.yaml` and your procedures as Markdown files under `procedures/`. Setup fails when `policy.yaml` names a metric or dimension that no event carries, so a misspelled name never leaves reviews without their numbers. A running server instead reports such a name in every review, so an export taken during an outage still gets reviewed.
 
 `events.csv` needs the columns `event_id`, `timestamp` in RFC 3339, `metric` and `value`, in any order. Every other named column is a dimension of the series, such as a source or a region, so its values must repeat across rows. A column that differs on every row, like a row id or a note, splits every series into single points. A row repeated with the same value is read once, and one repeated with another value fails the load with both lines named.
 
@@ -59,11 +59,11 @@ The eval holds out 12 of the 24 demo events and reviews them with Sonnet. With n
 
 | condition | events | status acc | hold acc | citation p | citation r | required checks | first check | knowledge hit | misapplied | revised | mean cost usd |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| seed | 12 | 0.83 | 1.00 | 0.78 | 0.92 | 1.00 | 0.88 | 0.00 | 0 | 0 | 0.1110 |
-| feedback:off | 12 | 0.83 | 1.00 | 0.83 | 0.92 | 1.00 | 0.88 | 0.00 | 0 | 1 | 0.1143 |
-| feedback:on | 12 | 1.00 | 1.00 | 0.89 | 1.00 | 1.00 | 0.88 | 0.00 | 0 | 0 | 0.0742 |
-| knowledge:on | 12 | 1.00 | 1.00 | 0.83 | 0.92 | 1.00 | 0.88 | 1.00 | 0 | 1 | 0.0941 |
-| knowledge:all | 12 | 1.00 | 1.00 | 0.86 | 0.92 | 1.00 | 1.00 | 1.00 | 15 | 2 | 0.1037 |
+| seed | 12 | 0.83 | 1.00 | 0.89 | 0.92 | 1.00 | 0.75 | 0.00 | 0 | 1 | 0.1394 |
+| feedback:off | 12 | 0.83 | 1.00 | 0.58 | 0.67 | 0.94 | 0.75 | 0.00 | 0 | 1 | 0.1032 |
+| feedback:on | 12 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | 0.00 | 0 | 0 | 0.0680 |
+| knowledge:on | 12 | 1.00 | 1.00 | 0.69 | 0.83 | 1.00 | 0.75 | 1.00 | 0 | 1 | 0.0964 |
+| knowledge:all | 12 | 1.00 | 1.00 | 0.72 | 0.83 | 0.94 | 0.75 | 1.00 | 15 | 0 | 0.0948 |
 
 To reproduce it, first set `NODLOOP_RECORD_DIR` to the absolute path of an empty directory, because the Quickstart reviewed and corrected tq-023, a holdout event, and holdout refuses records that already judge one. Then run `~/.nodloop/bin/nodloop eval seed --session demo` from the clone, correct the seed reviews with `feedback add`, import the demo knowledge with `knowledge import --file examples/demo/knowledge.jsonl`, then run `eval holdout --session demo` and `eval report --session demo` with the same binary. eval calls the `claude` CLI for every review. holdout stops before the first review when feedback:on has no corrected seed review or the knowledge conditions have no approved item, so leave a condition out with `--conditions` to run the rest. After a compaction, knowledge that replaced an item a label expects still counts as a hit.
 
@@ -73,11 +73,11 @@ Nothing in the core knows about the demo's domain. The same loop ran on 300 even
 
 | condition | events | status acc | hold acc | citation p | citation r | required checks | first check | knowledge hit | misapplied | revised | mean cost usd |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| seed | 150 | 0.76 | 0.60 | 0.77 | 0.98 | 0.87 | 0.86 | 0.00 | 0 | 17 | 0.0819 |
-| feedback:off | 150 | 0.75 | 0.60 | 0.76 | 0.97 | 0.86 | 0.84 | 0.00 | 0 | 17 | 0.0820 |
-| feedback:on | 150 | 0.99 | 1.00 | 0.91 | 0.97 | 0.98 | 0.96 | 0.00 | 0 | 1 | 0.0602 |
-| knowledge:on | 150 | 0.99 | 1.00 | 0.85 | 0.98 | 0.99 | 0.95 | 1.00 | 0 | 10 | 0.0551 |
-| knowledge:all | 150 | 0.99 | 1.00 | 0.88 | 1.00 | 1.00 | 0.92 | 1.00 | 548 | 8 | 0.0785 |
+| seed | 150 | 0.76 | 0.60 | 0.77 | 0.97 | 0.87 | 0.82 | 0.00 | 0 | 8 | 0.0801 |
+| feedback:off | 150 | 0.75 | 0.60 | 0.78 | 0.98 | 0.86 | 0.80 | 0.00 | 0 | 21 | 0.0822 |
+| feedback:on | 150 | 0.99 | 1.00 | 0.95 | 0.97 | 0.97 | 0.98 | 0.00 | 0 | 1 | 0.0615 |
+| knowledge:on | 150 | 0.99 | 1.00 | 0.85 | 0.98 | 0.99 | 0.95 | 1.00 | 0 | 9 | 0.0688 |
+| knowledge:all | 150 | 1.00 | 1.00 | 0.86 | 1.00 | 1.00 | 0.97 | 1.00 | 548 | 17 | 0.0796 |
 
 In 36 held-out events a trap decides the status. With no feedback, none of them got it right. With corrections all 36 did, and with scoped knowledge 35 did, which never landed on an event outside its scope. Applying every item regardless of scope landed 548 items that don't belong.
 
