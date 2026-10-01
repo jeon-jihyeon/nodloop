@@ -40,7 +40,7 @@ func compactionEnv(t *testing.T) func(string) string {
 	for _, tr := range []trace.Trace{{ID: "t1", Subject: "tq-001"}, {ID: "t2", Subject: "tq-017"}} {
 		tr.Name, tr.Time, tr.Output = trace.NameDiagnose, at, json.RawMessage(`{"status":"hold"}`)
 		require.NoError(t, traces.Append(ctx, tr))
-		fb, err := feedback.New(tr.ID, feedback.VerdictReject, "wrong", nil, "", at)
+		fb, err := feedback.New(tr.ID, feedback.VerdictReject, "", "wrong", nil, "", at)
 		require.NoError(t, err)
 		require.NoError(t, verdicts.Append(ctx, fb))
 	}

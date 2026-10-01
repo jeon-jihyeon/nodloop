@@ -139,7 +139,14 @@ func enumSchemas() map[reflect.Type]*jsonschema.Schema {
 	for _, s := range evidence.Statuses() {
 		statuses = append(statuses, string(s))
 	}
-	return map[reflect.Type]*jsonschema.Schema{reflect.TypeFor[evidence.Status](): {Type: "string", Enum: statuses}}
+	codes := make([]any, 0, len(feedback.ReasonCodes()))
+	for _, c := range feedback.ReasonCodes() {
+		codes = append(codes, string(c))
+	}
+	return map[reflect.Type]*jsonschema.Schema{
+		reflect.TypeFor[evidence.Status]():     {Type: "string", Enum: statuses},
+		reflect.TypeFor[feedback.ReasonCode](): {Type: "string", Enum: codes},
+	}
 }
 
 var tools = []tool{
@@ -169,6 +176,7 @@ var tools = []tool{
 	newTool("feedback", "Record the user's verdict on a recorded review: "+
 		"approve, edit or reject with the reason in the user's words "+
 		"and the corrected review in full when the verdict is edit. "+
+		"An edit or reject may carry the reason code the user picked. "+
 		"Refuses a failed review and an edited review whose keys or status are invalid, "+
 		"whose paragraph ids the procedures that apply to the event do not list now, "+
 		"or that the citation gate would hold such as a cause citing only a first step or a Decide paragraph", (*Server).feedback),
@@ -367,12 +375,13 @@ func (s *Server) record(ctx context.Context, _ *sdk.CallToolRequest, in recordIn
 }
 
 type feedbackInput struct {
-	Audit    bool             `json:"audit,omitempty" jsonschema:"true when selected by random audit in queue"`
-	TraceID  string           `json:"trace_id" jsonschema:"the trace id from record"`
-	Verdict  feedback.Verdict `json:"verdict" jsonschema:"approve or edit or reject"`
-	Reason   string           `json:"reason,omitempty" jsonschema:"why, in the user's words"`
-	Edited   *editedReview    `json:"edited,omitempty" jsonschema:"the corrected review in full when the verdict is edit"`
-	Reviewer string           `json:"reviewer,omitempty" jsonschema:"Defaults to author. The name of the person when someone other than the author reviews"`
+	Audit      bool                `json:"audit,omitempty" jsonschema:"true when selected by random audit in queue"`
+	TraceID    string              `json:"trace_id" jsonschema:"the trace id from record"`
+	Verdict    feedback.Verdict    `json:"verdict" jsonschema:"approve or edit or reject"`
+	ReasonCode feedback.ReasonCode `json:"reason_code,omitempty" jsonschema:"what the corrected review got wrong, only with edit or reject"`
+	Reason     string              `json:"reason,omitempty" jsonschema:"why, in the user's words"`
+	Edited     *editedReview       `json:"edited,omitempty" jsonschema:"the corrected review in full when the verdict is edit"`
+	Reviewer   string              `json:"reviewer,omitempty" jsonschema:"Defaults to author. The name of the person when someone other than the author reviews"`
 }
 
 // The embedded Diagnosis only gives the input schema its shape
@@ -396,7 +405,7 @@ func (s *Server) feedback(ctx context.Context, _ *sdk.CallToolRequest, in feedba
 	if in.Edited != nil {
 		edited = in.Edited.raw
 	}
-	fb, err := feedback.New(in.TraceID, in.Verdict, in.Reason, edited, in.Reviewer, s.now())
+	fb, err := feedback.New(in.TraceID, in.Verdict, in.ReasonCode, in.Reason, edited, in.Reviewer, s.now())
 	if err != nil {
 		return nil, nil, err
 	}
@@ -409,7 +418,7 @@ func (s *Server) feedback(ctx context.Context, _ *sdk.CallToolRequest, in feedba
 	if err = s.verdicts.Append(ctx, fb); err != nil {
 		return nil, nil, err
 	}
-	return nil, map[string]any{"trace_id": fb.TraceID, "verdict": fb.Verdict, "reviewer": fb.Reviewer}, nil
+	return nil, map[string]any{"trace_id": fb.TraceID, "verdict": fb.Verdict, "reason_code": fb.ReasonCode, "reviewer": fb.Reviewer}, nil
 }
 
 type outcomeInput struct {

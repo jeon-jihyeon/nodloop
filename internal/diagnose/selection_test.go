@@ -336,12 +336,12 @@ func TestPrepareCandidates(t *testing.T) {
 				ids[tr.ID] = tr.ID
 			}
 			for _, v := range tc.args.verdicts {
-				fb, err := feedback.New(ids[v.review], v.verdict, v.reason, v.edited, "", s.Clock.Now())
+				fb, err := feedback.New(ids[v.review], v.verdict, "", v.reason, v.edited, "", s.Clock.Now())
 				require.NoError(t, err)
 				require.NoError(t, s.Feedback.Append(ctx, fb))
 			}
 			for _, v := range tc.args.sessionVerdicts {
-				fb, err := feedback.New(ids[v.review], v.verdict, v.reason, v.edited, feedback.ReviewerSession, s.Clock.Now())
+				fb, err := feedback.New(ids[v.review], v.verdict, "", v.reason, v.edited, feedback.ReviewerSession, s.Clock.Now())
 				require.NoError(t, err)
 				require.NoError(t, s.Feedback.Append(ctx, fb))
 			}
@@ -837,7 +837,7 @@ func TestSelect(t *testing.T) {
 				ids[event] = res.TraceID
 			}
 			for _, v := range tc.args.verdicts {
-				fb, err := feedback.New(ids[v.review], v.verdict, v.reason, v.edited, "", s.Clock.Now())
+				fb, err := feedback.New(ids[v.review], v.verdict, "", v.reason, v.edited, "", s.Clock.Now())
 				require.NoError(t, err)
 				require.NoError(t, s.Feedback.Append(ctx, fb))
 			}
@@ -845,12 +845,12 @@ func TestSelect(t *testing.T) {
 			require.NoError(t, err)
 			ids["context"] = c.PendingID
 			for _, v := range tc.args.later {
-				fb, err := feedback.New(ids[v.review], v.verdict, v.reason, v.edited, "", s.Clock.Now())
+				fb, err := feedback.New(ids[v.review], v.verdict, "", v.reason, v.edited, "", s.Clock.Now())
 				require.NoError(t, err)
 				require.NoError(t, s.Feedback.Append(ctx, fb))
 			}
 			for _, v := range tc.args.laterSession {
-				fb, err := feedback.New(ids[v.review], v.verdict, v.reason, v.edited, feedback.ReviewerSession, s.Clock.Now())
+				fb, err := feedback.New(ids[v.review], v.verdict, "", v.reason, v.edited, feedback.ReviewerSession, s.Clock.Now())
 				require.NoError(t, err)
 				require.NoError(t, s.Feedback.Append(ctx, fb))
 			}
@@ -1031,7 +1031,7 @@ func TestRunSelection(t *testing.T) {
 				examples[event] = res.TraceID
 			}
 			for _, v := range verdicts {
-				fb, err := feedback.New(examples[v.review], v.verdict, v.reason, v.edited, "", s.Clock.Now())
+				fb, err := feedback.New(examples[v.review], v.verdict, "", v.reason, v.edited, "", s.Clock.Now())
 				require.NoError(t, err)
 				require.NoError(t, s.Feedback.Append(ctx, fb))
 			}

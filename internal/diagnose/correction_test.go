@@ -75,7 +75,7 @@ func correctedReview(t *testing.T, client llm.Client, verdicts []correctionVerdi
 	t.Helper()
 	r := recordReview(t, client)
 	for _, v := range verdicts {
-		fb, err := feedback.New(r.traceID, v.verdict, "a reason", v.edited, v.reviewer, r.Clock.Now())
+		fb, err := feedback.New(r.traceID, v.verdict, "", "a reason", v.edited, v.reviewer, r.Clock.Now())
 		require.NoError(t, err)
 		require.NoError(t, r.Feedback.Append(context.Background(), fb))
 	}
@@ -267,7 +267,7 @@ func TestCorrectionRefused(t *testing.T) {
 			// A review that failed on the context of another event carries a reject too
 			failed := trace.Trace{ID: "failed", Name: trace.NameDiagnose, Subject: "tq-007", Error: "model timed out", Time: r.Clock.Now()}
 			require.NoError(t, r.Traces.Append(ctx, failed))
-			fb, err := feedback.New(failed.ID, feedback.VerdictReject, "a reason", nil, "", r.Clock.Now())
+			fb, err := feedback.New(failed.ID, feedback.VerdictReject, "", "a reason", nil, "", r.Clock.Now())
 			require.NoError(t, err)
 			require.NoError(t, r.Feedback.Append(ctx, fb))
 			id := map[string]string{"": r.traceID, "context": r.contextID, "failed": failed.ID, "nope": "nope"}[tc.args.id]

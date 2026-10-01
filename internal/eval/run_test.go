@@ -782,7 +782,7 @@ func TestSeedThenHoldoutReport(t *testing.T) {
 			seeds, err := r.Seed(ctx, eval.RunOptions{SessionID: "s", Parallel: tc.args.parallel})
 			require.NoError(t, err)
 			require.Len(t, seeds, 12)
-			fb, err := feedback.New(seeds[tc.args.rejected].ID, feedback.VerdictReject, "wrong cause", nil, "", s.Clock.Now())
+			fb, err := feedback.New(seeds[tc.args.rejected].ID, feedback.VerdictReject, "", "wrong cause", nil, "", s.Clock.Now())
 			require.NoError(t, err)
 			require.NoError(t, s.Feedback.Append(ctx, fb))
 			demo, err := jsonl.Open[knowledge.Knowledge](testkit.DemoDir(t), "knowledge.jsonl")

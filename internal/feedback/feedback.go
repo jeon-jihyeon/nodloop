@@ -30,13 +30,38 @@ func (v Verdict) Valid() bool {
 	return ok
 }
 
+// What the corrected review got wrong
+type ReasonCode string
+
+const (
+	ReasonStatus   ReasonCode = "status"   // the status was wrong
+	ReasonCause    ReasonCode = "cause"    // a cause was wrong or missing
+	ReasonCitation ReasonCode = "citation" // a cited paragraph does not state the cause
+	ReasonChecks   ReasonCode = "checks"   // a check was missing or out of order
+	ReasonOther    ReasonCode = "other"    // none of the above
+)
+
+// In the order a person is asked
+// Four codes and other so one question with four options and its free answer covers them
+var reasonCodes = []ReasonCode{ReasonStatus, ReasonCause, ReasonCitation, ReasonChecks, ReasonOther}
+
+func ReasonCodes() []ReasonCode {
+	return slices.Clone(reasonCodes)
+}
+
+func (c ReasonCode) Valid() bool {
+	return slices.Contains(reasonCodes, c)
+}
+
 // References the trace and never copies its output
 // A trace may receive several records and the newest is the current verdict
 type Feedback struct {
 	TraceID string    `json:"trace_id"`
 	Time    time.Time `json:"time"`
 	Verdict Verdict   `json:"verdict"`
-	Reason  string    `json:"reason,omitempty"`
+	// Empty on an approval and on a correction recorded without one
+	ReasonCode ReasonCode `json:"reason_code,omitempty"`
+	Reason     string     `json:"reason,omitempty"`
 	// Present when Verdict is edit
 	// The corrected output in full so eval can diff it against the trace output
 	Edited json.RawMessage `json:"edited,omitempty"`
@@ -48,15 +73,22 @@ type Feedback struct {
 }
 
 // The reviewer defaults to author
-// An edit verdict carries a valid JSON edited review and no other verdict carries one
+// 1. an edit verdict carries a valid JSON edited review and no other verdict carries one
+// 2. a reason code is optional and only a correction carries one because an approval corrects nothing
 func New(
-	traceID string, verdict Verdict, reason string, edited json.RawMessage, reviewer string, now time.Time,
+	traceID string, verdict Verdict, code ReasonCode, reason string, edited json.RawMessage, reviewer string, now time.Time,
 ) (Feedback, error) {
 	if traceID == "" {
 		return Feedback{}, ErrTraceIDRequired
 	}
 	if !verdict.Valid() {
 		return Feedback{}, fmt.Errorf("%w: %q", ErrVerdictUnknown, verdict)
+	}
+	if code != "" && !code.Valid() {
+		return Feedback{}, fmt.Errorf("%w: %q", ErrReasonCodeUnknown, code)
+	}
+	if code != "" && verdict == VerdictApprove {
+		return Feedback{}, fmt.Errorf("%w: %s", ErrReasonCodeUnexpected, code)
 	}
 	if verdict == VerdictEdit && len(edited) == 0 {
 		return Feedback{}, ErrEditedRequired
@@ -71,7 +103,7 @@ func New(
 		reviewer = ReviewerAuthor
 	}
 	return Feedback{
-		TraceID: traceID, Time: now.UTC(), Verdict: verdict, Reason: reason, Edited: edited, Reviewer: reviewer,
+		TraceID: traceID, Time: now.UTC(), Verdict: verdict, ReasonCode: code, Reason: reason, Edited: edited, Reviewer: reviewer,
 	}, nil
 }
 

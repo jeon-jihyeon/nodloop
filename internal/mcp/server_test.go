@@ -450,14 +450,16 @@ func TestServerFeedback(t *testing.T) {
 		`"checks":[],"observations":["clicks up"],"open_questions":[],"status":"ready_for_review"}`)
 	type args struct {
 		verdict  feedback.Verdict
+		code     feedback.ReasonCode
 		reason   string
 		edited   json.RawMessage
 		reviewer string
 	}
 	type answer struct {
-		TraceID  string           `json:"trace_id"`
-		Verdict  feedback.Verdict `json:"verdict"`
-		Reviewer string           `json:"reviewer"`
+		TraceID    string              `json:"trace_id"`
+		Verdict    feedback.Verdict    `json:"verdict"`
+		ReasonCode feedback.ReasonCode `json:"reason_code"`
+		Reviewer   string              `json:"reviewer"`
 	}
 	tcs := []struct {
 		name string
@@ -475,6 +477,14 @@ func TestServerFeedback(t *testing.T) {
 			name: "a rejection with a null edited review keeps the named reviewer and stores no edit",
 			args: args{verdict: feedback.VerdictReject, reason: "wrong segment", reviewer: "user"},
 			want: feedback.Feedback{Verdict: feedback.VerdictReject, Reason: "wrong segment", Reviewer: "user"},
+		},
+		{
+			name: "a rejection keeps the reason code the user picked",
+			args: args{verdict: feedback.VerdictReject, code: feedback.ReasonCitation, reason: "cites the wrong step"},
+			want: feedback.Feedback{
+				Verdict: feedback.VerdictReject, ReasonCode: feedback.ReasonCitation, Reason: "cites the wrong step",
+				Reviewer: feedback.ReviewerAuthor,
+			},
 		},
 	}
 	for _, tc := range tcs {
@@ -498,6 +508,9 @@ func TestServerFeedback(t *testing.T) {
 				"trace_id": reviewed.TraceID, "verdict": tc.args.verdict, "reason": tc.args.reason,
 				"edited": tc.args.edited, "reviewer": tc.args.reviewer,
 			}
+			if tc.args.code != "" {
+				in["reason_code"] = tc.args.code
+			}
 			require.NoError(t, c.Call(t, "feedback", in, &got))
 			stored, err := st.Feedback.List(ctx, feedback.Filter{TraceID: reviewed.TraceID})
 			require.NoError(t, err)
@@ -505,7 +518,7 @@ func TestServerFeedback(t *testing.T) {
 			want := tc.want
 			want.TraceID = reviewed.TraceID
 			want.Time = stored[0].Time
-			assert.Equal(t, answer{TraceID: want.TraceID, Verdict: want.Verdict, Reviewer: want.Reviewer}, got)
+			assert.Equal(t, answer{TraceID: want.TraceID, Verdict: want.Verdict, ReasonCode: want.ReasonCode, Reviewer: want.Reviewer}, got)
 			assert.Equal(t, []feedback.Feedback{want}, stored)
 		})
 	}
@@ -943,7 +956,7 @@ func TestServerProposeFolder(t *testing.T) {
 			ID: "t-" + id, Name: trace.NameDiagnose, Subject: "e-" + id, Time: st.Clock.Now(),
 			Output: json.RawMessage(`{"status":"hold"}`),
 		}))
-		fb, err := feedback.New("t-"+id, feedback.VerdictApprove, "right", nil, "", st.Clock.Now())
+		fb, err := feedback.New("t-"+id, feedback.VerdictApprove, "", "right", nil, "", st.Clock.Now())
 		require.NoError(t, err)
 		require.NoError(t, st.Feedback.Append(context.Background(), fb))
 	}
@@ -1153,6 +1166,20 @@ func TestServerRefusals(t *testing.T) {
 			name: "feedback refuses an unknown verdict",
 			args: args{tool: "feedback", input: map[string]any{"trace_id": reviewed.TraceID, "verdict": "maybe"}},
 			want: feedback.ErrVerdictUnknown.Error(),
+		},
+		{
+			name: "feedback schema refuses a reason code outside the valid set",
+			args: args{tool: "feedback", input: map[string]any{
+				"trace_id": reviewed.TraceID, "verdict": feedback.VerdictReject, "reason_code": "typo",
+			}},
+			want: "/properties/reason_code: enum",
+		},
+		{
+			name: "feedback refuses a reason code on an approval",
+			args: args{tool: "feedback", input: map[string]any{
+				"trace_id": reviewed.TraceID, "verdict": feedback.VerdictApprove, "reason_code": feedback.ReasonStatus,
+			}},
+			want: feedback.ErrReasonCodeUnexpected.Error(),
 		},
 		{
 			name: "feedback schema refuses an edited review with a status outside the valid set",

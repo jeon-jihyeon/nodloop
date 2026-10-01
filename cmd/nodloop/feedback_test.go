@@ -29,7 +29,8 @@ func TestRunFeedback(t *testing.T) {
 	base := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
 	ctx := context.Background()
 	rejected := feedback.Feedback{
-		TraceID: "t1", Time: base, Verdict: feedback.VerdictReject, Reason: "wrong cause", Reviewer: "author",
+		TraceID: "t1", Time: base, Verdict: feedback.VerdictReject, ReasonCode: feedback.ReasonCause, Reason: "wrong cause",
+		Reviewer: "author",
 	}
 	require.NoError(t, store.Append(ctx, rejected))
 	approved := feedback.Feedback{
@@ -74,8 +75,8 @@ func TestRunFeedback(t *testing.T) {
 	require.NoError(t, os.WriteFile(stale, []byte(
 		`{"status":"ready_for_review","causes":[{"summary":"bot traffic","paragraph_ids":["p#1"]}]}`), 0o600))
 	const (
-		older = "t1\t2026-09-22T12:00:00Z\treject\tauthor\twrong cause\n"
-		newer = "t2\t2026-09-22T12:00:01Z\tapprove\tsession\t\n"
+		older = "t1\t2026-09-22T12:00:00Z\treject\tcause\tauthor\twrong cause\n"
+		newer = "t2\t2026-09-22T12:00:01Z\tapprove\t-\tsession\t\n"
 	)
 	type args struct {
 		args []string
@@ -122,6 +123,21 @@ func TestRunFeedback(t *testing.T) {
 			"add of an approval defaults the reviewer",
 			args{[]string{"add", "--trace", "d1", "--verdict", "approve"}, "{traced}"},
 			want{0, "d1\tapprove\tauthor\n", `^$`},
+		},
+		{
+			"add of a reject keeps the reason code",
+			args{[]string{"add", "--trace", "d1", "--verdict", "reject", "--reason-code", "checks"}, "{traced}"},
+			want{0, "d1\treject\tauthor\n", `^$`},
+		},
+		{
+			"add of an approval with a reason code names the reason",
+			args{[]string{"add", "--trace", "d1", "--verdict", "approve", "--reason-code", "checks"}, "{traced}"},
+			want{1, "", `^nodloop feedback: ` + feedback.ErrReasonCodeUnexpected.Error() + `: checks\n$`},
+		},
+		{
+			"add of an unknown reason code names the reason",
+			args{[]string{"add", "--trace", "d1", "--verdict", "reject", "--reason-code", "typo"}, "{traced}"},
+			want{1, "", `^nodloop feedback: ` + feedback.ErrReasonCodeUnknown.Error() + `: "typo"\n$`},
 		},
 		{
 			"add of an edit reads the edited file",
