@@ -693,6 +693,15 @@ func TestRunKnowledgeFrom(t *testing.T) {
 			want{1, `^$`, `^nodloop knowledge: ` + diagnose.ErrQuietMetricScope.Error(), []knowledge.Knowledge{}},
 		},
 		{
+			"a misspelled scope metric is refused before the content draft",
+			args{
+				"tq-005", []string{"--verdict", "edit", "--edited", edited},
+				[]string{"--kind", "meaning", "--model", "haiku", "--scope-metric", "conversions"},
+			},
+			func(*llmmock.MockClient) {},
+			want{1, `^$`, `^nodloop knowledge: ` + knowledge.ErrScopeUnobserved.Error() + `: metric conversions\n$`, []knowledge.Knowledge{}},
+		},
+		{
 			"an approved review is no correction",
 			args{"tq-005", []string{"--verdict", "approve"}, []string{"--kind", "meaning", "--content", "c"}},
 			func(*llmmock.MockClient) {},

@@ -271,8 +271,9 @@ type recordInput struct {
 	PromptVersion string `json:"prompt_version"`
 	// Copied so example candidates read diagnose traces alone
 	ChangeContext evidence.Context `json:"change_context"`
-	Metrics       []string         `json:"metrics"`
-	Selector      Selector         `json:"select_mode,omitempty"`
+	// Without the absent rows so a correction written during an outage still matches quiet events
+	Metrics  []string `json:"metrics"`
+	Selector Selector `json:"select_mode,omitempty"`
 	// Copied from the context trace
 	Procedures []string `json:"procedures"`
 	// Copied from the select trace with their sizes so eval reads one record
@@ -327,7 +328,7 @@ func (c Context) diagnoseTrace(now time.Time, selected *selectInput, run modelRu
 	tr := c.runTrace(trace.NameDiagnose, now, run)
 	in := recordInput{
 		Mode: c.Mode, PolicyVersion: c.PolicyVersion, PromptVersion: c.PromptVersion, ChangeContext: c.ChangeContext,
-		Metrics: c.Observations.Metrics(), Selector: selected.Selector, Procedures: c.Procedures, Knowledge: selected.givenKnowledge(),
+		Metrics: c.Observations.Measured(), Selector: selected.Selector, Procedures: c.Procedures, Knowledge: selected.givenKnowledge(),
 		Examples: slices.DeleteFunc(append([]appliedExample{}, selected.Examples...), appliedExample.dropped), Omitted: selected.Omitted,
 		CandidatesOmitted: c.CandidatesOmitted,
 		Chars:             promptChars{Procedures: c.ProcedureChars, sectionChars: selected.Chars},
@@ -339,6 +340,8 @@ func (c Context) diagnoseTrace(now time.Time, selected *selectInput, run modelRu
 
 // The reference data a review reads
 type Source interface {
+	Metrics(ctx context.Context) ([]string, error)
+	Dims(ctx context.Context) (map[string]map[string]struct{}, error)
 	Event(ctx context.Context, id string) (evidence.Event, error)
 	Procedures(ctx context.Context) (evidence.Procedures, error)
 }
@@ -406,7 +409,7 @@ func (d *Diagnoser) prepare(ctx context.Context, eventID string, mode Mode, sess
 	if err != nil {
 		return Context{}, err
 	}
-	obs, err := d.policy.Analyze(ev)
+	obs, err := d.Observe(ctx, ev)
 	if err != nil {
 		return Context{}, err
 	}
@@ -415,7 +418,7 @@ func (d *Diagnoser) prepare(ctx context.Context, eventID string, mode Mode, sess
 		Session: session, Observations: obs,
 	}.withProcedures(procedures)
 	var examplesOmitted, knowledgeOmitted bool
-	if c.ExampleCandidates, examplesOmitted, err = d.exampleCandidates(ctx, eventID, excluded, ev.ChangeContext, obs.Metrics()); err != nil {
+	if c.ExampleCandidates, examplesOmitted, err = d.exampleCandidates(ctx, eventID, excluded, ev.ChangeContext, obs.Measured()); err != nil {
 		return Context{}, err
 	}
 	if c.KnowledgeCandidates, knowledgeOmitted, err = d.knowledgeCandidates(ctx, ev.ChangeContext, knowledge.Moved{Metrics: obs.Moved(), Series: obs.MovedSeries()}, ev.Dims()); err != nil {
@@ -431,6 +434,20 @@ func (d *Diagnoser) prepare(ctx context.Context, eventID string, mode Mode, sess
 	}
 	c.PendingID = tr.ID
 	return c, nil
+}
+
+// The observations of ev under the policy bound to the data set as it reads now
+// Bound per call so an export that loses or regains a metric while a server runs shows in the next review
+func (d *Diagnoser) Observe(ctx context.Context, ev evidence.Event) (analysis.Observations, error) {
+	metrics, err := d.src.Metrics(ctx)
+	if err != nil {
+		return nil, err
+	}
+	dims, err := d.src.Dims(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return d.policy.Observed(metrics, knowledge.Dims(dims).Names()).Analyze(ev)
 }
 
 func (d *Diagnoser) pending(ctx context.Context, pendingID string) (Context, error) {

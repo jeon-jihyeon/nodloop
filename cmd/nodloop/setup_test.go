@@ -222,6 +222,16 @@ func TestRunSetup(t *testing.T) {
 			},
 		},
 		{
+			"a data dir without contexts.csv warns that every event reads change context unknown",
+			args{[]string{"--data-dir", "{nocontexts}"}, "{home}", "", "", false, ""},
+			want{
+				0, "data {nocontexts}\nrecords {home}/.nodloop/records\nconfig {home}/.nodloop/config.json\n",
+				`^nodloop setup: warning: {nocontexts} has no contexts\.csv so every event reads change context unknown\. ` +
+					`Add one with the columns event_id and change_context to name what changed around each event\n$`,
+				config{dataDir: "{nocontexts}", recordDir: "{home}/.nodloop/records", home: "{home}"}, nil,
+			},
+		},
+		{
 			"data dir whose export lost a metric the policy reads fails",
 			args{[]string{"--data-dir", "{lost}"}, "{home}", "", "", false, ""},
 			want{
@@ -325,6 +335,9 @@ func TestRunSetup(t *testing.T) {
 			if _, err := os.ReadDir(locked); err == nil && slices.Contains(tc.args.args, "{private}") {
 				t.Skip("folder permissions do not stop a read here")
 			}
+			noContexts := filepath.Join(t.TempDir(), "nocontexts")
+			require.NoError(t, os.CopyFS(noContexts, os.DirFS(demo)))
+			require.NoError(t, os.Remove(filepath.Join(noContexts, "contexts.csv")))
 			shared := t.TempDir()
 			require.NoError(t, os.WriteFile(filepath.Join(shared, "traces.jsonl"), nil, 0o600))
 			links := t.TempDir()
@@ -335,7 +348,7 @@ func TestRunSetup(t *testing.T) {
 				"{demolink}", demoLink, "{sharedlink}", sharedLink,
 				"{home}", t.TempDir(), "{empty}", t.TempDir(), "{events}", events, "{policy}", policy, "{nested}", nested,
 				"{demo}", demo, "{own}", own, "{badpolicy}", badPolicy, "{shared}", shared, "{team}", t.TempDir(), "{cwd}", cwd,
-				"{archived}", archived, "{typo}", typo, "{private}", private, "{lost}", lostMetricDir(t, "conversion_count"),
+				"{archived}", archived, "{typo}", typo, "{private}", private, "{nocontexts}", noContexts, "{lost}", lostMetricDir(t, "conversion_count"),
 			)
 			args := make([]string, 0, len(tc.args.args))
 			for _, a := range tc.args.args {

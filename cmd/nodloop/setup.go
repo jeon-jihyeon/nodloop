@@ -171,6 +171,7 @@ type setupCommand struct {
 // 5. a data dir naming another directory over the records in use before warns when they hold files because their knowledge and corrections carry into its reviews
 // 6. two spellings of one directory are one dir so a symlinked path never splits the records
 // 7. Markdown under procedures that no review reads warns with each entry named
+// 8. a data dir without contexts.csv warns because every event then reads change context unknown
 func (c setupCommand) data(dataDir, recordDir string) error {
 	prior, err := c.prior(recordDir)
 	if err != nil {
@@ -208,6 +209,10 @@ func (c setupCommand) data(dataDir, recordDir string) error {
 	if len(skipped) > 0 {
 		fmt.Fprintf(c.log, "nodloop setup: warning: reviews never read %s. "+
 			"Only .md files directly under procedures are procedures and a folder setup cannot open is passed over\n", strings.Join(skipped, ", "))
+	}
+	if _, err := os.Stat(filepath.Join(uc.DataDir, "contexts.csv")); errors.Is(err, os.ErrNotExist) {
+		fmt.Fprintf(c.log, "nodloop setup: warning: %s has no contexts.csv so every event reads change context unknown. "+
+			"Add one with the columns event_id and change_context to name what changed around each event\n", uc.DataDir)
 	}
 	c.warnCarryOver(prior, uc.DataDir, records)
 	return nil

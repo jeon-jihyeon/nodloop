@@ -252,30 +252,42 @@ func (c knowledgeCommand) proposeFrom(
 	if err != nil {
 		return err
 	}
+	// Checked before the model call so a misspelled scope never costs a draft
+	if err := c.check(ctx, draft); err != nil {
+		return err
+	}
 	if draft.Content != "" {
-		return c.propose(ctx, draft)
+		return c.add(ctx, draft)
 	}
 	written, err := d.DraftContent(ctx, correction, model)
 	if err != nil {
 		return err
 	}
 	draft.Content, draft.Drafted = written.Content, true
-	if err := c.propose(ctx, draft); err != nil {
+	if err := c.add(ctx, draft); err != nil {
 		return err
 	}
 	fmt.Fprintf(c.out, "drafted\t%.4f usd\t%s\n", written.CostUSD, written.Content)
 	return nil
 }
 
-// Prints the candidate and its scope and its veto and the folder it would join so the person sees how wide it reaches before approving
-// A scope metric or dim that no event carries fails before anything is appended
 func (c knowledgeCommand) propose(ctx context.Context, draft knowledge.Knowledge) error {
+	if err := c.check(ctx, draft); err != nil {
+		return err
+	}
+	return c.add(ctx, draft)
+}
+
+// Every cited review must be recorded and every scope metric or dim carried by some event
+func (c knowledgeCommand) check(ctx context.Context, draft knowledge.Knowledge) error {
 	if err := c.app.checkReviews(ctx, draft.Evidence.TraceIDs()...); err != nil {
 		return err
 	}
-	if err := c.observed(ctx, draft.Scope); err != nil {
-		return err
-	}
+	return c.observed(ctx, draft.Scope)
+}
+
+// Prints the candidate and its scope and its veto and the folder it would join so the person sees how wide it reaches before approving
+func (c knowledgeCommand) add(ctx context.Context, draft knowledge.Knowledge) error {
 	k, overlaps, err := c.ledger.Propose(ctx, draft)
 	if err != nil {
 		return err

@@ -96,7 +96,7 @@ func (a app) policy() (analysis.Policy, error) {
 }
 
 // The policy bound to the metrics and dimensions the events carry
-// A name no event carries never fails here because a running server must still review an export that lost a metric
+// A name no event carries never fails here because `analysis observe` must still show an export that lost a metric
 func (a app) observedPolicy(ctx context.Context, src *evidencefile.Source) (analysis.Policy, error) {
 	policy, err := a.policy()
 	if err != nil {
@@ -209,12 +209,14 @@ type pipeline struct {
 	now     func() time.Time
 }
 
+// The events are never read here because the diagnoser binds the policy to them per call
+// So one bad row fails only the calls that read events and a running server sees a metric an export lost later
 func (a app) pipeline() (pipeline, error) {
 	src, err := a.source()
 	if err != nil {
 		return pipeline{}, err
 	}
-	policy, err := a.observedPolicy(context.Background(), src)
+	policy, err := a.policy()
 	if err != nil {
 		return pipeline{}, err
 	}
