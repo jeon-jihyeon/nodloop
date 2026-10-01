@@ -241,3 +241,34 @@ func TestRecordsHuman(t *testing.T) {
 		})
 	}
 }
+
+func TestFeedbackEditWidth(t *testing.T) {
+	original := json.RawMessage(`{"status":"hold","causes":[],"checks":[{"purpose":"a"}]}`)
+	type args struct {
+		verdict feedback.Verdict
+		edited  string
+	}
+	tcs := []struct {
+		name string
+		args args
+		want int
+	}{
+		{"an approve changes nothing", args{feedback.VerdictApprove, ""}, 0},
+		{"a reject changes nothing", args{feedback.VerdictReject, ""}, 0},
+		{"an edit of one field counts one", args{feedback.VerdictEdit, `{"status":"no_action","causes":[],"checks":[{"purpose":"a"}]}`}, 1},
+		{
+			"a removed field and an added field count one each",
+			args{feedback.VerdictEdit, `{"status":"hold","causes":[],"open_questions":["q"]}`},
+			2,
+		},
+		{"an edit equal to the review counts nothing", args{feedback.VerdictEdit, string(original)}, 0},
+		{"an edit that is not an object counts nothing", args{feedback.VerdictEdit, `["status"]`}, 0},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			fb := feedback.Feedback{Verdict: tc.args.verdict, Edited: json.RawMessage(tc.args.edited)}
+			assert.Equal(t, tc.want, fb.EditWidth(original))
+		})
+	}
+}

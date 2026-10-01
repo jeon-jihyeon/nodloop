@@ -148,18 +148,20 @@ type Summary struct {
 // 1. a failed trace scores as an empty review so every metric keeps failures in its denominator
 // 2. citations compare the union of cause paragraph ids with the label paragraphs
 // 3. required checks are the share of the RequiredChecks of the label cited by any check and stay not applicable on a no_action label since that review carries no checks
-// 4. edit width counts the top level fields that differ between the output and the edited review
+// 4. edit width is the count of feedback EditWidth against the output of the trace
 // 5. knowledge hit and misapplied compare the lineage of every item the trace input names with the Knowledge of the label
 // 6. a metric whose label side is empty stays not applicable
 // 7. the verdict counts on a failed trace too
 func newScore(
-	condition Condition, l evidence.Label, tr trace.Trace, used applied, revised bool, verdict feedback.Verdict, edited json.RawMessage,
+	condition Condition, l evidence.Label, tr trace.Trace, used applied, revised bool, verdict feedback.Verdict, editWidth int,
 ) Score {
 	s := Score{
 		EventID: l.EventID, Condition: condition, Type: l.Type, ExpectedStatus: l.Expected,
 		CitationPrecision: notApplicable, CitationRecall: notApplicable, RequiredChecks: notApplicable, FirstCheck: notApplicable, KnowledgeHit: notApplicable,
 		ForcedHold: slices.Contains(tr.Tags, diagnose.TagGateHold),
 		Revised:    revised,
+		Verdict:    verdict,
+		EditWidth:  editWidth,
 		CostUSD:    tr.Usage.CostUSD, InputTokens: tr.Usage.PromptTokens(), OutputTokens: tr.Usage.OutputTokens, DurationMS: tr.DurationMS,
 	}
 	var diag diagnose.Diagnosis
@@ -177,7 +179,6 @@ func newScore(
 	if s.ExpectedStatus != evidence.StatusNoAction {
 		s.scoreChecks(diag.Checks.Paragraphs(), first, l.RequiredChecks)
 	}
-	s.scoreVerdict(tr.Output, verdict, edited)
 	return s
 }
 
@@ -254,24 +255,6 @@ func (s *Score) scoreChecks(checked, first []string, required []evidence.Paragra
 	s.FirstCheck = 0
 	if slices.Contains(first, string(required[0])) {
 		s.FirstCheck = 1
-	}
-}
-
-func (s *Score) scoreVerdict(output json.RawMessage, verdict feedback.Verdict, edited json.RawMessage) {
-	s.Verdict = verdict
-	var original, changed map[string]json.RawMessage
-	if verdict != feedback.VerdictEdit || json.Unmarshal(output, &original) != nil || json.Unmarshal(edited, &changed) != nil {
-		return
-	}
-	for k, v := range original {
-		if string(v) != string(changed[k]) {
-			s.EditWidth++
-		}
-	}
-	for k := range changed {
-		if _, ok := original[k]; !ok {
-			s.EditWidth++
-		}
 	}
 }
 

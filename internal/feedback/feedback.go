@@ -85,6 +85,29 @@ func (f Feedback) Implicit() bool {
 	return f.Reviewer == ReviewerSession
 }
 
+// How many top level fields of the recorded review the edit changed added or removed
+// 1. any verdict but edit changed nothing
+// 2. a review or an edit that is not a JSON object counts as no change because no field can be compared
+// eval and the online report read edit size by this one rule
+func (f Feedback) EditWidth(original json.RawMessage) int {
+	var before, after map[string]json.RawMessage
+	if f.Verdict != VerdictEdit || json.Unmarshal(original, &before) != nil || json.Unmarshal(f.Edited, &after) != nil {
+		return 0
+	}
+	width := 0
+	for k, v := range before {
+		if string(v) != string(after[k]) {
+			width++
+		}
+	}
+	for k := range after {
+		if _, ok := before[k]; !ok {
+			width++
+		}
+	}
+	return width
+}
+
 // Empty fields mean all
 type Filter struct {
 	TraceID  string

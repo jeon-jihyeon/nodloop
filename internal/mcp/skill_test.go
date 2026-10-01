@@ -33,7 +33,14 @@ func TestSkillTools(t *testing.T) {
 			"../../plugin/skills/setup/SKILL.md",
 			want{tools: []string{"events"}, commands: []string{"nodloop check --data-dir", "nodloop setup --data-dir"}},
 		},
-		{"the review skill calls the review tools", "../../plugin/skills/review/SKILL.md", want{tools: []string{"context", "observe", "record", "select"}}},
+		{
+			"the review skill calls the review tools and reads past traces and the report through the CLI",
+			"../../plugin/skills/review/SKILL.md",
+			want{
+				tools:    []string{"context", "observe", "record", "select"},
+				commands: []string{"nodloop trace list --subject", "nodloop trace show", "nodloop report online", "nodloop check --data-dir"},
+			},
+		},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {

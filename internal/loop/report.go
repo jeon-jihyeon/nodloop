@@ -30,6 +30,8 @@ type Week struct {
 	// Seconds from the review to its verdict
 	// A wait for the verdict and not the working time of the person
 	MedianWaitSeconds *float64 `json:"median_wait_seconds"`
+	// Top level fields an edit changed counted over the edits only
+	MedianEditWidth *float64 `json:"median_edit_width"`
 }
 
 type Verdicts struct {
@@ -80,9 +82,12 @@ func (o *Outcomes) add(result feedback.Result) {
 }
 
 // The reviews that applied knowledge or none
+// The wait and the edit width read like those of a week so the two cohorts compare on verdict time and edit size
 type Cohort struct {
-	Verdicts Verdicts `json:"verdicts"`
-	Outcomes Outcomes `json:"outcomes"`
+	Verdicts          Verdicts `json:"verdicts"`
+	Outcomes          Outcomes `json:"outcomes"`
+	MedianWaitSeconds *float64 `json:"median_wait_seconds"`
+	MedianEditWidth   *float64 `json:"median_edit_width"`
 }
 
 // The status of the first submission against the status the person settled on
@@ -125,7 +130,7 @@ func (h *History) Report(since time.Time) Report {
 		Agreement: Agreement{Confusion: map[evidence.Status]map[evidence.Status]int{}},
 	}
 	weeks := map[time.Time]*Week{}
-	waits := map[time.Time]durations{}
+	byWeek, byCohort := map[time.Time]*measures{}, map[*Cohort]*measures{}
 	for _, r := range h.reviews {
 		cohort := &rep.WithoutKnowledge
 		if len(r.applied()) > 0 {
@@ -142,21 +147,32 @@ func (h *History) Report(since time.Time) Report {
 		h.agree(&rep.Agreement, r, fb)
 		start := weekOf(fb.Time)
 		if weeks[start] == nil {
-			weeks[start] = &Week{Start: start}
+			weeks[start], byWeek[start] = &Week{Start: start}, &measures{}
+		}
+		if byCohort[cohort] == nil {
+			byCohort[cohort] = &measures{}
 		}
 		weeks[start].Verdicts.add(fb.Verdict)
 		if fb.Audit {
 			weeks[start].Audit.add(fb.Verdict)
 		}
+		if fb.Verdict == feedback.VerdictEdit {
+			width := float64(fb.EditWidth(r.trace.Output))
+			byWeek[start].widths, byCohort[cohort].widths = append(byWeek[start].widths, width), append(byCohort[cohort].widths, width)
+		}
 		if fb.Time.Before(r.trace.Time) {
 			rep.InvalidWaits++
 			continue
 		}
-		waits[start] = append(waits[start], fb.Time.Sub(r.trace.Time))
+		wait := fb.Time.Sub(r.trace.Time).Seconds()
+		byWeek[start].waits, byCohort[cohort].waits = append(byWeek[start].waits, wait), append(byCohort[cohort].waits, wait)
 	}
 	for start, week := range weeks {
-		week.MedianWaitSeconds = waits[start].medianSeconds()
+		week.MedianWaitSeconds, week.MedianEditWidth = byWeek[start].waits.median(), byWeek[start].widths.median()
 		rep.Weeks = append(rep.Weeks, *week)
+	}
+	for cohort, m := range byCohort {
+		cohort.MedianWaitSeconds, cohort.MedianEditWidth = m.waits.median(), m.widths.median()
 	}
 	slices.SortFunc(rep.Weeks, Week.compare)
 	return rep
@@ -201,18 +217,25 @@ func weekOf(t time.Time) time.Time {
 	return day.AddDate(0, 0, -((int(day.Weekday()) + 6) % 7))
 }
 
-type durations []time.Duration
+// The verdict waits in seconds and the edit widths of one week or one cohort
+type measures struct {
+	waits  samples
+	widths samples
+}
+
+// Values of one measure such as wait seconds or edit widths
+type samples []float64
 
 // Nil without a sample
-func (ds durations) medianSeconds() *float64 {
-	if len(ds) == 0 {
+func (ss samples) median() *float64 {
+	if len(ss) == 0 {
 		return nil
 	}
-	sorted := slices.Sorted(slices.Values(ds))
+	sorted := slices.Sorted(slices.Values(ss))
 	mid := len(sorted) / 2
-	m := sorted[mid].Seconds()
+	m := sorted[mid]
 	if len(sorted)%2 == 0 {
-		m = (sorted[mid-1] + sorted[mid]).Seconds() / 2
+		m = (sorted[mid-1] + sorted[mid]) / 2
 	}
 	return &m
 }
