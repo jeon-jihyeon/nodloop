@@ -1,4 +1,4 @@
-// Command gen writes the review Skill from the Rules constant so the two never drift
+// Command gen writes the review Skill and the review MCP prompt from the Rules constant so the three never drift
 package main
 
 import (
@@ -7,11 +7,13 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/jeon-jihyeon/nodloop/internal/diagnose"
 )
 
-const skill = `---
+// What Claude Code reads before the steps
+const skillHead = `---
 name: review
 description: Evidence-grounded review of an event from registered data and procedures with nodloop, with the user's verdict recorded as feedback. Use when the user asks to check, review or investigate metrics, anomalies or an incident, and when the user corrects a review that nodloop recorded.
 ---
@@ -24,7 +26,29 @@ description: Evidence-grounded review of an event from registered data and proce
 
 When a tool answers that no data directory is configured or names any other config or data error, such as a broken config, a data directory that moved or a policy.yaml that does not parse, follow the ` + "`nodloop:setup`" + ` skill before the steps below. It asks the user only what the files and ` + "`nodloop check`" + ` cannot answer and never asks for a reconnect. After a review that returns ready_for_review or hold on an event whose change context is unknown, or is declared without breaking the baseline while the observations moved, follow its section on change contexts after a finding
 
-## Refresh
+`
+
+// What an MCP client without the plugin skills reads before the steps
+// The setup skill is Claude Code only so its place goes to the two plain commands
+const promptHead = `# Review with nodloop
+
+## First setup
+
+When a tool answers that no data directory is configured or names any other config or data error, run ` + "`nodloop check --data-dir <dir>`" + ` in a shell. It prints what nodloop reads in the data directory and the error that stops it, and writes nothing. Fix that file with the user, then run ` + "`nodloop setup --data-dir <dir>`" + ` once. Every tool call reads the saved config again, so neither a setup nor a later edit of policy.yaml or contexts.csv needs a reconnect
+
+`
+
+// The parts of the steps only Claude Code has, as any MCP client reads them
+var portable = strings.NewReplacer(
+	"${CLAUDE_PLUGIN_ROOT}/bin/nodloop", "nodloop",
+	"~/.nodloop/bin/nodloop", "nodloop",
+	" through Bash", " in a shell",
+	" with AskUserQuestion", "",
+	"the `nodloop:setup` skill", "the First setup section",
+)
+
+// The sections the skill and the prompt share with the Rules in place of the verb
+const steps = `## Refresh
 
 Before the first ` + "`observe`" + ` or ` + "`context`" + ` of a review, when the data directory holds ` + "`convert.py`" + `, run ` + "`python3 <data dir>/convert.py`" + ` through Bash without asking, because the user approved the script when it was saved. The data directory is the one setup printed, or ` + "`file_dir`" + ` in ` + "`~/.nodloop/config.json`" + `. It writes nothing and prints ` + "`up to date`" + ` unless a source is newer than events.csv. When it prints ` + "`rewrote`" + `, run ` + "`~/.nodloop/bin/nodloop check --data-dir <data dir>`" + ` and follow the ` + "`nodloop:setup`" + ` skill on an error. The next tool call reads the refreshed files with no setup. When the script fails, show the error and fix the script with the user, never events.csv
 
@@ -71,20 +95,26 @@ func main() {
 func run(args []string, stderr io.Writer) int {
 	flags := flag.NewFlagSet("gen", flag.ContinueOnError)
 	flags.SetOutput(stderr)
-	out := flags.String("out", "SKILL.md", "output path")
+	out := flags.String("out", "SKILL.md", "skill output path")
+	prompt := flags.String("prompt", "review.md", "MCP prompt output path")
 	if err := flags.Parse(args); err != nil {
 		return 2
 	}
-	if err := write(*out); err != nil {
-		fmt.Fprintln(stderr, "gen:", err)
-		return 1
+	body := fmt.Sprintf(steps, diagnose.Rules)
+	for _, file := range []struct{ path, text string }{
+		{*out, skillHead + body}, {*prompt, promptHead + portable.Replace(body)},
+	} {
+		if err := write(file.path, file.text); err != nil {
+			fmt.Fprintln(stderr, "gen:", err)
+			return 1
+		}
 	}
 	return 0
 }
 
-func write(out string) error {
-	if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
+func write(path, text string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	return os.WriteFile(out, []byte(fmt.Sprintf(skill, diagnose.Rules)), 0o644)
+	return os.WriteFile(path, []byte(text), 0o644)
 }

@@ -31,6 +31,7 @@ func (h *Host) ServeTransport(ctx context.Context, t sdk.Transport) error {
 	for _, tl := range tools {
 		tl.add(srv, h)
 	}
+	addPrompts(srv)
 	return srv.Run(ctx, t)
 }
 
