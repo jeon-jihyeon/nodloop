@@ -258,7 +258,7 @@ func TestSourceProceduresParagraphs(t *testing.T) {
 			for name, content := range tc.args.procedures {
 				require.NoError(t, os.WriteFile(filepath.Join(dir, "procedures", name), []byte(content), 0o600))
 			}
-			src, err := file.New(dir)
+			src, err := file.New(dir, evidence.DefaultContexts())
 			require.NoError(t, err)
 			got, err := src.Procedures(ctx)
 			assert.ErrorIs(t, err, tc.want.err)
@@ -280,7 +280,7 @@ func TestSourceProceduresDemo(t *testing.T) {
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
-			src, err := file.New(tc.args)
+			src, err := file.New(tc.args, evidence.DefaultContexts())
 			require.NoError(t, err)
 			got, err := src.Procedures(context.Background())
 			require.NoError(t, err)
@@ -418,7 +418,7 @@ func TestSourceProceduresFolder(t *testing.T) {
 			for _, folder := range tc.args.locked {
 				lock(t, filepath.Join(dir, folder))
 			}
-			src, err := file.New(dir)
+			src, err := file.New(dir, evidence.DefaultContexts())
 			require.NoError(t, err)
 			got, err := src.Procedures(ctx)
 			var texts []string
@@ -528,7 +528,7 @@ func TestSourceSkipped(t *testing.T) {
 			for link, target := range tc.args.links {
 				require.NoError(t, os.Symlink(filepath.Join(dir, target), filepath.Join(dir, link)))
 			}
-			src, err := file.New(dir)
+			src, err := file.New(dir, evidence.DefaultContexts())
 			require.NoError(t, err)
 			got, err := src.Skipped(ctx)
 			var skipped []string

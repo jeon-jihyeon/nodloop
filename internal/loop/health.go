@@ -117,9 +117,11 @@ type Issue struct {
 // 3. knowledge refs must name a recorded version
 // 4. scope change contexts and exceptions must be valid and scope metrics and dim values must be observed in some event
 // 5. exceptions must leave some change context of the scope or the item never applies
-func (h *History) BrokenReferences(procedures evidence.Procedures, metrics []string, dims knowledge.Dims) []Issue {
+func (h *History) BrokenReferences(
+	procedures evidence.Procedures, metrics []string, dims knowledge.Dims, contexts evidence.Contexts,
+) []Issue {
 	refs := references{feedback: h.withFeedback, outcomes: h.withOutcome, paragraphs: map[string]bool{},
-		versions: map[knowledge.Ref]bool{}, metrics: metrics, dims: dims}
+		versions: map[knowledge.Ref]bool{}, metrics: metrics, dims: dims, contexts: contexts}
 	for _, p := range procedures.Paragraphs() {
 		refs.paragraphs[string(p.ID)] = true
 	}
@@ -139,6 +141,8 @@ type references struct {
 	versions                       map[knowledge.Ref]bool
 	metrics                        []string
 	dims                           knowledge.Dims
+	// A scope context the policy no longer declares reaches no event
+	contexts evidence.Contexts
 }
 
 // One issue per broken reference of the item in field order
@@ -157,12 +161,12 @@ func (refs references) issues(k knowledge.Knowledge) []Issue {
 		found.check("knowledge", fmt.Sprintf("%s v%d", ref.ID, ref.Version), refs.versions[ref])
 	}
 	for _, c := range k.Scope.ChangeContexts {
-		found.check("change_contexts", string(c), c.Valid())
+		found.check("change_contexts", string(c), refs.contexts.Valid(c))
 	}
 	for _, c := range k.Exceptions {
-		found.check("exceptions", string(c), c.Valid())
+		found.check("exceptions", string(c), refs.contexts.Valid(c))
 	}
-	found.check("exceptions", fmt.Sprint(k.Exceptions), !k.Excluded())
+	found.check("exceptions", fmt.Sprint(k.Exceptions), !k.Excluded(refs.contexts))
 	for _, m := range k.Scope.Metrics {
 		found.check("metrics", m, slices.Contains(refs.metrics, m))
 	}
@@ -186,12 +190,12 @@ func (is *issues) check(field, ref string, resolved bool) {
 	}
 }
 
-// The valid change contexts of the conversation reviews that applied the version or passed their outcome to it and were refuted
+// The declared change contexts of the conversation reviews that applied the version or passed their outcome to it and were refuted
 // Sorted once each so a narrowing proposal reads the same whatever the record order
-func (h *History) RefutedContexts(id string, version int) []evidence.Context {
+func (h *History) RefutedContexts(id string, version int, contexts evidence.Contexts) []evidence.Context {
 	var out []evidence.Context
 	for _, r := range h.refuted(knowledge.Ref{ID: id, Version: version}) {
-		if r.ChangeContext.Valid() && !slices.Contains(out, r.ChangeContext) {
+		if contexts.Valid(r.ChangeContext) && !slices.Contains(out, r.ChangeContext) {
 			out = append(out, r.ChangeContext)
 		}
 	}

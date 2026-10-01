@@ -26,13 +26,15 @@ const (
 	byteOrderMark = "\uFEFF"
 )
 
-// Stateless
 // Every call re-reads the files because the data is small
 type Source struct {
 	dir string
+	// The change contexts the policy of the data set declares
+	// contexts.csv and procedure scopes may name only these
+	contexts evidence.Contexts
 }
 
-func New(dir string) (*Source, error) {
+func New(dir string, contexts evidence.Contexts) (*Source, error) {
 	info, err := os.Stat(dir)
 	if err != nil {
 		return nil, fmt.Errorf("evidence file source: %w", err)
@@ -40,7 +42,7 @@ func New(dir string) (*Source, error) {
 	if !info.IsDir() {
 		return nil, fmt.Errorf("%w: %s", ErrNotDirectory, dir)
 	}
-	return &Source{dir: dir}, nil
+	return &Source{dir: dir, contexts: contexts}, nil
 }
 
 // Reads events.csv only so a broken contexts.csv still lists
@@ -108,6 +110,11 @@ func (s *Source) Procedures(_ context.Context) (evidence.Procedures, error) {
 		p, err := parseProcedure(name, string(b))
 		if err != nil {
 			return nil, err
+		}
+		for _, c := range p.Scope.ChangeContexts {
+			if !s.contexts.Valid(c) {
+				return nil, fmt.Errorf("%s: %w: %q is not one of %v", name, evidence.ErrUnknownContext, c, s.contexts.Names())
+			}
 		}
 		out = append(out, p)
 	}
@@ -250,5 +257,5 @@ func (s *Source) loadContexts() (map[string]evidence.Context, error) {
 		return nil, err
 	}
 	defer func() { _ = f.Close() }()
-	return parseContexts(f)
+	return parseContexts(f, s.contexts)
 }

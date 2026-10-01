@@ -1,0 +1,19 @@
+version: fixture-1
+contexts:
+  - name: deploy
+  - name: campaign_start
+  - name: tracking_change
+    breaks_baseline: true
+analyzers:
+  - rule: zscore
+    metrics: [click_count]
+    baseline: 12
+    window: 4
+    threshold: 3
+    min_samples: 4
+  - rule: coverage_rule
+    metrics: [click_count]
+    baseline: 12
+    window: 4
+    threshold: 0.2
+    min_samples: 4

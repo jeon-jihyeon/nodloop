@@ -92,7 +92,14 @@ type Stores struct {
 
 func Open(t *testing.T) Stores {
 	t.Helper()
-	src, err := evidencefile.New(DemoDir(t))
+	return OpenData(t, DemoDir(t))
+}
+
+// Stores over another data set whose policy declares its own change contexts
+func OpenData(t *testing.T, dataDir string) Stores {
+	t.Helper()
+	contexts := PolicyOf(t, dataDir).Contexts
+	src, err := evidencefile.New(dataDir, contexts)
 	require.NoError(t, err)
 	dir := t.TempDir()
 	traces, err := tracefile.New(dir)
@@ -108,8 +115,9 @@ func Open(t *testing.T) Stores {
 	// Later than every record in the demo data
 	clock := &Clock{now: time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)}
 	ledger := knowledge.NewLedger(
-		items, vetofile.NewApprovedFile(t.TempDir(), dir), clock.Now, func(prefix string) string { return prefix + "generated" },
-	)
+		items, vetofile.NewApprovedFile(t.TempDir(), dir), contexts,
+		clock.Now, func(prefix string) string { return prefix + "generated" })
+
 	return Stores{
 		Source: src, Traces: traces, Replays: replays, Feedback: verdicts, Outcomes: outcomes, Ledger: ledger, Clock: clock,
 	}
@@ -124,10 +132,24 @@ func DemoDir(t *testing.T) string {
 	return filepath.Join(filepath.Dir(self), "..", "..", "examples", "demo")
 }
 
+// A data set under testkit testdata
+// contexts declares deploy, campaign_start and tracking_change in place of the default five
+func FixtureDir(t *testing.T, name string) string {
+	t.Helper()
+	_, self, _, ok := runtime.Caller(0)
+	require.True(t, ok, "caller unknown")
+	return filepath.Join(filepath.Dir(self), "testdata", name)
+}
+
 // The policy of the demo data set
 func Policy(t *testing.T) analysis.Policy {
 	t.Helper()
-	b, err := os.ReadFile(filepath.Join(DemoDir(t), "policy.yaml"))
+	return PolicyOf(t, DemoDir(t))
+}
+
+func PolicyOf(t *testing.T, dataDir string) analysis.Policy {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(dataDir, "policy.yaml"))
 	require.NoError(t, err)
 	policy, err := analysis.LoadPolicy(b)
 	require.NoError(t, err)

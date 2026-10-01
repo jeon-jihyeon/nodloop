@@ -28,6 +28,8 @@ type Compactable struct {
 	// Folder items whose evidence cites only procedure paragraphs
 	// No event can replay them so a compaction leaves them out
 	Excluded Set
+	// The declared change contexts the crowding is measured over
+	Contexts evidence.Contexts `json:"-"`
 }
 
 // A replacement of the approved items of one folder so each review carries fewer items that never share a folder with an item of their kind
@@ -90,7 +92,7 @@ func (e Evidence) Replayable() bool {
 // The anchor and its folder items split by whether an event can replay them
 // 1. fails with ErrNotFound unless the anchor has an approved version
 // 2. fails with ErrParagraphOnly when the anchor cites only procedure paragraphs
-func (s Set) Compactable(anchor string) (Compactable, error) {
+func (s Set) Compactable(anchor string, contexts evidence.Contexts) (Compactable, error) {
 	k := s.current(anchor)
 	if k == nil || k.Status != StatusApproved {
 		return Compactable{}, fmt.Errorf("%w: %s has no approved version", ErrNotFound, anchor)
@@ -98,13 +100,13 @@ func (s Set) Compactable(anchor string) (Compactable, error) {
 	if !k.Evidence.Replayable() {
 		return Compactable{}, fmt.Errorf("%w: %s", ErrParagraphOnly, anchor)
 	}
-	return s.compactable(*k), nil
+	return s.compactable(*k, contexts), nil
 }
 
 // The approved items other than the anchor that share a folder with it across every change context it spans
 // A compaction may span change contexts so it covers their union
-func (s Set) compactable(anchor Knowledge) Compactable {
-	out := Compactable{Items: Set{anchor}, Excluded: Set{}}
+func (s Set) compactable(anchor Knowledge, contexts evidence.Contexts) Compactable {
+	out := Compactable{Items: Set{anchor}, Excluded: Set{}, Contexts: contexts}
 	for _, other := range s.Approved() {
 		switch {
 		case other.ID == anchor.ID || !anchor.sharesFolder(other):
@@ -122,7 +124,7 @@ func (s Set) compactable(anchor Knowledge) Compactable {
 // No review carries a veto so vetoes never make a compaction due
 func (c Compactable) heaviest() int {
 	n := 0
-	for _, changeContext := range evidence.Contexts() {
+	for _, changeContext := range c.Contexts.Names() {
 		if !c.Items[0].carriedIn(changeContext) {
 			continue
 		}
@@ -153,7 +155,7 @@ func (c Compactable) Crowded() bool {
 // 6. an old veto is kept by a new veto of an item that names it and keeps its tools and conditions and example
 // 7. a draft id is one old id so it becomes the next version of that id or a new id and no id repeats
 // 8. evidence is the union of the named old items and basis is verified only when every named item is
-func (s Set) compact(id string, old Set, drafts []Knowledge, now time.Time) (Set, error) {
+func (s Set) compact(id string, old Set, drafts []Knowledge, now time.Time, contexts evidence.Contexts) (Set, error) {
 	if len(old) < 2 || len(drafts) == 0 {
 		return nil, fmt.Errorf("%w: %d old items and %d drafts", ErrCompactionInvalid, len(old), len(drafts))
 	}
@@ -166,7 +168,7 @@ func (s Set) compact(id string, old Set, drafts []Knowledge, now time.Time) (Set
 		if err != nil {
 			return nil, err
 		}
-		if err := named.checkWidening(draft); err != nil {
+		if err := named.checkWidening(draft, contexts); err != nil {
 			return nil, fmt.Errorf("draft %d: %w", i+1, err)
 		}
 		draft = named.draft(draft)
@@ -176,7 +178,7 @@ func (s Set) compact(id string, old Set, drafts []Knowledge, now time.Time) (Set
 		if len(s.history(draft.ID)) > 0 && !slices.ContainsFunc(old, draft.hasID) {
 			return nil, fmt.Errorf("%w: draft %d takes the id %s of an item outside the compaction", ErrCompactionInvalid, i+1, draft.ID)
 		}
-		k, err := s.propose(draft, now)
+		k, err := s.propose(draft, now, contexts)
 		if err != nil {
 			return nil, fmt.Errorf("draft %d: %w", i+1, err)
 		}
@@ -261,8 +263,8 @@ func (e Evidence) union(other Evidence) Evidence {
 // Fails with ErrCompactionInvalid naming the first event the draft reaches and an item it names does not reach
 // The draft carries the facts of every item it names so a wider draft would carry a fact to events its item never reached
 // and a replay of the old events never shows it
-func (s Set) checkWidening(d Knowledge) error {
-	k, reached, ok := s.widened(d)
+func (s Set) checkWidening(d Knowledge, contexts evidence.Contexts) error {
+	k, reached, ok := s.widened(d, contexts)
 	if !ok {
 		return nil
 	}
@@ -273,15 +275,15 @@ func (s Set) checkWidening(d Knowledge) error {
 }
 
 // The first item of the set that d reaches past and the events it reaches there
-// 1. the change contexts are the valid ones the scope and the exceptions of d leave
+// 1. the change contexts are the declared ones the scope and the exceptions of d leave
 // 2. d without metrics reaches every metric
 // 3. a dim value of d must be one every item keeps because a dim holds one value per key
-func (s Set) widened(d Knowledge) (Knowledge, Scope, bool) {
+func (s Set) widened(d Knowledge, contexts evidence.Contexts) (Knowledge, Scope, bool) {
 	metrics := d.Scope.Metrics
 	if len(metrics) == 0 {
 		metrics = []string{""}
 	}
-	for _, c := range evidence.Contexts() {
+	for _, c := range contexts.Names() {
 		if !d.reaches(c) {
 			continue
 		}
@@ -513,7 +515,7 @@ func (s Set) proposedUnder(id string) Set {
 // 2. every other old item is retired
 // 3. a record already appended by an earlier call is not repeated so a second call completes a partial one
 // 4. an old item changed by anything but this compaction makes the compaction outdated
-func (s Set) approveCompaction(c Compaction, approver string, now time.Time) ([]Knowledge, Set, error) {
+func (s Set) approveCompaction(c Compaction, approver string, now time.Time, contexts evidence.Contexts) ([]Knowledge, Set, error) {
 	working := slices.Clone(s)
 	var records []Knowledge
 	add := func(k Knowledge) {
@@ -529,7 +531,7 @@ func (s Set) approveCompaction(c Compaction, approver string, now time.Time) ([]
 		if latest.Status == StatusApproved {
 			continue
 		}
-		to, superseded, err := working.approve(item.ID, item.Version, approver, now)
+		to, superseded, err := working.approve(item.ID, item.Version, approver, now, contexts)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -556,7 +558,7 @@ func (s Set) approveCompaction(c Compaction, approver string, now time.Time) ([]
 // The records that approve the compaction of id
 // 1. an approver is required once the compaction is found
 // 2. an approval that pushes a review past a cap or grows one already past it is refused like one of Approve
-func (s Set) compactionApproval(id, approver string, now time.Time) ([]Knowledge, error) {
+func (s Set) compactionApproval(id, approver string, now time.Time, contexts evidence.Contexts) ([]Knowledge, error) {
 	c, err := s.compaction(id)
 	if err != nil {
 		return nil, err
@@ -564,12 +566,12 @@ func (s Set) compactionApproval(id, approver string, now time.Time) ([]Knowledge
 	if approver == "" {
 		return nil, fmt.Errorf("%w: compaction %s needs one", ErrApproverRequired, id)
 	}
-	records, after, err := s.approveCompaction(c, approver, now)
+	records, after, err := s.approveCompaction(c, approver, now, contexts)
 	if err != nil {
 		return nil, err
 	}
 	for _, k := range c.Items {
-		if f, grew := after.outgrows(s, k); grew {
+		if f, grew := after.outgrows(s, k, contexts); grew {
 			return nil, fmt.Errorf("%w: %s %s with %s", ErrFolderFull, k.ID, f.load(), f)
 		}
 	}
@@ -577,7 +579,7 @@ func (s Set) compactionApproval(id, approver string, now time.Time) ([]Knowledge
 }
 
 // The set with the compaction approved in memory
-func (s Set) preview(c Compaction, now time.Time) (Set, error) {
-	_, working, err := s.approveCompaction(c, "preview", now)
+func (s Set) preview(c Compaction, now time.Time, contexts evidence.Contexts) (Set, error) {
+	_, working, err := s.approveCompaction(c, "preview", now, contexts)
 	return working, err
 }

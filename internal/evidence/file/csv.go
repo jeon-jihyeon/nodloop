@@ -197,7 +197,7 @@ func (l layout) point(rec []string, line int) (string, evidence.Point, error) {
 // Change context per event id
 // 1. an empty event id is rejected as events.csv rejects it
 // 2. a repeated event id is rejected because the later row would silently win
-func parseContexts(r io.Reader) (map[string]evidence.Context, error) {
+func parseContexts(r io.Reader, declared evidence.Contexts) (map[string]evidence.Context, error) {
 	t, err := readTable(contextsFile, r, []string{columnEventID, columnContext})
 	if err != nil {
 		return nil, err
@@ -213,8 +213,8 @@ func parseContexts(r io.Reader) (map[string]evidence.Context, error) {
 				evidence.ErrMalformed, contextsFile, line, columnEventID, id)
 		}
 		c := evidence.Context(rec[t.positions[columnContext]])
-		if !c.Valid() {
-			return fmt.Errorf("%w: %s line %d: %q", evidence.ErrUnknownContext, contextsFile, line, c)
+		if !declared.Valid(c) {
+			return fmt.Errorf("%w: %s line %d: %q is not one of %v", evidence.ErrUnknownContext, contextsFile, line, c, declared.Names())
 		}
 		out[id] = c
 		return nil

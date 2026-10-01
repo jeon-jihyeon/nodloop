@@ -25,8 +25,11 @@ const (
 )
 
 type Policy struct {
-	Version   string     `yaml:"version" json:"version"`
-	Analyzers []RuleSpec `yaml:"analyzers" json:"analyzers"`
+	Version string `yaml:"version" json:"version"`
+	// Loaded by LoadContexts from the contexts key
+	// A hand built policy without any flags no change context
+	Contexts  evidence.Contexts `yaml:"-" json:"-"`
+	Analyzers []RuleSpec        `yaml:"analyzers" json:"analyzers"`
 	// Names an analyzer reads that no event of the data set it was bound to carries
 	absent []absence
 }
@@ -234,7 +237,7 @@ func (p Policy) Analyze(ev evidence.Event) (Observations, error) {
 	}
 	points := series(ev.Points)
 	var out Observations
-	unflagged := ev.ChangeContext.Breaks()
+	unflagged := p.Contexts.Breaks(ev.ChangeContext)
 	for _, spec := range p.Analyzers {
 		if unflagged && spec.Rule == RuleCoverage {
 			out = append(out, points.contextObservation(ev.ID, ev.ChangeContext))
@@ -270,7 +273,48 @@ func LoadPolicy(b []byte) (Policy, error) {
 	if err := p.validate(); err != nil {
 		return Policy{}, err
 	}
+	contexts, err := LoadContexts(b)
+	if err != nil {
+		return Policy{}, err
+	}
+	p.Contexts = contexts
 	return p, nil
+}
+
+// The change contexts a policy file declares and nothing else of it
+// So a command that never analyzes reads them from a file whose analyzers are broken
+// 1. a file that declares none gets the default five
+// 2. unknown is appended when left out because an event without a context row reads it
+// 3. an empty name or a repeated one or an unknown that breaks fails
+func LoadContexts(b []byte) (evidence.Contexts, error) {
+	var file struct {
+		Contexts []struct {
+			Name           evidence.Context `yaml:"name"`
+			BreaksBaseline bool             `yaml:"breaks_baseline"`
+		} `yaml:"contexts"`
+	}
+	if err := yaml.Unmarshal(b, &file); err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrMalformedPolicy, err)
+	}
+	if len(file.Contexts) == 0 {
+		return evidence.DefaultContexts(), nil
+	}
+	var out evidence.Contexts
+	for _, d := range file.Contexts {
+		switch {
+		case d.Name == "":
+			return nil, fmt.Errorf("%w: a context without a name", ErrUnknownContextDecl)
+		case out.Valid(d.Name):
+			return nil, fmt.Errorf("%w: %q declared twice", ErrUnknownContextDecl, d.Name)
+		case d.Name == evidence.ContextUnknown && d.BreaksBaseline:
+			return nil, fmt.Errorf("%w: %q never breaks the baseline", ErrUnknownContextDecl, d.Name)
+		}
+		out = append(out, evidence.DeclaredContext{Name: d.Name, BreaksBaseline: d.BreaksBaseline})
+	}
+	if !out.Valid(evidence.ContextUnknown) {
+		out = append(out, evidence.DeclaredContext{Name: evidence.ContextUnknown})
+	}
+	return out, nil
 }
 
 // Version is left to LoadPolicy because Analyze runs hand built policies too

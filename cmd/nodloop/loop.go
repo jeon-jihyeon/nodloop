@@ -65,7 +65,11 @@ func (c knowledgeCommand) audit(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	return json.NewEncoder(c.out).Encode(h.BrokenReferences(procedures, metrics, dims))
+	contexts, err := c.app.contexts()
+	if err != nil {
+		return err
+	}
+	return json.NewEncoder(c.out).Encode(h.BrokenReferences(procedures, metrics, dims, contexts))
 }
 
 // Without a version the approved version of the id is the one reaffirmed
@@ -97,7 +101,11 @@ func (c knowledgeCommand) narrow(ctx context.Context, id string, version int, au
 	if err != nil {
 		return err
 	}
-	k, overlaps, err := c.ledger.Narrow(ctx, id, version, h.RefutedContexts(id, version), h.RefutedTraces(id, version), author)
+	contexts, err := c.app.contexts()
+	if err != nil {
+		return err
+	}
+	k, overlaps, err := c.ledger.Narrow(ctx, id, version, h.RefutedContexts(id, version, contexts), h.RefutedTraces(id, version), author)
 	if errors.Is(err, knowledge.ErrNarrowExhausted) {
 		return fmt.Errorf("%w. Narrowing cannot help because every change context of the version was refuted. "+
 			"Keep the version or retire it by name with nodloop knowledge retire %s --version %d --approver <name>",

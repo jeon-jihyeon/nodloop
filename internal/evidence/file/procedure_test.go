@@ -91,7 +91,7 @@ func TestSourceProcedures(t *testing.T) {
 			dir := t.TempDir()
 			require.NoError(t, os.Mkdir(filepath.Join(dir, "procedures"), 0o700))
 			require.NoError(t, os.WriteFile(filepath.Join(dir, "procedures", "r.md"), []byte(tc.args), 0o600))
-			src, err := file.New(dir)
+			src, err := file.New(dir, evidence.DefaultContexts())
 			require.NoError(t, err)
 			got, err := src.Procedures(ctx)
 			assert.ErrorIs(t, err, tc.want.err)

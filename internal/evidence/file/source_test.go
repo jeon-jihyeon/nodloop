@@ -16,7 +16,7 @@ import (
 )
 
 func TestSourceContract(t *testing.T) {
-	src, err := file.New(filepath.Join("..", "..", "..", "examples", "demo"))
+	src, err := file.New(filepath.Join("..", "..", "..", "examples", "demo"), evidence.DefaultContexts())
 	require.NoError(t, err)
 	evidencetest.Run(t, src, evidencetest.Seed{
 		EventID:        "tq-005",
@@ -43,7 +43,7 @@ func TestNew(t *testing.T) {
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got, err := file.New(tc.args)
+			got, err := file.New(tc.args, evidence.DefaultContexts())
 			assert.ErrorIs(t, err, tc.want)
 			assert.Equal(t, tc.want == nil, got != nil, "a source opens exactly when there is no error")
 		})
@@ -141,7 +141,7 @@ func TestSourceLabels(t *testing.T) {
 			for name, content := range tc.args {
 				require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte(content), 0o600))
 			}
-			src, err := file.New(dir)
+			src, err := file.New(dir, evidence.DefaultContexts())
 			require.NoError(t, err)
 			got, err := src.Labels(ctx)
 			assert.Contains(t, fmt.Sprint(err), tc.want.text)

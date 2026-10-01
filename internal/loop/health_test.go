@@ -160,12 +160,24 @@ func TestHistoryBrokenReferences(t *testing.T) {
 		evidence   knowledge.Evidence
 		scope      knowledge.Scope
 		exceptions []evidence.Context
+		// What the policy declares now
+		// Nil reads as the default five
+		contexts evidence.Contexts
 	}
 	tcs := []struct {
 		name string
 		args args
 		want []loop.Issue
 	}{
+		{
+			"a default change context the policy no longer declares",
+			args{
+				evidence: knowledge.Evidence{ParagraphIDs: []string{"p#1"}},
+				scope:    knowledge.Scope{Scope: evidence.Scope{ChangeContexts: []evidence.Context{evidence.ContextPlannedChange}}},
+				contexts: evidence.Contexts{{Name: "deploy"}, {Name: evidence.ContextUnknown}},
+			},
+			[]loop.Issue{{ID: "k", Version: 2, Field: "change_contexts", Reference: "planned_operational_change"}},
+		},
 		{
 			"every reference resolves",
 			args{
@@ -235,6 +247,10 @@ func TestHistoryBrokenReferences(t *testing.T) {
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
+			contexts := tc.args.contexts
+			if contexts == nil {
+				contexts = evidence.DefaultContexts()
+			}
 			audited := item("k", 2, knowledge.StatusApproved)
 			audited.Evidence, audited.Scope, audited.Exceptions = tc.args.evidence, tc.args.scope, tc.args.exceptions
 			superseded := item("k", 1, knowledge.StatusSuperseded)
@@ -245,7 +261,7 @@ func TestHistoryBrokenReferences(t *testing.T) {
 				knowledge.Set{audited, superseded},
 			)
 			require.NoError(t, err)
-			assert.Equal(t, tc.want, h.BrokenReferences(procedures, []string{"clicks"}, knowledge.Dims{"source": {"source-a": {}}}))
+			assert.Equal(t, tc.want, h.BrokenReferences(procedures, []string{"clicks"}, knowledge.Dims{"source": {"source-a": {}}}, contexts))
 		})
 	}
 }
@@ -292,7 +308,7 @@ func TestHistoryRefuted(t *testing.T) {
 			}
 			h, err := loop.New(traces(t, tc.args.reviews...), nil, outcomes, knowledge.Set{item("k", 1, knowledge.StatusApproved)})
 			require.NoError(t, err)
-			assert.Equal(t, tc.want.contexts, h.RefutedContexts("k", 1))
+			assert.Equal(t, tc.want.contexts, h.RefutedContexts("k", 1, evidence.DefaultContexts()))
 			assert.Equal(t, tc.want.traceIDs, h.RefutedTraces("k", 1))
 		})
 	}
@@ -401,7 +417,7 @@ func TestHistoryCarriedOutcomes(t *testing.T) {
 			i := slices.IndexFunc(rows, func(row loop.Health) bool { return row.ID == "x" && row.Version == 2 })
 			require.GreaterOrEqual(t, i, 0)
 
-			got := want{rows[i].CarriedConfirmed, rows[i].CarriedRefuted, rows[i].RetireCandidate, h.RefutedContexts("x", 2)}
+			got := want{rows[i].CarriedConfirmed, rows[i].CarriedRefuted, rows[i].RetireCandidate, h.RefutedContexts("x", 2, evidence.DefaultContexts())}
 			assert.Equal(t, tc.want, got)
 		})
 	}

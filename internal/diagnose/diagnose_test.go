@@ -290,7 +290,7 @@ func editedDemo(t *testing.T, file, old, replacement string) *evidencefile.Sourc
 	b, err := os.ReadFile(path)
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(path, []byte(strings.Replace(string(b), old, replacement, 1)), 0o600))
-	src, err := evidencefile.New(dir)
+	src, err := evidencefile.New(dir, evidence.DefaultContexts())
 	require.NoError(t, err)
 	return src
 }
@@ -332,6 +332,44 @@ func TestPrepareFailure(t *testing.T) {
 
 			assert.Equal(t, diagnose.Context{}, got)
 			assert.Empty(t, traces)
+		})
+	}
+}
+
+// A data set that declares its own change contexts reviews with them unchanged
+func TestPrepareDeclaredContexts(t *testing.T) {
+	dir := testkit.FixtureDir(t, "contexts")
+	const untrusted = "change context tracking_change: the baseline comparison is not trusted until the context is resolved"
+	type want struct {
+		changeContext evidence.Context
+		procedures    []string
+		// Whether the context observation flags the baseline
+		flagged bool
+	}
+	tcs := []struct {
+		name string
+		args string
+		want want
+	}{
+		{"a declared context that breaks flags the baseline and loads its procedure", "e-track", want{"tracking_change", []string{"metric-review", "tracking-hold"}, true}},
+		{"a declared context that keeps the baseline flags nothing", "e-deploy", want{"deploy", []string{"metric-review"}, false}},
+		{"a moved metric under a declared context is scored", "e-campaign", want{"campaign_start", []string{"metric-review"}, false}},
+	}
+	ctx := context.Background()
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			s := testkit.OpenData(t, dir)
+			d := diagnose.New(s.Source, testkit.PolicyOf(t, dir), nil, s.Traces, s.Feedback, s.Ledger, s.Clock.Now)
+
+			got, err := d.Prepare(ctx, tc.args, diagnose.ModeInteractive, diagnose.Session{})
+
+			require.NoError(t, err)
+			flagged := false
+			for _, o := range got.Observations {
+				flagged = flagged || o.Summary == untrusted
+			}
+			assert.Equal(t, tc.want, want{got.ChangeContext, got.Procedures, flagged})
 		})
 	}
 }
@@ -1529,7 +1567,7 @@ func TestRunStoreFailure(t *testing.T) {
 			verdicts, err := feedbackfile.New(dir)
 			require.NoError(t, err)
 			ledger := knowledge.NewLedger(
-				items, vetofile.NewApprovedFile(t.TempDir(), "records"),
+				items, vetofile.NewApprovedFile(t.TempDir(), "records"), evidence.DefaultContexts(),
 				s.Clock.Now, func(prefix string) string { return prefix + "generated" },
 			)
 			reviewer := diagnose.New(
@@ -1559,7 +1597,7 @@ func TestRunStoreFailure(t *testing.T) {
 				Reads: testkit.Reads{Allowed: tc.args.feedbackReads, Err: assert.AnError},
 			}
 			flakyLedger := knowledge.NewLedger(
-				flakyKnowledge, vetofile.NewApprovedFile(t.TempDir(), "records"),
+				flakyKnowledge, vetofile.NewApprovedFile(t.TempDir(), "records"), evidence.DefaultContexts(),
 				s.Clock.Now, func(prefix string) string { return prefix + "generated" },
 			)
 			client := llmmock.NewMockClient(gomock.NewController(t))

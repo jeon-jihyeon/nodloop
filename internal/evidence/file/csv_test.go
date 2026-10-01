@@ -29,6 +29,9 @@ func TestSourceEvent(t *testing.T) {
 		// Unlisted files are written readable
 		modes map[string]os.FileMode
 		id    string
+		// The declaration of the policy
+		// Nil reads as the default five
+		contexts evidence.Contexts
 	}
 	type want struct {
 		event evidence.Event
@@ -36,6 +39,7 @@ func TestSourceEvent(t *testing.T) {
 		// A fragment of the message naming the file and line
 		text string
 	}
+	declared := evidence.Contexts{{Name: "deploy", BreaksBaseline: true}, {Name: evidence.ContextUnknown}}
 	tcs := []struct {
 		name string
 		args args
@@ -219,7 +223,19 @@ func TestSourceEvent(t *testing.T) {
 		{
 			name: "context outside the valid set names the line",
 			args: args{files: map[string]string{"events.csv": events, "contexts.csv": contexts + "e,bogus\n"}, id: "e"},
-			want: want{err: evidence.ErrUnknownContext, text: `unknown change context: contexts.csv line 2: "bogus"`},
+			want: want{err: evidence.ErrUnknownContext, text: `unknown change context: contexts.csv line 2: "bogus" is not one of [no_known_change`},
+		},
+		{
+			name: "a context the policy declares sets the change context",
+			args: args{files: map[string]string{"events.csv": events, "contexts.csv": contexts + "e,deploy\n"}, id: "e", contexts: declared},
+			want: want{event: evidence.Event{ID: "e", ChangeContext: "deploy", Points: point}},
+		},
+		{
+			name: "a default context the policy does not declare names the declared ones",
+			args: args{
+				files: map[string]string{"events.csv": events, "contexts.csv": contexts + "e,measurement_context_changed\n"}, id: "e", contexts: declared,
+			},
+			want: want{err: evidence.ErrUnknownContext, text: `"measurement_context_changed" is not one of [deploy unknown]`},
 		},
 		{
 			name: "empty event id in contexts names the line",
@@ -253,7 +269,11 @@ func TestSourceEvent(t *testing.T) {
 				mode := cmp.Or(tc.args.modes[name], os.FileMode(0o600))
 				require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte(content), mode))
 			}
-			src, err := file.New(dir)
+			contexts := tc.args.contexts
+			if contexts == nil {
+				contexts = evidence.DefaultContexts()
+			}
+			src, err := file.New(dir, contexts)
 			require.NoError(t, err)
 			got, err := src.Event(ctx, tc.args.id)
 			assert.ErrorIs(t, err, tc.want.err)
@@ -324,7 +344,7 @@ func TestSourceEvents(t *testing.T) {
 			for name, content := range tc.args {
 				require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte(content), 0o600))
 			}
-			src, err := file.New(dir)
+			src, err := file.New(dir, evidence.DefaultContexts())
 			require.NoError(t, err)
 			got, err := src.Events(ctx)
 			assert.ErrorIs(t, err, tc.want.err)

@@ -54,7 +54,7 @@ func TestSourceMetrics(t *testing.T) {
 			for name, content := range tc.args {
 				require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte(content), 0o600))
 			}
-			source, err := file.New(dir)
+			source, err := file.New(dir, evidence.DefaultContexts())
 			require.NoError(t, err)
 			metrics, err := source.Metrics(ctx)
 			assert.ErrorIs(t, err, tc.want.err)
@@ -92,7 +92,7 @@ func TestSourceDims(t *testing.T) {
 			for name, content := range tc.args {
 				require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte(content), 0o600))
 			}
-			source, err := file.New(dir)
+			source, err := file.New(dir, evidence.DefaultContexts())
 			require.NoError(t, err)
 			dims, err := source.Dims(ctx)
 			assert.ErrorIs(t, err, tc.want.err)

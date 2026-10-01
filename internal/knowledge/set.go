@@ -108,9 +108,9 @@ func (s Set) Covers(changeContext evidence.Context) bool {
 // 1. measured per change context the item reaches because an event carries one and a review loads only its items
 // 2. an upper bound per event since metrics and dims are left open
 // Another version of the item never counts because approval replaces it
-func (s Set) folder(item Knowledge) Folder {
+func (s Set) folder(item Knowledge, contexts evidence.Contexts) Folder {
 	f := Folder{Chars: utf8.RuneCountInString(item.Text()), Carried: Set{}}
-	for _, c := range evidence.Contexts() {
+	for _, c := range contexts.Names() {
 		if !item.carriedIn(c) {
 			continue
 		}
@@ -119,7 +119,7 @@ func (s Set) folder(item Knowledge) Folder {
 		}
 	}
 	if item.Status == StatusApproved && item.Evidence.Replayable() {
-		f.Compactable = s.compactable(item).heaviest()
+		f.Compactable = s.compactable(item, contexts).heaviest()
 	}
 	return f
 }
@@ -135,8 +135,8 @@ func (s Set) folderIn(item Knowledge, changeContext evidence.Context) Folder {
 // 2. each cap is judged alone so a review with fewer items and more chars passes while its chars stay under the cap
 // 3. a review already past a cap that does not grow passes so a replacement never needs a retire first
 // Only a change context whose review carries the item can grow because every other change between the sets retires or supersedes
-func (s Set) outgrows(before Set, item Knowledge) (Folder, bool) {
-	for _, c := range evidence.Contexts() {
+func (s Set) outgrows(before Set, item Knowledge, contexts evidence.Contexts) (Folder, bool) {
+	for _, c := range contexts.Names() {
 		if !item.carriedIn(c) {
 			continue
 		}
@@ -252,7 +252,7 @@ func (s Set) overlapsOf(id string) (Set, error) {
 // 1. status and approval fields of the draft are dropped so a proposal never arrives approved
 // 2. compaction fields are dropped so only a compaction proposal marks its candidates
 // 3. the base is the current version of the id so approval can tell which versions the candidate was built on
-func (s Set) propose(draft Knowledge, now time.Time) (Knowledge, error) {
+func (s Set) propose(draft Knowledge, now time.Time, contexts evidence.Contexts) (Knowledge, error) {
 	if draft.Basis == "" {
 		draft.Basis = BasisStated
 	}
@@ -262,7 +262,7 @@ func (s Set) propose(draft Knowledge, now time.Time) (Knowledge, error) {
 	if cur := s.current(draft.ID); cur != nil {
 		draft.Base = cur.Version
 	}
-	if err := draft.validate(); err != nil {
+	if err := draft.validate(contexts); err != nil {
 		return Knowledge{}, err
 	}
 	return draft, nil
@@ -277,7 +277,7 @@ func (s Set) propose(draft Knowledge, now time.Time) (Knowledge, error) {
 // Only a retire by a named person widens the scope the same way
 // 5. an approval that pushes a review past ReviewChars or ReviewItems or grows one already past them is refused
 // So a new version that replaces an item in a review already past a cap passes while that review does not grow
-func (s Set) approval(id string, version int, approver string, now time.Time) ([]Knowledge, error) {
+func (s Set) approval(id string, version int, approver string, now time.Time, contexts evidence.Contexts) ([]Knowledge, error) {
 	history, err := s.historyOf(id)
 	if err != nil {
 		return nil, err
@@ -293,7 +293,7 @@ func (s Set) approval(id string, version int, approver string, now time.Time) ([
 		return nil, fmt.Errorf("%w: %s v%d was built on v%d, which compaction %s retired. Retire v%d and propose the change on the item that replaced v%d",
 			ErrCandidateOutdated, id, version, retired.Version, retired.Compaction, version, retired.Version)
 	}
-	to, superseded, err := history.approve(id, version, approver, now)
+	to, superseded, err := history.approve(id, version, approver, now, contexts)
 	if err != nil {
 		return nil, err
 	}
@@ -303,14 +303,14 @@ func (s Set) approval(id string, version int, approver string, now time.Time) ([
 			return nil, fmt.Errorf("%w: %s v%d does not block what v%d blocks. Restate the veto or retire v%d first",
 				ErrVetoLifted, id, version, superseded.Version, superseded.Version)
 		}
-		if _, reached, ok := (Set{*superseded}).widened(to); ok {
+		if _, reached, ok := (Set{*superseded}).widened(to, contexts); ok {
 			return nil, fmt.Errorf("%w: %s v%d reaches events of %s that v%d never reached. "+
 				"Propose again with the scope of v%d or a narrower one, which is %s, propose the wider part under a new id, or retire v%d first",
 				ErrScopeWidened, id, version, reached, superseded.Version, superseded.Version, superseded.reachText(), superseded.Version)
 		}
 		records = append(records, *superseded)
 	}
-	if f, grew := slices.Concat(records, s).outgrows(s, to); grew {
+	if f, grew := slices.Concat(records, s).outgrows(s, to, contexts); grew {
 		return nil, fmt.Errorf("%w: %s with %s", ErrFolderFull, f.load(), f)
 	}
 	return records, nil
@@ -321,7 +321,7 @@ func (s Set) approval(id string, version int, approver string, now time.Time) ([
 // 2. a version older than the approved one is refused so an approval never rolls the id back
 // 3. a candidate whose bases never reach the approved version is refused because it was built without that version
 // Approving it would drop whatever the approved version added such as the facts a compaction merged
-func (s Set) approve(id string, version int, approver string, now time.Time) (Knowledge, *Knowledge, error) {
+func (s Set) approve(id string, version int, approver string, now time.Time, contexts evidence.Contexts) (Knowledge, *Knowledge, error) {
 	from, err := s.latest(id, version)
 	if err != nil {
 		return Knowledge{}, nil, err
@@ -330,7 +330,7 @@ func (s Set) approve(id string, version int, approver string, now time.Time) (Kn
 	if err != nil {
 		return Knowledge{}, nil, err
 	}
-	if err := to.validate(); err != nil {
+	if err := to.validate(contexts); err != nil {
 		return Knowledge{}, nil, err
 	}
 	cur := s.current(id)
@@ -396,10 +396,10 @@ func (s Set) compactedBase(k Knowledge) (Knowledge, bool) {
 // 2. a record the set already holds is left out so importing one file twice changes nothing
 // 3. a record older than the newest record of its id and version fails with ErrImportStale
 // So a file never undoes a later retire or approval
-func (s Set) importable(records []Knowledge) (Set, error) {
+func (s Set) importable(records []Knowledge, contexts evidence.Contexts) (Set, error) {
 	out := Set{}
 	for i, k := range records {
-		if err := k.validate(); err != nil {
+		if err := k.validate(contexts); err != nil {
 			return nil, fmt.Errorf("record %d: %w", i+1, err)
 		}
 		if slices.ContainsFunc(s, k.same) {

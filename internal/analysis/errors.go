@@ -11,4 +11,5 @@ var (
 	ErrProportionMetrics  = errors.New("analysis: proportion_control needs exactly a numerator and a denominator metric")
 	ErrPolicyUnobserved   = errors.New("analysis: policy names a metric or dimension no event carries")
 	ErrLimitsSection      = errors.New("analysis: the limits section is no longer read because the review caps are internal now so remove it")
+	ErrUnknownContextDecl = errors.New("analysis: invalid change context declaration")
 )

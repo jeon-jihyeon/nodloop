@@ -37,7 +37,7 @@ func parseProcedure(fileName, content string) (evidence.Procedure, error) {
 
 // The lines between a first line `---` and the next `---`
 // 1. a file that does not open with the fence has no front matter and an empty scope
-// 2. only change_contexts and metrics are known and every change context must be one the evidence layer knows
+// 2. only change_contexts and metrics are known and the source checks the change contexts against the declared ones
 // 3. a fence after the first line is text
 func frontMatter(content string) (evidence.Scope, string, error) {
 	first, rest, _ := strings.Cut(content, "\n")
@@ -60,11 +60,6 @@ func decodeScope(head, body string) (evidence.Scope, string, error) {
 	dec.KnownFields(true)
 	if err := dec.Decode(&scope); err != nil && !errors.Is(err, io.EOF) {
 		return evidence.Scope{}, "", fmt.Errorf("%w: front matter: %w", evidence.ErrMalformed, err)
-	}
-	for _, c := range scope.ChangeContexts {
-		if !c.Valid() {
-			return evidence.Scope{}, "", fmt.Errorf("%w: %q", evidence.ErrUnknownContext, c)
-		}
 	}
 	return scope, body, nil
 }

@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/jeon-jihyeon/nodloop/internal/atomicfile"
+	"github.com/jeon-jihyeon/nodloop/internal/evidence"
 	evidencefile "github.com/jeon-jihyeon/nodloop/internal/evidence/file"
 )
 
@@ -99,14 +100,16 @@ func newUserConfig(ctx context.Context, dataDir, recordDir string) (userConfig, 
 	if _, err := os.Stat(filepath.Join(abs, "events.csv")); err != nil {
 		return userConfig{}, fmt.Errorf("%w: %s", errNoEvents, abs)
 	}
-	src, err := evidencefile.New(abs)
+	a := app{cfg: config{dataDir: abs}}
+	src, err := a.source()
 	if err != nil {
 		return userConfig{}, err
 	}
 	// 1. a policy the server could not load fails here so rerunning setup never reports success on it
 	// 2. a name no event carries fails here too so a misspelled name never leaves reviews without their numbers
 	// 3. the server reports that name in every review instead because it cannot tell a typo from an outage
-	policy, err := (app{cfg: config{dataDir: abs}}).observedPolicy(ctx, src)
+	// 4. a contexts.csv value or procedure scope the policy does not declare fails through the source
+	policy, err := a.observedPolicy(ctx, src)
 	if err != nil {
 		return userConfig{}, err
 	}
@@ -217,7 +220,8 @@ func (c setupCommand) prepare(ctx context.Context, dataDir, recordDir string) (u
 		report.warnings = append(report.warnings, fmt.Sprintf("%s is %s and wins over the saved data dir so every command started with it reviews %s. "+
 			"Unset it to review %s", envFileDir, c.fileEnv, report.data, uc.DataDir))
 	}
-	src, err := evidencefile.New(uc.DataDir)
+	// Skipped reads no change context so the default declaration serves
+	src, err := evidencefile.New(uc.DataDir, evidence.DefaultContexts())
 	if err != nil {
 		return userConfig{}, setupReport{}, err
 	}

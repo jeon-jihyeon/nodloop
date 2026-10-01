@@ -173,7 +173,7 @@ func (v Veto) check(id, reason string) error {
 	return nil
 }
 
-func (k Knowledge) validate() error {
+func (k Knowledge) validate(contexts evidence.Contexts) error {
 	if k.ID == "" {
 		return ErrIDRequired
 	}
@@ -196,7 +196,7 @@ func (k Knowledge) validate() error {
 	case k.Author == "":
 		return ErrAuthorRequired
 	}
-	if err := k.checkScope(); err != nil {
+	if err := k.checkScope(contexts); err != nil {
 		return err
 	}
 	if k.Veto == nil {
@@ -220,31 +220,31 @@ func (k Knowledge) checkVersion() error {
 }
 
 // Fails with ErrScopeInvalid when no event could ever match the scope and the exceptions
-// 1. a change context or exception outside the valid set matches no event
+// 1. a change context or exception the data set does not declare matches no event
 // 2. exceptions that cover every change context left leave the item nothing to apply to
 // A misspelled exception would otherwise let the item reach the events the person meant to exclude
-func (k Knowledge) checkScope() error {
+func (k Knowledge) checkScope(contexts evidence.Contexts) error {
 	for _, c := range k.Scope.ChangeContexts {
-		if !c.Valid() {
-			return fmt.Errorf("%w: change context %q is not one of %v", ErrScopeInvalid, c, evidence.Contexts())
+		if !contexts.Valid(c) {
+			return fmt.Errorf("%w: change context %q is not one of %v", ErrScopeInvalid, c, contexts.Names())
 		}
 	}
 	for _, c := range k.Exceptions {
-		if !c.Valid() {
-			return fmt.Errorf("%w: exception %q is not one of %v", ErrScopeInvalid, c, evidence.Contexts())
+		if !contexts.Valid(c) {
+			return fmt.Errorf("%w: exception %q is not one of %v", ErrScopeInvalid, c, contexts.Names())
 		}
 	}
-	if k.Excluded() {
+	if k.Excluded(contexts) {
 		return fmt.Errorf("%w: the exceptions %v cover every change context of the scope", ErrScopeInvalid, k.Exceptions)
 	}
 	return nil
 }
 
 // Whether the exceptions leave no change context the item could apply to
-// An item scoped to no change context may apply to every one
-func (k Knowledge) Excluded() bool {
+// An item scoped to no change context may apply to every declared one
+func (k Knowledge) Excluded(contexts evidence.Contexts) bool {
 	if len(k.Scope.ChangeContexts) == 0 {
-		return k.excepts(evidence.Contexts())
+		return k.excepts(contexts.Names())
 	}
 	return k.excepts(k.Scope.ChangeContexts)
 }

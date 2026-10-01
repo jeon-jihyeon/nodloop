@@ -69,7 +69,16 @@ const (
 
 // Policy of the demo data set
 // Hourly series of 48 points with the last 12 under test
+// The contexts are the default five written out so a reader sees how a data set declares its own
 const policyYAML = `version: demo-1
+contexts:
+  - name: no_known_change
+  - name: planned_operational_change
+  - name: measurement_context_changed
+    breaks_baseline: true
+  - name: data_availability_issue
+    breaks_baseline: true
+  - name: unknown
 analyzers:
   - rule: zscore
     metrics: [click_count]
