@@ -123,7 +123,7 @@ func (d dataCheck) run(ctx context.Context) (dataReport, error) {
 	if textErr != nil {
 		return report, textErr
 	}
-	policy, err := analysis.LoadPolicy(text)
+	policy, err := analysis.LoadPolicy(text, commandRunner{dir: abs})
 	if err != nil {
 		return report, err
 	}

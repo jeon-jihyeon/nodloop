@@ -417,8 +417,8 @@ func TestPrepareCandidates(t *testing.T) {
 
 // Under a zscore only policy tq-005 moves click_count on source-a alone while every source stays in the event
 func TestPrepareKnowledgeScopedToMovedSeries(t *testing.T) {
-	policy, err := analysis.LoadPolicy([]byte("version: zscore-1\nanalyzers:\n" +
-		"  - rule: zscore\n    metrics: [click_count]\n    baseline: 36\n    window: 12\n    threshold: 3\n    min_samples: 12\n"))
+	policy, err := analysis.LoadPolicy([]byte("version: zscore-1\nanalyzers:\n"+
+		"  - rule: zscore\n    metrics: [click_count]\n    baseline: 36\n    window: 12\n    threshold: 3\n    min_samples: 12\n"), nil)
 	require.NoError(t, err)
 	clicksOn := func(source string) knowledge.Scope {
 		return knowledge.Scope{Scope: evidence.Scope{Metrics: []string{"click_count"}}, Dims: map[string]string{"source": source}}
@@ -426,10 +426,10 @@ func TestPrepareKnowledgeScopedToMovedSeries(t *testing.T) {
 	// The demo policy adds concentration_change whose source-b share on tq-005 falls only because source-a grew
 	demo := testkit.Policy(t)
 	// ev-1 of testdata diluted moves only source-d whose share rose because the other sources fell
-	diluted, err := analysis.LoadPolicy([]byte("version: diluted-1\nanalyzers:\n" +
-		"  - rule: zscore\n    metrics: [click_count]\n    baseline: 36\n    window: 12\n    threshold: 3\n    min_samples: 12\n" +
-		"  - rule: concentration_change\n    metrics: [click_count]\n    group_by: source\n    baseline: 36\n    window: 12\n" +
-		"    threshold: 0.15\n    min_samples: 12\n"))
+	diluted, err := analysis.LoadPolicy([]byte("version: diluted-1\nanalyzers:\n"+
+		"  - rule: zscore\n    metrics: [click_count]\n    baseline: 36\n    window: 12\n    threshold: 3\n    min_samples: 12\n"+
+		"  - rule: concentration_change\n    metrics: [click_count]\n    group_by: source\n    baseline: 36\n    window: 12\n"+
+		"    threshold: 0.15\n    min_samples: 12\n"), nil)
 	require.NoError(t, err)
 	demoDir, dilutedDir := testkit.DemoDir(t), filepath.Join("testdata", "diluted")
 	clicks := knowledge.Scope{Scope: evidence.Scope{

@@ -22,6 +22,7 @@ const (
 	RuleProportion    Rule = "proportion_control"
 	RuleConcentration Rule = "concentration_change"
 	RuleCoverage      Rule = "coverage_rule"
+	RuleCommand       Rule = "command"
 )
 
 type Policy struct {
@@ -32,6 +33,8 @@ type Policy struct {
 	Analyzers []RuleSpec        `yaml:"analyzers" json:"analyzers"`
 	// Names an analyzer reads that no event of the data set it was bound to carries
 	absent []absence
+	// Starts the command analyzers
+	run Runner
 }
 
 type RuleSpec struct {
@@ -58,6 +61,15 @@ type RuleSpec struct {
 	// Zero means the window is one number
 	// proportion_control uses it so a rate that fell only in the freshest hours is visible as such
 	Recent int `yaml:"recent,omitempty" json:"recent,omitempty"`
+	// command only
+	// The name leads every summary and is unique among the command analyzers of a policy
+	Name string `yaml:"name,omitempty" json:"name,omitempty"`
+	// command only
+	// The argv started in the data directory
+	Command []string `yaml:"command,omitempty" json:"command,omitempty"`
+	// command only
+	// Zero means 10 seconds
+	Timeout time.Duration `yaml:"timeout,omitempty" json:"timeout,omitempty"`
 }
 
 type Observation struct {
@@ -231,6 +243,7 @@ var analyzers = map[Rule]analyzer{
 // 1. inadequate observations sort last so the review sees scored series first
 // 2. a change context that breaks the comparison is flagged once where the first coverage_rule runs
 // 3. a name absent from the whole data set is reported inadequate unless this event carries it by now
+// 4. a command analyzer runs through the runner of the policy
 func (p Policy) Analyze(ev evidence.Event) (Observations, error) {
 	if err := p.validate(); err != nil {
 		return nil, err
@@ -242,6 +255,10 @@ func (p Policy) Analyze(ev evidence.Event) (Observations, error) {
 		if unflagged && spec.Rule == RuleCoverage {
 			out = append(out, points.contextObservation(ev.ID, ev.ChangeContext))
 			unflagged = false
+		}
+		if spec.Rule == RuleCommand {
+			out = append(out, p.command(spec, ev)...)
+			continue
 		}
 		out = append(out, analyzers[spec.Rule](spec, ev.ID, points)...)
 	}
@@ -255,7 +272,8 @@ func (p Policy) Analyze(ev evidence.Event) (Observations, error) {
 }
 
 // A limits section is refused so a file written for the configurable caps never loses them without a word
-func LoadPolicy(b []byte) (Policy, error) {
+// run starts the command analyzers and only a policy without one may pass nil
+func LoadPolicy(b []byte, run Runner) (Policy, error) {
 	var file struct {
 		Policy `yaml:",inline"`
 		Limits yaml.Node `yaml:"limits"`
@@ -267,6 +285,7 @@ func LoadPolicy(b []byte) (Policy, error) {
 		return Policy{}, ErrLimitsSection
 	}
 	p := file.Policy
+	p.run = run
 	if p.Version == "" {
 		return Policy{}, ErrMissingVersion
 	}
@@ -318,16 +337,34 @@ func LoadContexts(b []byte) (evidence.Contexts, error) {
 }
 
 // Version is left to LoadPolicy because Analyze runs hand built policies too
+// Command analyzers need the runner and one name each
 func (p Policy) validate() error {
+	names := map[string]bool{}
 	for i, spec := range p.Analyzers {
 		if err := spec.validate(); err != nil {
 			return fmt.Errorf("%w: analyzer %d rule %q", err, i, spec.Rule)
 		}
+		if spec.Rule != RuleCommand {
+			continue
+		}
+		if names[spec.Name] {
+			return fmt.Errorf("%w: analyzer %d name %q", ErrCommandName, i, spec.Name)
+		}
+		if p.run == nil {
+			return fmt.Errorf("%w: analyzer %d name %q", ErrCommandRunner, i, spec.Name)
+		}
+		names[spec.Name] = true
 	}
 	return nil
 }
 
 func (spec RuleSpec) validate() error {
+	if spec.Rule == RuleCommand {
+		if spec.Name == "" || len(spec.Command) == 0 || spec.Command[0] == "" {
+			return ErrIncompleteCommand
+		}
+		return nil
+	}
 	if _, ok := analyzers[spec.Rule]; !ok {
 		return ErrUnknownRule
 	}

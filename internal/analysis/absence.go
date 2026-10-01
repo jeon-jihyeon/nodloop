@@ -25,7 +25,7 @@ func (a absence) err() error {
 // 1. a data set without events has nothing to analyze so nothing is absent
 // 2. checked over the data set because one event cannot tell an absent name from a metric only other events carry
 func (p Policy) Observed(metrics, dims []string) Policy {
-	out := Policy{Version: p.Version, Contexts: p.Contexts, Analyzers: p.Analyzers}
+	out := Policy{Version: p.Version, Contexts: p.Contexts, Analyzers: p.Analyzers, run: p.run}
 	if len(metrics) == 0 {
 		return out
 	}

@@ -151,7 +151,7 @@ func PolicyOf(t *testing.T, dataDir string) analysis.Policy {
 	t.Helper()
 	b, err := os.ReadFile(filepath.Join(dataDir, "policy.yaml"))
 	require.NoError(t, err)
-	policy, err := analysis.LoadPolicy(b)
+	policy, err := analysis.LoadPolicy(b, nil)
 	require.NoError(t, err)
 	return policy
 }
