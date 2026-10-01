@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"errors"
@@ -8,6 +9,7 @@ import (
 	"fmt"
 	"maps"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -123,7 +125,39 @@ func (a app) policy() (analysis.Policy, error) {
 	if err != nil {
 		return analysis.Policy{}, err
 	}
-	return analysis.LoadPolicy(b)
+	return analysis.LoadPolicy(b, commandRunner{dir: a.cfg.dataDir})
+}
+
+// Starts the command analyzers of a policy in the data directory
+// A relative command path resolves against the data directory as os/exec evaluates a relative path against Dir
+// So a policy names its scripts the way it names its files
+type commandRunner struct {
+	dir string
+}
+
+// Bytes of stderr a failure quotes
+const stderrHead = 200
+
+func (r commandRunner) Run(argv []string, stdin []byte, timeout time.Duration) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
+	cmd.Dir, cmd.Stdin = r.dir, bytes.NewReader(stdin)
+	// A child of the command that keeps stdout open past the kill would hold the review until it exits
+	cmd.WaitDelay = time.Second
+	out, err := cmd.Output()
+	if ctx.Err() != nil {
+		return nil, fmt.Errorf("%w: after %s", analysis.ErrCommandTimeout, timeout)
+	}
+	var exit *exec.ExitError
+	if errors.As(err, &exit) {
+		head := strings.TrimSpace(string(exit.Stderr))
+		return nil, fmt.Errorf("%w: %w: %s", analysis.ErrCommandFailed, err, head[:min(len(head), stderrHead)])
+	}
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", analysis.ErrCommandFailed, err)
+	}
+	return out, nil
 }
 
 // The policy bound to the metrics and dimensions the events carry

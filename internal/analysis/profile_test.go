@@ -112,7 +112,7 @@ func TestProposedPolicyDemo(t *testing.T) {
 	b, err := os.ReadFile("testdata/proposed-demo.yaml")
 	require.NoError(t, err)
 
-	policy, err := analysis.LoadPolicy(b)
+	policy, err := analysis.LoadPolicy(b, nil)
 
 	require.NoError(t, err)
 	metrics, err := src.Metrics(t.Context())

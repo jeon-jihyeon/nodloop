@@ -146,11 +146,16 @@ func TestLoadPolicy(t *testing.T) {
 			args: "version: v1\nanalyzers:\n  - rule: proportion_control\n    metrics: [x, y, z]\n    baseline: 1\n    window: 1\n",
 			want: want{err: analysis.ErrProportionMetrics},
 		},
+		{
+			name: "a command analyzer without a runner is refused",
+			args: "version: v1\nanalyzers:\n  - rule: command\n    name: p99\n    command: [./p99.py]\n",
+			want: want{err: analysis.ErrCommandRunner},
+		},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got, err := analysis.LoadPolicy([]byte(tc.args))
+			got, err := analysis.LoadPolicy([]byte(tc.args), nil)
 			assert.ErrorIs(t, err, tc.want.err)
 			assert.Equal(t, tc.want.policy, got)
 		})
@@ -448,7 +453,7 @@ func TestPolicyAnalyzeAbsent(t *testing.T) {
 	conversion := evidence.Point{Time: start.Add(time.Hour), Metric: "conversion_count", Value: 1, Dims: map[string]string{"region": "kr"}}
 	demo, err := os.ReadFile(filepath.Join(testkit.DemoDir(t), "policy.yaml"))
 	require.NoError(t, err)
-	policy, err := analysis.LoadPolicy(demo)
+	policy, err := analysis.LoadPolicy(demo, nil)
 	require.NoError(t, err)
 	window := analysis.Window{Start: start, End: start.Add(time.Hour), Points: 2}
 	ref := analysis.Ref{EventID: "ev", Start: start, End: start.Add(time.Hour)}

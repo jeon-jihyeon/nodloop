@@ -80,6 +80,23 @@ Each procedure is a `.md` file directly under `procedures/`, and setup fails whe
 
 </details>
 
+<details>
+<summary>Analyzers of your own</summary>
+
+Besides the four built in rules, `policy.yaml` can run your own program per event, such as a latency percentile nodloop has no rule for:
+
+```yaml
+analyzers:
+  - rule: command
+    name: p99-latency
+    command: [./analyzers/latency.py]
+    timeout: 10s
+```
+
+The command starts in the data directory and a relative path resolves there. It reads one JSON object on stdin, `{"observation_version": 1, "event_id": ..., "change_context": ..., "points": [{"time", "metric", "value", "dims"}]}`, and sees no records or knowledge. It writes one JSON object on stdout, `{"observation_version": 1, "observations": [...]}`, where each observation needs `metric`, `current`, `baseline`, `change`, `severity` from 0 to 1, `adequate` and `summary`, and may add `target`, `window`, `samples` and `missing`. A missing number, an unknown key, a non zero exit or a run past the timeout becomes one observation that names the analyzer and the error, so the review holds instead of failing.
+
+</details>
+
 ## Why nodloop
 
 - **Grounded in procedure paragraphs**: a cause without a citation, or a status that contradicts the causes, gets the review sent back once, and a second miss puts it on hold
