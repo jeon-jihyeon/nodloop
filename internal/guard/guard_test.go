@@ -24,7 +24,7 @@ func TestRun(t *testing.T) {
 	vetoes, err := veto.Parse(b)
 	require.NoError(t, err)
 	fixtures := map[string]string{}
-	for _, name := range []string{"bash_plain.json", "bash_sed.json", "write_readme.json"} {
+	for _, name := range []string{"bash_plain.json", "bash_sed.json", "monitor_sed.json", "write_readme.json"} {
 		b, err := os.ReadFile(filepath.Join("testdata", name))
 		require.NoError(t, err)
 		fixtures[name] = string(b)
@@ -64,6 +64,11 @@ func TestRun(t *testing.T) {
 			"sed in place edit is blocked with the veto id and reason",
 			args{fixtures["bash_sed.json"], vetoes, nil, ""},
 			want{guard.ExitBlock, repo, sedBlocked},
+		},
+		{
+			"sed in place edit through Monitor is blocked by the derived commands",
+			args{fixtures["monitor_sed.json"], vetoes, nil, ""},
+			want{guard.ExitBlock, repo, strings.Replace(sedBlocked, "Bash call", "Monitor call", 1)},
 		},
 		{
 			"readme write is blocked",

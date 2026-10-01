@@ -159,6 +159,8 @@ curl -fsSL --create-dirs https://raw.githubusercontent.com/jeon-jihyeon/nodloop/
 ~/.nodloop/bin/nodloop guard check
 ```
 
+The seed vetoes read `commands`, which the guard derives from the Bash or Monitor `command` with a shell parser: one line per simple command, also inside loops, pipes and substitutions, without quotes, so a word inside a quoted argument or a heredoc never counts as a command. The header of [vetoes.yaml](examples/vetoes.yaml) states what it still can't follow, such as variables and the string given to `bash -c`, which the seeds block outright.
+
 A correction can become a veto too. Propose it as a judgment with a veto, and once someone approves it, nodloop writes it to an approved veto file under `~/.claude/nodloop` and the guard blocks that call from then on. Such a judgment acts only through the guard, so no review carries it and vetoes never use up a review's budget. Retiring the knowledge removes the veto, a new version that drops it is refused, and a veto you write by hand wins over an approved one with the same id.
 
 <details>

@@ -55,7 +55,7 @@ func (f *knowledgeFlags) bind(fs *flag.FlagSet) {
 	fs.Var(&f.outcomeIDs, "evidence-outcome", "diagnose trace id whose outcome supports it. Repeatable")
 	fs.StringVar(&f.vetoTool, "veto-tool", "",
 		"propose: tool a judgment forbids such as Bash. Approval makes it a guard veto")
-	fs.StringVar(&f.vetoField, "veto-field", "", "propose: tool_input field the veto matches such as command")
+	fs.StringVar(&f.vetoField, "veto-field", "", "propose: tool_input field the veto matches such as commands, one line per simple command derived from command")
 	fs.StringVar(&f.vetoMatch, "veto-match", "", "propose: RE2 regexp the field must match")
 	fs.StringVar(&f.vetoUnless, "veto-unless", "", "propose: RE2 regexp that lets the call through")
 	fs.StringVar(&f.vetoExample, "veto-example", "",

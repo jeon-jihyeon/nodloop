@@ -456,7 +456,7 @@ type vetoInput struct {
 }
 
 type vetoWhen struct {
-	Field  string `json:"field" jsonschema:"the tool_input field such as command or file_path"`
+	Field  string `json:"field" jsonschema:"the tool_input field such as file_path or commands, which the guard derives from command with one line per simple command so a pattern anchored with (?m)^ reads command starts"`
 	Match  string `json:"match" jsonschema:"RE2 regexp that must match part of the field"`
 	Unless string `json:"unless,omitempty" jsonschema:"RE2 regexp that lets the call through when it matches"`
 }

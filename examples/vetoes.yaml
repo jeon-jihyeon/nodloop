@@ -1,53 +1,56 @@
 # Seed vetoes distilled from a personal CLAUDE.md
 # Copy to ~/.claude/nodloop/vetoes.yaml for every project or to .claude/nodloop/vetoes.yaml at a project root for that project
 #
-# The Bash patterns share one command start prefix
-#   start      the input start, a new line, one of ; & | ( ) { } ` !, the keywords do then else elif or find -exec -execdir -ok -okdir
-#   assign     any number of VAR=value words such as LC_ALL=C
-#   wrapper    any number of builtin command env exec nice nohup stdbuf sudo time timeout xargs with the options each one takes
-#              an option cluster that ends in a letter taking a value such as -Eu root takes the next word
-#   name       an optional backslash or quote and an optional path such as /usr/bin/
-# Arguments are read quote aware so a ; inside quotes or a line continuation does not end the command
-# An escaped ; or a lone + ends the command a find -exec runs
-# A redirection such as 2>&1 or &>/dev/null stays part of a cd and a git may follow ! or open a $( or a backtick
-# A regexp veto is best effort
-# 1. it never follows variables, aliases or functions so a deliberate evasion gets past it
-# 2. a start word or a start character such as ; inside quoted text also counts as a command start so echo 'a; sed -i b' is blocked
-# 3. any sed option cluster holding i or the BSD I counts as in place so -ei with a script named i is blocked too
+# The Bash patterns match the field commands that the guard derives from command through a shell parser
+#   one line per simple command in the order the shell runs them, also inside if, loops, pipes and substitutions
+#   a line holds the command name and its arguments without leading VAR=value assignments or redirections
+#   quotes and backslashes are removed, a word holding a space comes back quoted and a part that expands renders as $
+#   a subshell or a substitution opens with a line ( and closes with a line )
+#   the command find runs through -exec, -execdir, -ok or -okdir is a line of its own
+# Each Bash pattern starts a line with one prefix of wrappers, assignments, durations and options
+#   the wrappers are builtin command doas env exec nice nohup stdbuf sudo time timeout xargs
+#   any option of a wrapper may take the next word so -Eu root and -n 1 need no list of letters
+# Monitor runs a shell command under the same field so every Bash veto covers it too
+# Limits
+# 1. variables, aliases, functions and a command name the shell computes are matched as written
+# 2. the string given to bash -c or eval is not parsed so the seeds block those forms outright
+# 3. any option of a wrapper may take the next word so sudo -E nodloop eval is blocked
+# 4. text that neither bash nor zsh parses is matched as written line by line
+# 5. any sed option cluster holding i or the BSD I counts as in place so -ei with a script named i is blocked too
 vetoes:
   - id: no-sed-inplace
-    tool: Bash
+    tool: Bash|Monitor
     when:
-      - field: command
+      - field: commands
         match: |-
-          (^|[\n;&|(){}`!]|\b(do|then|else|elif)\s|\s-(exec|execdir|ok|okdir)\s)(\s|\\\n)*(([A-Za-z_][A-Za-z0-9_]*=[^\s;&|]*|(builtin|nohup|command(\s+-[pvV]+)*|exec(\s+(-[A-Za-z]*a\s+[^\s;&|]+|-[^\s;&|]*))*|time(\s+-[^\s;&|]*)*|nice(\s+(-[A-Za-z]*n\s+[^\s;&|]+|-[^\s;&|]*))*|stdbuf(\s+-[^\s;&|]*)*|timeout(\s+(-[A-Za-z]*[ks]\s+[^\s;&|]+|--[A-Za-z0-9-]+(=[^\s;&|]*)?|-[^\s;&|]*))*\s+[0-9.]+[smhd]?|env(\s+(-[A-Za-z0-9]*[uCSP]\s+[^\s;&|]+|--[A-Za-z0-9-]+(=[^\s;&|]*|\s+[^-\s;&|][^\s;&|]*)?|-[^\s;&|]*|[A-Za-z_][A-Za-z0-9_]*=[^\s;&|]*))*|sudo(\s+(-[A-Za-z]*[ugUChprDRTt]\s+[^\s;&|]+|--[A-Za-z0-9-]+(=[^\s;&|]*|\s+[^-\s;&|][^\s;&|]*)?|-[^\s;&|]*|[A-Za-z_][A-Za-z0-9_]*=[^\s;&|]*))*|xargs(\s+(-[A-Za-z0-9]*[nILPdEsaJRS]\s+[^\s;&|]+|--[A-Za-z0-9-]+(=[^\s;&|]*|\s+[^-\s;&|][^\s;&|]*)?|-[^\s;&|]*))*))(\s|\\\n)+)*\\?['\"]?(\S*/)?(sed['\"]?(\s([^;&|\n'"\\+]|[^\s;&|\n'"\\]\+|\+[^\s;&|\n'"\\]|'[^']*'|"([^"\\]|\\[\s\S])*"|\\[^;])*?)?(\s|\\\n)(-[A-Za-z]*[iI]|--in-place)|perl['\"]?(\s([^;&|\n'"\\+]|[^\s;&|\n'"\\]\+|\+[^\s;&|\n'"\\]|'[^']*'|"([^"\\]|\\[\s\S])*"|\\[^;])*?)?(\s|\\\n)-[^\s;&|'\"MmIeEdxF]*i)
+          (?m)^((builtin|command|doas|env|exec|nice|nohup|stdbuf|sudo|time|timeout|xargs|[A-Za-z_][A-Za-z0-9_]*=\S*|[0-9.]+[smhd]?) |-\S* (\S+ )?)*?(\S*/)?(sed( ('[^']*'|"[^"]*"|\$'[^']*'|[^'"\s]\S*))*? (-[A-Za-z]*[iI]\S*|--in-place\S*)|perl( ('[^']*'|"[^"]*"|\$'[^']*'|[^'"\s]\S*))*? -[^\s'"MmIeEdxF]*i\S*)( |$)
     reason: sed -i and perl -i are forbidden. Use the Edit tool to modify files
     source: personal CLAUDE.md
 
   - id: no-eval
-    tool: Bash
+    tool: Bash|Monitor
     when:
-      - field: command
+      - field: commands
         match: |-
-          (^|[\n;&|(){}`!]|\b(do|then|else|elif)\s|\s-(exec|execdir|ok|okdir)\s)(\s|\\\n)*(([A-Za-z_][A-Za-z0-9_]*=[^\s;&|]*|(builtin|nohup|command(\s+-[pvV]+)*|exec(\s+(-[A-Za-z]*a\s+[^\s;&|]+|-[^\s;&|]*))*|time(\s+-[^\s;&|]*)*|nice(\s+(-[A-Za-z]*n\s+[^\s;&|]+|-[^\s;&|]*))*|stdbuf(\s+-[^\s;&|]*)*|timeout(\s+(-[A-Za-z]*[ks]\s+[^\s;&|]+|--[A-Za-z0-9-]+(=[^\s;&|]*)?|-[^\s;&|]*))*\s+[0-9.]+[smhd]?|env(\s+(-[A-Za-z0-9]*[uCSP]\s+[^\s;&|]+|--[A-Za-z0-9-]+(=[^\s;&|]*|\s+[^-\s;&|][^\s;&|]*)?|-[^\s;&|]*|[A-Za-z_][A-Za-z0-9_]*=[^\s;&|]*))*|sudo(\s+(-[A-Za-z]*[ugUChprDRTt]\s+[^\s;&|]+|--[A-Za-z0-9-]+(=[^\s;&|]*|\s+[^-\s;&|][^\s;&|]*)?|-[^\s;&|]*|[A-Za-z_][A-Za-z0-9_]*=[^\s;&|]*))*|xargs(\s+(-[A-Za-z0-9]*[nILPdEsaJRS]\s+[^\s;&|]+|--[A-Za-z0-9-]+(=[^\s;&|]*|\s+[^-\s;&|][^\s;&|]*)?|-[^\s;&|]*))*))(\s|\\\n)+)*\\?['\"]?(\S*/)?eval['\"]?(\s|$)
+          (?m)^((builtin|command|doas|env|exec|nice|nohup|stdbuf|sudo|time|timeout|xargs|[A-Za-z_][A-Za-z0-9_]*=\S*|[0-9.]+[smhd]?) |-\S* (\S+ )?)*?(\S*/)?eval( |$)
     reason: eval is forbidden. Run the command directly or use python3 -c
     source: personal CLAUDE.md
 
   - id: no-shell-c
-    tool: Bash
+    tool: Bash|Monitor
     when:
-      - field: command
+      - field: commands
         match: |-
-          (^|[\n;&|(){}`!]|\b(do|then|else|elif)\s|\s-(exec|execdir|ok|okdir)\s)(\s|\\\n)*(([A-Za-z_][A-Za-z0-9_]*=[^\s;&|]*|(builtin|nohup|command(\s+-[pvV]+)*|exec(\s+(-[A-Za-z]*a\s+[^\s;&|]+|-[^\s;&|]*))*|time(\s+-[^\s;&|]*)*|nice(\s+(-[A-Za-z]*n\s+[^\s;&|]+|-[^\s;&|]*))*|stdbuf(\s+-[^\s;&|]*)*|timeout(\s+(-[A-Za-z]*[ks]\s+[^\s;&|]+|--[A-Za-z0-9-]+(=[^\s;&|]*)?|-[^\s;&|]*))*\s+[0-9.]+[smhd]?|env(\s+(-[A-Za-z0-9]*[uCSP]\s+[^\s;&|]+|--[A-Za-z0-9-]+(=[^\s;&|]*|\s+[^-\s;&|][^\s;&|]*)?|-[^\s;&|]*|[A-Za-z_][A-Za-z0-9_]*=[^\s;&|]*))*|sudo(\s+(-[A-Za-z]*[ugUChprDRTt]\s+[^\s;&|]+|--[A-Za-z0-9-]+(=[^\s;&|]*|\s+[^-\s;&|][^\s;&|]*)?|-[^\s;&|]*|[A-Za-z_][A-Za-z0-9_]*=[^\s;&|]*))*|xargs(\s+(-[A-Za-z0-9]*[nILPdEsaJRS]\s+[^\s;&|]+|--[A-Za-z0-9-]+(=[^\s;&|]*|\s+[^-\s;&|][^\s;&|]*)?|-[^\s;&|]*))*))(\s|\\\n)+)*\\?['\"]?(\S*/)?(bash|sh|zsh)['\"]?((\s|\\\n)+([-+][A-Za-z]*[oO][A-Za-z]*\s+[^\s;&|]+|--(rcfile|init-file)\s+[^\s;&|]+|[-+][^\s;&|]*))*(\s|\\\n)+-[a-zA-Z]*c[a-zA-Z]*(\s|$)
+          (?m)^((builtin|command|doas|env|exec|nice|nohup|stdbuf|sudo|time|timeout|xargs|[A-Za-z_][A-Za-z0-9_]*=\S*|[0-9.]+[smhd]?) |-\S* (\S+ )?)*?(\S*/)?(bash|sh|zsh|dash|ksh)( ([-+][A-Za-z]*[oO][A-Za-z]* \S+|--(rcfile|init-file) \S+|[-+]\S*))* -[A-Za-z]*c[A-Za-z]*( |$)
     reason: bash -c and sh -c are forbidden. Run the command directly or use python3 -c
     source: personal CLAUDE.md
 
   - id: no-cd-then-git
-    tool: Bash
+    tool: Bash|Monitor
     when:
-      - field: command
+      - field: commands
         match: |-
-          (^|[\n;&|(){}`!]|\b(do|then|else|elif)\s|\s-(exec|execdir|ok|okdir)\s)(\s|\\\n)*cd(\s([^;&|\n()'"\\$]|[<>]&|&>|\$\([^()]*\)|'[^']*'|"([^"\\]|\\[\s\S])*"|\\[\s\S]|\$)*)?(&&|\|\||;|\n)(([^()'"\\$]|\$\([^()]*\)|'[^']*'|"([^"\\]|\\[\s\S])*"|\\[\s\S]|\$)*?(&&|\|\||;|\n|\||"?\$\(|`))?(\s|\\\n)*(!(\s|\\\n)+)?(([A-Za-z_][A-Za-z0-9_]*=[^\s;&|]*|(builtin|nohup|command(\s+-[pvV]+)*|exec(\s+(-[A-Za-z]*a\s+[^\s;&|]+|-[^\s;&|]*))*|time(\s+-[^\s;&|]*)*|nice(\s+(-[A-Za-z]*n\s+[^\s;&|]+|-[^\s;&|]*))*|stdbuf(\s+-[^\s;&|]*)*|timeout(\s+(-[A-Za-z]*[ks]\s+[^\s;&|]+|--[A-Za-z0-9-]+(=[^\s;&|]*)?|-[^\s;&|]*))*\s+[0-9.]+[smhd]?|env(\s+(-[A-Za-z0-9]*[uCSP]\s+[^\s;&|]+|--[A-Za-z0-9-]+(=[^\s;&|]*|\s+[^-\s;&|][^\s;&|]*)?|-[^\s;&|]*|[A-Za-z_][A-Za-z0-9_]*=[^\s;&|]*))*|sudo(\s+(-[A-Za-z]*[ugUChprDRTt]\s+[^\s;&|]+|--[A-Za-z0-9-]+(=[^\s;&|]*|\s+[^-\s;&|][^\s;&|]*)?|-[^\s;&|]*|[A-Za-z_][A-Za-z0-9_]*=[^\s;&|]*))*|xargs(\s+(-[A-Za-z0-9]*[nILPdEsaJRS]\s+[^\s;&|]+|--[A-Za-z0-9-]+(=[^\s;&|]*|\s+[^-\s;&|][^\s;&|]*)?|-[^\s;&|]*))*))(\s|\\\n)+)*\\?['\"]?(\S*/)?git['\"]?(\s+--?[^C\s;&|][^\s;&|]*)*(\s+[^-\s;&|]|\s*$|\s*[;&|\n)])
+          (?m)^cd( .*)?$(\n([^()\n].*)?|\n\((\n([^()\n].*)?|\n\((\n([^()\n].*)?)*\n\))*\n\)|\n\()*\n((builtin|command|doas|env|exec|nice|nohup|stdbuf|sudo|time|timeout|xargs|[A-Za-z_][A-Za-z0-9_]*=\S*|[0-9.]+[smhd]?) |-\S* (\S+ )?)*?(\S*/)?git( --?[^C\s]\S*)*( [^-\s]| *$)
     reason: cd X && git is forbidden because allow rules apply per segment. Use git -C X instead
     source: personal CLAUDE.md
 

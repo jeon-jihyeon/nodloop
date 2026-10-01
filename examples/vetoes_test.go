@@ -19,7 +19,7 @@ func TestVetoes(t *testing.T) {
 	for _, v := range vetoes {
 		byID[v.ID()] = v
 	}
-	fields := map[string]string{"Bash": "command", "Write": "file_path"}
+	fields := map[string]string{"Bash": "command", "Monitor": "command", "Write": "file_path"}
 	type args struct {
 		id    string
 		tool  string
@@ -99,12 +99,8 @@ func TestVetoes(t *testing.T) {
 		{"flag inside a double quoted script passes", args{"no-sed-inplace", "Bash", `sed -e "s/ -i /x/" f`}, false},
 		{"flag inside a single quoted script word passes", args{"no-sed-inplace", "Bash", "sed 'x -i' f"}, false},
 		{"extended regexp flag passes", args{"no-sed-inplace", "Bash", "sed -E s/a/b/ f"}, false},
-		{
-			"start word inside a commit message is blocked as a stated limit",
-			args{"no-sed-inplace", "Bash", `git commit -m "then sed -i note"`},
-			true,
-		},
-		{"start character inside quoted text is blocked as a stated limit", args{"no-sed-inplace", "Bash", "echo 'a; sed -i b'"}, true},
+		{"start word inside a commit message passes", args{"no-sed-inplace", "Bash", `git commit -m "then sed -i note"`}, false},
+		{"start character inside quoted text passes", args{"no-sed-inplace", "Bash", "echo 'a; sed -i b'"}, false},
 		{"eval in an if condition is blocked", args{"no-eval", "Bash", "if ! eval x; then ls; fi"}, true},
 		{"eval in an if body is blocked", args{"no-eval", "Bash", "if true; then eval echo hi; fi"}, true},
 		{"eval in a while body is blocked", args{"no-eval", "Bash", `while read l; do eval "$l"; done`}, true},
@@ -211,6 +207,29 @@ func TestVetoes(t *testing.T) {
 		{"find print after an exec terminator passes", args{"no-sed-inplace", "Bash", `find . -exec sed -n 1p {} \; -print`}, false},
 		{"find exec in place edit ended by an escaped terminator is blocked", args{"no-sed-inplace", "Bash", `find . -exec sed -i '' s/a/b/ {} \;`}, true},
 		{"plus inside a sed script before the flag is blocked", args{"no-sed-inplace", "Bash", "sed -E 's/a+/b/' -i f"}, true},
+		{
+			"word inside a quoted grep argument passes",
+			args{"no-eval", "Bash", `grep -n "Items 1 and 2 change a shared contract\|eval rerun" tmp/docs/SPEC-generalize.md`},
+			false,
+		},
+		{"python heredoc text holding the word passes", args{"no-eval", "Bash", "python3 - <<'EOF'\nprint('run eval now')\neval\nEOF"}, false},
+		{"sed in a substitution of a heredoc is blocked", args{"no-sed-inplace", "Bash", "cat <<EOF\n$(sed -i x f)\nEOF"}, true},
+		{"sed in place through Monitor is blocked", args{"no-sed-inplace", "Monitor", "tail -f log & sed -i x f"}, true},
+		{"eval through Monitor is blocked", args{"no-eval", "Monitor", "while true; do eval x; sleep 5; done"}, true},
+		{"shell -c through Monitor is blocked", args{"no-shell-c", "Monitor", "bash -c 'tail -f log'"}, true},
+		{"cd then git through Monitor is blocked", args{"no-cd-then-git", "Monitor", "cd repo && git log -f"}, true},
+		{"tail through Monitor passes", args{"no-sed-inplace", "Monitor", "tail -f build.log | grep -i error"}, false},
+		{"sed in a process substitution is blocked", args{"no-sed-inplace", "Bash", "diff <(sed -i x f) y"}, true},
+		{"sed with a suffix from a variable is blocked", args{"no-sed-inplace", "Bash", `sed -i"$sfx" x f`}, true},
+		{"sed in an until condition is blocked", args{"no-sed-inplace", "Bash", "until sed -i x f; do sleep 1; done"}, true},
+		{"sed after a double dash wrapper option is blocked", args{"no-sed-inplace", "Bash", "sudo -- sed -i x f"}, true},
+		{"eval in a nested substitution is blocked", args{"no-eval", "Bash", "echo $(echo $(eval x))"}, true},
+		{"timed nodloop eval with an option passes", args{"no-eval", "Bash", "time -p nodloop eval seed"}, false},
+		{"nodloop eval after a sudo flag is blocked as a stated limit", args{"no-eval", "Bash", "sudo -E nodloop eval seed"}, true},
+		{"git after cd in an assigned substitution passes", args{"no-cd-then-git", "Bash", "V=$(cd x; pwd); git status"}, false},
+		{"git in a subshell after cd is blocked", args{"no-cd-then-git", "Bash", "cd x && (git status)"}, true},
+		{"git after a nested substitution in the directory is blocked", args{"no-cd-then-git", "Bash", `cd x && echo "$(dirname "$(pwd)")" && git log`}, true},
+		{"shell -c in an if condition is blocked", args{"no-shell-c", "Bash", "if bash -c 'true'; then ls; fi"}, true},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
