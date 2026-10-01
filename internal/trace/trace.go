@@ -77,8 +77,11 @@ func (t Trace) CheckReview() error {
 }
 
 type Usage struct {
-	InputTokens       int     `json:"input_tokens"`
-	OutputTokens      int     `json:"output_tokens"`
+	InputTokens  int `json:"input_tokens"`
+	OutputTokens int `json:"output_tokens"`
+	// The share of OutputTokens spent thinking
+	// Absent in traces written before it was recorded
+	ThinkingTokens    int     `json:"thinking_tokens,omitempty"`
 	CacheReadTokens   int     `json:"cache_read"`
 	CacheCreateTokens int     `json:"cache_create"`
 	CostUSD           float64 `json:"cost_usd"`
@@ -88,6 +91,7 @@ func (u Usage) Add(other Usage) Usage {
 	return Usage{
 		InputTokens:       u.InputTokens + other.InputTokens,
 		OutputTokens:      u.OutputTokens + other.OutputTokens,
+		ThinkingTokens:    u.ThinkingTokens + other.ThinkingTokens,
 		CacheReadTokens:   u.CacheReadTokens + other.CacheReadTokens,
 		CacheCreateTokens: u.CacheCreateTokens + other.CacheCreateTokens,
 		CostUSD:           u.CostUSD + other.CostUSD,

@@ -29,9 +29,11 @@ type Response struct {
 	CostUSD      float64
 	InputTokens  int
 	OutputTokens int
-	CacheRead    int
-	CacheCreate  int
-	Duration     time.Duration
+	// The share of OutputTokens the model spent thinking before it answered
+	ThinkingTokens int
+	CacheRead      int
+	CacheCreate    int
+	Duration       time.Duration
 }
 
 // The consumer is diagnose but the interface lives here because mockgen generates llmmock from this file

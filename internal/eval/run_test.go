@@ -381,6 +381,16 @@ func TestHoldout(t *testing.T) {
 			want{err: eval.ErrNoCorrections},
 		},
 		{
+			"a correction a session gave is no example",
+			args{
+				opts: eval.RunOptions{
+					SessionID: "s", Events: []string{"tq-003"}, Examples: 3, Conditions: []eval.Condition{eval.ConditionExamples},
+				},
+				feedback: []feedback.Feedback{{TraceID: "t0", Verdict: feedback.VerdictReject, Reviewer: feedback.ReviewerSession}},
+			},
+			want{err: eval.ErrNoCorrections},
+		},
+		{
 			"a correction on a failed review is no example",
 			args{
 				opts: eval.RunOptions{

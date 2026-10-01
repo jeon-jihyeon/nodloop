@@ -34,7 +34,7 @@ func (m Mode) valid() bool {
 	return m == ModeInteractive || m == ModeBatch
 }
 
-const promptVersion = "diagnose/v13"
+const promptVersion = "diagnose/v14"
 
 // Trace tag when the citation gate turned a review into a hold
 const TagGateHold = "gate:hold"
@@ -521,8 +521,7 @@ func (d *Diagnoser) Record(ctx context.Context, pendingID string, diag Diagnosis
 	if selected == nil && c.offered() {
 		return Result{}, fmt.Errorf("%w: %s", ErrNotSelected, c.PendingID)
 	}
-	cited := diag.cited(c.citable())
-	res, err := d.revise(ctx, c, diag, cited.revisions(c.firstSteps()), modelRun{})
+	res, err := d.revise(ctx, c, diag, diag.revisions(c.citable(), c.firstSteps()), modelRun{})
 	if err != nil || len(res.Revisions) > 0 {
 		return res, err
 	}
@@ -664,8 +663,7 @@ func (d *Diagnoser) review(ctx context.Context, c Context, prompt, model string)
 	if err != nil {
 		return Diagnosis{}, run, err
 	}
-	cited := diag.cited(c.citable())
-	res, err := d.sendBack(ctx, c, diag, cited.revisions(c.firstSteps()), run)
+	res, err := d.sendBack(ctx, c, diag, diag.revisions(c.citable(), c.firstSteps()), run)
 	if err != nil || len(res.Revisions) == 0 {
 		return diag, run, err
 	}
@@ -694,7 +692,8 @@ func (d *Diagnoser) complete(ctx context.Context, prompt, model string) (Diagnos
 		return Diagnosis{}, run, err
 	}
 	run.usage = trace.Usage{
-		InputTokens: res.InputTokens, OutputTokens: res.OutputTokens, CacheReadTokens: res.CacheRead, CacheCreateTokens: res.CacheCreate,
+		InputTokens: res.InputTokens, OutputTokens: res.OutputTokens, ThinkingTokens: res.ThinkingTokens,
+		CacheReadTokens: res.CacheRead, CacheCreateTokens: res.CacheCreate,
 		CostUSD: res.CostUSD,
 	}
 	var diag Diagnosis

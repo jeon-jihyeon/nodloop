@@ -138,8 +138,11 @@ type result struct {
 }
 
 type usage struct {
-	InputTokens              int `json:"input_tokens"`
-	OutputTokens             int `json:"output_tokens"`
+	InputTokens         int `json:"input_tokens"`
+	OutputTokens        int `json:"output_tokens"`
+	OutputTokensDetails struct {
+		ThinkingTokens int `json:"thinking_tokens"`
+	} `json:"output_tokens_details"`
 	CacheReadInputTokens     int `json:"cache_read_input_tokens"`
 	CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
 }
@@ -163,12 +166,13 @@ func (r result) response() (Response, error) {
 		return Response{}, ErrNoOutput
 	}
 	return Response{
-		Output:       r.StructuredOutput,
-		CostUSD:      r.TotalCostUSD,
-		InputTokens:  r.Usage.InputTokens,
-		OutputTokens: r.Usage.OutputTokens,
-		CacheRead:    r.Usage.CacheReadInputTokens,
-		CacheCreate:  r.Usage.CacheCreationInputTokens,
-		Duration:     time.Duration(r.DurationMS) * time.Millisecond,
+		Output:         r.StructuredOutput,
+		CostUSD:        r.TotalCostUSD,
+		InputTokens:    r.Usage.InputTokens,
+		OutputTokens:   r.Usage.OutputTokens,
+		ThinkingTokens: r.Usage.OutputTokensDetails.ThinkingTokens,
+		CacheRead:      r.Usage.CacheReadInputTokens,
+		CacheCreate:    r.Usage.CacheCreationInputTokens,
+		Duration:       time.Duration(r.DurationMS) * time.Millisecond,
 	}, nil
 }

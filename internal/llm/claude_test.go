@@ -25,13 +25,14 @@ func TestClaudeCLIComplete(t *testing.T) {
 		stdin string
 	}
 	success := llm.Response{
-		Output:       json.RawMessage(`{"answer":42}`),
-		CostUSD:      0.037367000000000004,
-		InputTokens:  9,
-		OutputTokens: 153,
-		CacheRead:    30230,
-		CacheCreate:  16785,
-		Duration:     2839 * time.Millisecond,
+		Output:         json.RawMessage(`{"answer":42}`),
+		CostUSD:        0.037367000000000004,
+		InputTokens:    9,
+		OutputTokens:   153,
+		ThinkingTokens: 97,
+		CacheRead:      30230,
+		CacheCreate:    16785,
+		Duration:       2839 * time.Millisecond,
 	}
 	tcs := []struct {
 		name string

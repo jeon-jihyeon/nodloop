@@ -112,10 +112,15 @@ func (c evalCommand) seed(ctx context.Context, opts eval.RunOptions) error {
 func (c evalCommand) holdout(ctx context.Context, opts eval.RunOptions) error {
 	opts.Log = c.log
 	traces, err := c.runner.Holdout(ctx, opts)
-	// No command removes feedback so these records stay unusable for holdout and only a fresh record dir gets past it
-	if errors.Is(err, eval.ErrHoldoutFeedback) || errors.Is(err, eval.ErrHoldoutKnowledge) {
+	// No command removes feedback so only a fresh record dir gets past it
+	if errors.Is(err, eval.ErrHoldoutFeedback) {
 		return fmt.Errorf("%w. The records in %s already judge a holdout event. "+
 			"Run the eval with --record-dir or %s naming an empty directory", err, c.recordDir, envRecordDir)
+	}
+	// The check reads approved knowledge only so retiring the item named in err clears it
+	if errors.Is(err, eval.ErrHoldoutKnowledge) {
+		return fmt.Errorf("%w. Retire that version with nodloop knowledge retire <id> --version <n> --approver <name> "+
+			"and run the holdout again, or run the eval with --record-dir or %s naming an empty directory", err, envRecordDir)
 	}
 	if err != nil {
 		return err

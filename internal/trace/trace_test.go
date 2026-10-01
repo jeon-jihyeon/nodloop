@@ -14,17 +14,19 @@ import (
 func TestTraceRoundTrip(t *testing.T) {
 	base := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
 	in := trace.Trace{
-		ID:         trace.NewID(base),
-		Name:       trace.NameDiagnose,
-		SessionID:  "eval-1",
-		Subject:    "tq-001",
-		Ref:        "c1",
-		Time:       base,
-		Model:      "sonnet",
-		Input:      json.RawMessage(`{"mode":"batch","metrics":["click_count"]}`),
-		Output:     json.RawMessage(`{"status":"hold","hold_reasons":["gap in the window"]}`),
-		Error:      "timeout",
-		Usage:      trace.Usage{InputTokens: 100, OutputTokens: 20, CacheReadTokens: 5, CacheCreateTokens: 6, CostUSD: 0.01},
+		ID:        trace.NewID(base),
+		Name:      trace.NameDiagnose,
+		SessionID: "eval-1",
+		Subject:   "tq-001",
+		Ref:       "c1",
+		Time:      base,
+		Model:     "sonnet",
+		Input:     json.RawMessage(`{"mode":"batch","metrics":["click_count"]}`),
+		Output:    json.RawMessage(`{"status":"hold","hold_reasons":["gap in the window"]}`),
+		Error:     "timeout",
+		Usage: trace.Usage{
+			InputTokens: 100, OutputTokens: 20, ThinkingTokens: 7, CacheReadTokens: 5, CacheCreateTokens: 6, CostUSD: 0.01,
+		},
 		DurationMS: 1500,
 		Tags:       []string{"feedback:on"},
 	}
@@ -81,7 +83,9 @@ func TestUsageAdd(t *testing.T) {
 		usage trace.Usage
 		other trace.Usage
 	}
-	full := trace.Usage{InputTokens: 100, OutputTokens: 20, CacheReadTokens: 5, CacheCreateTokens: 6, CostUSD: 0.01}
+	full := trace.Usage{
+		InputTokens: 100, OutputTokens: 20, ThinkingTokens: 7, CacheReadTokens: 5, CacheCreateTokens: 6, CostUSD: 0.01,
+	}
 	tcs := []struct {
 		name string
 		args args
@@ -91,8 +95,12 @@ func TestUsageAdd(t *testing.T) {
 		{"nothing keeps the other usage", args{other: full}, full},
 		{
 			"every count and the cost add up",
-			args{full, trace.Usage{InputTokens: 1, OutputTokens: 2, CacheReadTokens: 3, CacheCreateTokens: 4, CostUSD: 0.02}},
-			trace.Usage{InputTokens: 101, OutputTokens: 22, CacheReadTokens: 8, CacheCreateTokens: 10, CostUSD: 0.03},
+			args{full, trace.Usage{
+				InputTokens: 1, OutputTokens: 2, ThinkingTokens: 1, CacheReadTokens: 3, CacheCreateTokens: 4, CostUSD: 0.02,
+			}},
+			trace.Usage{
+				InputTokens: 101, OutputTokens: 22, ThinkingTokens: 8, CacheReadTokens: 8, CacheCreateTokens: 10, CostUSD: 0.03,
+			},
 		},
 	}
 	for _, tc := range tcs {

@@ -122,10 +122,23 @@ type Records = listing[Feedback]
 type stamped interface {
 	trace() string
 	at() time.Time
+	Implicit() bool
 }
 
 // Records or outcomes in the order the store lists them
 type listing[T stamped] []T
+
+// The records a person gave in the order the input has them
+// A session record is never a person's word so it neither teaches a review nor replaces a person's record
+func (l listing[T]) Human() listing[T] {
+	out := make(listing[T], 0, len(l))
+	for _, r := range l {
+		if !r.Implicit() {
+			out = append(out, r)
+		}
+	}
+	return out
+}
 
 // Newest record per trace id in the order the input has them
 // 1. a trace later approved stops being an edit or reject example

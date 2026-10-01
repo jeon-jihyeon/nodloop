@@ -187,7 +187,7 @@ func (ls labelSet) leak(traces trace.Traces, records feedback.Records, approved 
 	for _, k := range approved {
 		for _, id := range k.Evidence.TraceIDs() {
 			if subject, ok := holdoutTraces[id]; ok {
-				return fmt.Errorf("%w: %s cites %s of %s", ErrHoldoutKnowledge, k.ID, id, subject)
+				return fmt.Errorf("%w: %s version %d cites %s of %s", ErrHoldoutKnowledge, k.ID, k.Version, id, subject)
 			}
 		}
 	}
@@ -196,7 +196,7 @@ func (ls labelSet) leak(traces trace.Traces, records feedback.Records, approved 
 
 // Corrections a review of the half could take as an example
 // The labels are the whole holdout half and a correction counts under the rules diagnose applies to example candidates
-// 1. the latest verdict on the trace is edit or reject
+// 1. the latest verdict a person gave on the trace is edit or reject
 // 2. the trace is a diagnose trace with an output
 // 3. the trace is not a review of a holdout event
 func (ls labelSet) corrections(traces trace.Traces, records feedback.Records) int {
@@ -208,7 +208,7 @@ func (ls labelSet) corrections(traces trace.Traces, records feedback.Records) in
 		}
 	}
 	n := 0
-	for _, fb := range records.Latest() {
+	for _, fb := range records.Human().Latest() {
 		if _, ok := offered[fb.TraceID]; ok && fb.Corrects() {
 			n++
 		}

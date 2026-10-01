@@ -77,7 +77,7 @@ func (d *Diagnoser) Correction(ctx context.Context, traceID string) (Correction,
 	if err != nil {
 		return Correction{}, err
 	}
-	human := feedback.Records(slices.DeleteFunc(verdicts, feedback.Feedback.Implicit)).Latest()
+	human := feedback.Records(verdicts).Human().Latest()
 	if len(human) == 0 {
 		return Correction{}, fmt.Errorf("%w: %s", ErrNoFeedback, traceID)
 	}

@@ -32,6 +32,11 @@ func (c citable) unknown(diag Diagnosis) []string {
 	for _, cause := range diag.Causes {
 		ids = append(ids, cause.ParagraphIDs...)
 	}
+	return c.unlisted(ids)
+}
+
+// The ids the context does not list in citation order without repeats
+func (c citable) unlisted(ids []string) []string {
 	var out []string
 	for _, id := range ids {
 		if _, ok := c[id]; !ok && !slices.Contains(out, id) {

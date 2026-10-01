@@ -132,6 +132,13 @@ func TestRunEval(t *testing.T) {
 				`a holdout event\. Run the eval with --record-dir or ` + envRecordDir + ` naming an empty directory\n$`, os.ErrNotExist},
 		},
 		{
+			"holdout over records with knowledge citing a holdout review names the retire of that version as the way out",
+			args{"testdata/eval-knowledge-leaked", nil, []string{"holdout", "--session", "t", "--conditions", "feedback:off"}},
+			want{1, "", `^nodloop eval: eval: knowledge cites a holdout trace: k-out version 1 cites t-quickstart of tq-023\. ` +
+				`Retire that version with nodloop knowledge retire <id> --version <n> --approver <name> and run the holdout again, ` +
+				`or run the eval with --record-dir or ` + envRecordDir + ` naming an empty directory\n$`, os.ErrNotExist},
+		},
+		{
 			"holdout of an unknown condition fails",
 			args{"", nil, []string{"holdout", "--session", "t", "--conditions", "bogus"}},
 			want{1, "", `^nodloop eval: .*"bogus"\n$`, os.ErrNotExist},
