@@ -74,10 +74,12 @@ func (v Veto) Matches(tool string, input map[string]any) bool {
 }
 
 // The conditions never depend on the tool so an input is blocked for every tool the veto lists
+// A condition on commands reads the simple commands derived from command
 func (v Veto) Blocks(input map[string]any) bool {
 	if !v.enabled {
 		return false
 	}
+	input = Input(input).withCommands()
 	for _, c := range v.when {
 		if !c.matches(input[c.field]) {
 			return false
@@ -94,7 +96,9 @@ func (vs Vetoes) Has(id string) bool {
 }
 
 // First veto that matches and nil when none does
+// commands is derived once here so every veto reads the same parse
 func (vs Vetoes) Match(tool string, input map[string]any) *Veto {
+	input = Input(input).withCommands()
 	for i := range vs {
 		if vs[i].Matches(tool, input) {
 			return &vs[i]
