@@ -191,7 +191,7 @@ A correction can become a veto too. Propose it as a judgment with a veto, and on
 
 ## Supported
 
-macOS and Linux, or Windows through WSL. It runs as a Claude Code plugin. For Codex, Cursor or another MCP client, install it with `go install github.com/jeon-jihyeon/nodloop/cmd/nodloop@latest`, run `nodloop setup --data-dir <dir>` once and serve it with `nodloop mcp`. Outside Claude Code nobody converts your data, so bring it in the layout above and run `nodloop check --data-dir <dir>` until it passes. nodloop has no reader for other formats such as Parquet or a DuckDB database and none is planned.
+macOS and Linux, or Windows through WSL. It runs as a Claude Code plugin. For Codex, Cursor or another MCP client, install it with `go install github.com/jeon-jihyeon/nodloop/cmd/nodloop@latest`, run `nodloop setup --data-dir <dir>` once and serve it with `nodloop mcp`. The server also offers the review steps and rules as an MCP prompt named `review`, generated from the same text as the review skill. Outside Claude Code nobody converts your data, so bring it in the layout above and run `nodloop check --data-dir <dir>` until it passes. nodloop has no reader for other formats such as Parquet or a DuckDB database and none is planned.
 
 ## Limits
 
