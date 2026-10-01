@@ -13,13 +13,14 @@ import (
 
 func TestFeedbackRoundTrip(t *testing.T) {
 	in := feedback.Feedback{
-		TraceID:  "00019974a1b2c3d4deadbeef",
-		Time:     time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC),
-		Verdict:  feedback.VerdictEdit,
-		Reason:   "reorder checks",
-		Edited:   json.RawMessage(`{"order":["db","cache"]}`),
-		Reviewer: "author",
-		Audit:    true,
+		TraceID:    "00019974a1b2c3d4deadbeef",
+		Time:       time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC),
+		Verdict:    feedback.VerdictEdit,
+		ReasonCode: feedback.ReasonChecks,
+		Reason:     "reorder checks",
+		Edited:     json.RawMessage(`{"order":["db","cache"]}`),
+		Reviewer:   "author",
+		Audit:      true,
 	}
 	b, err := json.Marshal(in)
 	require.NoError(t, err)
@@ -55,6 +56,7 @@ func TestNew(t *testing.T) {
 	type args struct {
 		traceID  string
 		verdict  feedback.Verdict
+		code     feedback.ReasonCode
 		edited   json.RawMessage
 		reviewer string
 	}
@@ -103,11 +105,37 @@ func TestNew(t *testing.T) {
 			args{traceID: "t1", verdict: feedback.VerdictReject, edited: json.RawMessage(`{}`)},
 			want{err: feedback.ErrEditedUnexpected},
 		},
+		{
+			"an edit keeps its reason code",
+			args{traceID: "t1", verdict: feedback.VerdictEdit, code: feedback.ReasonChecks, edited: hold},
+			want{feedback: feedback.Feedback{
+				TraceID: "t1", Time: utc, Verdict: feedback.VerdictEdit, ReasonCode: feedback.ReasonChecks, Reason: "why",
+				Edited: hold, Reviewer: "author",
+			}},
+		},
+		{
+			"a reject keeps its reason code",
+			args{traceID: "t1", verdict: feedback.VerdictReject, code: feedback.ReasonCause},
+			want{feedback: feedback.Feedback{
+				TraceID: "t1", Time: utc, Verdict: feedback.VerdictReject, ReasonCode: feedback.ReasonCause, Reason: "why",
+				Reviewer: "author",
+			}},
+		},
+		{
+			"an unknown reason code fails",
+			args{traceID: "t1", verdict: feedback.VerdictReject, code: "typo"},
+			want{err: feedback.ErrReasonCodeUnknown},
+		},
+		{
+			"an approval with a reason code fails",
+			args{traceID: "t1", verdict: feedback.VerdictApprove, code: feedback.ReasonStatus},
+			want{err: feedback.ErrReasonCodeUnexpected},
+		},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got, err := feedback.New(tc.args.traceID, tc.args.verdict, "why", tc.args.edited, tc.args.reviewer, now)
+			got, err := feedback.New(tc.args.traceID, tc.args.verdict, tc.args.code, "why", tc.args.edited, tc.args.reviewer, now)
 			assert.ErrorIs(t, err, tc.want.err)
 			assert.Equal(t, tc.want.feedback, got)
 		})
