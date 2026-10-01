@@ -53,6 +53,19 @@ func (c ReasonCode) Valid() bool {
 	return slices.Contains(reasonCodes, c)
 }
 
+// An empty code passes any verdict and a code passes only a correction
+func (c ReasonCode) check(verdict Verdict) error {
+	switch {
+	case c == "":
+		return nil
+	case !c.Valid():
+		return fmt.Errorf("%w: %q", ErrReasonCodeUnknown, c)
+	case verdict == VerdictApprove:
+		return fmt.Errorf("%w: %s", ErrReasonCodeUnexpected, c)
+	}
+	return nil
+}
+
 // References the trace and never copies its output
 // A trace may receive several records and the newest is the current verdict
 type Feedback struct {
@@ -75,6 +88,8 @@ type Feedback struct {
 // The reviewer defaults to author
 // 1. an edit verdict carries a valid JSON edited review and no other verdict carries one
 // 2. a reason code is optional and only a correction carries one because an approval corrects nothing
+// 3. a session record has the secrets of its reason and edited review redacted before it is checked
+// A person's own record is kept as written
 func New(
 	traceID string, verdict Verdict, code ReasonCode, reason string, edited json.RawMessage, reviewer string, now time.Time,
 ) (Feedback, error) {
@@ -84,11 +99,14 @@ func New(
 	if !verdict.Valid() {
 		return Feedback{}, fmt.Errorf("%w: %q", ErrVerdictUnknown, verdict)
 	}
-	if code != "" && !code.Valid() {
-		return Feedback{}, fmt.Errorf("%w: %q", ErrReasonCodeUnknown, code)
+	if err := code.check(verdict); err != nil {
+		return Feedback{}, err
 	}
-	if code != "" && verdict == VerdictApprove {
-		return Feedback{}, fmt.Errorf("%w: %s", ErrReasonCodeUnexpected, code)
+	if reviewer == ReviewerSession {
+		reason = redact(reason)
+		if len(edited) > 0 {
+			edited = json.RawMessage(redact(string(edited)))
+		}
 	}
 	if verdict == VerdictEdit && len(edited) == 0 {
 		return Feedback{}, ErrEditedRequired
