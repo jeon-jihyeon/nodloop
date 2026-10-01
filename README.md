@@ -40,7 +40,7 @@ git clone https://github.com/jeon-jihyeon/nodloop
 /plugin install nodloop@nodloop
 ```
 
-On first run, the plugin downloads its binary. Start Claude Code in the directory where you ran `git clone`, so `./nodloop/examples/demo` resolves. Ask Claude Code to point nodloop at the demo, reconnect the server with `/mcp` when it asks, then run one full loop:
+On first run, the plugin downloads its binary. Start Claude Code in the directory where you ran `git clone`, so `./nodloop/examples/demo` resolves. Ask Claude Code to point nodloop at the demo, then run one full loop. The server reads the new directory on its next call, with no reconnect:
 
 ```
 > set up nodloop with the demo in ./nodloop/examples/demo

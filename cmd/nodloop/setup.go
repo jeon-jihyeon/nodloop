@@ -86,7 +86,7 @@ func (h homeDir) readConfig() (userConfig, error) {
 }
 
 // Both directories are stored absolute because the plugin's MCP server starts in the plugin directory
-func newUserConfig(dataDir, recordDir string) (userConfig, error) {
+func newUserConfig(ctx context.Context, dataDir, recordDir string) (userConfig, error) {
 	abs, err := filepath.Abs(dataDir)
 	if err != nil {
 		return userConfig{}, err
@@ -106,7 +106,6 @@ func newUserConfig(dataDir, recordDir string) (userConfig, error) {
 	// 1. a policy the server could not load fails here so rerunning setup never reports success on it
 	// 2. a name no event carries fails here too so a misspelled name never leaves reviews without their numbers
 	// 3. the server reports that name in every review instead because it cannot tell a typo from an outage
-	ctx := context.Background()
 	policy, err := (app{cfg: config{dataDir: abs}}).observedPolicy(ctx, src)
 	if err != nil {
 		return userConfig{}, err
@@ -164,58 +163,80 @@ type setupCommand struct {
 }
 
 // Prints the data and the records every later command uses so a changed or shadowed dir is never silent
-// 1. an empty record dir keeps the one saved before so rerunning setup with the data dir alone never drops the records
-// 2. a broken config fails unless --record-dir names the records since the record dir saved in it cannot be read
-// 3. the dirs in use resolve before the config is written so a failed setup changes nothing
-// 4. NODLOOP_FILE_DIR naming another directory warns because every command started with it reviews that dir
-// 5. a data dir naming another directory over the records in use before warns when they hold files because their knowledge and corrections carry into its reviews
-// 6. two spellings of one directory are one dir so a symlinked path never splits the records
-// 7. Markdown under procedures that no review reads warns with each entry named
-// 8. a data dir without contexts.csv warns because every event then reads change context unknown
+// Every check runs before the config is written so a failed setup changes nothing
 func (c setupCommand) data(dataDir, recordDir string) error {
-	prior, err := c.prior(recordDir)
-	if err != nil {
-		return err
-	}
-	uc, err := newUserConfig(dataDir, cmp.Or(recordDir, prior.RecordDir))
-	if err != nil {
-		return err
-	}
-	records, err := recordDirOf("", c.recordEnv, uc.RecordDir, c.home.recordDir())
-	if err != nil {
-		return err
-	}
-	// The variable is taken as is by every later command so it resolves against the working directory like theirs
-	data, err := filepath.Abs(cmp.Or(c.fileEnv, uc.DataDir))
+	uc, report, err := c.prepare(context.Background(), dataDir, recordDir)
 	if err != nil {
 		return err
 	}
 	if err := c.home.save(uc); err != nil {
 		return err
 	}
-	fmt.Fprintf(c.out, "data %s\nrecords %s\nconfig %s\n", data, records, c.home.configPath())
-	if !dirPath(uc.DataDir).sameAs(data) {
-		fmt.Fprintf(c.log, "nodloop setup: warning: %s is %s and wins over the saved data dir so every command started with it reviews %s. "+
-			"Unset it to review %s\n", envFileDir, c.fileEnv, data, uc.DataDir)
+	fmt.Fprintf(c.out, "data %s\nrecords %s\nconfig %s\n", report.data, report.records, c.home.configPath())
+	for _, w := range report.warnings {
+		fmt.Fprintf(c.log, "nodloop setup: warning: %s\n", w)
+	}
+	return nil
+}
+
+// What a setup would save and use
+type setupReport struct {
+	// The data dir every later command reads
+	data string
+	// The record dir every later command writes
+	records  string
+	warnings []string
+}
+
+// The config to save and what to report without writing anything
+// 1. an empty record dir keeps the one saved before so rerunning setup with the data dir alone never drops the records
+// 2. a broken config fails unless --record-dir names the records since the record dir saved in it cannot be read
+// 3. NODLOOP_FILE_DIR naming another directory warns because every command started with it reviews that dir
+// 4. a data dir naming another directory over the records in use before warns when they hold files because their knowledge and corrections carry into its reviews
+// 5. two spellings of one directory are one dir so a symlinked path never splits the records
+// 6. Markdown under procedures that no review reads warns with each entry named
+// 7. a data dir without contexts.csv warns because every event then reads change context unknown
+func (c setupCommand) prepare(ctx context.Context, dataDir, recordDir string) (userConfig, setupReport, error) {
+	prior, err := c.prior(recordDir)
+	if err != nil {
+		return userConfig{}, setupReport{}, err
+	}
+	uc, err := newUserConfig(ctx, dataDir, cmp.Or(recordDir, prior.RecordDir))
+	if err != nil {
+		return userConfig{}, setupReport{}, err
+	}
+	var report setupReport
+	if report.records, err = recordDirOf("", c.recordEnv, uc.RecordDir, c.home.recordDir()); err != nil {
+		return userConfig{}, setupReport{}, err
+	}
+	// The variable is taken as is by every later command so it resolves against the working directory like theirs
+	if report.data, err = filepath.Abs(cmp.Or(c.fileEnv, uc.DataDir)); err != nil {
+		return userConfig{}, setupReport{}, err
+	}
+	if !dirPath(uc.DataDir).sameAs(report.data) {
+		report.warnings = append(report.warnings, fmt.Sprintf("%s is %s and wins over the saved data dir so every command started with it reviews %s. "+
+			"Unset it to review %s", envFileDir, c.fileEnv, report.data, uc.DataDir))
 	}
 	src, err := evidencefile.New(uc.DataDir)
 	if err != nil {
-		return err
+		return userConfig{}, setupReport{}, err
 	}
-	skipped, err := src.Skipped(context.Background())
+	skipped, err := src.Skipped(ctx)
 	if err != nil {
-		return err
+		return userConfig{}, setupReport{}, err
 	}
 	if len(skipped) > 0 {
-		fmt.Fprintf(c.log, "nodloop setup: warning: reviews never read %s. "+
-			"Only .md files directly under procedures are procedures and a folder setup cannot open is passed over\n", strings.Join(skipped, ", "))
+		report.warnings = append(report.warnings, fmt.Sprintf("reviews never read %s. "+
+			"Only .md files directly under procedures are procedures and a folder setup cannot open is passed over", strings.Join(skipped, ", ")))
 	}
 	if _, err := os.Stat(filepath.Join(uc.DataDir, "contexts.csv")); errors.Is(err, os.ErrNotExist) {
-		fmt.Fprintf(c.log, "nodloop setup: warning: %s has no contexts.csv so every event reads change context unknown. "+
-			"Add one with the columns event_id and change_context to name what changed around each event\n", uc.DataDir)
+		report.warnings = append(report.warnings, fmt.Sprintf("%s has no contexts.csv so every event reads change context unknown. "+
+			"Add one with the columns event_id and change_context to name what changed around each event", uc.DataDir))
 	}
-	c.warnCarryOver(prior, uc.DataDir, records)
-	return nil
+	if w := c.carryOver(prior, uc.DataDir, report.records); w != "" {
+		report.warnings = append(report.warnings, w)
+	}
+	return uc, report, nil
 }
 
 // The config saved before
@@ -231,20 +252,22 @@ func (c setupCommand) prior(recordDir string) (userConfig, error) {
 	return userConfig{}, fmt.Errorf("%w. Fix it or run setup again with --record-dir <dir> since the record dir saved in it cannot be read", err)
 }
 
-// Warns when the records in use before hold files of another data dir
-func (c setupCommand) warnCarryOver(prior userConfig, dataDir, records string) {
+// The warning when the records in use before hold files of another data dir
+// Empty when they do not
+func (c setupCommand) carryOver(prior userConfig, dataDir, records string) string {
 	if prior.DataDir == "" || dirPath(prior.DataDir).sameAs(dataDir) {
-		return
+		return ""
 	}
 	// A prior record dir that does not resolve failed every earlier command so no records came from it
 	used, err := recordDirOf("", c.recordEnv, prior.RecordDir, c.home.recordDir())
 	if err != nil || !dirPath(used).sameAs(records) {
-		return
+		return ""
 	}
-	if entries, err := os.ReadDir(records); err == nil && len(entries) > 0 {
-		fmt.Fprintf(c.log, "nodloop setup: warning: %s holds the reviews and knowledge of %s and they carry into reviews of %s. "+
-			"%s to keep them apart\n", records, prior.DataDir, dataDir, c.recordHint())
+	if entries, err := os.ReadDir(records); err != nil || len(entries) == 0 {
+		return ""
 	}
+	return fmt.Sprintf("%s holds the reviews and knowledge of %s and they carry into reviews of %s. "+
+		"%s to keep them apart", records, prior.DataDir, dataDir, c.recordHint())
 }
 
 // NODLOOP_RECORD_DIR wins over the saved record dir so a new --record-dir alone would not move the records

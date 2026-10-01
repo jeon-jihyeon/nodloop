@@ -46,13 +46,18 @@ const (
 // A test that needs another source or ledger replaces it in its copy of the stores
 func connect(t *testing.T, st testkit.Stores, exe, dataArgs string) testkit.Client {
 	t.Helper()
+	srv := newServer(t, st, mcp.NewSession(st.Clock.Now()), exe, dataArgs)
+	return testkit.Connect(t, mcp.NewHost(func(context.Context) (*mcp.Server, error) { return srv, nil }, "test").ServeTransport)
+}
+
+func newServer(t *testing.T, st testkit.Stores, session diagnose.Session, exe, dataArgs string) *mcp.Server {
+	t.Helper()
 	policy := testkit.Policy(t)
 	diagnoser := diagnose.New(st.Source, policy, nil, st.Traces, st.Feedback, st.Ledger, st.Clock.Now)
 	compactor := compact.New(st.Source, st.Ledger, st.Traces, st.Feedback, st.Outcomes, st.Replays)
-	srv := mcp.New(
-		st.Source, policy, diagnoser, st.Traces, st.Feedback, st.Outcomes, st.Ledger, compactor, st.Clock.Now, "test", exe, dataArgs,
+	return mcp.New(
+		st.Source, policy, diagnoser, st.Traces, st.Feedback, st.Outcomes, st.Ledger, compactor, st.Clock.Now, session, exe, dataArgs,
 	)
-	return testkit.Connect(t, srv.ServeTransport)
 }
 
 func TestServerTools(t *testing.T) {
