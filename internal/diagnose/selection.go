@@ -430,12 +430,14 @@ func (d *Diagnoser) knowledgeCandidates(
 // A hand edited trace that no longer decodes is skipped so one bad line never blocks every later review
 // 3. same change context and one shared metric or no metric on both sides
 // 4. never a review of an excluded event so eval cannot leak an answer into its own question
-// 5. corrections of the event under review first
-// 6. then the closest metric set first
-// 7. then newest first within one distance up to the candidate cap
+// 5. never an edit whose review a person's latest check refuted at or after the edit
+// A reject stays because a refutation agrees with it
+// 6. corrections of the event under review first
+// 7. then the closest metric set first
+// 8. then newest first within one distance up to the candidate cap
 // A reviewer who corrected this event expects that correction in its next review
 // Newer corrections that share one metric never push out an older one of the same metric set
-// Every feedback record is read and each correction costs one trace read
+// Every feedback and outcome record is read and each correction costs one trace read
 // A store query by change context would bound this once the records grow
 func (d *Diagnoser) exampleCandidates(
 	ctx context.Context, eventID string, excluded []string, changeContext evidence.Context, metrics []string,
@@ -444,9 +446,17 @@ func (d *Diagnoser) exampleCandidates(
 	if err != nil {
 		return nil, false, err
 	}
+	outcomes, err := d.outcomes.List(ctx, "")
+	if err != nil {
+		return nil, false, err
+	}
+	latest := checks{}
+	for _, o := range feedback.Outcomes(outcomes).Human().Latest() {
+		latest[o.TraceID] = o
+	}
 	var found exampleMatches
 	for _, verdict := range feedback.Records(all).Human().Latest() {
-		if !verdict.Corrects() {
+		if !verdict.Corrects() || latest.overturn(verdict) {
 			continue
 		}
 		tr, err := d.traces.Get(ctx, verdict.TraceID)
@@ -471,6 +481,15 @@ func (d *Diagnoser) exampleCandidates(
 	}
 	out, cut := found.offer()
 	return out, cut, nil
+}
+
+// The latest outcome a person recorded per trace id
+type checks map[string]feedback.Outcome
+
+// Whether a check refuted the corrected review of an edit at or after the edit
+func (cs checks) overturn(edit feedback.Feedback) bool {
+	o, ok := cs[edit.TraceID]
+	return ok && edit.Verdict == feedback.VerdictEdit && o.RefutedSince(edit.Time)
 }
 
 // A correction that fits the event with the number of metrics only one side holds

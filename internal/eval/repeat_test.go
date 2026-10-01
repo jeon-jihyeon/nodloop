@@ -73,7 +73,7 @@ func TestHoldoutRepeated(t *testing.T) {
 			client.EXPECT().Complete(gomock.Any(), gomock.Any()).Return(llm.Response{
 				Output: json.RawMessage(`{"status":"no_action","observations":[],"causes":[],"checks":[],"open_questions":[]}`),
 			}, nil).Times(len(tc.want.tags))
-			d := diagnose.New(s.Source, testkit.Policy(t), client, s.Traces, s.Feedback, s.Ledger, s.Clock.Now)
+			d := diagnose.New(s.Source, testkit.Policy(t), client, s.Traces, s.Feedback, s.Outcomes, s.Ledger, s.Clock.Now)
 			r := eval.New(s.Source, d, s.Traces, s.Feedback, s.Ledger)
 			traces, err := r.Holdout(ctx, eval.RunOptions{
 				SessionID: "repeated", Repeat: tc.args.repeat, Parallel: 1,
@@ -127,7 +127,7 @@ func TestSeedRepeated(t *testing.T) {
 			client.EXPECT().Complete(gomock.Any(), gomock.Any()).Return(llm.Response{
 				Output: json.RawMessage(`{"status":"no_action","observations":[],"causes":[],"checks":[],"open_questions":[]}`),
 			}, nil).Times(len(tc.want.tags))
-			d := diagnose.New(s.Source, testkit.Policy(t), client, s.Traces, s.Feedback, s.Ledger, s.Clock.Now)
+			d := diagnose.New(s.Source, testkit.Policy(t), client, s.Traces, s.Feedback, s.Outcomes, s.Ledger, s.Clock.Now)
 			r := eval.New(s.Source, d, s.Traces, s.Feedback, s.Ledger)
 			traces, err := r.Seed(ctx, eval.RunOptions{
 				SessionID: "repeated", Repeat: tc.args.repeat, Parallel: 1, Events: []string{"tq-001"},

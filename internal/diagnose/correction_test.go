@@ -44,7 +44,7 @@ func recordReview(t *testing.T, client llm.Client) corrected {
 	t.Helper()
 	ctx := context.Background()
 	s := testkit.Open(t)
-	d := diagnose.New(s.Source, testkit.Policy(t), client, s.Traces, s.Feedback, s.Ledger, s.Clock.Now)
+	d := diagnose.New(s.Source, testkit.Policy(t), client, s.Traces, s.Feedback, s.Outcomes, s.Ledger, s.Clock.Now)
 	c, err := d.Prepare(ctx, "tq-005", diagnose.ModeInteractive, diagnose.Session{})
 	require.NoError(t, err)
 	review := diagnose.Diagnosis{
@@ -501,7 +501,7 @@ func TestCheckEditAgreesWithTheNextReview(t *testing.T) {
 			src := editedDemo(t, cmp.Or(tc.args.edit.file, "data-integrity-hold.md"), tc.args.edit.old, tc.args.edit.replacement)
 			current, err := src.Procedures(ctx)
 			require.NoError(t, err)
-			later := diagnose.New(src, testkit.Policy(t), nil, r.Traces, r.Feedback, r.Ledger, r.Clock.Now)
+			later := diagnose.New(src, testkit.Policy(t), nil, r.Traces, r.Feedback, r.Outcomes, r.Ledger, r.Clock.Now)
 			c, err := later.Prepare(ctx, "tq-005", diagnose.ModeInteractive, diagnose.Session{})
 			require.NoError(t, err)
 

@@ -371,6 +371,12 @@ type FeedbackStore interface {
 	List(ctx context.Context, f feedback.Filter) ([]feedback.Feedback, error)
 }
 
+// What real checks found for past reviews
+// An empty trace id lists every outcome
+type OutcomeStore interface {
+	List(ctx context.Context, traceID string) ([]feedback.Outcome, error)
+}
+
 // The open check and the append after it run under mu
 // Two Records or a Select and a Record on one pending id would otherwise both pass the check
 // The guard holds within one process only
@@ -381,16 +387,20 @@ type Diagnoser struct {
 	client    llm.Client
 	traces    TraceStore
 	feedback  FeedbackStore
+	outcomes  OutcomeStore
 	knowledge KnowledgeSource
 	now       func() time.Time
 	mu        sync.Mutex
 }
 
 func New(
-	src Source, policy analysis.Policy, client llm.Client, traces TraceStore, verdicts FeedbackStore,
+	src Source, policy analysis.Policy, client llm.Client, traces TraceStore, verdicts FeedbackStore, outcomes OutcomeStore,
 	knowledgeSrc KnowledgeSource, now func() time.Time,
 ) *Diagnoser {
-	return &Diagnoser{src: src, policy: policy, client: client, traces: traces, feedback: verdicts, knowledge: knowledgeSrc, now: now}
+	return &Diagnoser{
+		src: src, policy: policy, client: client, traces: traces, feedback: verdicts, outcomes: outcomes, knowledge: knowledgeSrc,
+		now: now,
+	}
 }
 
 // Builds the context and records it

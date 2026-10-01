@@ -326,12 +326,12 @@ func (p pipeline) replayDiagnoser(ctx context.Context, client llm.Client, id str
 	if err != nil {
 		return nil, err
 	}
-	return diagnose.New(p.src, p.policy, client, p.replays, p.feedback, preview, p.now), nil
+	return diagnose.New(p.src, p.policy, client, p.replays, p.feedback, p.outcomes, preview, p.now), nil
 }
 
 // A nil client serves the conversation that writes the review itself
 func (p pipeline) diagnoser(client llm.Client) *diagnose.Diagnoser {
-	return diagnose.New(p.src, p.policy, client, p.traces, p.feedback, p.ledger, p.now)
+	return diagnose.New(p.src, p.policy, client, p.traces, p.feedback, p.outcomes, p.ledger, p.now)
 }
 
 func (a app) diagnoser(client llm.Client) (*diagnose.Diagnoser, error) {
