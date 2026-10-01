@@ -396,6 +396,15 @@ func TestHoldout(t *testing.T) {
 			want{reviews: []review{{"tq-003", []string{"feedback:on"}}}},
 		},
 		{
+			"feedback:on with a negative example count is refused before any review",
+			args{
+				opts: eval.RunOptions{
+					SessionID: "s", Events: []string{"tq-003"}, Examples: -1, Conditions: []eval.Condition{eval.ConditionExamples},
+				},
+			},
+			want{err: eval.ErrExamples},
+		},
+		{
 			"knowledge:on without approved knowledge is refused before any review",
 			args{opts: eval.RunOptions{SessionID: "s", Events: []string{"tq-003"}, Conditions: []eval.Condition{eval.ConditionKnowledge}}},
 			want{err: eval.ErrNoApprovedKnowledge},

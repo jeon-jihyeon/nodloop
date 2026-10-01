@@ -322,7 +322,7 @@ func (s *Server) observe(ctx context.Context, _ *sdk.CallToolRequest, in eventIn
 	if err != nil {
 		return nil, nil, err
 	}
-	obs, err := s.policy.Analyze(ev)
+	obs, err := s.diagnoser.Observe(ctx, ev)
 	if err != nil {
 		return nil, nil, err
 	}

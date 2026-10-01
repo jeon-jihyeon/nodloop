@@ -3,7 +3,8 @@ package eval
 import "errors"
 
 var (
-	ErrRepeat = errors.New("eval: repeat must not be negative")
+	ErrRepeat   = errors.New("eval: repeat must not be negative")
+	ErrExamples = errors.New("eval: examples must not be negative")
 	// A run with repeats in a session half without them or the reverse
 	ErrRepeatSession = errors.New("eval: the session already holds reviews with a different repeat setting")
 	// Report on a session with no diagnose trace

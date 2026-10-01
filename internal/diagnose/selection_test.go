@@ -44,6 +44,8 @@ func TestPrepareCandidates(t *testing.T) {
 		traces   []trace.Trace
 		verdicts []verdict
 		event    string
+		// Added to the demo policy that is bound to the demo data before the diagnoser gets it
+		analyzers []analysis.RuleSpec
 	}
 	type offer struct {
 		knowledge []diagnose.KnowledgeCandidate
@@ -222,6 +224,23 @@ func TestPrepareCandidates(t *testing.T) {
 			}},
 		},
 		{
+			name: "offers a quiet correction to a quiet event while the export lacks a policy metric",
+			args: args{
+				traces: []trace.Trace{{
+					ID: "quiet", Name: trace.NameDiagnose, Subject: "tq-001", Output: json.RawMessage(`{"status":"no_action"}`),
+					Input: json.RawMessage(`{"change_context":"no_known_change","metrics":[]}`),
+				}},
+				verdicts: []verdict{{"quiet", feedback.VerdictReject, "expected variation", nil}},
+				event:    "tq-002",
+				analyzers: []analysis.RuleSpec{
+					{Rule: analysis.RuleZScore, Metrics: []string{"signup_count"}, Baseline: 36, Window: 12, Threshold: 3, MinSamples: 12},
+				},
+			},
+			want: want{offer: offer{
+				examples: []diagnose.ExampleCandidate{{TraceID: "quiet", Verdict: feedback.VerdictReject, Head: "expected variation"}},
+			}},
+		},
+		{
 			name: "skips a correction of the same context that shares no metric",
 			args: args{
 				reviews:  []string{"tq-001"},
@@ -264,8 +283,14 @@ func TestPrepareCandidates(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			s := testkit.Open(t)
+			policy := testkit.Policy(t)
+			policy.Analyzers = slices.Concat(policy.Analyzers, tc.args.analyzers)
+			metrics, err := s.Source.Metrics(ctx)
+			require.NoError(t, err)
+			dims, err := s.Source.Dims(ctx)
+			require.NoError(t, err)
 			d := diagnose.New(
-				s.Source, testkit.Policy(t), nil, s.Traces, s.Feedback, s.Ledger, s.Clock.Now,
+				s.Source, policy.Observed(metrics, knowledge.Dims(dims).Names()), nil, s.Traces, s.Feedback, s.Ledger, s.Clock.Now,
 			)
 			for _, k := range tc.args.knowledge {
 				k.Evidence, k.Author = knowledge.Evidence{ParagraphIDs: []string{"p-1"}}, "author"

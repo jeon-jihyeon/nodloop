@@ -129,7 +129,7 @@ type listing struct {
 	// File names ending in `.md` directly under dir
 	procedures []string
 	// 1. a Markdown file spelled other than `.md`
-	// 2. a folder that holds Markdown at any depth
+	// 2. a folder or a link to one that holds Markdown at any depth
 	// 3. a folder that cannot be opened at any depth
 	skipped []string
 }
@@ -153,30 +153,45 @@ func (s *Source) list() (listing, error) {
 		case strings.HasPrefix(name, "."):
 		case filepath.Ext(name) == procedureExt:
 			l.procedures = append(l.procedures, name)
-		case !entry.IsDir() && markdown(name):
+		case !folder(entry, path) && markdown(name):
 			l.skipped = append(l.skipped, path)
-		case entry.IsDir() && holdsMarkdown(path):
+		case folder(entry, path) && holdsMarkdown(path):
 			l.skipped = append(l.skipped, path)
 		}
 	}
 	return l, nil
 }
 
+// A folder or a link to one
+// A link that does not resolve counts as a file so a dangling link to an image is never named
+func folder(entry fs.DirEntry, path string) bool {
+	if entry.Type()&fs.ModeSymlink == 0 {
+		return entry.IsDir()
+	}
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
+}
+
 // Markdown at any depth so a procedure nested by team or topic is still named
 // 1. entries starting with a dot are passed over at every depth as list passes them over
 // 2. a folder that cannot be opened counts as holding Markdown because nothing proves it holds none
 // 3. that folder never fails the listing because the walk only feeds a warning and must not stop reviews
+// 4. a linked folder is walked at its target because a walk never enters a link
 func holdsMarkdown(dir string) bool {
+	root, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return true
+	}
 	found := false
 	// The callback never returns an error of its own so WalkDir returns nil
-	_ = filepath.WalkDir(dir, func(path string, entry fs.DirEntry, err error) error {
+	_ = filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
 		switch {
 		case err != nil:
 			found = true
 			return fs.SkipAll
-		case path != dir && strings.HasPrefix(entry.Name(), ".") && entry.IsDir():
+		case path != root && strings.HasPrefix(entry.Name(), ".") && entry.IsDir():
 			return fs.SkipDir
-		case path != dir && strings.HasPrefix(entry.Name(), "."):
+		case path != root && strings.HasPrefix(entry.Name(), "."):
 			return nil
 		case !entry.IsDir() && markdown(entry.Name()):
 			found = true

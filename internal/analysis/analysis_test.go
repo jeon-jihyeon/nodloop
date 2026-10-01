@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"strings"
 	"testing"
 	"time"
 
@@ -387,8 +386,8 @@ func TestPolicyAnalyzeAbsent(t *testing.T) {
 			name: "a metric the export lost is reported once per rule that reads it",
 			args: args{metrics: []string{"click_count"}, dims: []string{"region", "source"}, points: []evidence.Point{click(0), click(1)}},
 			want: analysis.Observations{
-				{Rule: analysis.RuleProportion, Metric: "conversion_count", Window: window, Ref: ref, Summary: lost},
-				{Rule: analysis.RuleCoverage, Metric: "conversion_count", Window: window, Ref: ref, Summary: lost},
+				{Rule: analysis.RuleProportion, Metric: "conversion_count", Window: window, Ref: ref, Summary: lost, Absent: true},
+				{Rule: analysis.RuleCoverage, Metric: "conversion_count", Window: window, Ref: ref, Summary: lost, Absent: true},
 			},
 		},
 		{
@@ -399,7 +398,7 @@ func TestPolicyAnalyzeAbsent(t *testing.T) {
 			},
 			want: analysis.Observations{{
 				Rule: analysis.RuleConcentration, Metric: "click_count", Window: window, Ref: ref,
-				Summary: "click_count: no event of the data set carries dimension source to group by",
+				Summary: "click_count: no event of the data set carries dimension source to group by", Absent: true,
 			}},
 		},
 		{
@@ -426,7 +425,7 @@ func TestPolicyAnalyzeAbsent(t *testing.T) {
 			require.GreaterOrEqual(t, len(got), len(tc.want))
 			var absent analysis.Observations
 			for _, o := range got {
-				if o.Detail.Samples == 0 && strings.Contains(o.Summary, "no event of the data set") {
+				if o.Absent {
 					absent = append(absent, o)
 				}
 			}
@@ -462,6 +461,35 @@ func TestObservationsMetrics(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			assert.Equal(t, tc.want, tc.args.Metrics())
+		})
+	}
+}
+
+func TestObservationsMeasured(t *testing.T) {
+	tcs := []struct {
+		name string
+		args analysis.Observations
+		want []string
+	}{
+		{
+			name: "an absent row adds no metric so a quiet event stays quiet",
+			args: analysis.Observations{{Rule: analysis.RuleCoverage, Metric: "conversion_count", Absent: true}},
+			want: []string{},
+		},
+		{
+			name: "a metric observed beside its absent group dimension stays",
+			args: analysis.Observations{
+				{Rule: analysis.RuleZScore, Metric: "click_count"},
+				{Rule: analysis.RuleConcentration, Metric: "click_count", Absent: true},
+				{Rule: analysis.RuleZScore, Metric: "conversion_count", Absent: true},
+			},
+			want: []string{"click_count"},
+		},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.want, tc.args.Measured())
 		})
 	}
 }

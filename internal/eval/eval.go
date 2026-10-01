@@ -56,8 +56,11 @@ func (c Condition) options(examples int) diagnose.BatchOptions {
 // Refuses a condition that has nothing to inject so its paid reviews never pass for a measured effect
 // 1. feedback:on needs a correction it could take as an example unless examples are off
 // 2. knowledge:on and knowledge:all need an approved item
+// 3. feedback:on refuses a negative example count because it would run as off and pass for a measured effect
 func (c Condition) supplied(examples, corrections, approved int) error {
 	switch {
+	case c == ConditionExamples && examples < 0:
+		return fmt.Errorf("%w: %d. Pass 0 to run %s without examples", ErrExamples, examples, c)
 	case c == ConditionExamples && examples > 0 && corrections == 0:
 		return fmt.Errorf("%w: %s would inject nothing so add feedback on the seed reviews or leave it out of the conditions",
 			ErrNoCorrections, c)

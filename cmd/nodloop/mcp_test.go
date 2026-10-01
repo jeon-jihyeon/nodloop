@@ -24,6 +24,14 @@ func TestShellWord(t *testing.T) {
 		{"a plain path stays as it is", "/home/u/.nodloop/bin/nodloop", "/home/u/.nodloop/bin/nodloop"},
 		{"a path with a space is quoted", "/Users/u/My Tools/nodloop", "'/Users/u/My Tools/nodloop'"},
 		{"a quote in the path is escaped", "/tmp/it's/nodloop", `'/tmp/it'\''s/nodloop'`},
+		{"a command separator is quoted", "/data/a;b", "'/data/a;b'"},
+		{"an ampersand and a pipe are quoted", "/data/R&D|x", "'/data/R&D|x'"},
+		{"parentheses and redirections are quoted", "/data/v(2)<in>", "'/data/v(2)<in>'"},
+		{"glob characters are quoted", "/data/run[1]*?", "'/data/run[1]*?'"},
+		{"a leading tilde and a hash are quoted", "~/data#1", "'~/data#1'"},
+		{"a newline is quoted", "/data/a\nb", "'/data/a\nb'"},
+		{"an empty path is quoted so it stays a word", "", "''"},
+		{"other safe characters stay", "/data/v1.2_x-y/a@b%c+d=e,f:g", "/data/v1.2_x-y/a@b%c+d=e,f:g"},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {

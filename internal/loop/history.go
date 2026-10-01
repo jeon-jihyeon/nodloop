@@ -55,9 +55,10 @@ func (r review) statedOnly(versions map[knowledge.Ref]knowledge.Knowledge) bool 
 }
 
 // The conversation as the records tell it joined once
-// 1. a conversation review is a diagnose trace without error written in the interactive mode
-// 2. the verdict and the outcome of a review are the latest ones a person gave
-// 3. the first submission of a review is the revise trace of its context
+// 1. a conversation review is a diagnose trace without error written in the interactive mode or by a one-off batch run without a session
+// 2. every eval run names a session so its reviews stay out
+// 3. the verdict and the outcome of a review are the latest ones a person gave
+// 4. the first submission of a review is the revise trace of its context
 type History struct {
 	// Newest first as the store lists them
 	reviews []review
@@ -129,7 +130,7 @@ func New(traces trace.Traces, verdicts feedback.Records, outcomes feedback.Outco
 				return nil, err
 			}
 			recorded[tr.ID] = true
-			if rec.Mode == diagnose.ModeInteractive {
+			if rec.Mode == diagnose.ModeInteractive || tr.SessionID == "" {
 				h.reviews = append(h.reviews, review{trace: tr, Recorded: rec})
 			}
 		}

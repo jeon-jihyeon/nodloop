@@ -84,6 +84,9 @@ type Observation struct {
 	Ref Ref `json:"ref"`
 	// One line for the review context and the trace
 	Summary string `json:"summary"`
+	// Set when no event of the data set carries the metric or the group dimension
+	// The row then reports the data set and not the event
+	Absent bool `json:"absent,omitempty"`
 }
 
 // Series name for summaries
@@ -158,6 +161,18 @@ func (obs Observations) Metrics() []string {
 		}
 	}
 	return out
+}
+
+// Metrics like Metrics without the absent rows
+// Every event of a data set gets the same absent rows so they never tell one event from another
+func (obs Observations) Measured() []string {
+	var kept Observations
+	for _, o := range obs {
+		if !o.Absent {
+			kept = append(kept, o)
+		}
+	}
+	return kept.Metrics()
 }
 
 // Whether the observation reports a movement of its metric
