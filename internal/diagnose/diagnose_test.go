@@ -215,7 +215,7 @@ func TestPrepare(t *testing.T) {
 				EventID:        tc.args.event,
 				Mode:           tc.args.mode,
 				PolicyVersion:  "demo-1",
-				PromptVersion:  "diagnose/v14",
+				PromptVersion:  "diagnose/v15",
 				ChangeContext:  ev.ChangeContext,
 				Session:        tc.args.session,
 				Observations:   observations,
@@ -229,7 +229,7 @@ func TestPrepare(t *testing.T) {
 				Input: tr.Input, Output: tr.Output, Tags: tc.args.session.Tags,
 			}, tr)
 			assert.Equal(t, input{
-				Mode: tc.args.mode, PolicyVersion: "demo-1", PromptVersion: "diagnose/v14", Procedures: tc.want.procedures,
+				Mode: tc.args.mode, PolicyVersion: "demo-1", PromptVersion: "diagnose/v15", Procedures: tc.want.procedures,
 				ParagraphIDs: ids, ProcedureChars: tc.want.procedureChars,
 			}, in)
 			assert.Equal(t, output{
@@ -526,7 +526,7 @@ func TestRecord(t *testing.T) {
 	oldReady := ready
 	recorded := input{
 		SessionID: "s1", Subject: "tq-005", Tags: []string{"feedback:off"},
-		Mode: diagnose.ModeInteractive, PolicyVersion: "demo-1", PromptVersion: "diagnose/v14",
+		Mode: diagnose.ModeInteractive, PolicyVersion: "demo-1", PromptVersion: "diagnose/v15",
 		ChangeContext: evidence.ContextNoKnownChange, Metrics: []string{"click_count", "conversion_count"},
 		Procedures: demoProcedures, Knowledge: []diagnose.AppliedKnowledge{}, Examples: []example{},
 		Chars: sections{Procedures: demoProcedureChars},
