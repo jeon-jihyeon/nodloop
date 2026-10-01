@@ -19,6 +19,7 @@ import (
 	"github.com/jeon-jihyeon/nodloop/internal/feedback"
 	"github.com/jeon-jihyeon/nodloop/internal/jsonl"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
+	knowledgefile "github.com/jeon-jihyeon/nodloop/internal/knowledge/file"
 	"github.com/jeon-jihyeon/nodloop/internal/llm"
 )
 
@@ -217,13 +218,15 @@ type knowledgeCommand struct {
 	vetoPath     string
 	settingsPath string
 	stableBinary string
-	out          io.Writer
+	// The approved knowledge as rules a CLAUDE.md imports
+	rulesPath string
+	out       io.Writer
 }
 
 func (a app) knowledgeCommand(ledger *knowledge.Ledger, out io.Writer) knowledgeCommand {
 	return knowledgeCommand{
 		app: a, ledger: ledger, vetoPath: a.vetoFile(a.cfg.recordDir).Path(), settingsPath: a.cfg.home.settingsPath(),
-		stableBinary: a.cfg.home.stableBinary(), out: out,
+		stableBinary: a.cfg.home.stableBinary(), rulesPath: knowledgefile.RulesPath(a.cfg.recordDir), out: out,
 	}
 }
 
@@ -426,7 +429,7 @@ func (c knowledgeCommand) overlaps(ctx context.Context, id string) error {
 }
 
 // Approve and retire move one version to a new status under a name
-// 1. a failed veto export still prints the status line because the record is written and the error follows
+// 1. a failed export still prints the status line because the record is written and the error follows
 // 2. the veto line appears only when the export worked and the approved vetoes changed
 func (c knowledgeCommand) transition(
 	ctx context.Context, action string, move func(context.Context, string, int, string) (knowledge.Knowledge, error),
@@ -440,7 +443,7 @@ func (c knowledgeCommand) transition(
 		return err
 	}
 	k, err := move(ctx, id, version, approver)
-	if err != nil && !errors.Is(err, knowledge.ErrVetoExport) {
+	if err != nil && !errors.Is(err, knowledge.ErrExport) {
 		return err
 	}
 	fmt.Fprintf(c.out, "%s\tv%d\t%s\t%s\n", k.ID, k.Version, k.Status, k.Approver)
@@ -457,9 +460,10 @@ func (c knowledgeCommand) transition(
 	return nil
 }
 
-// Hands the approved vetoes to the file again after a failed export
+// Writes the approved vetoes and rules again after a failed export or before the first import of the rules
+// The rules line names the import a CLAUDE.md needs so every session loads them
 func (c knowledgeCommand) export(ctx context.Context) error {
-	if err := c.ledger.ExportVetoes(ctx); err != nil {
+	if err := c.ledger.Export(ctx); err != nil {
 		return err
 	}
 	all, err := c.ledger.All(ctx)
@@ -467,6 +471,12 @@ func (c knowledgeCommand) export(ctx context.Context) error {
 		return err
 	}
 	c.vetoLine(len(all.Vetoes()))
+	if len(all.Approved()) == 0 {
+		fmt.Fprintln(c.out, "rules\tnot written because no item is approved")
+		return nil
+	}
+	fmt.Fprintf(c.out, "rules\t%d approved in %s\timport it from CLAUDE.md with the line @%s\n",
+		len(all.Approved()), c.rulesPath, c.rulesPath)
 	return nil
 }
 

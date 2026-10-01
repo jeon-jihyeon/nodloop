@@ -7,4 +7,5 @@ var (
 	ErrOpen   = errors.New("knowledge file: record directory unusable")
 	ErrAppend = errors.New("knowledge file: append failed")
 	ErrRead   = errors.New("knowledge file: read failed")
+	ErrWrite  = errors.New("knowledge file: rules write failed")
 )

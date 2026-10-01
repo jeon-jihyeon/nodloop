@@ -26,6 +26,9 @@ type Store interface {
 	AppendDecided(ctx context.Context, decide func(all Set) ([]Knowledge, error)) error
 	// Every record newest first
 	List(ctx context.Context) ([]Knowledge, error)
+	// Rewrites the rules file with what render returns for every record newest first
+	// render runs while no other writer can append so the later of two writers reads the newer records
+	ReplaceRules(ctx context.Context, render func(all Set) string) error
 }
 
 // Where the vetoes of the approved items take effect
@@ -39,13 +42,13 @@ type VetoSink interface {
 // 1. a proposal is always a candidate
 // 2. approve and retire need an approver and follow the allowed status changes
 // 3. the clock is read here in UTC and every record of one call carries that time
-// 4. approve and retire and import end by handing the approved vetoes to the sink
-// A refused approve or retire hands them too so its retry repairs a sink a killed call left behind
+// 4. approve and retire and import and reaffirm end by exporting the approved vetoes and rules
+// A refused approve or retire exports them too so its retry repairs an export a killed call left behind
 // 5. approve refuses an approval that pushes a review past ReviewChars or ReviewItems or grows one already past them
 // and import never checks it
 // 6. every write decides under the store lock on the records as they are then
 // So two writers at once never both pass a check that only one of them may pass and neither refuses the other
-// A failed hand off returns ErrVetoExport after the records are appended so the caller knows the status changed
+// A failed export returns ErrExport after the records are appended so the caller knows the status changed
 type Ledger struct {
 	store  Store
 	vetoes VetoSink
@@ -173,7 +176,7 @@ func (l *Ledger) Approve(ctx context.Context, id string, version int, approver s
 	if err != nil {
 		return Knowledge{}, l.refused(ctx, err)
 	}
-	return to, l.exportVetoes(ctx, to)
+	return to, l.exported(ctx, to)
 }
 
 func (l *Ledger) Retire(ctx context.Context, id string, version int, approver string) (Knowledge, error) {
@@ -191,15 +194,15 @@ func (l *Ledger) Retire(ctx context.Context, id string, version int, approver st
 	if err != nil {
 		return Knowledge{}, l.refused(ctx, err)
 	}
-	return to, l.exportVetoes(ctx, to)
+	return to, l.exported(ctx, to)
 }
 
-// The refusal of an approve or a retire after the approved vetoes are handed to the sink again
-// A call killed between its append and its hand off leaves the sink behind the records and its retry is refused
-// so the refused retry brings the sink back in step
-// A failed hand off joins the refusal without ErrVetoExport because no status changed
+// The refusal of an approve or a retire after the approved knowledge is exported again
+// A call killed between its append and its export leaves the exports behind the records and its retry is refused
+// so the refused retry brings them back in step
+// A failed export joins the refusal without ErrExport because no status changed
 func (l *Ledger) refused(ctx context.Context, err error) error {
-	return errors.Join(err, l.ExportVetoes(ctx))
+	return errors.Join(err, l.Export(ctx))
 }
 
 // Appends in one write the records of a file that the ledger does not hold yet and returns them
@@ -217,28 +220,30 @@ func (l *Ledger) Import(ctx context.Context, records []Knowledge) (Set, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := l.ExportVetoes(ctx); err != nil {
-		return fresh, fmt.Errorf("%w: %d records imported: %w", ErrVetoExport, len(fresh), err)
+	if err := l.Export(ctx); err != nil {
+		return fresh, fmt.Errorf("%w: %d records imported: %w", ErrExport, len(fresh), err)
 	}
 	return fresh, nil
 }
 
-// Hands the approved vetoes to the sink again
-// The way back after a failed hand off because nothing else changes a status
-func (l *Ledger) ExportVetoes(ctx context.Context) error {
-	return l.vetoes.Replace(func() ([]veto.Spec, error) {
+// Hands the approved vetoes to the sink and rewrites the rules file again
+// The way back after a failed export because nothing else changes a status
+// One failure never stops the other export
+func (l *Ledger) Export(ctx context.Context) error {
+	vetoes := l.vetoes.Replace(func() ([]veto.Spec, error) {
 		all, err := l.All(ctx)
 		if err != nil {
 			return nil, err
 		}
 		return all.Vetoes(), nil
 	})
+	return errors.Join(vetoes, l.store.ReplaceRules(ctx, Set.Rules))
 }
 
 // The status change already happened so the error names it
-func (l *Ledger) exportVetoes(ctx context.Context, changed Knowledge) error {
-	if err := l.ExportVetoes(ctx); err != nil {
-		return fmt.Errorf("%w: %s v%d is %s: %w", ErrVetoExport, changed.ID, changed.Version, changed.Status, err)
+func (l *Ledger) exported(ctx context.Context, changed Knowledge) error {
+	if err := l.Export(ctx); err != nil {
+		return fmt.Errorf("%w: %s v%d is %s: %w", ErrExport, changed.ID, changed.Version, changed.Status, err)
 	}
 	return nil
 }
@@ -320,8 +325,8 @@ func (l *Ledger) ApproveCompaction(ctx context.Context, id, approver string, rep
 	if err != nil {
 		return Compaction{}, err
 	}
-	if err := l.ExportVetoes(ctx); err != nil {
-		return approved, fmt.Errorf("%w: compaction %s is approved: %w", ErrVetoExport, id, err)
+	if err := l.Export(ctx); err != nil {
+		return approved, fmt.Errorf("%w: compaction %s is approved: %w", ErrExport, id, err)
 	}
 	return approved, nil
 }

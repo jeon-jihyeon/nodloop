@@ -428,13 +428,18 @@ func TestRunKnowledge(t *testing.T) {
 			},
 			want{
 				1, "^k-sed\tv1\tapproved\treviewer\n$",
-				`^nodloop knowledge: knowledge: vetoes were not exported: k-sed v1 is approved: .*failed to write veto file`,
+				`^nodloop knowledge: knowledge: approved knowledge was not exported: k-sed v1 is approved: .*failed to write veto file`,
 			},
 		},
 		{
-			"export writes the approved vetoes again",
+			"export writes the approved vetoes and rules again and names the import line",
 			args{setup: [][]string{proposeSed, approveSed}, args: []string{"export"}, home: "{home}"},
-			want{0, "^" + vetoes + unhooked + "$", `^$`},
+			want{0, "^" + vetoes + unhooked + "rules\t1 approved in (.*/approved\\.md)\timport it from CLAUDE\\.md with the line @(.*/approved\\.md)\n$", `^$`},
+		},
+		{
+			"export with nothing approved says no rules were written",
+			args{setup: [][]string{proposeSed}, args: []string{"export"}, home: "{home}"},
+			want{0, "^vetoes\t0 approved in .*\t" + unhooked + "rules\tnot written because no item is approved\n$", `^$`},
 		},
 		{
 			"approve of an item whose folder may outgrow the review is refused",

@@ -35,6 +35,7 @@ func (k Knowledge) Stale(now time.Time) bool {
 // 1. the approved record is appended again with the reaffirm time and the approver and nothing a review sees changes
 // 2. the version is checked under the store lock
 // So a reaffirm never reopens a version that a concurrent retire closed
+// 3. the exports follow because they name the approver
 func (l *Ledger) Reaffirm(ctx context.Context, id string, version int, approver string) (Knowledge, error) {
 	if approver == "" {
 		return Knowledge{}, fmt.Errorf("%w: reaffirm needs one", ErrApproverRequired)
@@ -52,7 +53,7 @@ func (l *Ledger) Reaffirm(ctx context.Context, id string, version int, approver 
 	if err != nil {
 		return Knowledge{}, err
 	}
-	return k, nil
+	return k, l.exported(ctx, k)
 }
 
 // Proposes the next version of the current approved version without the change contexts where its reviews were refuted

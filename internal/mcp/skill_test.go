@@ -34,9 +34,12 @@ func TestSkillTools(t *testing.T) {
 			want{tools: []string{"events"}, commands: []string{"nodloop check --data-dir", "nodloop setup --data-dir"}},
 		},
 		{
-			"the sessions skill records verdicts and proposes knowledge and skips recorded traces through the CLI",
+			"the sessions skill records verdicts and proposes knowledge and runs the list and the export through the CLI",
 			"../../plugin/skills/sessions/SKILL.md",
-			want{tools: []string{"feedback", "propose", "approve"}, commands: []string{"nodloop feedback list --trace"}},
+			want{
+				tools:    []string{"feedback", "propose", "approve"},
+				commands: []string{"nodloop feedback list --trace", "nodloop knowledge export"},
+			},
 		},
 		{
 			"the review skill calls the review tools and reads past traces and the report through the CLI",

@@ -194,7 +194,7 @@ var tools = []tool{
 		"Only call it when the user explicitly approves and names themselves. "+
 		"Fails when the approval would push a review past the budget or grow one already past it and names the items to retire or replace. "+
 		"Answers the folder with compaction_due like propose. "+
-		"Once the approval is recorded a failed veto export or folder read comes back as veto_export_error or folder_error "+
+		"Once the approval is recorded a failed export of the vetoes or rules or a failed folder read comes back as export_error or folder_error "+
 		"and approving again would fail", (*Server).approve),
 	newTool("compaction", "Read what a compaction of one knowledge folder is drafted from: "+
 		"the approved items of the folder of an item, the corrections behind them, the replay events with their expected status "+
@@ -588,7 +588,7 @@ type approveInput struct {
 
 func (s *Server) approve(ctx context.Context, _ *sdk.CallToolRequest, in approveInput) (*sdk.CallToolResult, any, error) {
 	k, err := s.ledger.Approve(ctx, in.ID, in.Version, in.Approver)
-	if err != nil && !errors.Is(err, knowledge.ErrVetoExport) {
+	if err != nil && !errors.Is(err, knowledge.ErrExport) {
 		return nil, nil, err
 	}
 	answer := map[string]any{
@@ -596,7 +596,7 @@ func (s *Server) approve(ctx context.Context, _ *sdk.CallToolRequest, in approve
 	}
 	// The approval is recorded and a second approve would fail so every later failure rides on the answer
 	if err != nil {
-		answer["veto_export_error"] = err.Error()
+		answer["export_error"] = err.Error()
 	}
 	folder, err := s.ledger.Folder(ctx, k.ID, k.Version)
 	if err != nil {
@@ -692,7 +692,7 @@ func (s *Server) approveCompaction(
 	ctx context.Context, _ *sdk.CallToolRequest, in approveCompactionInput,
 ) (*sdk.CallToolResult, any, error) {
 	c, err := s.compactor.Approve(ctx, in.Compaction, in.Approver)
-	if err != nil && !errors.Is(err, knowledge.ErrVetoExport) {
+	if err != nil && !errors.Is(err, knowledge.ErrExport) {
 		return nil, nil, err
 	}
 	statuses := make([]string, 0, len(c.Items)+len(c.Replaced))
@@ -702,7 +702,7 @@ func (s *Server) approveCompaction(
 	answer := map[string]any{"compaction": c.ID, "approver": in.Approver, "records": statuses}
 	// The records are appended and a second approval appends nothing so the export failure rides on the answer
 	if err != nil {
-		answer["veto_export_error"] = err.Error()
+		answer["export_error"] = err.Error()
 	}
 	return nil, answer, nil
 }

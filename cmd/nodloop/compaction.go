@@ -138,7 +138,7 @@ func (c compactionCommand) approve(ctx context.Context, id, approver string) err
 		return err
 	}
 	compaction, err := c.compactor.Approve(ctx, id, approver)
-	if err != nil && !errors.Is(err, knowledge.ErrVetoExport) {
+	if err != nil && !errors.Is(err, knowledge.ErrExport) {
 		return err
 	}
 	c.printCompaction(compaction)
