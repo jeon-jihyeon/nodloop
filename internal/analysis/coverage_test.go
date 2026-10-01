@@ -255,7 +255,7 @@ func TestAnalyzeCoverageRule(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			ev := evidence.Event{ID: "e1", ChangeContext: tc.args.changeContext, Points: tc.args.points}
-			got, err := analysis.Policy{Version: "t", Analyzers: []analysis.RuleSpec{tc.args.spec}}.Analyze(ev)
+			got, err := analysis.Policy{Version: "t", Contexts: evidence.DefaultContexts(), Analyzers: []analysis.RuleSpec{tc.args.spec}}.Analyze(ev)
 			assert.NoError(t, err)
 			assert.Equal(t, tc.want, got)
 		})

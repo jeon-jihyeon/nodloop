@@ -1,4 +1,12 @@
 version: demo-1
+contexts:
+  - name: no_known_change
+  - name: planned_operational_change
+  - name: measurement_context_changed
+    breaks_baseline: true
+  - name: data_availability_issue
+    breaks_baseline: true
+  - name: unknown
 analyzers:
   - rule: zscore
     metrics: [click_count]

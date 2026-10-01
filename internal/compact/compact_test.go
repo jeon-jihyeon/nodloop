@@ -566,7 +566,7 @@ func TestFolderDue(t *testing.T) {
 	crowd := make(knowledge.Set, knowledge.FolderItems+1)
 	// An unscoped anchor and one item per change context so each review carries two
 	spread := knowledge.Set{{ID: "g"}}
-	for _, c := range evidence.Contexts() {
+	for _, c := range evidence.DefaultContexts().Names() {
 		spread = append(spread, knowledge.Knowledge{
 			ID: string(c), Scope: knowledge.Scope{Scope: evidence.Scope{ChangeContexts: []evidence.Context{c}}},
 		})
@@ -589,7 +589,7 @@ func TestFolderDue(t *testing.T) {
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			f := compact.Folder{Compactable: knowledge.Compactable{Items: tc.args.items}, Replay: tc.args.replay}
+			f := compact.Folder{Compactable: knowledge.Compactable{Items: tc.args.items, Contexts: evidence.DefaultContexts()}, Replay: tc.args.replay}
 			assert.Equal(t, tc.want, f.Due())
 		})
 	}

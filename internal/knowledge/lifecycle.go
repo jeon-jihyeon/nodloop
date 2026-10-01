@@ -71,13 +71,13 @@ func (l *Ledger) Narrow(
 		if err != nil {
 			return Knowledge{}, err
 		}
-		draft, err := k.narrowed(contexts)
+		draft, err := k.narrowed(contexts, l.contexts)
 		if err != nil {
 			return Knowledge{}, err
 		}
 		draft.Author = author
 		draft.Evidence.OutcomeTraceIDs = append(slices.Clone(k.Evidence.OutcomeTraceIDs), traceIDs...)
-		return all.propose(draft, now)
+		return all.propose(draft, now, l.contexts)
 	})
 }
 
@@ -96,7 +96,7 @@ func (s Set) currentApproved(id string, version int) (Knowledge, error) {
 }
 
 // The item without the contexts
-func (k Knowledge) narrowed(contexts []evidence.Context) (Knowledge, error) {
+func (k Knowledge) narrowed(contexts []evidence.Context, declared evidence.Contexts) (Knowledge, error) {
 	if len(contexts) == 0 {
 		return Knowledge{}, fmt.Errorf("%w: no refuted change context", ErrNarrowInvalid)
 	}
@@ -104,7 +104,7 @@ func (k Knowledge) narrowed(contexts []evidence.Context) (Knowledge, error) {
 		k.Scope.ChangeContexts = slices.DeleteFunc(slices.Clone(k.Scope.ChangeContexts), func(c evidence.Context) bool {
 			return slices.Contains(contexts, c)
 		})
-		if len(k.Scope.ChangeContexts) == 0 || k.Excluded() {
+		if len(k.Scope.ChangeContexts) == 0 || k.Excluded(declared) {
 			return Knowledge{}, fmt.Errorf("%w: %s v%d has none left without %v", ErrNarrowExhausted, k.ID, k.Version, contexts)
 		}
 		return k, nil
@@ -115,7 +115,7 @@ func (k Knowledge) narrowed(contexts []evidence.Context) (Knowledge, error) {
 			k.Exceptions = append(k.Exceptions, c)
 		}
 	}
-	if k.Excluded() {
+	if k.Excluded(declared) {
 		return Knowledge{}, fmt.Errorf("%w: %s v%d would except every change context", ErrNarrowExhausted, k.ID, k.Version)
 	}
 	return k, nil

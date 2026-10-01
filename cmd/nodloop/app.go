@@ -70,7 +70,31 @@ type app struct {
 }
 
 func (a app) source() (*evidencefile.Source, error) {
-	return evidencefile.New(a.cfg.dataDir)
+	contexts, err := a.contexts()
+	if err != nil {
+		return nil, err
+	}
+	return evidencefile.New(a.cfg.dataDir, contexts)
+}
+
+// The change contexts policy.yaml declares
+// 1. only the contexts key is read so a command that never analyzes runs on a policy whose analyzers are broken
+// 2. a data dir without the file or with a file that does not parse declares the default five
+// So the knowledge commands still run on records alone and every analyzing command reports the broken file
+// 3. a contexts list that parses but declares a context twice or without a name fails because it says what the person meant
+func (a app) contexts() (evidence.Contexts, error) {
+	b, err := a.policyText()
+	if errors.Is(err, errPolicyMissing) {
+		return evidence.DefaultContexts(), nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	contexts, err := analysis.LoadContexts(b)
+	if errors.Is(err, analysis.ErrMalformedPolicy) {
+		return evidence.DefaultContexts(), nil
+	}
+	return contexts, err
 }
 
 // Reads the procedures folder alone and never the policy or the events
@@ -84,13 +108,18 @@ func (a app) procedures(ctx context.Context) (evidence.Procedures, error) {
 
 const policyFile = "policy.yaml"
 
-// `policy.yaml` in the reference directory
+// The text of `policy.yaml` in the reference directory
 // The data set owns its analyzers so a directory without the file cannot be analyzed
-func (a app) policy() (analysis.Policy, error) {
+func (a app) policyText() ([]byte, error) {
 	b, err := os.ReadFile(filepath.Join(a.cfg.dataDir, policyFile))
 	if errors.Is(err, os.ErrNotExist) {
-		return analysis.Policy{}, fmt.Errorf("%w: %s", errPolicyMissing, a.cfg.dataDir)
+		return nil, fmt.Errorf("%w: %s", errPolicyMissing, a.cfg.dataDir)
 	}
+	return b, err
+}
+
+func (a app) policy() (analysis.Policy, error) {
+	b, err := a.policyText()
 	if err != nil {
 		return analysis.Policy{}, err
 	}
@@ -150,11 +179,15 @@ func (a app) outcomes() (*feedbackfile.OutcomeStore, error) {
 }
 
 func (a app) ledger() (*knowledge.Ledger, error) {
+	contexts, err := a.contexts()
+	if err != nil {
+		return nil, err
+	}
 	dir, err := a.makeRecordDir()
 	if err != nil {
 		return nil, err
 	}
-	return a.ledgerIn(dir)
+	return a.ledgerIn(dir, contexts)
 }
 
 // Approved vetoes of the record directory under home
@@ -162,12 +195,12 @@ func (a app) vetoFile(dir string) *vetofile.ApprovedFile {
 	return vetofile.NewApprovedFile(string(a.cfg.home), dir)
 }
 
-func (a app) ledgerIn(dir string) (*knowledge.Ledger, error) {
+func (a app) ledgerIn(dir string, contexts evidence.Contexts) (*knowledge.Ledger, error) {
 	store, err := knowledgefile.New(dir)
 	if err != nil {
 		return nil, err
 	}
-	return knowledge.NewLedger(store, a.vetoFile(dir), a.now, a.newID), nil
+	return knowledge.NewLedger(store, a.vetoFile(dir), contexts, a.now, a.newID), nil
 }
 
 // The prefix and the clock milliseconds in hex and two random bytes so two ids in one millisecond differ
@@ -238,7 +271,7 @@ func (a app) pipeline() (pipeline, error) {
 	if err != nil {
 		return pipeline{}, err
 	}
-	ledger, err := a.ledgerIn(dir)
+	ledger, err := a.ledgerIn(dir, policy.Contexts)
 	if err != nil {
 		return pipeline{}, err
 	}

@@ -833,7 +833,7 @@ func TestReportLabels(t *testing.T) {
 			s := testkit.Open(t)
 			dir := t.TempDir()
 			require.NoError(t, os.Mkdir(filepath.Join(dir, tc.args), 0o700))
-			src, err := evidencefile.New(dir)
+			src, err := evidencefile.New(dir, evidence.DefaultContexts())
 			require.NoError(t, err)
 			rep, err := eval.New(src, nil, s.Traces, s.Feedback, s.Ledger).Report(ctx, "s")
 			assert.ErrorIs(t, err, tc.want)

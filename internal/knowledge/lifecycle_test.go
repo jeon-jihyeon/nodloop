@@ -198,7 +198,7 @@ func TestLedgerReaffirmConcurrentWrite(t *testing.T) {
 			open := func() *knowledge.Ledger {
 				store, err := knowledgefile.New(dir)
 				require.NoError(t, err)
-				return knowledge.NewLedger(store, sink, func() time.Time { return now }, func(p string) string { return p })
+				return knowledge.NewLedger(store, sink, evidence.DefaultContexts(), func() time.Time { return now }, func(p string) string { return p })
 			}
 			require.NoError(t, testkit.Err(open().Import(ctx, []knowledge.Knowledge{item})))
 			first, second := open(), open()

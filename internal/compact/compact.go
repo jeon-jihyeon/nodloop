@@ -107,7 +107,7 @@ func (c *Compactor) Folder(ctx context.Context, anchor string) (Folder, error) {
 	if err != nil {
 		return Folder{}, err
 	}
-	compactable, err := all.Compactable(anchor)
+	compactable, err := c.ledger.Compactable(ctx, anchor)
 	if err != nil {
 		return Folder{}, err
 	}

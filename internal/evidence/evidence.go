@@ -10,33 +10,67 @@ import (
 )
 
 // What was known to have changed around an event
+// A data set declares its own in policy.yaml
 type Context string
 
+// The members of the default declaration
 const (
 	ContextNoKnownChange      Context = "no_known_change"
 	ContextPlannedChange      Context = "planned_operational_change"
 	ContextMeasurementChanged Context = "measurement_context_changed"
 	ContextDataAvailability   Context = "data_availability_issue"
-	ContextUnknown            Context = "unknown"
+	ContextUnknown            Context = "unknown" // always declared because an event without a context row reads it
 )
 
-var contexts = []Context{
-	ContextNoKnownChange, ContextPlannedChange, ContextMeasurementChanged, ContextDataAvailability, ContextUnknown,
+// One change context a data set declares
+type DeclaredContext struct {
+	Name Context
+	// The baseline comparison is untrusted around such a change
+	BreaksBaseline bool
 }
 
-func (c Context) Valid() bool {
-	return slices.Contains(contexts, c)
+// The change contexts of one data set in declaration order
+type Contexts []DeclaredContext
+
+// A data set that declares none gets these
+// 1. a measurement or availability change leaves the baseline comparison untrusted
+// 2. a planned change or an unknown context does not because the procedures read through them
+func DefaultContexts() Contexts {
+	return Contexts{
+		{Name: ContextNoKnownChange},
+		{Name: ContextPlannedChange},
+		{Name: ContextMeasurementChanged, BreaksBaseline: true},
+		{Name: ContextDataAvailability, BreaksBaseline: true},
+		{Name: ContextUnknown},
+	}
 }
 
-// Every change context in a fixed order
-func Contexts() []Context {
-	return slices.Clone(contexts)
+func (cs Contexts) Valid(c Context) bool {
+	_, ok := cs.find(c)
+	return ok
 }
 
-// A measurement or availability change leaves the baseline comparison untrusted
-// A planned change or an unknown context does not because the procedures read through them
-func (c Context) Breaks() bool {
-	return c == ContextMeasurementChanged || c == ContextDataAvailability
+// An undeclared context never breaks because nothing said it does
+func (cs Contexts) Breaks(c Context) bool {
+	d, _ := cs.find(c)
+	return d.BreaksBaseline
+}
+
+func (cs Contexts) find(c Context) (DeclaredContext, bool) {
+	for _, d := range cs {
+		if d.Name == c {
+			return d, true
+		}
+	}
+	return DeclaredContext{}, false
+}
+
+func (cs Contexts) Names() []Context {
+	out := make([]Context, 0, len(cs))
+	for _, d := range cs {
+		out = append(out, d.Name)
+	}
+	return out
 }
 
 // The category a label assigns to an event

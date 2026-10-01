@@ -436,7 +436,7 @@ func TestPrepareKnowledgeScopedToMovedSeries(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			s := testkit.Open(t)
-			src, err := evidencefile.New(tc.args.dir)
+			src, err := evidencefile.New(tc.args.dir, evidence.DefaultContexts())
 			require.NoError(t, err)
 			d := diagnose.New(src, tc.args.policy, nil, s.Traces, s.Feedback, s.Ledger, s.Clock.Now)
 			k := knowledge.Knowledge{

@@ -143,7 +143,7 @@ func TestServerEvents(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			st := testkit.Open(t)
-			src, err := evidencefile.New(tc.args.dataDir)
+			src, err := evidencefile.New(tc.args.dataDir, evidence.DefaultContexts())
 			require.NoError(t, err)
 			st.Source = src
 			c := connect(t, st, "nodloop", "")
@@ -869,7 +869,7 @@ func TestServerApproveKeepsTheApproval(t *testing.T) {
 				Status: knowledge.StatusCandidate, Author: "author", Time: st.Clock.Now(),
 			}))
 			flaky := &testkit.FlakyKnowledge{Store: items, Reads: testkit.Reads{Allowed: tc.args.reads, Err: assert.AnError}}
-			st.Ledger = knowledge.NewLedger(flaky, vetofile.NewApprovedFile(home, dir), st.Clock.Now, func(p string) string { return p })
+			st.Ledger = knowledge.NewLedger(flaky, vetofile.NewApprovedFile(home, dir), evidence.DefaultContexts(), st.Clock.Now, func(p string) string { return p })
 			c := connect(t, st, "nodloop", "")
 			var got map[string]any
 
@@ -1011,7 +1011,7 @@ func TestServerDetail(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			st := testkit.Open(t)
-			src, err := evidencefile.New(tc.args.dir)
+			src, err := evidencefile.New(tc.args.dir, evidence.DefaultContexts())
 			require.NoError(t, err)
 			st.Source = src
 			c := connect(t, st, "nodloop", "")

@@ -15,24 +15,34 @@ import (
 	"github.com/jeon-jihyeon/nodloop/internal/evidence"
 )
 
-func TestContextValid(t *testing.T) {
+func TestContexts(t *testing.T) {
+	declared := evidence.Contexts{{Name: "deploy", BreaksBaseline: true}, {Name: "campaign_start"}, {Name: evidence.ContextUnknown}}
+	type args struct {
+		contexts evidence.Contexts
+		context  evidence.Context
+	}
+	type want struct {
+		valid, breaks bool
+	}
 	tcs := []struct {
 		name string
-		args evidence.Context
-		want bool
+		args args
+		want want
 	}{
-		{"no known change is valid", evidence.ContextNoKnownChange, true},
-		{"planned change is valid", evidence.ContextPlannedChange, true},
-		{"measurement change is valid", evidence.ContextMeasurementChanged, true},
-		{"data availability issue is valid", evidence.ContextDataAvailability, true},
-		{"unknown is valid", evidence.ContextUnknown, true},
-		{"empty context is invalid", "", false},
-		{"unlisted context is invalid", "bogus", false},
+		{"no known change is a default that keeps the baseline", args{evidence.DefaultContexts(), evidence.ContextNoKnownChange}, want{true, false}},
+		{"planned change is a default that keeps the baseline", args{evidence.DefaultContexts(), evidence.ContextPlannedChange}, want{true, false}},
+		{"measurement change is a default that breaks", args{evidence.DefaultContexts(), evidence.ContextMeasurementChanged}, want{true, true}},
+		{"data availability is a default that breaks", args{evidence.DefaultContexts(), evidence.ContextDataAvailability}, want{true, true}},
+		{"unknown is a default that keeps the baseline", args{evidence.DefaultContexts(), evidence.ContextUnknown}, want{true, false}},
+		{"an empty context is not declared", args{evidence.DefaultContexts(), ""}, want{false, false}},
+		{"a declared context breaks as declared", args{declared, "deploy"}, want{true, true}},
+		{"a declared context keeps the baseline as declared", args{declared, "campaign_start"}, want{true, false}},
+		{"a default name another data set leaves out is not declared", args{declared, evidence.ContextMeasurementChanged}, want{false, false}},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			assert.Equal(t, tc.want, tc.args.Valid())
+			assert.Equal(t, tc.want, want{tc.args.contexts.Valid(tc.args.context), tc.args.contexts.Breaks(tc.args.context)})
 		})
 	}
 }
@@ -47,7 +57,7 @@ func TestEnumLists(t *testing.T) {
 		args string
 		want []string
 	}{
-		{"contexts list every declared context", "Context", enumValues(evidence.Contexts())},
+		{"the default declaration lists every context constant", "Context", enumValues(evidence.DefaultContexts().Names())},
 		{"statuses list every declared status", "Status", enumValues(evidence.Statuses())},
 	}
 	for _, tc := range tcs {
@@ -81,26 +91,6 @@ func enumValues[T ~string](values []T) []string {
 		out = append(out, string(v))
 	}
 	return out
-}
-
-func TestContextBreaks(t *testing.T) {
-	tcs := []struct {
-		name string
-		args evidence.Context
-		want bool
-	}{
-		{"measurement change breaks the comparison", evidence.ContextMeasurementChanged, true},
-		{"data availability issue breaks the comparison", evidence.ContextDataAvailability, true},
-		{"planned change keeps the comparison", evidence.ContextPlannedChange, false},
-		{"no known change keeps the comparison", evidence.ContextNoKnownChange, false},
-		{"unknown context keeps the comparison", evidence.ContextUnknown, false},
-	}
-	for _, tc := range tcs {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			assert.Equal(t, tc.want, tc.args.Breaks())
-		})
-	}
 }
 
 func TestEventTypeValid(t *testing.T) {

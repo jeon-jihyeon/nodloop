@@ -116,7 +116,7 @@ func TestKnowledgeValidate(t *testing.T) {
 		{"misspelled change context fails", scoped([]evidence.Context{"no-known-change"}, nil), knowledge.ErrScopeInvalid},
 		{"misspelled exception fails", scoped(nil, []evidence.Context{"planned_change"}), knowledge.ErrScopeInvalid},
 		{"exception of the only scoped context fails", scoped([]evidence.Context{noChange}, []evidence.Context{noChange}), knowledge.ErrScopeInvalid},
-		{"exceptions of every context on an unscoped item fail", scoped(nil, evidence.Contexts()), knowledge.ErrScopeInvalid},
+		{"exceptions of every context on an unscoped item fail", scoped(nil, evidence.DefaultContexts().Names()), knowledge.ErrScopeInvalid},
 	}
 	ctx := context.Background()
 	for _, tc := range tcs {
@@ -125,7 +125,7 @@ func TestKnowledgeValidate(t *testing.T) {
 			store, err := file.New(t.TempDir())
 			require.NoError(t, err)
 			l := knowledge.NewLedger(
-				store, vetofile.NewApprovedFile(t.TempDir(), "records"),
+				store, vetofile.NewApprovedFile(t.TempDir(), "records"), evidence.DefaultContexts(),
 				func() time.Time { return at }, func(prefix string) string { return prefix + "new" },
 			)
 			assert.ErrorIs(t, testkit.Err(l.Import(ctx, []knowledge.Knowledge{tc.args})), tc.want)
