@@ -22,7 +22,7 @@ nodloop runs locally. These are the surfaces worth attention.
 | `nodloop mcp` | Serves review tools on stdio to the MCP client that started it. Approving a judgment with a veto writes an approved veto file under `~/.claude/nodloop` that the guard then loads | The client is trusted. Path traversal or command execution through tool arguments is in scope, and so is a veto file written without a named approver |
 | Reference data | Reads `events.csv`, `contexts.csv`, `policy.yaml`, labels and procedures from the data directory, and files named by `knowledge import --file` and `feedback add --edited` | Crafted data files that escape the directory or execute anything are in scope |
 | Records and config | Writes traces, feedback, outcomes, knowledge, replays and eval reports to the record directory, and `~/.nodloop/config.json` | A write outside those paths is in scope |
-| Model calls | `diagnose`, `eval`, `knowledge compact`, `knowledge replay` and `knowledge propose --from` run `claude -p`, or the binary `NODLOOP_CLAUDE_BIN` names | A way for data or model output to change that command line is in scope |
+| Model calls | `diagnose`, `eval`, `llm probe`, `knowledge compact`, `knowledge replay` and `knowledge propose --from` run `claude -p`, or the binary `NODLOOP_CLAUDE_BIN` names | A way for data or model output to change that command line is in scope |
 
 The `plugin/bin/nodloop` launcher downloads a release archive from this repository over HTTPS into `~/.nodloop/bin` and checks it against `checksums.txt`. A way to make it fetch or run something else is in scope.
 
