@@ -34,7 +34,7 @@ func (m Mode) valid() bool {
 	return m == ModeInteractive || m == ModeBatch
 }
 
-const promptVersion = "diagnose/v14"
+const promptVersion = "diagnose/v15"
 
 // Trace tag when the citation gate turned a review into a hold
 const TagGateHold = "gate:hold"
