@@ -58,13 +58,8 @@ func (s *Source) Events(_ context.Context) ([]evidence.EventRef, error) {
 	return refs, nil
 }
 
-// Joins contexts.csv so an event without a row keeps the unknown context
-func (s *Source) Event(_ context.Context, id string) (evidence.Event, error) {
-	events, err := s.loadEvents()
-	if err != nil {
-		return evidence.Event{}, err
-	}
-	contexts, err := s.loadContexts()
+func (s *Source) Event(ctx context.Context, id string) (evidence.Event, error) {
+	events, err := s.All(ctx)
 	if err != nil {
 		return evidence.Event{}, err
 	}
@@ -72,11 +67,26 @@ func (s *Source) Event(_ context.Context, id string) (evidence.Event, error) {
 	if i < 0 {
 		return evidence.Event{}, fmt.Errorf("event %q: %w", id, evidence.ErrNotFound)
 	}
-	ev := events[i]
-	if c, ok := contexts[id]; ok {
-		ev.ChangeContext = c
+	return events[i], nil
+}
+
+// Every event with its points and change context in one read of each file
+// Joins contexts.csv so an event without a row keeps the unknown context
+func (s *Source) All(_ context.Context) ([]evidence.Event, error) {
+	events, err := s.loadEvents()
+	if err != nil {
+		return nil, err
 	}
-	return ev, nil
+	contexts, err := s.loadContexts()
+	if err != nil {
+		return nil, err
+	}
+	for i, ev := range events {
+		if c, ok := contexts[ev.ID]; ok {
+			events[i].ChangeContext = c
+		}
+	}
+	return events, nil
 }
 
 // Procedures in file name order
