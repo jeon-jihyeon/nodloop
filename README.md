@@ -60,7 +60,7 @@ The second review applies the knowledge you approved.
 
 When you are done with the demo, point nodloop at your own directory the same way and ask for a new record directory too, such as `~/.nodloop/own-records`. Otherwise the demo reviews, corrections and knowledge stay in `~/.nodloop/records` and carry into reviews of your data, and setup warns about that. `NODLOOP_RECORD_DIR` wins over the record directory setup saves, so while it is set point it at a new directory instead. `NODLOOP_FILE_DIR` wins over the saved data directory the same way, and setup warns when it names another one.
 
-Your directory needs `events.csv`, `policy.yaml` and your procedures as Markdown files under `procedures/`, and nodloop reads the change context of each event from `contexts.csv`. When it has no `policy.yaml`, Claude Code proposes one from the profile of your events and writes it only after you approve it. `nodloop check --data-dir <dir>` prints what nodloop reads there and the error that stops it, and writes nothing. Setup warns when `contexts.csv` is missing, since every event then reads the change context `unknown`. Setup fails when `policy.yaml` names a metric or dimension that no event carries, so a misspelled name never leaves reviews without their numbers. A running server instead reports such a name in every review, so an export taken during an outage still gets reviewed.
+Your directory needs `events.csv`, `policy.yaml` and your procedures as Markdown files under `procedures/`, and nodloop reads the change context of each event from `contexts.csv`. When your data comes in another shape, such as another CSV layout, several files or Parquet, Claude Code writes a `convert.py` beside it that rewrites `events.csv` and `contexts.csv`, saves it only after you approve a preview, and reruns it before each review when a source file is newer. It needs python3, and the duckdb CLI only for a source such as Parquet. When the directory has no `policy.yaml`, Claude Code proposes one from the profile of your events and writes it only after you approve it. `nodloop check --data-dir <dir>` prints what nodloop reads there and the error that stops it, and writes nothing. Setup warns when `contexts.csv` is missing, since every event then reads the change context `unknown`. Setup fails when `policy.yaml` names a metric or dimension that no event carries, so a misspelled name never leaves reviews without their numbers. A running server instead reports such a name in every review, so an export taken during an outage still gets reviewed.
 
 </details>
 
@@ -170,7 +170,7 @@ A correction can become a veto too. Propose it as a judgment with a veto, and on
 
 ## Supported
 
-macOS and Linux, or Windows through WSL. It runs as a Claude Code plugin. For Codex, Cursor or another MCP client, install it with `go install github.com/jeon-jihyeon/nodloop/cmd/nodloop@latest`, run `nodloop setup --data-dir <dir>` once and serve it with `nodloop mcp`.
+macOS and Linux, or Windows through WSL. It runs as a Claude Code plugin. For Codex, Cursor or another MCP client, install it with `go install github.com/jeon-jihyeon/nodloop/cmd/nodloop@latest`, run `nodloop setup --data-dir <dir>` once and serve it with `nodloop mcp`. Outside Claude Code nobody converts your data, so bring it in the layout above and run `nodloop check --data-dir <dir>` until it passes. nodloop has no reader for other formats such as Parquet or a DuckDB database and none is planned.
 
 ## Limits
 

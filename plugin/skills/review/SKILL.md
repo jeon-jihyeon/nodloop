@@ -11,6 +11,10 @@ description: Evidence-grounded review of an event from registered data and proce
 
 When a tool answers that no data directory is configured or names any other config or data error, such as a broken config, a data directory that moved or a policy.yaml that does not parse, follow the `nodloop:setup` skill before the steps below. It asks the user only what the files and `nodloop check` cannot answer and never asks for a reconnect. After a review that returns ready_for_review or hold on an event whose change context is unknown, or is declared without breaking the baseline while the observations moved, follow its section on change contexts after a finding
 
+## Refresh
+
+Before the first `observe` or `context` of a review, when the data directory holds `convert.py`, run `python3 <data dir>/convert.py` through Bash without asking, because the user approved the script when it was saved. The data directory is the one setup printed, or `file_dir` in `~/.nodloop/config.json`. It writes nothing and prints `up to date` unless a source is newer than events.csv. When it prints `rewrote`, run `${CLAUDE_PLUGIN_ROOT}/bin/nodloop check --data-dir <data dir>` and follow the `nodloop:setup` skill on an error. The next tool call reads the refreshed files with no setup. When the script fails, show the error and fix the script with the user, never events.csv
+
 ## Steps
 
 1. Find the event. Call `events` when the user names a period instead of an event id and pick the events whose range covers it. When the user names a dimension value such as a source, call `events` with `dims` keyed by a name from the `dimensions` it answers, such as `{"source": "src-11"}`. When `events` fails naming a dim and value no event carries, look for the name among the dimensions the error lists. When the name is missing there the name is wrong: call again with the listed name it meant. When the name is listed the value is wrong: ask the user once which value they meant instead of trying others. An empty answer means no single event carries all the named values together
