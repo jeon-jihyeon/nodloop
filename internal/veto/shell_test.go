@@ -52,7 +52,7 @@ func TestCommandLines(t *testing.T) {
 func TestBlocksDerivesCommands(t *testing.T) {
 	condition, err := veto.NewCondition(veto.FieldCommands, "(?m)^sed -i", "")
 	require.NoError(t, err)
-	v, err := veto.New("no-sed", "Bash|Monitor", []veto.Condition{condition}, "r", true)
+	v, err := veto.New("no-sed", "Bash|Monitor", []veto.Condition{condition}, "r", veto.ActionBlock, true)
 	require.NoError(t, err)
 	type args struct {
 		tool  string

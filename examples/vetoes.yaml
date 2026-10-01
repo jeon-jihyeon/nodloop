@@ -11,6 +11,9 @@
 #   the wrappers are builtin command doas env exec nice nohup stdbuf sudo time timeout xargs
 #   any option of a wrapper may take the next word so -Eu root and -n 1 need no list of letters
 # Monitor runs a shell command under the same field so every Bash veto covers it too
+# An entry with action: ask hands the call to you with its reason instead of blocking it
+#   a matching veto that blocks always wins over one that asks
+#   every block and ask is logged to ~/.nodloop/guard.jsonl and nodloop guard log prints them
 # Limits
 # 1. variables, aliases, functions and a command name the shell computes are matched as written
 # 2. the string given to bash -c or eval is not parsed so the seeds block those forms outright

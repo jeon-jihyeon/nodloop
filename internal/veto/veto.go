@@ -17,14 +17,31 @@ type Veto struct {
 	tools   []string
 	when    []Condition
 	reason  string
+	action  Action
 	enabled bool
 }
 
+// What the guard does with a call the veto matches
+type Action string
+
+const (
+	ActionBlock Action = "block" // the call never runs and Claude reads the reason
+	ActionAsk   Action = "ask"   // Claude Code asks the person and shows the reason
+)
+
 // Validate the required fields and split the tool list
-// tool is one exact `tool_name` or a list such as `Edit|Write`
-func New(id, tool string, when []Condition, reason string, enabled bool) (Veto, error) {
+// 1. tool is one exact `tool_name` or a list such as `Edit|Write`
+// 2. an empty action blocks
+func New(id, tool string, when []Condition, reason string, action Action, enabled bool) (Veto, error) {
 	if id == "" {
 		return Veto{}, ErrIDMissing
+	}
+	switch action {
+	case "":
+		action = ActionBlock
+	case ActionBlock, ActionAsk:
+	default:
+		return Veto{}, fmt.Errorf("%w: %q", ErrActionUnknown, action)
 	}
 	var tools []string
 	for t := range strings.SplitSeq(tool, "|") {
@@ -41,7 +58,7 @@ func New(id, tool string, when []Condition, reason string, enabled bool) (Veto, 
 	if reason == "" {
 		return Veto{}, ErrReasonMissing
 	}
-	return Veto{id: id, tools: tools, when: when, reason: reason, enabled: enabled}, nil
+	return Veto{id: id, tools: tools, when: when, reason: reason, action: action, enabled: enabled}, nil
 }
 
 // Shape of a PreToolUse `tool_name`
@@ -67,6 +84,8 @@ func (v Veto) ID() string { return v.id }
 
 // Written to stderr on block so Claude sees it
 func (v Veto) Reason() string { return v.reason }
+
+func (v Veto) Action() Action { return v.action }
 
 // Every condition must match and a disabled veto never matches
 func (v Veto) Matches(tool string, input map[string]any) bool {
@@ -95,16 +114,26 @@ func (vs Vetoes) Has(id string) bool {
 	return slices.ContainsFunc(vs, func(v Veto) bool { return v.id == id })
 }
 
-// First veto that matches and nil when none does
+// The veto that decides the call and nil when none matches
+// 1. the first matching veto that blocks
+// 2. else the first matching veto that asks
+// So a block never loses to an ask that comes earlier in the merge order
 // commands is derived once here so every veto reads the same parse
 func (vs Vetoes) Match(tool string, input map[string]any) *Veto {
 	input = Input(input).withCommands()
+	var asks *Veto
 	for i := range vs {
-		if vs[i].Matches(tool, input) {
+		if !vs[i].Matches(tool, input) {
+			continue
+		}
+		if vs[i].action == ActionBlock {
 			return &vs[i]
 		}
+		if asks == nil {
+			asks = &vs[i]
+		}
 	}
-	return nil
+	return asks
 }
 
 // Regexp condition on one `tool_input` field

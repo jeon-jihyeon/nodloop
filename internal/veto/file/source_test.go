@@ -18,13 +18,13 @@ func TestSourcesVetoes(t *testing.T) {
 	condition, err := veto.NewCondition("command", "x", "")
 	require.NoError(t, err)
 	when := []veto.Condition{condition}
-	projectShared, err := veto.New("shared", "Bash", when, "project", true)
+	projectShared, err := veto.New("shared", "Bash", when, "project", "", true)
 	require.NoError(t, err)
-	projectOnly, err := veto.New("project-only", "Bash", when, "project", true)
+	projectOnly, err := veto.New("project-only", "Bash", when, "project", "", true)
 	require.NoError(t, err)
-	userShared, err := veto.New("shared", "Bash", when, "user", true)
+	userShared, err := veto.New("shared", "Bash", when, "user", "", true)
 	require.NoError(t, err)
-	userOnly, err := veto.New("user-only", "Bash", when, "user", true)
+	userOnly, err := veto.New("user-only", "Bash", when, "user", "", true)
 	require.NoError(t, err)
 	tcs := []struct {
 		name string
