@@ -52,6 +52,9 @@ On first run, the plugin downloads its binary. Start Claude Code in the director
 
 The second review applies the knowledge you approved.
 
+> [!TIP]
+> Setup runs `nodloop check` and `nodloop setup` through Bash, so Claude Code asks for permission the first time. To skip that prompt, add `"Bash(*/bin/nodloop check *)"` and `"Bash(*/bin/nodloop setup *)"` to `permissions.allow` in `~/.claude/settings.json`.
+
 <details>
 <summary>Moving from the demo to your own data and record directory</summary>
 
