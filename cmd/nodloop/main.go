@@ -28,6 +28,10 @@ commands:
                             Point nodloop at a reference data directory such as examples/demo of the repository.
                             Records go to ~/.nodloop/records unless --record-dir or NODLOOP_RECORD_DIR names another
                             A rerun without --record-dir keeps the record dir saved before and prints the records in use
+  check --data-dir <dir> [--policy <file>]
+                            Check the canonical layout of a data directory and write nothing. Prints the events,
+                            their profile, the declared change contexts, the procedures, the policy and the warnings
+                            as JSON and exits 1 on the error that stopped it. --policy checks a draft in place of policy.yaml
   llm probe [--model <m>]   Send a minimal structured-output request through claude -p and print cost
   evidence events           List events from the configured source
   evidence event --id <id>  Print the change context and the series of one event
@@ -141,6 +145,7 @@ func run(args []string, getenv func(string) string, stdin io.Reader, stdout io.W
 		"report":   func(args []string) int { return runReport(args, getenv, time.Now, stdout, stderr) },
 		"guard":    func(args []string) int { return runGuard(args, getenv, os.Executable, stdin, stdout, stderr) },
 		"setup":    func(args []string) int { return runSetup(args, getenv, stdout, stderr) },
+		"check":    func(args []string) int { return runCheck(args, stdout, stderr) },
 		"llm":      func(args []string) int { return runLLM(args, claudeCLI(getenv), time.Now, stdout, stderr) },
 		"knowledge": func(args []string) int {
 			return runKnowledge(args, getenv, claudeCLI(getenv), time.Now, stdout, stderr)

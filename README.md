@@ -57,7 +57,7 @@ The second review applies the knowledge you approved.
 
 When you are done with the demo, point nodloop at your own directory the same way and ask for a new record directory too, such as `~/.nodloop/own-records`. Otherwise the demo reviews, corrections and knowledge stay in `~/.nodloop/records` and carry into reviews of your data, and setup warns about that. `NODLOOP_RECORD_DIR` wins over the record directory setup saves, so while it is set point it at a new directory instead. `NODLOOP_FILE_DIR` wins over the saved data directory the same way, and setup warns when it names another one.
 
-Your directory needs `events.csv`, `policy.yaml` and your procedures as Markdown files under `procedures/`, and nodloop reads the change context of each event from `contexts.csv`. Setup warns when `contexts.csv` is missing, since every event then reads the change context `unknown`. Setup fails when `policy.yaml` names a metric or dimension that no event carries, so a misspelled name never leaves reviews without their numbers. A running server instead reports such a name in every review, so an export taken during an outage still gets reviewed.
+Your directory needs `events.csv`, `policy.yaml` and your procedures as Markdown files under `procedures/`, and nodloop reads the change context of each event from `contexts.csv`. When it has no `policy.yaml`, Claude Code proposes one from the profile of your events and writes it only after you approve it. `nodloop check --data-dir <dir>` prints what nodloop reads there and the error that stops it, and writes nothing. Setup warns when `contexts.csv` is missing, since every event then reads the change context `unknown`. Setup fails when `policy.yaml` names a metric or dimension that no event carries, so a misspelled name never leaves reviews without their numbers. A running server instead reports such a name in every review, so an export taken during an outage still gets reviewed.
 
 </details>
 
@@ -66,7 +66,7 @@ Your directory needs `events.csv`, `policy.yaml` and your procedures as Markdown
 
 `events.csv` needs the columns `event_id`, `timestamp` in RFC 3339, `metric` and `value`, in any order. Every other named column is a dimension of the series, such as a source or a region, so its values must repeat across rows. A column that differs on every row, like a row id or a note, splits every series into single points. A row repeated with the same value is read once, and one repeated with another value fails the load with both lines named.
 
-`contexts.csv` needs the columns `event_id` and `change_context`, one row per event, and the context is one of `no_known_change`, `planned_operational_change`, `measurement_context_changed`, `data_availability_issue` or `unknown`. An event without a row reads `unknown`. A bad row in either file fails only the tools that read events, so the queue and the verdicts keep working while you fix it.
+`contexts.csv` needs the columns `event_id` and `change_context`, one row per event, and the context is one that `policy.yaml` declares under `contexts`, each with a name and whether it breaks the baseline. A policy without that list declares `no_known_change`, `planned_operational_change`, `measurement_context_changed`, `data_availability_issue` and `unknown`, and only the measurement and data availability ones break the baseline. An event without a row reads `unknown`. A bad row in either file fails only the tools that read events, so the queue and the verdicts keep working while you fix it.
 
 </details>
 

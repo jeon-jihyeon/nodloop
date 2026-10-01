@@ -260,8 +260,8 @@ func TestRunSetup(t *testing.T) {
 		},
 		{
 			"data dir without a policy fails",
-			args{[]string{"--data-dir", "{events}"}, "{home}", "", "", false, ""},
-			want{1, "", "^nodloop setup: no policy.yaml: {events}\n$", config{}, errDataDirUnset},
+			args{[]string{"--data-dir", "{nopolicy}"}, "{home}", "", "", false, ""},
+			want{1, "", "^nodloop setup: no policy.yaml: {nopolicy}\n$", config{}, errDataDirUnset},
 		},
 		{
 			"data dir without procedures fails",
@@ -304,8 +304,6 @@ func TestRunSetup(t *testing.T) {
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			events := t.TempDir()
-			require.NoError(t, os.WriteFile(filepath.Join(events, "events.csv"), nil, 0o600))
 			policy, nested := t.TempDir(), t.TempDir()
 			for _, dir := range []string{policy, nested} {
 				require.NoError(t, os.WriteFile(filepath.Join(dir, "events.csv"), []byte("event_id,timestamp,metric,value\n"), 0o600))
@@ -335,6 +333,9 @@ func TestRunSetup(t *testing.T) {
 			if _, err := os.ReadDir(locked); err == nil && slices.Contains(tc.args.args, "{private}") {
 				t.Skip("folder permissions do not stop a read here")
 			}
+			noPolicy := filepath.Join(t.TempDir(), "nopolicy")
+			require.NoError(t, os.CopyFS(noPolicy, os.DirFS(demo)))
+			require.NoError(t, os.Remove(filepath.Join(noPolicy, "policy.yaml")))
 			noContexts := filepath.Join(t.TempDir(), "nocontexts")
 			require.NoError(t, os.CopyFS(noContexts, os.DirFS(demo)))
 			require.NoError(t, os.Remove(filepath.Join(noContexts, "contexts.csv")))
@@ -346,7 +347,7 @@ func TestRunSetup(t *testing.T) {
 			require.NoError(t, os.Symlink(shared, sharedLink))
 			r := strings.NewReplacer(
 				"{demolink}", demoLink, "{sharedlink}", sharedLink,
-				"{home}", t.TempDir(), "{empty}", t.TempDir(), "{events}", events, "{policy}", policy, "{nested}", nested,
+				"{home}", t.TempDir(), "{empty}", t.TempDir(), "{nopolicy}", noPolicy, "{policy}", policy, "{nested}", nested,
 				"{demo}", demo, "{own}", own, "{badpolicy}", badPolicy, "{shared}", shared, "{team}", t.TempDir(), "{cwd}", cwd,
 				"{archived}", archived, "{typo}", typo, "{private}", private, "{nocontexts}", noContexts, "{lost}", lostMetricDir(t, "conversion_count"),
 			)
