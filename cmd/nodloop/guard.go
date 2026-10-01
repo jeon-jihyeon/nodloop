@@ -9,8 +9,10 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/jeon-jihyeon/nodloop/internal/guard"
+	"github.com/jeon-jihyeon/nodloop/internal/jsonl"
 	"github.com/jeon-jihyeon/nodloop/internal/settings"
 	settingsfile "github.com/jeon-jihyeon/nodloop/internal/settings/file"
 	"github.com/jeon-jihyeon/nodloop/internal/veto"
@@ -19,9 +21,12 @@ import (
 
 // Any first argument other than an action runs the hook so a registered hook never depends on an action name
 func runGuard(
-	args []string, getenv func(string) string, executable func() (string, error), stdin io.Reader, stdout, stderr io.Writer,
+	args []string, getenv func(string) string, executable func() (string, error), now func() time.Time,
+	stdin io.Reader, stdout, stderr io.Writer,
 ) int {
-	cmd := guardCommand{home: homeDir(getenv("HOME")), executable: executable, stdin: stdin, out: stdout, errOut: stderr}
+	cmd := guardCommand{
+		home: homeDir(getenv("HOME")), executable: executable, now: now, stdin: stdin, out: stdout, errOut: stderr,
+	}
 	var action string
 	if len(args) > 0 {
 		action = args[0]
@@ -34,6 +39,14 @@ func runGuard(
 		err = cmd.install()
 	case "uninstall":
 		err = cmd.uninstall()
+	case "log":
+		fs := flag.NewFlagSet("guard log", flag.ContinueOnError)
+		fs.SetOutput(stderr)
+		limit := fs.Int("limit", decisionLimit, "newest n decisions. 0 prints every one")
+		if err := fs.Parse(args[1:]); err != nil {
+			return 1
+		}
+		err = cmd.log(*limit)
 	default:
 		fs := flag.NewFlagSet("guard", flag.ContinueOnError)
 		fs.SetOutput(stderr)
@@ -64,25 +77,80 @@ type guardCommand struct {
 	home homeDir
 	// The running binary as the process resolves it
 	executable func() (string, error)
+	now        func() time.Time
 	stdin      io.Reader
-	out        io.Writer
+	// The hook writes the output that asks the person here
+	out io.Writer
 	// The hook writes its block reason here
 	errOut io.Writer
 }
+
+// The decision log under the nodloop directory of home
+const decisionLog = "guard.jsonl"
+
+// Decisions guard log prints without a limit flag
+// One screen of recent blocks and asks
+const decisionLimit = 20
 
 // Without a path the vetoes are discovered under the hook cwd and home on every call
 // A file with a broken entry still blocks through its valid entries
 // A named file is compared by its absolute path because Claude Code sends an absolute file_path
 func (c guardCommand) hook(vetoesPath string) guard.Exit {
-	if vetoesPath == "" {
-		return guard.Run(c.stdin, c.errOut, c.discover, "")
+	load, named := guard.Loader(c.discover), ""
+	if vetoesPath != "" {
+		vetoes, err := vetofile.Load(vetoesPath)
+		load = func(string) (veto.Vetoes, error) { return vetoes, err }
+		if abs, absErr := filepath.Abs(vetoesPath); absErr == nil {
+			named = abs
+		}
 	}
-	vetoes, err := vetofile.Load(vetoesPath)
-	named, absErr := filepath.Abs(vetoesPath)
-	if absErr != nil {
-		named = ""
+	d := guard.Run(c.stdin, c.out, c.errOut, load, named, c.now())
+	if d.Entry != nil {
+		c.record(*d.Entry)
 	}
-	return guard.Run(c.stdin, c.errOut, func(string) (veto.Vetoes, error) { return vetoes, err }, named)
+	return d.Exit
+}
+
+// Appends the decision of a matched veto to the log
+// A failed append warns and never changes the exit because a broken log must neither open nor close a call
+// Without a home nothing is written
+func (c guardCommand) record(e guard.Entry) {
+	if c.home == "" {
+		return
+	}
+	err := os.MkdirAll(c.home.dir(), 0o700)
+	if err == nil {
+		var log jsonl.File[guard.Entry]
+		if log, err = jsonl.Open[guard.Entry](c.home.dir(), decisionLog); err == nil {
+			err = log.Append(e)
+		}
+	}
+	if err != nil {
+		fmt.Fprintf(c.errOut, "nodloop guard: decision not logged: %v\n", err)
+	}
+}
+
+// Prints the logged decisions newest first one tab separated line each
+// No log yet prints nothing
+func (c guardCommand) log(limit int) error {
+	if c.home == "" {
+		return fmt.Errorf("%w: cannot locate the decision log", errHomeUnknown)
+	}
+	log, err := jsonl.Open[guard.Entry](c.home.dir(), decisionLog)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	entries, err := log.Newest(func(guard.Entry) bool { return true }, limit)
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		fmt.Fprintf(c.out, "%s\t%s\t%s\t%s\t%s\n", e.Time.Format(time.RFC3339), e.Action, e.Veto, e.Tool, e.Cwd)
+	}
+	return nil
 }
 
 func (c guardCommand) discover(cwd string) (veto.Vetoes, error) {

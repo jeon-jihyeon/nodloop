@@ -19,16 +19,18 @@ func TestParse(t *testing.T) {
 	sedCondition, err := veto.NewCondition("command", `(^|[;&|]\s*)(sed|perl)\s+(-[a-zA-Z]*i|--in-place)`, "")
 	require.NoError(t, err)
 	sedReason := "sed -i and perl -i are forbidden. Use the Edit tool to modify files"
-	sed, err := veto.New("no-sed-inplace", "Bash", []veto.Condition{sedCondition}, sedReason, true)
+	sed, err := veto.New("no-sed-inplace", "Bash", []veto.Condition{sedCondition}, sedReason, "", true)
 	require.NoError(t, err)
 	readmeCondition, err := veto.NewCondition("file_path", `(^|/)README\.md$`, "node_modules/")
 	require.NoError(t, err)
 	readmeReason := "Do not create README files"
-	readme, err := veto.New("no-readme", "Write|Edit", []veto.Condition{readmeCondition}, readmeReason, true)
+	readme, err := veto.New("no-readme", "Write|Edit", []veto.Condition{readmeCondition}, readmeReason, "", true)
 	require.NoError(t, err)
 	xCondition, err := veto.NewCondition("command", "x", "")
 	require.NoError(t, err)
-	a, err := veto.New("a", "Bash", []veto.Condition{xCondition}, "r", true)
+	a, err := veto.New("a", "Bash", []veto.Condition{xCondition}, "r", "", true)
+	require.NoError(t, err)
+	asks, err := veto.New("a", "Bash", []veto.Condition{xCondition}, "r", veto.ActionAsk, true)
 	require.NoError(t, err)
 	type want struct {
 		vetoes veto.Vetoes
@@ -42,6 +44,17 @@ func TestParse(t *testing.T) {
 	}{
 		{"valid file loads every veto in order", string(valid), want{veto.Vetoes{sed, readme}, nil, "<nil>"}},
 		{"empty list loads nothing", "vetoes: []", want{veto.Vetoes{}, nil, "<nil>"}},
+		{
+			"an entry that asks loads with its action",
+			"vetoes:\n  - id: a\n    tool: Bash\n    action: ask\n    when: [{field: command, match: x}]\n    reason: r",
+			want{veto.Vetoes{asks}, nil, "<nil>"},
+		},
+		{
+			"an unknown action fails the entry alone",
+			"vetoes:\n  - id: a\n    tool: Bash\n    when: [{field: command, match: x}]\n    reason: r\n" +
+				"  - id: b\n    tool: Bash\n    action: warn\n    when: [{field: command, match: x}]\n    reason: r",
+			want{veto.Vetoes{a}, veto.ErrActionUnknown, `vetoes[1] (b): action must be block or ask: "warn"`},
+		},
 		{
 			"yaml syntax error fails",
 			"vetoes: [",

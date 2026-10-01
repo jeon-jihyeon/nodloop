@@ -780,7 +780,7 @@ func TestApprovedVetoBlocksTheCall(t *testing.T) {
 			}
 			input := `{"tool_name":"Bash","cwd":"` + t.TempDir() + `","tool_input":` + tc.args + `}`
 
-			got := runGuard(nil, getenv, os.Executable, strings.NewReader(input), io.Discard, &stderr)
+			got := runGuard(nil, getenv, os.Executable, now, strings.NewReader(input), io.Discard, &stderr)
 
 			assert.Equal(t, tc.want, got)
 		})
@@ -862,7 +862,7 @@ func TestRetireRemovesTheFileOfAnOldSpelling(t *testing.T) {
 			}
 			input := `{"tool_name":"Bash","cwd":"` + t.TempDir() + `","tool_input":{"command":"sed -i s/a/b/ f"}}`
 
-			got := runGuard(nil, getenv, os.Executable, strings.NewReader(input), io.Discard, &stderr)
+			got := runGuard(nil, getenv, os.Executable, now, strings.NewReader(input), io.Discard, &stderr)
 
 			assert.Equal(t, tc.want, got, stderr.String())
 		})

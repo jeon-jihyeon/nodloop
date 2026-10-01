@@ -21,7 +21,7 @@ func TestMatches(t *testing.T) {
 	require.Equal(t, "Do not create README files", readme.Reason())
 	condition, err := veto.NewCondition("command", "sed -i", "")
 	require.NoError(t, err)
-	disabled, err := veto.New("no-sed-inplace", "Bash", []veto.Condition{condition}, "r", false)
+	disabled, err := veto.New("no-sed-inplace", "Bash", []veto.Condition{condition}, "r", "", false)
 	require.NoError(t, err)
 	type args struct {
 		veto  veto.Veto
@@ -57,13 +57,47 @@ func TestMatches(t *testing.T) {
 	}
 }
 
+func TestVetoesMatchAction(t *testing.T) {
+	t.Parallel()
+	condition, err := veto.NewCondition("command", "rm", "")
+	require.NoError(t, err)
+	vetoOf := func(id string, action veto.Action) veto.Veto {
+		v, err := veto.New(id, "Bash", []veto.Condition{condition}, "r", action, true)
+		require.NoError(t, err)
+		return v
+	}
+	asks, blocks, later := vetoOf("asks", veto.ActionAsk), vetoOf("blocks", veto.ActionBlock), vetoOf("later", veto.ActionAsk)
+	tcs := []struct {
+		name string
+		args veto.Vetoes
+		// The id of the veto that decides and empty for none
+		want string
+	}{
+		{"a block after an ask decides", veto.Vetoes{asks, blocks}, "blocks"},
+		{"the first ask decides when nothing blocks", veto.Vetoes{asks, later}, "asks"},
+		{"no veto decides nothing", nil, ""},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := tc.args.Match("Bash", map[string]any{"command": "rm x"})
+			if tc.want == "" {
+				assert.Nil(t, got)
+				return
+			}
+			require.NotNil(t, got)
+			assert.Equal(t, tc.want, got.ID())
+		})
+	}
+}
+
 func TestVetoBlocks(t *testing.T) {
 	t.Parallel()
 	condition, err := veto.NewCondition("file_path", `README\.md$`, "")
 	require.NoError(t, err)
-	readme, err := veto.New("no-readme", "Write|Edit", []veto.Condition{condition}, "r", true)
+	readme, err := veto.New("no-readme", "Write|Edit", []veto.Condition{condition}, "r", "", true)
 	require.NoError(t, err)
-	disabled, err := veto.New("no-readme", "Write|Edit", []veto.Condition{condition}, "r", false)
+	disabled, err := veto.New("no-readme", "Write|Edit", []veto.Condition{condition}, "r", "", false)
 	require.NoError(t, err)
 	type args struct {
 		veto  veto.Veto
@@ -105,7 +139,7 @@ func TestVetoUnknownTools(t *testing.T) {
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			v, err := veto.New("v", tc.args, []veto.Condition{condition}, "r", true)
+			v, err := veto.New("v", tc.args, []veto.Condition{condition}, "r", "", true)
 			require.NoError(t, err)
 			assert.Equal(t, tc.want, v.UnknownTools())
 		})

@@ -23,6 +23,8 @@ type Spec struct {
 	Tool   string `yaml:"tool"`
 	When   []When `yaml:"when"`
 	Reason string `yaml:"reason"`
+	// Empty means block
+	Action Action `yaml:"action,omitempty"`
 	// Where the veto came from such as a session id
 	// Kept for the reader of the file and never read by code
 	Source string `yaml:"source,omitempty"`
@@ -40,7 +42,7 @@ type When struct {
 // Keys an entry and a condition may hold
 // A misspelled key such as unles fails the entry instead of silently changing what it blocks
 var (
-	specKeys = []string{"id", "tool", "when", "reason", "source", "enabled"}
+	specKeys = []string{"id", "tool", "when", "reason", "action", "source", "enabled"}
 	whenKeys = []string{"field", "match", "unless"}
 )
 
@@ -54,7 +56,7 @@ func (s Spec) Veto() (Veto, error) {
 		}
 		when = append(when, cond)
 	}
-	return New(s.ID, s.Tool, when, s.Reason, s.Enabled == nil || *s.Enabled)
+	return New(s.ID, s.Tool, when, s.Reason, s.Action, s.Enabled == nil || *s.Enabled)
 }
 
 // Every entry that builds comes back with the joined errors of the rest

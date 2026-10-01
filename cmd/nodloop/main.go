@@ -16,9 +16,12 @@ import (
 const usage = `usage: nodloop <command>
 
 commands:
-  guard [--vetoes <path>]   PreToolUse hook. Reads hook input from stdin and blocks calls that match a veto.
+  guard [--vetoes <path>]   PreToolUse hook. Reads hook input from stdin and blocks calls that match a veto,
+                            or asks the person when the veto says action ask and no matching veto blocks.
                             Without --vetoes, loads every .claude/nodloop/vetoes.yaml from the hook cwd up to the git root
-                            and from $HOME and then every approved veto file under $HOME/.claude/nodloop
+                            and from $HOME and then every approved veto file under $HOME/.claude/nodloop.
+                            Logs every block and ask to ~/.nodloop/guard.jsonl
+  guard log [--limit <n>]   Logged blocks and asks newest first. 20 by default and 0 prints every one
   guard check               Load the veto files guard reads for the current directory, report counts or errors
                             and whether the hook is installed
   guard install             Register this binary as a PreToolUse hook in ~/.claude/settings.json (backs up first)
@@ -148,7 +151,7 @@ func run(args []string, getenv func(string) string, stdin io.Reader, stdout io.W
 		"feedback": func(args []string) int { return runFeedback(args, getenv, time.Now, stdout, stderr) },
 		"queue":    func(args []string) int { return runQueue(args, getenv, time.Now, stdout, stderr) },
 		"report":   func(args []string) int { return runReport(args, getenv, time.Now, stdout, stderr) },
-		"guard":    func(args []string) int { return runGuard(args, getenv, os.Executable, stdin, stdout, stderr) },
+		"guard":    func(args []string) int { return runGuard(args, getenv, os.Executable, time.Now, stdin, stdout, stderr) },
 		"setup":    func(args []string) int { return runSetup(args, getenv, stdout, stderr) },
 		"check":    func(args []string) int { return runCheck(args, stdout, stderr) },
 		"llm":      func(args []string) int { return runLLM(args, claudeCLI(getenv), time.Now, stdout, stderr) },
