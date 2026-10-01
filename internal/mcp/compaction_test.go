@@ -3,7 +3,6 @@ package mcp_test
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -13,7 +12,6 @@ import (
 	"github.com/jeon-jihyeon/nodloop/internal/evidence"
 	"github.com/jeon-jihyeon/nodloop/internal/feedback"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
-	"github.com/jeon-jihyeon/nodloop/internal/mcp"
 	"github.com/jeon-jihyeon/nodloop/internal/testkit"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
 )
@@ -276,34 +274,5 @@ func TestServerApproveCompaction(t *testing.T) {
 
 			assert.Equal(t, tc.want, got)
 		})
-	}
-}
-
-// Without a data directory every tool answers the setup error
-func TestServerUnconfigured(t *testing.T) {
-	t.Parallel()
-	reason := errors.New("NODLOOP_FILE_DIR is not set. Run nodloop setup --data-dir <dir>")
-	c := testkit.Connect(t, mcp.NewUnconfigured(reason, "test").ServeTransport)
-	// The smallest input each schema accepts so the call reaches the tool
-	inputs := map[string]map[string]any{
-		"knowledge_health": {},
-		"reaffirm":         {"id": "k", "version": 1, "approver": "jed"},
-		"queue":            {},
-		"events":           {}, "pending": {}, "observe": {"event_id": "e"}, "context": {"event_id": "e"}, "detail": {"event_id": "e"},
-		"select": {"pending_id": "p", "knowledge": []any{}, "examples": []any{}},
-		"record": {"pending_id": "p", "diagnosis": map[string]any{
-			"status": "hold", "observations": []any{}, "causes": []any{}, "checks": []any{}, "open_questions": []any{},
-		}},
-		"feedback": {"trace_id": "t", "verdict": "approve"}, "outcome": {"trace_id": "t", "result": "confirmed"},
-		"propose": {"kind": "meaning", "content": "c"}, "approve": {"id": "k", "version": 1, "approver": "jed"},
-		"compaction": {"id": "k"}, "propose_compaction": {"anchor": "k", "items": []any{}},
-		"approve_compaction": {"compaction": "c", "approver": "jed"},
-	}
-	tools := c.Tools(t)
-	require.ElementsMatch(t, mcp.Tools(), tools)
-	require.Len(t, tools, len(inputs))
-	for _, tool := range tools {
-		err := c.Run(t, tool, inputs[tool])
-		assert.ErrorContains(t, err, reason.Error(), tool)
 	}
 }

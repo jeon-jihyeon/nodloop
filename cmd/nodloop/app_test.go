@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeon-jihyeon/nodloop/internal/analysis"
+	"github.com/jeon-jihyeon/nodloop/internal/mcp"
 	"github.com/jeon-jihyeon/nodloop/internal/testkit"
 )
 
@@ -158,9 +160,7 @@ func TestAppServerReadsEventsPerCall(t *testing.T) {
 				require.NoError(t, err)
 				require.NoError(t, os.WriteFile(filepath.Join(dir, name), append(b, rows...), 0o600))
 			}
-			s, err := app{cfg: config{dataDir: dir, recordDir: t.TempDir()}, now: func() time.Time { return at }}.server()
-			require.NoError(t, err)
-			c := testkit.Connect(t, s.ServeTransport)
+			c := connectApp(t, app{cfg: config{dataDir: dir, recordDir: t.TempDir()}, now: func() time.Time { return at }})
 			dropMetric(t, dir, tc.args.lost)
 
 			got, err := c.Text(t, tc.args.tool, tc.args.input)
@@ -174,9 +174,7 @@ func TestAppServerReadsEventsPerCall(t *testing.T) {
 func TestAppServerLostMetric(t *testing.T) {
 	at := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
 	cfg := config{dataDir: lostMetricDir(t, "conversion_count"), recordDir: t.TempDir()}
-	s, err := app{cfg: cfg, now: func() time.Time { return at }}.server()
-	require.NoError(t, err)
-	c := testkit.Connect(t, s.ServeTransport)
+	c := connectApp(t, app{cfg: cfg, now: func() time.Time { return at }})
 	event := map[string]any{"event_id": "tq-017"}
 	type args struct {
 		tool  string
@@ -205,4 +203,11 @@ func TestAppServerLostMetric(t *testing.T) {
 			assert.Regexp(t, tc.want, got)
 		})
 	}
+}
+
+// The host over one config as runMCP builds it
+func connectApp(t *testing.T, a app) testkit.Client {
+	t.Helper()
+	session := mcp.NewSession(a.now())
+	return testkit.Connect(t, mcp.NewHost(func(context.Context) (*mcp.Server, error) { return a.server(session) }, "test").ServeTransport)
 }
