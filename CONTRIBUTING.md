@@ -46,6 +46,8 @@ Use haiku while iterating. The numbers in README.md come from `nodloop eval` on 
 | Infra | the `file` subpackages | Implements the stores and the veto and settings files. Application code never imports one outside its tests |
 | Controllers | `cmd/nodloop`, `mcp`, `guard` | `cmd/nodloop` is the composition root and the only reader of the process environment |
 | Test harness | `testkit` | File stores in a temp directory, the demo source and a fake clock |
+| File helper | `atomicfile` | Replaces a whole file in one rename and keeps a symlink that points at it. Used by setup and the settings file store |
+| Demo generator | `demo` | `go run ./internal/demo` writes the synthetic data set of `examples/demo` deterministically |
 
 depguard enforces the direction. If a change needs an import that the linter rejects, the change is in the wrong package.
 

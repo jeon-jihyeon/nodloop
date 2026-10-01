@@ -10,7 +10,7 @@
 # Arguments are read quote aware so a ; inside quotes or a line continuation does not end the command
 # A regexp veto is best effort
 # 1. it never follows variables, aliases or functions so a deliberate evasion gets past it
-# 2. a start word inside quoted text such as a commit message with then sed -i also counts as a command start
+# 2. a start word or a start character such as ; inside quoted text also counts as a command start so echo 'a; sed -i b' is blocked
 # 3. any sed option cluster holding i or the BSD I counts as in place so -ei with a script named i is blocked too
 vetoes:
   - id: no-sed-inplace
