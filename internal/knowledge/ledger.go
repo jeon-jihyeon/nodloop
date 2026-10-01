@@ -7,6 +7,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/jeon-jihyeon/nodloop/internal/evidence"
 	"github.com/jeon-jihyeon/nodloop/internal/veto"
 )
 
@@ -48,12 +49,26 @@ type VetoSink interface {
 type Ledger struct {
 	store  Store
 	vetoes VetoSink
-	now    func() time.Time
-	newID  func(prefix string) string
+	// The change contexts of the data set
+	// Scopes may name only these and every folder is measured over them
+	contexts evidence.Contexts
+	now      func() time.Time
+	newID    func(prefix string) string
 }
 
-func NewLedger(store Store, vetoes VetoSink, now func() time.Time, newID func(prefix string) string) *Ledger {
-	return &Ledger{store: store, vetoes: vetoes, now: now, newID: newID}
+func NewLedger(
+	store Store, vetoes VetoSink, contexts evidence.Contexts, now func() time.Time, newID func(prefix string) string,
+) *Ledger {
+	return &Ledger{store: store, vetoes: vetoes, contexts: contexts, now: now, newID: newID}
+}
+
+// The anchor and its folder items split by whether an event can replay them
+func (l *Ledger) Compactable(ctx context.Context, anchor string) (Compactable, error) {
+	all, err := l.All(ctx)
+	if err != nil {
+		return Compactable{}, err
+	}
+	return all.Compactable(anchor, l.contexts)
 }
 
 func (l *Ledger) All(ctx context.Context) (Set, error) {
@@ -88,7 +103,7 @@ func (l *Ledger) Folder(ctx context.Context, id string, version int) (Folder, er
 	if err != nil {
 		return Folder{}, err
 	}
-	return all.folder(k), nil
+	return all.folder(k, l.contexts), nil
 }
 
 // Latest record of one version
@@ -122,7 +137,7 @@ func (l *Ledger) Propose(ctx context.Context, draft Knowledge) (Knowledge, Set, 
 		draft.ID = l.newID(itemPrefix)
 	}
 	return l.appendCandidate(ctx, func(all Set, now time.Time) (Knowledge, error) {
-		return all.propose(draft, now)
+		return all.propose(draft, now, l.contexts)
 	})
 }
 
@@ -148,7 +163,7 @@ func (l *Ledger) appendCandidate(ctx context.Context, decide func(all Set, now t
 func (l *Ledger) Approve(ctx context.Context, id string, version int, approver string) (Knowledge, error) {
 	var to Knowledge
 	err := l.store.AppendDecided(ctx, func(all Set) ([]Knowledge, error) {
-		records, err := all.approval(id, version, approver, l.now().UTC())
+		records, err := all.approval(id, version, approver, l.now().UTC(), l.contexts)
 		if err != nil {
 			return nil, err
 		}
@@ -196,7 +211,7 @@ func (l *Ledger) Import(ctx context.Context, records []Knowledge) (Set, error) {
 	var fresh Set
 	err := l.store.AppendDecided(ctx, func(all Set) ([]Knowledge, error) {
 		var err error
-		fresh, err = all.importable(records)
+		fresh, err = all.importable(records, l.contexts)
 		return fresh, err
 	})
 	if err != nil {
@@ -241,14 +256,14 @@ func (l *Ledger) ProposeCompaction(ctx context.Context, anchor string, drafts []
 	}
 	c := Compaction{ID: l.newID(compactionPrefix)}
 	err := l.store.AppendDecided(ctx, func(all Set) ([]Knowledge, error) {
-		old, err := all.Compactable(anchor)
+		old, err := all.Compactable(anchor, l.contexts)
 		if err != nil {
 			return nil, err
 		}
 		if pending := all.PendingCompaction(old.Items); pending != "" {
 			return nil, fmt.Errorf("%w: %s", ErrCompactionPending, pending)
 		}
-		if c.Items, err = all.compact(c.ID, old.Items, drafts, l.now().UTC()); err != nil {
+		if c.Items, err = all.compact(c.ID, old.Items, drafts, l.now().UTC(), l.contexts); err != nil {
 			return nil, err
 		}
 		c.Replaced = old.Items
@@ -279,7 +294,7 @@ func (l *Ledger) Preview(ctx context.Context, id string) (*Preview, error) {
 	if err != nil {
 		return nil, err
 	}
-	set, err := all.preview(c, l.now().UTC())
+	set, err := all.preview(c, l.now().UTC(), l.contexts)
 	if err != nil {
 		return nil, err
 	}
@@ -296,7 +311,7 @@ func (l *Ledger) ApproveCompaction(ctx context.Context, id, approver string, rep
 		return Compaction{}, fmt.Errorf("%w: %s", ErrReplayNotPassed, id)
 	}
 	err := l.store.AppendDecided(ctx, func(all Set) ([]Knowledge, error) {
-		return all.compactionApproval(id, approver, l.now().UTC())
+		return all.compactionApproval(id, approver, l.now().UTC(), l.contexts)
 	})
 	if err != nil {
 		return Compaction{}, err

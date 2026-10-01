@@ -55,7 +55,7 @@ func TestLedgerApproved(t *testing.T) {
 	store, err := file.New(t.TempDir())
 	require.NoError(t, err)
 	l := knowledge.NewLedger(
-		store, vetofile.NewApprovedFile(t.TempDir(), "records"),
+		store, vetofile.NewApprovedFile(t.TempDir(), "records"), evidence.DefaultContexts(),
 		func() time.Time { return at }, func(prefix string) string { return prefix + "new" },
 	)
 	require.NoError(t, testkit.Err(l.Import(ctx, []knowledge.Knowledge{candidate, approved, other})))
@@ -99,7 +99,7 @@ func TestLedgerApprovedVersion(t *testing.T) {
 	store, err := file.New(t.TempDir())
 	require.NoError(t, err)
 	l := knowledge.NewLedger(
-		store, vetofile.NewApprovedFile(t.TempDir(), "records"),
+		store, vetofile.NewApprovedFile(t.TempDir(), "records"), evidence.DefaultContexts(),
 		func() time.Time { return at }, func(prefix string) string { return prefix + "new" },
 	)
 	require.NoError(t, testkit.Err(l.Import(ctx, []knowledge.Knowledge{first, second, candidate, other})))
@@ -140,7 +140,7 @@ func TestLedgerHistory(t *testing.T) {
 	store, err := file.New(t.TempDir())
 	require.NoError(t, err)
 	l := knowledge.NewLedger(
-		store, vetofile.NewApprovedFile(t.TempDir(), "records"),
+		store, vetofile.NewApprovedFile(t.TempDir(), "records"), evidence.DefaultContexts(),
 		func() time.Time { return at }, func(prefix string) string { return prefix + "new" },
 	)
 	require.NoError(t, testkit.Err(l.Import(ctx, []knowledge.Knowledge{candidate, other, approved})))
@@ -181,7 +181,7 @@ func TestLedgerOverlaps(t *testing.T) {
 	store, err := file.New(t.TempDir())
 	require.NoError(t, err)
 	l := knowledge.NewLedger(
-		store, vetofile.NewApprovedFile(t.TempDir(), "records"),
+		store, vetofile.NewApprovedFile(t.TempDir(), "records"), evidence.DefaultContexts(),
 		func() time.Time { return at }, func(prefix string) string { return prefix + "new" },
 	)
 	require.NoError(t, testkit.Err(l.Import(ctx, []knowledge.Knowledge{k1, k2, retired})))
@@ -191,6 +191,67 @@ func TestLedgerOverlaps(t *testing.T) {
 			got, err := l.Overlaps(ctx, tc.args)
 			assert.ErrorIs(t, err, tc.want.err)
 			assert.Equal(t, tc.want.overlaps, got)
+		})
+	}
+}
+
+// A data set that declares its own change contexts scopes and measures knowledge by them
+func TestLedgerDeclaredContexts(t *testing.T) {
+	at := time.Date(2026, 9, 23, 0, 0, 0, 0, time.UTC)
+	declared := evidence.Contexts{{Name: "deploy", BreaksBaseline: true}, {Name: "campaign_start"}, {Name: evidence.ContextUnknown}}
+	scoped := func(contexts, exceptions []evidence.Context) knowledge.Knowledge {
+		return knowledge.Knowledge{
+			ID: "k1", Kind: knowledge.KindMeaning, Content: "a deploy resets the counters",
+			Scope:      knowledge.Scope{Scope: evidence.Scope{ChangeContexts: contexts}},
+			Exceptions: exceptions, Evidence: knowledge.Evidence{ParagraphIDs: []string{"p#1"}}, Author: "author",
+		}
+	}
+	type want struct {
+		err  error
+		text string
+		// The change context of the folder the candidate would join
+		folder evidence.Context
+	}
+	tcs := []struct {
+		name string
+		args knowledge.Knowledge
+		want want
+	}{
+		{"a declared context scopes the item", scoped([]evidence.Context{"campaign_start"}, nil), want{folder: "campaign_start"}},
+		{"an unscoped item is measured in the first declared context", scoped(nil, nil), want{folder: "deploy"}},
+		{
+			"a default context the data set does not declare is refused naming the declared ones",
+			scoped([]evidence.Context{evidence.ContextNoKnownChange}, nil),
+			want{err: knowledge.ErrScopeInvalid, text: `"no_known_change" is not one of [deploy campaign_start unknown]`},
+		},
+		{
+			"exceptions of every declared context leave an unscoped item nothing",
+			scoped(nil, []evidence.Context{"deploy", "campaign_start", evidence.ContextUnknown}),
+			want{err: knowledge.ErrScopeInvalid, text: "cover every change context"},
+		},
+	}
+	ctx := context.Background()
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			store, err := file.New(t.TempDir())
+			require.NoError(t, err)
+			l := knowledge.NewLedger(
+				store, vetofile.NewApprovedFile(t.TempDir(), "records"), declared,
+				func() time.Time { return at }, func(prefix string) string { return prefix + "new" },
+			)
+
+			k, _, err := l.Propose(ctx, tc.args)
+
+			if tc.want.err != nil {
+				assert.ErrorIs(t, err, tc.want.err)
+				assert.ErrorContains(t, err, tc.want.text)
+				return
+			}
+			require.NoError(t, err)
+			f, err := l.Folder(ctx, k.ID, k.Version)
+			require.NoError(t, err)
+			assert.Equal(t, tc.want.folder, f.Context)
 		})
 	}
 }
@@ -297,7 +358,7 @@ func TestLedgerPropose(t *testing.T) {
 			store, err := file.New(t.TempDir())
 			require.NoError(t, err)
 			l := knowledge.NewLedger(
-				store, vetofile.NewApprovedFile(t.TempDir(), "records"),
+				store, vetofile.NewApprovedFile(t.TempDir(), "records"), evidence.DefaultContexts(),
 				func() time.Time { return now }, func(prefix string) string { return prefix + "new" },
 			)
 			require.NoError(t, testkit.Err(l.Import(ctx, tc.args.seeds)))
@@ -550,7 +611,7 @@ func TestLedgerApprove(t *testing.T) {
 			require.NoError(t, err)
 			home := t.TempDir()
 			l := knowledge.NewLedger(
-				store, vetofile.NewApprovedFile(home, "records"),
+				store, vetofile.NewApprovedFile(home, "records"), evidence.DefaultContexts(),
 				func() time.Time { return now }, func(prefix string) string { return prefix + "new" },
 			)
 			require.NoError(t, testkit.Err(l.Import(ctx, tc.args.seeds)))
@@ -597,10 +658,11 @@ func TestLedgerApproveInProposalOrder(t *testing.T) {
 			store, err := file.New(t.TempDir())
 			require.NoError(t, err)
 			now := time.Date(2026, 9, 23, 0, 0, 0, 0, time.UTC)
-			l := knowledge.NewLedger(store, vetofile.NewApprovedFile(t.TempDir(), "records"), func() time.Time {
+			l := knowledge.NewLedger(store, vetofile.NewApprovedFile(t.TempDir(), "records"), evidence.DefaultContexts(), func() time.Time {
 				now = now.Add(time.Minute)
 				return now
-			}, func(prefix string) string { return prefix + "new" })
+			}, func(prefix string) string { return prefix + "new" },
+			)
 			var last error
 			for i, step := range tc.args {
 				require.NoError(t, last, "step %d", i)
@@ -700,10 +762,11 @@ func TestLedgerApproveScopeWidened(t *testing.T) {
 			store, err := file.New(t.TempDir())
 			require.NoError(t, err)
 			now := time.Date(2026, 9, 23, 0, 0, 0, 0, time.UTC)
-			l := knowledge.NewLedger(store, vetofile.NewApprovedFile(t.TempDir(), "records"), func() time.Time {
+			l := knowledge.NewLedger(store, vetofile.NewApprovedFile(t.TempDir(), "records"), evidence.DefaultContexts(), func() time.Time {
 				now = now.Add(time.Minute)
 				return now
-			}, func(prefix string) string { return prefix + "new" })
+			}, func(prefix string) string { return prefix + "new" },
+			)
 			draft := func(r reach) knowledge.Knowledge {
 				return knowledge.Knowledge{
 					ID: "k1", Kind: knowledge.KindMeaning, Content: "one",
@@ -832,7 +895,7 @@ func TestLedgerApproveItemCap(t *testing.T) {
 			store, err := file.New(t.TempDir())
 			require.NoError(t, err)
 			l := knowledge.NewLedger(
-				store, vetofile.NewApprovedFile(t.TempDir(), "records"),
+				store, vetofile.NewApprovedFile(t.TempDir(), "records"), evidence.DefaultContexts(),
 				func() time.Time { return now }, func(prefix string) string { return prefix + "new" },
 			)
 			var records []knowledge.Knowledge
@@ -945,7 +1008,7 @@ func TestLedgerApproveInOverfullFolder(t *testing.T) {
 			store, err := file.New(t.TempDir())
 			require.NoError(t, err)
 			l := knowledge.NewLedger(
-				store, vetofile.NewApprovedFile(t.TempDir(), "records"),
+				store, vetofile.NewApprovedFile(t.TempDir(), "records"), evidence.DefaultContexts(),
 				func() time.Time { return now.Add(time.Hour) }, func(prefix string) string { return prefix + "new" },
 			)
 			require.NoError(t, testkit.Err(l.Import(ctx, tc.args.seeds)))
@@ -1059,7 +1122,7 @@ func TestLedgerRetire(t *testing.T) {
 			require.NoError(t, err)
 			home := t.TempDir()
 			l := knowledge.NewLedger(
-				store, vetofile.NewApprovedFile(home, "records"),
+				store, vetofile.NewApprovedFile(home, "records"), evidence.DefaultContexts(),
 				func() time.Time { return now }, func(prefix string) string { return prefix + "new" },
 			)
 			require.NoError(t, testkit.Err(l.Import(ctx, tc.args.seeds)))
@@ -1171,7 +1234,7 @@ func TestLedgerImport(t *testing.T) {
 			require.NoError(t, err)
 			home := t.TempDir()
 			l := knowledge.NewLedger(
-				store, vetofile.NewApprovedFile(home, "records"),
+				store, vetofile.NewApprovedFile(home, "records"), evidence.DefaultContexts(),
 				func() time.Time { return at }, func(prefix string) string { return prefix + "new" },
 			)
 			require.NoError(t, testkit.Err(l.Import(ctx, tc.args.seeds)))
@@ -1204,13 +1267,15 @@ func TestLedgerFailsOnBrokenStore(t *testing.T) {
 	unreadableStore, err := file.New(unreadableDir)
 	require.NoError(t, err)
 	unreadable := knowledge.NewLedger(
-		unreadableStore, vetofile.NewApprovedFile(t.TempDir(), "records"), now, newID,
+		unreadableStore, vetofile.NewApprovedFile(t.TempDir(), "records"), evidence.DefaultContexts(),
+		now, newID,
 	)
 	readOnlyDir := t.TempDir()
 	readOnlyStore, err := file.New(readOnlyDir)
 	require.NoError(t, err)
 	readOnly := knowledge.NewLedger(
-		readOnlyStore, vetofile.NewApprovedFile(t.TempDir(), "records"), now, newID,
+		readOnlyStore, vetofile.NewApprovedFile(t.TempDir(), "records"), evidence.DefaultContexts(),
+		now, newID,
 	)
 	require.NoError(t, testkit.Err(readOnly.Import(ctx, []knowledge.Knowledge{candidate})))
 	require.NoError(t, os.Chmod(filepath.Join(readOnlyDir, "knowledge.jsonl"), 0o400))
@@ -1224,9 +1289,9 @@ func TestLedgerFailsOnBrokenStore(t *testing.T) {
 	blocked := func() *knowledge.Ledger {
 		store, err := file.New(t.TempDir())
 		require.NoError(t, err)
-		seeder := knowledge.NewLedger(store, vetofile.NewApprovedFile(t.TempDir(), "records"), now, newID)
+		seeder := knowledge.NewLedger(store, vetofile.NewApprovedFile(t.TempDir(), "records"), evidence.DefaultContexts(), now, newID)
 		require.NoError(t, testkit.Err(seeder.Import(ctx, []knowledge.Knowledge{candidate, approved})))
-		return knowledge.NewLedger(store, vetofile.NewApprovedFile(blockedHome, "records"), now, newID)
+		return knowledge.NewLedger(store, vetofile.NewApprovedFile(blockedHome, "records"), evidence.DefaultContexts(), now, newID)
 	}
 	approvedNow := candidate
 	approvedNow.Status, approvedNow.Approver = knowledge.StatusApproved, "jed"
@@ -1437,12 +1502,12 @@ func TestLedgerRefusedRetryExportsVetoes(t *testing.T) {
 			require.NoError(t, os.WriteFile(filepath.Join(blockedHome, ".claude"), nil, 0o600))
 			store, err := file.New(dir)
 			require.NoError(t, err)
-			working := knowledge.NewLedger(store, vetofile.NewApprovedFile(home, dir), now, newID)
+			working := knowledge.NewLedger(store, vetofile.NewApprovedFile(home, dir), evidence.DefaultContexts(), now, newID)
 			require.NoError(t, testkit.Err(working.Import(ctx, []knowledge.Knowledge{judgment})))
 			if tc.args.before != nil {
 				require.NoError(t, tc.args.before(ctx, working))
 			}
-			blocked := knowledge.NewLedger(store, vetofile.NewApprovedFile(blockedHome, dir), now, newID)
+			blocked := knowledge.NewLedger(store, vetofile.NewApprovedFile(blockedHome, dir), evidence.DefaultContexts(), now, newID)
 			require.ErrorIs(t, tc.args.lost(ctx, blocked), knowledge.ErrVetoExport)
 
 			err = tc.args.lost(ctx, working)
@@ -1468,7 +1533,8 @@ func TestLedgerUnknownID(t *testing.T) {
 	require.NoError(t, err)
 	now := func() time.Time { return time.Date(2026, 9, 23, 0, 0, 0, 0, time.UTC) }
 	l := knowledge.NewLedger(
-		store, vetofile.NewApprovedFile(t.TempDir(), "records"), now, func(prefix string) string { return prefix + "new" },
+		store, vetofile.NewApprovedFile(t.TempDir(), "records"), evidence.DefaultContexts(),
+		now, func(prefix string) string { return prefix + "new" },
 	)
 	type want struct {
 		value any
@@ -1669,7 +1735,7 @@ func TestLedgerFolder(t *testing.T) {
 			store, err := file.New(t.TempDir())
 			require.NoError(t, err)
 			l := knowledge.NewLedger(
-				store, vetofile.NewApprovedFile(t.TempDir(), "records"),
+				store, vetofile.NewApprovedFile(t.TempDir(), "records"), evidence.DefaultContexts(),
 				func() time.Time { return now }, func(prefix string) string { return prefix + "new" },
 			)
 			require.NoError(t, testkit.Err(l.Import(ctx, tc.args.seeds)))
@@ -1786,7 +1852,7 @@ func TestLedgerConcurrentWrite(t *testing.T) {
 			open := func(n int) *knowledge.Ledger {
 				store, err := file.New(dir)
 				require.NoError(t, err)
-				return knowledge.NewLedger(store, sink, func() time.Time { return at }, func(p string) string { return fmt.Sprintf("%s%d", p, n) })
+				return knowledge.NewLedger(store, sink, evidence.DefaultContexts(), func() time.Time { return at }, func(p string) string { return fmt.Sprintf("%s%d", p, n) })
 			}
 			require.NoError(t, testkit.Err(open(0).Import(ctx, tc.args.seeds)))
 			start, results := make(chan struct{}), make(chan error, len(tc.args.calls))
@@ -1847,7 +1913,8 @@ func TestLedgerConcurrentApprovalsKeepEveryVeto(t *testing.T) {
 		store, err := file.New(dir)
 		require.NoError(t, err)
 		return knowledge.NewLedger(
-			store, vetofile.NewApprovedFile(home, dir), func() time.Time { return at }, func(p string) string { return p },
+			store, vetofile.NewApprovedFile(home, dir), evidence.DefaultContexts(),
+			func() time.Time { return at }, func(p string) string { return p },
 		)
 	}
 	require.NoError(t, testkit.Err(open().Import(ctx, seeds)))

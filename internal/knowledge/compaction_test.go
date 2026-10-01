@@ -101,7 +101,7 @@ func newTestLedger(t *testing.T, dir string, at time.Time) (*knowledge.Ledger, s
 		counts[prefix]++
 		return fmt.Sprintf("%s%d", prefix, counts[prefix])
 	}
-	l := knowledge.NewLedger(store, vetofile.NewApprovedFile(home, "records"), func() time.Time { return at }, newID)
+	l := knowledge.NewLedger(store, vetofile.NewApprovedFile(home, "records"), evidence.DefaultContexts(), func() time.Time { return at }, newID)
 	return l, vetofile.NewApprovedFile(home, "records").Path()
 }
 
@@ -1059,13 +1059,14 @@ func TestLedgerNarrowedDuringCompaction(t *testing.T) {
 			require.NoError(t, err)
 			now := seeds.at
 			counts := map[string]int{}
-			l := knowledge.NewLedger(store, vetofile.NewApprovedFile(t.TempDir(), "records"), func() time.Time {
+			l := knowledge.NewLedger(store, vetofile.NewApprovedFile(t.TempDir(), "records"), evidence.DefaultContexts(), func() time.Time {
 				now = now.Add(time.Minute)
 				return now
 			}, func(prefix string) string {
 				counts[prefix]++
 				return fmt.Sprintf("%s%d", prefix, counts[prefix])
-			})
+			},
+			)
 			require.NoError(t, testkit.Err(l.Import(ctx, seeds.all())))
 			_, err = l.ProposeCompaction(ctx, "a", seeds.drafts())
 			require.NoError(t, err)
@@ -1224,7 +1225,7 @@ func perContextSeeds(at time.Time) []knowledge.Knowledge {
 	g := base
 	g.ID, g.Content, g.Evidence = "g", "general fact", knowledge.Evidence{FeedbackTraceIDs: []string{"t-g"}}
 	out := []knowledge.Knowledge{g}
-	for _, c := range evidence.Contexts() {
+	for _, c := range evidence.DefaultContexts().Names() {
 		k := base
 		k.ID, k.Content = string(c), string(c)+" fact"
 		k.Scope = knowledge.Scope{Scope: evidence.Scope{ChangeContexts: []evidence.Context{c}}}
@@ -1279,7 +1280,7 @@ func TestLedgerFolderCrowdedPerChangeContext(t *testing.T) {
 			require.NoError(t, testkit.Err(l.Import(ctx, tc.args)))
 			all, err := l.All(ctx)
 			require.NoError(t, err)
-			compactable, err := all.Compactable("g")
+			compactable, err := all.Compactable("g", evidence.DefaultContexts())
 			require.NoError(t, err)
 
 			got, err := l.Folder(ctx, "g", 1)

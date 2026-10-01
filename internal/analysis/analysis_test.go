@@ -18,6 +18,45 @@ import (
 	"github.com/jeon-jihyeon/nodloop/internal/testkit"
 )
 
+func TestLoadContexts(t *testing.T) {
+	type want struct {
+		contexts evidence.Contexts
+		err      error
+	}
+	tcs := []struct {
+		name string
+		args string
+		want want
+	}{
+		{"a policy without contexts declares the five defaults", "version: v\n", want{contexts: evidence.DefaultContexts()}},
+		{"an empty list declares the five defaults", "contexts: []\n", want{contexts: evidence.DefaultContexts()}},
+		{
+			"declared contexts keep their order and unknown is appended",
+			"contexts:\n  - name: deploy\n    breaks_baseline: true\n  - name: campaign_start\n",
+			want{contexts: evidence.Contexts{{Name: "deploy", BreaksBaseline: true}, {Name: "campaign_start"}, {Name: evidence.ContextUnknown}}},
+		},
+		{
+			"unknown declared in place stays there",
+			"contexts:\n  - name: unknown\n  - name: deploy\n",
+			want{contexts: evidence.Contexts{{Name: evidence.ContextUnknown}, {Name: "deploy"}}},
+		},
+		{"a context without a name fails", "contexts:\n  - breaks_baseline: true\n", want{err: analysis.ErrUnknownContextDecl}},
+		{"a context declared twice fails", "contexts:\n  - name: deploy\n  - name: deploy\n", want{err: analysis.ErrUnknownContextDecl}},
+		{"unknown that breaks fails", "contexts:\n  - name: unknown\n    breaks_baseline: true\n", want{err: analysis.ErrUnknownContextDecl}},
+		{"a file that does not parse fails", "contexts: [\n", want{err: analysis.ErrMalformedPolicy}},
+		{"broken analyzers never stop the contexts", "contexts:\n  - name: deploy\nanalyzers:\n  - rule: nope\n",
+			want{contexts: evidence.Contexts{{Name: "deploy"}, {Name: evidence.ContextUnknown}}}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := analysis.LoadContexts([]byte(tc.args))
+			assert.ErrorIs(t, err, tc.want.err)
+			assert.Equal(t, tc.want.contexts, got)
+		})
+	}
+}
+
 func TestLoadPolicy(t *testing.T) {
 	demo, err := os.ReadFile(filepath.Join(testkit.DemoDir(t), "policy.yaml"))
 	require.NoError(t, err)
@@ -33,7 +72,7 @@ func TestLoadPolicy(t *testing.T) {
 		{
 			name: "demo policy reads every analyzer",
 			args: string(demo),
-			want: want{policy: analysis.Policy{Version: "demo-1", Analyzers: []analysis.RuleSpec{
+			want: want{policy: analysis.Policy{Version: "demo-1", Contexts: evidence.DefaultContexts(), Analyzers: []analysis.RuleSpec{
 				{
 					Rule: analysis.RuleZScore, Metrics: []string{"click_count"},
 					Baseline: 36, Window: 12, Threshold: 3, MinSamples: 12,
@@ -216,7 +255,7 @@ func TestPolicyAnalyze(t *testing.T) {
 		{
 			name: "breaking change context is flagged once across coverage specs",
 			args: args{
-				policy: analysis.Policy{Version: "t", Analyzers: []analysis.RuleSpec{coverage, coverage}},
+				policy: analysis.Policy{Version: "t", Contexts: evidence.DefaultContexts(), Analyzers: []analysis.RuleSpec{coverage, coverage}},
 				event:  evidence.Event{ID: "e1", ChangeContext: evidence.ContextDataAvailability},
 			},
 			want: want{observations: analysis.Observations{{
@@ -224,6 +263,28 @@ func TestPolicyAnalyze(t *testing.T) {
 				Summary: "change context data_availability_issue: " +
 					"the baseline comparison is not trusted until the context is resolved",
 			}}},
+		},
+		{
+			name: "a declared context that breaks the baseline is flagged like a default one",
+			args: args{
+				policy: analysis.Policy{
+					Version: "t", Contexts: evidence.Contexts{{Name: "deploy", BreaksBaseline: true}}, Analyzers: []analysis.RuleSpec{coverage},
+				},
+				event: evidence.Event{ID: "e1", ChangeContext: "deploy"},
+			},
+			want: want{observations: analysis.Observations{{
+				Rule: analysis.RuleCoverage, Change: 1, Severity: 1, Adequate: true, Ref: analysis.Ref{EventID: "e1"},
+				Summary: "change context deploy: the baseline comparison is not trusted until the context is resolved",
+			}}},
+		},
+		{
+			name: "a default breaking context another data set does not declare is not flagged",
+			args: args{
+				policy: analysis.Policy{
+					Version: "t", Contexts: evidence.Contexts{{Name: "deploy", BreaksBaseline: true}}, Analyzers: []analysis.RuleSpec{coverage},
+				},
+				event: evidence.Event{ID: "e1", ChangeContext: evidence.ContextDataAvailability},
+			},
 		},
 		{
 			name: "breaking change context is not flagged without a coverage spec",
@@ -277,6 +338,25 @@ func TestPolicyAnalyze(t *testing.T) {
 			got, err := tc.args.policy.Analyze(tc.args.event)
 			assert.ErrorIs(t, err, tc.want.err)
 			assert.Equal(t, tc.want.observations, got)
+		})
+	}
+}
+
+// A bound policy flags the change contexts its file declares
+func TestPolicyObservedKeepsContexts(t *testing.T) {
+	declared := evidence.Contexts{{Name: "deploy", BreaksBaseline: true}, {Name: evidence.ContextUnknown}}
+	policy := analysis.Policy{Version: "t", Contexts: declared}
+	tcs := []struct {
+		name string
+		args []string
+	}{
+		{"bound to the metrics of a data set", []string{"click_count"}},
+		{"bound to a data set without events", nil},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, declared, policy.Observed(tc.args, nil).Contexts)
 		})
 	}
 }
@@ -559,7 +639,7 @@ func TestObservationsMoved(t *testing.T) {
 }
 
 func TestAnalyzeDemoSetFindsEveryLabeledAnomaly(t *testing.T) {
-	src, err := file.New(testkit.DemoDir(t))
+	src, err := file.New(testkit.DemoDir(t), evidence.DefaultContexts())
 	require.NoError(t, err)
 	policy := testkit.Policy(t)
 	ctx := context.Background()
@@ -588,7 +668,7 @@ func TestAnalyzeDemoSetFindsEveryLabeledAnomaly(t *testing.T) {
 }
 
 func TestAnalyzeDemoSetMovesNothingOnQuietEvents(t *testing.T) {
-	src, err := file.New(testkit.DemoDir(t))
+	src, err := file.New(testkit.DemoDir(t), evidence.DefaultContexts())
 	require.NoError(t, err)
 	policy := testkit.Policy(t)
 	ctx := context.Background()
