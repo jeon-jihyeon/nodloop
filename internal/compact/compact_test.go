@@ -428,7 +428,7 @@ func TestReplay(t *testing.T) {
 				}).AnyTimes()
 			preview, err := s.Ledger.Preview(ctx, proposed.ID)
 			require.NoError(t, err)
-			d := diagnose.New(s.Source, testkit.Policy(t), client, s.Replays, s.Feedback, preview, s.Clock.Now)
+			d := diagnose.New(s.Source, testkit.Policy(t), client, s.Replays, s.Feedback, s.Outcomes, preview, s.Clock.Now)
 
 			first, err := c.Replay(ctx, d, proposed.ID, compact.ReplayOptions{Parallel: 1})
 			require.NoError(t, err)

@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -37,6 +38,13 @@ func TestPrepareCandidates(t *testing.T) {
 		reason  string
 		edited  json.RawMessage
 	}
+	// A check recorded after the verdicts at the clock moved by after
+	type check struct {
+		review   string
+		result   feedback.Result
+		after    time.Duration
+		reviewer string
+	}
 	type args struct {
 		knowledge []knowledge.Knowledge
 		reviews   []string
@@ -45,6 +53,7 @@ func TestPrepareCandidates(t *testing.T) {
 		verdicts []verdict
 		// Appended after verdicts with the session reviewer
 		sessionVerdicts []verdict
+		outcomes        []check
 		event           string
 		// Added to the demo policy that is bound to the demo data before the diagnoser gets it
 		analyzers []analysis.RuleSpec
@@ -243,6 +252,44 @@ func TestPrepareCandidates(t *testing.T) {
 			}},
 		},
 		{
+			name: "skips an edit a check refuted after it and keeps a reject a check refuted after it",
+			args: args{
+				reviews: []string{"tq-005", "tq-007"}, verdicts: verdicts[:2], event: "tq-008",
+				outcomes: []check{
+					{"tq-007", feedback.ResultRefuted, time.Minute, ""}, {"tq-005", feedback.ResultRefuted, time.Minute, ""},
+				},
+			},
+			want: want{offer: offer{
+				examples: []diagnose.ExampleCandidate{{TraceID: "tq-005", Verdict: feedback.VerdictReject, Head: "older reason"}},
+			}},
+		},
+		{
+			name: "keeps an edit a check refuted before it and an edit a check confirmed",
+			args: args{
+				reviews: []string{"tq-005", "tq-007"}, event: "tq-008",
+				verdicts: []verdict{
+					{"tq-005", feedback.VerdictEdit, "older reason", json.RawMessage(`{"status":"hold"}`)}, verdicts[1],
+				},
+				outcomes: []check{
+					{"tq-007", feedback.ResultRefuted, -time.Minute, ""}, {"tq-005", feedback.ResultConfirmed, time.Minute, ""},
+				},
+			},
+			want: want{offer: offer{examples: []diagnose.ExampleCandidate{
+				{TraceID: "tq-007", Verdict: feedback.VerdictEdit, Head: "newer reason"},
+				{TraceID: "tq-005", Verdict: feedback.VerdictEdit, Head: "older reason"},
+			}}},
+		},
+		{
+			name: "keeps an edit a session refuted after it",
+			args: args{
+				reviews: []string{"tq-007"}, verdicts: verdicts[1:2], event: "tq-008",
+				outcomes: []check{{"tq-007", feedback.ResultRefuted, time.Minute, feedback.ReviewerSession}},
+			},
+			want: want{offer: offer{
+				examples: []diagnose.ExampleCandidate{{TraceID: "tq-007", Verdict: feedback.VerdictEdit, Head: "newer reason"}},
+			}},
+		},
+		{
 			name: "skips a correction a session gave",
 			args: args{
 				reviews:         []string{"tq-005"},
@@ -312,7 +359,7 @@ func TestPrepareCandidates(t *testing.T) {
 			dims, err := s.Source.Dims(ctx)
 			require.NoError(t, err)
 			d := diagnose.New(
-				s.Source, policy.Observed(metrics, knowledge.Dims(dims).Names()), nil, s.Traces, s.Feedback, s.Ledger, s.Clock.Now,
+				s.Source, policy.Observed(metrics, knowledge.Dims(dims).Names()), nil, s.Traces, s.Feedback, s.Outcomes, s.Ledger, s.Clock.Now,
 			)
 			for _, k := range tc.args.knowledge {
 				k.Evidence, k.Author = knowledge.Evidence{ParagraphIDs: []string{"p-1"}}, "author"
@@ -344,6 +391,11 @@ func TestPrepareCandidates(t *testing.T) {
 				fb, err := feedback.New(ids[v.review], v.verdict, "", v.reason, v.edited, feedback.ReviewerSession, s.Clock.Now())
 				require.NoError(t, err)
 				require.NoError(t, s.Feedback.Append(ctx, fb))
+			}
+			for _, c := range tc.args.outcomes {
+				o, err := feedback.NewOutcome(ids[c.review], c.result, "", "", c.reviewer, s.Clock.Now().Add(c.after))
+				require.NoError(t, err)
+				require.NoError(t, s.Outcomes.Append(ctx, o))
 			}
 			wantOffer := tc.want.offer
 			wantOffer.examples = nil
@@ -438,7 +490,7 @@ func TestPrepareKnowledgeScopedToMovedSeries(t *testing.T) {
 			s := testkit.Open(t)
 			src, err := evidencefile.New(tc.args.dir, evidence.DefaultContexts())
 			require.NoError(t, err)
-			d := diagnose.New(src, tc.args.policy, nil, s.Traces, s.Feedback, s.Ledger, s.Clock.Now)
+			d := diagnose.New(src, tc.args.policy, nil, s.Traces, s.Feedback, s.Outcomes, s.Ledger, s.Clock.Now)
 			k := knowledge.Knowledge{
 				ID: "k-scoped", Kind: knowledge.KindMeaning, Content: "a source rule", Scope: tc.args.scope,
 				Evidence: knowledge.Evidence{ParagraphIDs: []string{"p-1"}}, Author: "author",
@@ -816,7 +868,7 @@ func TestSelect(t *testing.T) {
 			t.Parallel()
 			s := testkit.Open(t)
 			d := diagnose.New(
-				s.Source, testkit.Policy(t), nil, s.Traces, s.Feedback, s.Ledger, s.Clock.Now,
+				s.Source, testkit.Policy(t), nil, s.Traces, s.Feedback, s.Outcomes, s.Ledger, s.Clock.Now,
 			)
 			for _, k := range drafts {
 				k.Evidence, k.Author = knowledge.Evidence{ParagraphIDs: []string{"p-1"}}, "author"
@@ -1011,7 +1063,7 @@ func TestRunSelection(t *testing.T) {
 			s := testkit.Open(t)
 			client := llmmock.NewMockClient(gomock.NewController(t))
 			d := diagnose.New(
-				s.Source, testkit.Policy(t), client, s.Traces, s.Feedback, s.Ledger, s.Clock.Now,
+				s.Source, testkit.Policy(t), client, s.Traces, s.Feedback, s.Outcomes, s.Ledger, s.Clock.Now,
 			)
 			for _, k := range drafts {
 				k.Evidence, k.Author = knowledge.Evidence{ParagraphIDs: []string{"p-1"}}, "author"

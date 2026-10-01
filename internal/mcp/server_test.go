@@ -53,7 +53,7 @@ func connect(t *testing.T, st testkit.Stores, exe, dataArgs string) testkit.Clie
 func newServer(t *testing.T, st testkit.Stores, session diagnose.Session, exe, dataArgs string) *mcp.Server {
 	t.Helper()
 	policy := testkit.Policy(t)
-	diagnoser := diagnose.New(st.Source, policy, nil, st.Traces, st.Feedback, st.Ledger, st.Clock.Now)
+	diagnoser := diagnose.New(st.Source, policy, nil, st.Traces, st.Feedback, st.Outcomes, st.Ledger, st.Clock.Now)
 	compactor := compact.New(st.Source, st.Ledger, st.Traces, st.Feedback, st.Outcomes, st.Replays)
 	return mcp.New(
 		st.Source, policy, diagnoser, st.Traces, st.Feedback, st.Outcomes, st.Ledger, compactor, st.Clock.Now, session, exe, dataArgs,

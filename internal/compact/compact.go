@@ -377,7 +377,6 @@ func (r review) expectation() (Expectation, bool) {
 }
 
 // Whether the latest outcome refuted the review at or after its latest verdict
-// A person who approves again after the refutation stands behind the status once more
 func (r review) refutedSinceVerdict() bool {
-	return r.outcome != nil && r.outcome.Result == feedback.ResultRefuted && !r.outcome.Time.Before(r.verdict.Time)
+	return r.outcome != nil && r.outcome.RefutedSince(r.verdict.Time)
 }
