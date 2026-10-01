@@ -81,6 +81,31 @@ func (l *Ledger) Narrow(
 	})
 }
 
+// Proposes the next version of the current approved version with basis verified on the confirmed reviews
+// 1. content and scope and exceptions and veto stay so the approval replaces the version without widening or lifting
+// 2. the confirmed reviews join the outcome evidence
+// 3. the candidate is approved like any new version by a named person
+// 1. fails with ErrPromoteInvalid when no confirmed review is given
+// 2. fails with ErrPromoteVerified when the version is verified already
+// The version is checked under the store lock like Narrow
+func (l *Ledger) Promote(ctx context.Context, id string, version int, traceIDs []string, author string) (Knowledge, Set, error) {
+	return l.appendCandidate(ctx, func(all Set, now time.Time) (Knowledge, error) {
+		k, err := all.currentApproved(id, version)
+		if err != nil {
+			return Knowledge{}, err
+		}
+		if len(traceIDs) == 0 {
+			return Knowledge{}, fmt.Errorf("%w: %s v%d has no confirmed review", ErrPromoteInvalid, id, version)
+		}
+		if k.Basis == BasisVerified {
+			return Knowledge{}, fmt.Errorf("%w: %s v%d", ErrPromoteVerified, id, version)
+		}
+		k.Basis, k.Author = BasisVerified, author
+		k.Evidence.OutcomeTraceIDs = slices.Concat(k.Evidence.OutcomeTraceIDs, traceIDs)
+		return all.propose(k, now, l.contexts)
+	})
+}
+
 // Fails unless the version is the approved one of its id
 // A superseded or retired version cannot be reaffirmed or narrowed
 func (s Set) currentApproved(id string, version int) (Knowledge, error) {

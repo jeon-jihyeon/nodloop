@@ -92,6 +92,12 @@ func TestRunKnowledgeLoop(t *testing.T) {
 			want{0, "^k-lag\tv2\tcandidate\tscope change contexts no_known_change\texceptions \\[\\]\nfolder\t", `^$`},
 		},
 		{"narrow needs a version", []string{"narrow", "k-lag"}, want{1, `^$`, `^nodloop knowledge: narrow: an id and --version is required`}},
+		{
+			"promote of a refuted version names the missing confirmation",
+			[]string{"promote", "k-lag", "--version", "1"},
+			want{1, `^$`, `^nodloop knowledge: ` + knowledge.ErrPromoteInvalid.Error() + `: k-lag v1 has no confirmed review\n$`},
+		},
+		{"promote needs a version", []string{"promote", "k-lag"}, want{1, `^$`, `^nodloop knowledge: promote: an id and --version is required`}},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
@@ -108,6 +114,27 @@ func TestRunKnowledgeLoop(t *testing.T) {
 			assert.Regexp(t, tc.want.stderr, stderr.String())
 		})
 	}
+}
+
+// A later check that confirmed the review replaces the refutation so the version may be promoted
+func TestRunKnowledgePromote(t *testing.T) {
+	now := testkit.Open(t).Clock.Now
+	records := loopRecords(t, now())
+	outcomes, err := feedbackfile.NewOutcomeStore(records)
+	require.NoError(t, err)
+	require.NoError(t, outcomes.Append(context.Background(), feedback.Outcome{
+		TraceID: "review", Result: feedback.ResultConfirmed, Time: now(), Reviewer: "ann",
+	}))
+	getenv := func(k string) string {
+		return map[string]string{envFileDir: testkit.DemoDir(t), envRecordDir: records}[k]
+	}
+	var stdout, stderr bytes.Buffer
+
+	got := runKnowledge([]string{"promote", "k-lag", "--version", "1", "--author", "jed"}, getenv, nil, now, &stdout, &stderr)
+
+	assert.Equal(t, 0, got)
+	assert.Regexp(t, "^k-lag\tv2\tcandidate\tbasis verified\toutcomes \\[review\\]\nfolder\t", stdout.String())
+	assert.Empty(t, stderr.String())
 }
 
 // An item scoped to the one change context where its review was refuted has nothing left to narrow

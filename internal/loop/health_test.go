@@ -15,6 +15,11 @@ import (
 	"github.com/jeon-jihyeon/nodloop/internal/loop"
 )
 
+func verified(k knowledge.Knowledge) knowledge.Knowledge {
+	k.Basis = knowledge.BasisVerified
+	return k
+}
+
 func TestHistoryHealth(t *testing.T) {
 	k1 := item("k", 1, knowledge.StatusApproved)
 	later := monday.Add(time.Hour)
@@ -94,6 +99,36 @@ func TestHistoryHealth(t *testing.T) {
 				items: knowledge.Set{k1}, now: monday,
 			},
 			loop.Health{ID: "k", Version: 1, Status: knowledge.StatusApproved, Applied: 3, Confirmed: 2, Refuted: 1, LastReviewed: monday},
+		},
+		{
+			"a confirmed outcome and none refuted flags a stated version for promotion",
+			args{
+				reviews:  []review{{id: "r1", knowledge: uses}, {id: "r2", knowledge: uses}},
+				outcomes: feedback.Outcomes{outcome("r1", feedback.ResultConfirmed, monday), outcome("r2", feedback.ResultInconclusive, monday)},
+				items:    knowledge.Set{k1}, now: monday,
+			},
+			loop.Health{
+				ID: "k", Version: 1, Status: knowledge.StatusApproved, Applied: 2, Confirmed: 1, Inconclusive: 1,
+				PromotionCandidate: true, LastReviewed: monday,
+			},
+		},
+		{
+			"a verified version is never a promotion candidate",
+			args{
+				reviews:  []review{{id: "r1", knowledge: uses}},
+				outcomes: feedback.Outcomes{outcome("r1", feedback.ResultConfirmed, monday)},
+				items:    knowledge.Set{verified(k1)}, now: monday,
+			},
+			loop.Health{ID: "k", Version: 1, Status: knowledge.StatusApproved, Applied: 1, Confirmed: 1, LastReviewed: monday},
+		},
+		{
+			"a candidate version is never a promotion candidate",
+			args{
+				reviews:  []review{{id: "r1", knowledge: uses}},
+				outcomes: feedback.Outcomes{outcome("r1", feedback.ResultConfirmed, monday)},
+				items:    knowledge.Set{item("k", 1, knowledge.StatusCandidate)}, now: monday,
+			},
+			loop.Health{ID: "k", Version: 1, Status: knowledge.StatusCandidate, Applied: 1, Confirmed: 1, LastReviewed: monday},
 		},
 		{
 			"a session outcome and a batch review of an eval session are left out",
@@ -314,6 +349,52 @@ func TestHistoryRefuted(t *testing.T) {
 	}
 }
 
+func TestHistoryConfirmedTraces(t *testing.T) {
+	uses := []diagnose.AppliedKnowledge{applied("k", 1)}
+	type args struct {
+		reviews  []review
+		outcomes feedback.Outcomes
+	}
+	tcs := []struct {
+		name string
+		args args
+		want []string
+	}{
+		{"no confirmed review gives nothing", args{reviews: []review{{id: "r1", knowledge: uses}}}, nil},
+		{
+			"confirmed reviews of the version give their ids sorted and the rest stay out",
+			args{
+				reviews: []review{
+					{id: "r3", knowledge: uses}, {id: "r2", knowledge: uses}, {id: "r1", knowledge: uses}, {id: "r4"},
+				},
+				outcomes: feedback.Outcomes{
+					outcome("r3", feedback.ResultConfirmed, monday), outcome("r1", feedback.ResultConfirmed, monday),
+					outcome("r2", feedback.ResultRefuted, monday), outcome("r4", feedback.ResultConfirmed, monday),
+				},
+			},
+			[]string{"r1", "r3"},
+		},
+		{
+			"a later refutation replaces a confirmation",
+			args{
+				reviews: []review{{id: "r1", knowledge: uses}},
+				outcomes: feedback.Outcomes{
+					outcome("r1", feedback.ResultRefuted, monday.Add(time.Hour)), outcome("r1", feedback.ResultConfirmed, monday),
+				},
+			},
+			nil,
+		},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			h, err := loop.New(traces(t, tc.args.reviews...), nil, tc.args.outcomes, knowledge.Set{item("k", 1, knowledge.StatusApproved)})
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, h.ConfirmedTraces("k", 1))
+		})
+	}
+}
+
 // Outcomes of reviews that applied versions a compaction merged pass to the version it made
 func TestHistoryCarriedOutcomes(t *testing.T) {
 	quiet := knowledge.Scope{Scope: evidence.Scope{ChangeContexts: []evidence.Context{evidence.ContextNoKnownChange}}}
@@ -346,7 +427,7 @@ func TestHistoryCarriedOutcomes(t *testing.T) {
 	}
 	type want struct {
 		confirmed, refuted int
-		retire             bool
+		retire, promote    bool
 		contexts           []evidence.Context
 	}
 	tcs := []struct {
@@ -383,6 +464,14 @@ func TestHistoryCarriedOutcomes(t *testing.T) {
 			want{confirmed: 2, refuted: 1, contexts: []evidence.Context{evidence.ContextNoKnownChange}},
 		},
 		{
+			"a carried confirmed review alone flags the compacted version for promotion",
+			args{
+				knowledge.Set{x1, y1, compacted(keep)}, []review{quietReview("r1", onX1)},
+				feedback.Outcomes{outcome("r1", feedback.ResultConfirmed, monday)},
+			},
+			want{confirmed: 1, promote: true},
+		},
+		{
 			"a review the version cites as outcome evidence is answered and not carried",
 			args{
 				knowledge.Set{x1, y1, compacted(func(k *knowledge.Knowledge) { k.Evidence.OutcomeTraceIDs = []string{"r1"} })},
@@ -417,7 +506,10 @@ func TestHistoryCarriedOutcomes(t *testing.T) {
 			i := slices.IndexFunc(rows, func(row loop.Health) bool { return row.ID == "x" && row.Version == 2 })
 			require.GreaterOrEqual(t, i, 0)
 
-			got := want{rows[i].CarriedConfirmed, rows[i].CarriedRefuted, rows[i].RetireCandidate, h.RefutedContexts("x", 2, evidence.DefaultContexts())}
+			got := want{
+				rows[i].CarriedConfirmed, rows[i].CarriedRefuted, rows[i].RetireCandidate, rows[i].PromotionCandidate,
+				h.RefutedContexts("x", 2, evidence.DefaultContexts()),
+			}
 			assert.Equal(t, tc.want, got)
 		})
 	}

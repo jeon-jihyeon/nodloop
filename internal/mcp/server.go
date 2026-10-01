@@ -218,6 +218,7 @@ var tools = []tool{
 		"which versions are retire candidates or past their review deadline, and which references broke. "+
 		"carried_confirmed and carried_refuted count the outcomes a version takes over from reviews of the versions a compaction merged into it, "+
 		"only reviews of a change context and a moved metric the version still reaches. "+
+		"promotion_candidate marks an approved version of basis stated with a confirmed outcome and none refuted. "+
 		"Reads only. Retire, narrow and reaffirm stay with a named person", (*Server).knowledgeHealth),
 	newTool("reaffirm", "Record that a named person rechecked an approved knowledge version, "+
 		"which resets its review deadline without changing it. "+
