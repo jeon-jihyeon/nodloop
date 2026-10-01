@@ -6,11 +6,13 @@ import (
 )
 
 var (
-	errHomeUnknown      = errors.New("home directory unknown")
-	errDataDirUnset     = errors.New(envFileDir + " is not set")
-	errUnknownSource    = errors.New("unknown source")
-	errNoEvents         = errors.New("no events.csv")
-	errPolicyMissing    = errors.New("no policy.yaml")
+	errHomeUnknown   = errors.New("home directory unknown")
+	errDataDirUnset  = errors.New(envFileDir + " is not set")
+	errUnknownSource = errors.New("unknown source")
+	errNoEvents      = errors.New("no events.csv")
+	errPolicyMissing = errors.New("no policy.yaml")
+	// A procedure whose scope names such a metric never reaches a review
+	errScopeUnobserved  = errors.New("a procedure scope names a metric no event carries")
 	errConfigInvalid    = errors.New(configFile + " is not valid JSON")
 	errUnexpectedOutput = errors.New("unexpected output")
 	errWrongAnswer      = errors.New("wrong answer")
