@@ -2,6 +2,7 @@ package feedback_test
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -299,4 +300,54 @@ func TestFeedbackEditWidth(t *testing.T) {
 			assert.Equal(t, tc.want, fb.EditWidth(original))
 		})
 	}
+}
+
+// Secrets are built from parts so no scanner reads the fixtures as leaked keys
+func TestNewRedactsSessionRecords(t *testing.T) {
+	now := time.Date(2026, 10, 2, 0, 0, 0, 0, time.UTC)
+	pem := "-----BEGIN RSA PRIVATE KEY-----\nMIIEow\n-----END RSA PRIVATE KEY-----"
+	tcs := []struct {
+		name string
+		args string
+		want string
+	}{
+		{"a text without a secret is kept", "the cause was a campaign launch", "the cause was a campaign launch"},
+		{"a private key block", "key " + pem + " end", "key [redacted] end"},
+		{"an aws access key id", "id AKIA" + strings.Repeat("Q", 16) + " here", "id [redacted] here"},
+		{"a github token", "ghp_" + strings.Repeat("a", 36), "[redacted]"},
+		{"a fine grained github token", "github_pat_" + strings.Repeat("b", 30), "[redacted]"},
+		{"a slack token", "xoxb-" + strings.Repeat("1", 12), "[redacted]"},
+		{"a google api key", "AIza" + strings.Repeat("c", 35), "[redacted]"},
+		{"a key of the sk shape", "sk-" + strings.Repeat("d", 24), "[redacted]"},
+		{"a json web token", "eyJ" + strings.Repeat("e", 10) + "." + strings.Repeat("f", 10) + "." + strings.Repeat("g", 10), "[redacted]"},
+		{"the token after bearer", "Authorization: Bearer " + strings.Repeat("h", 20), "Authorization: Bearer [redacted]"},
+		{"the password of a url", "clone https://jed:" + "hunter2@example.com/repo", "clone https://jed:[redacted]@example.com/repo"},
+		{"a named value", "set password=" + "hunter2, then retry", "set password=[redacted], then retry"},
+		{"a named value after a colon", "API_KEY: " + "abc123", "API_KEY: [redacted]"},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			session, err := feedback.New("t1", feedback.VerdictReject, "", tc.args, nil, feedback.ReviewerSession, now)
+			require.NoError(t, err)
+			person, err := feedback.New("t1", feedback.VerdictReject, "", tc.args, nil, "jed", now)
+			require.NoError(t, err)
+			outcome, err := feedback.NewOutcome("t1", feedback.ResultConfirmed, tc.args, tc.args, feedback.ReviewerSession, now)
+			require.NoError(t, err)
+
+			assert.Equal(t, tc.want, session.Reason)
+			assert.Equal(t, tc.args, person.Reason)
+			assert.Equal(t, []string{tc.want, tc.want}, []string{outcome.ConfirmedCause, outcome.Note})
+		})
+	}
+}
+
+func TestNewRedactsSessionEditsAsJSON(t *testing.T) {
+	t.Parallel()
+	edited := json.RawMessage(`{"status":"hold","hold_reasons":["token=` + "s3cr3t" + `\n` + "ghp_" + strings.Repeat("z", 36) + `"]}`)
+
+	got, err := feedback.New("t1", feedback.VerdictEdit, "", "", edited, feedback.ReviewerSession, time.Time{})
+
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"status":"hold","hold_reasons":["token=[redacted]\n[redacted]"]}`, string(got.Edited))
 }
