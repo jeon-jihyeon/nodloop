@@ -10,11 +10,11 @@ Go 1.25 or newer, and the `claude` CLI on PATH for the commands that call a mode
 git clone https://github.com/jeon-jihyeon/nodloop
 cd nodloop
 go install ./cmd/nodloop
-nodloop setup --data-dir examples/demo
-nodloop evidence events
+nodloop run record --producer dev --label repo=nodloop --output README.md --record-dir /tmp/nodloop-dev
+nodloop trace list --record-dir /tmp/nodloop-dev
 ```
 
-The last command lists the 24 demo events of `examples/demo`, which means the binary and the demo data are in place. `go run ./internal/demo` writes its events, contexts, labels, policy and knowledge files again.
+The last command lists the run you recorded, which means the binary and a record directory are in place.
 
 ## Checks
 
@@ -31,23 +31,20 @@ Tests that talk to a model are opt in:
 
 ```
 NODLOOP_LLM_LIVE=1 go test ./internal/llm/... -run Live
-nodloop diagnose --event tq-001 --model haiku
 ```
 
-Use haiku while iterating. The numbers in README.md come from `nodloop eval` on sonnet only, so change them only with a fresh run and the report that produced them.
+Use haiku while iterating with `--model haiku` on the commands that call a model, such as `nodloop knowledge compact` and `nodloop knowledge check`.
 
 ## Layout
 
 | Layer | Packages | Rule |
 |---|---|---|
-| Domain | `evidence`, `feedback`, `trace`, `llm`, `veto`, `settings`, `jsonl` | No imports from the layers above |
-| Core | `analysis`, `knowledge`, `diagnose` | Imports domain and the core below it. Never a file store |
-| Application | `eval`, `compact`, `loop` | Build on the core. `compact` and `loop` never import `eval`, and only `eval`, `mcp` and `cmd/nodloop` import `loop` |
+| Domain | `feedback`, `trace`, `llm`, `veto`, `settings`, `jsonl`, `atomicfile` | No imports from the layers above |
+| Core | `knowledge` | The ledger of items, their scopes and their history. Never a file store |
+| Application | `compact`, `loop` | Build on the core. They never import each other and only `mcp` and `cmd/nodloop` import them |
 | Infra | the `file` subpackages | Implements the stores and the veto and settings files. Application code never imports one outside its tests |
 | Controllers | `cmd/nodloop`, `mcp`, `guard` | `cmd/nodloop` is the composition root and the only reader of the process environment |
-| Test harness | `testkit` | File stores in a temp directory, the demo source and a fake clock |
-| File helper | `atomicfile` | Replaces a whole file in one rename and keeps a symlink that points at it. Used by setup and the settings file store |
-| Demo generator | `demo` | `go run ./internal/demo` writes the synthetic data set of `examples/demo` deterministically |
+| Test harness | `testkit` | File stores in a temp directory and a fake clock |
 
 depguard enforces the direction. If a change needs an import that the linter rejects, the change is in the wrong package.
 
@@ -64,9 +61,9 @@ depguard enforces the direction. If a change needs an import that the linter rej
 ## Pull requests
 
 - One change per pull request. Keep refactors and behavior changes apart
-- Commit messages follow `type: what changed` with `feat`, `fix`, `docs`, `refactor`, `test` or `chore`, for example `fix: send back a cause without a listed paragraph before the gate holds it`
-- Say in the description what you ran. A pull request that touches a review prompt or a store format links the trace or the eval report that shows the effect
-- New tools, commands and flags come with a line in the usage text and, when they change the plugin, in the skill template in `internal/diagnose/gen/main.go` followed by `go generate ./...`
+- Commit messages follow `type: what changed` with `feat`, `fix`, `docs`, `refactor`, `test` or `chore`, for example `fix: refuse a label no recorded run carries`
+- Say in the description what you ran. A pull request that touches a store format or what a prompt receives shows a trace or the `nodloop report loop` output before and after
+- New tools, commands and flags come with a line in the usage text and, when they change the plugin, in the skill under `plugin/skills` that calls them
 
 ## Security
 

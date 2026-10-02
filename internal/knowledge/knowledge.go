@@ -76,7 +76,7 @@ type Knowledge struct {
 	Kind    Kind   `json:"kind"`
 	Content string `json:"content"`
 	// Where the item applies among the runs of one producer
-	// Nil on a record of the data review written before 0.8.0, which reaches no run and can only be retired
+	// Nil on a record of the data review written before 0.6.0, which reaches no run and can only be retired
 	Run *RunScope `json:"run,omitempty"`
 	// At least one reference is required
 	Evidence Evidence `json:"evidence"`
@@ -216,7 +216,7 @@ func (k Knowledge) checkVersion() error {
 }
 
 // Fails with ErrScopeRequired on an item without a run scope
-// A record of the data review written before 0.8.0 is only read, never proposed or approved again
+// A record of the data review written before 0.6.0 is only read, never proposed or approved again
 func (k Knowledge) checkScope() error {
 	if k.Run == nil {
 		return fmt.Errorf("%w: %s", ErrScopeRequired, k.ID)

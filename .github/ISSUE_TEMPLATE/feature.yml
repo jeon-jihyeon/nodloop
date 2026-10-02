@@ -6,7 +6,7 @@ body:
     id: problem
     attributes:
       label: What you tried to do
-      description: The review, correction or guard situation where nodloop fell short
+      description: The correction, knowledge or guard situation where nodloop fell short
     validations:
       required: true
   - type: textarea

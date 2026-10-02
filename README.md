@@ -7,7 +7,7 @@
 </div>
 
 <div align="center">
-  <h3>Procedure-grounded incident reviews inside Claude Code. Your corrections become approved knowledge that feeds the next review.</h3>
+  <h3>Your nods and corrections on AI output, recorded and carried to the next run in the same place.</h3>
 </div>
 
 <div align="center">
@@ -20,165 +20,74 @@
 
 <br>
 
-Claude Code writes the review with its own model, so there's no API key to set up. nodloop gives it the numbers, computed from your events by plain code, and the paragraphs of the procedures that fit the event, which it can cite. When you correct a review, the correction can become a knowledge item, used only after someone approves it and only on events that match its scope.
-
-> [!TIP]
-> The last part of the recording, where the guard blocks `sed -i`, needs the hook and vetoes from the [Guard](#guard) steps below.
-
-![nodloop demo: a review, a correction, an approval, the next review applying it, and the guard hook blocking a forbidden command](.github/demo.gif)
+You correct an AI answer, the session ends, and next week in the same repository the same mistake comes back. nodloop closes that loop. Each answer is recorded as a run with where it was made, your verdict on it is recorded as a nod, and a correction you approve by name becomes an item that the next prompt in that place receives. Nothing reaches a prompt that a person did not approve, and nothing reaches a place its scope does not cover.
 
 ## Quickstart
-
-Clone the repository for its demo set of 24 synthetic traffic events in `examples/demo`, then install the plugin in Claude Code:
-
-```
-git clone https://github.com/jeon-jihyeon/nodloop
-```
 
 ```
 /plugin marketplace add jeon-jihyeon/nodloop
 /plugin install nodloop@nodloop
 ```
 
-On first run, the plugin downloads its binary. Start Claude Code in the directory where you ran `git clone`, so `./nodloop/examples/demo` resolves. Ask Claude Code to point nodloop at the demo, then run one full loop. The server reads the new directory on its next call, with no reconnect:
+On first run the plugin downloads its binary. From then on it records every answer of the conversation as a run labeled with the repository and directory you work in. Work as usual, and when an answer was wrong, say so:
 
 ```
-> set up nodloop with the demo in ./nodloop/examples/demo
-> review the conversions of September 18 to 19 with nodloop
-> That is attribution lag. Conversions arrive up to 4 hours after the click, so the newest 4 hours always read low. Record that as feedback and propose it as knowledge.
+> /nodloop:nod you ran cd before git again. Use git -C <dir> instead
 > approve it, approver <your name>
-> review the conversions of September 20 to 21 with nodloop
 ```
 
-The second review applies the knowledge you approved. Each demo event spans its own two days, so you name an event by when it happened, and by a source when one matters, never by an id.
+The nod records an edit on that answer's run, proposes one sentence of what it taught scoped to this repository, and approves it only when you name yourself. Before every later prompt in this repository a hook adds the approved items as context, so the next answer follows the correction without being told again. `~/.nodloop/bin/nodloop knowledge for --producer session --label repo=<repo>` lists what a prompt there receives.
 
 > [!TIP]
-> Setup runs `~/.nodloop/bin/nodloop check` and `~/.nodloop/bin/nodloop setup` through Bash, so Claude Code asks for permission the first time. To skip that prompt, add `"Bash(~/.nodloop/bin/nodloop check *)"` and `"Bash(~/.nodloop/bin/nodloop setup *)"` to `permissions.allow` in `~/.claude/settings.json`. The plugin keeps that path linked to the binary it runs, so the rules hold across updates.
-
-<details>
-<summary>Moving from the demo to your own data and record directory</summary>
-
-Setup asks only what your files and `nodloop check` can't answer, and never asks you to reconnect. When you are done with the demo, point nodloop at your own directory the same way and ask for a new record directory too, such as `~/.nodloop/own-records`. Otherwise the demo reviews, corrections and knowledge stay in `~/.nodloop/records` and carry into reviews of your data, and setup warns about that. `NODLOOP_RECORD_DIR` wins over the record directory setup saves, so while it is set point it at a new directory instead. `NODLOOP_FILE_DIR` wins over the saved data directory the same way, and setup warns when it names another one.
-
-Your directory needs `events.csv`, `policy.yaml` and your procedures as Markdown files under `procedures/`, and nodloop reads the change context of each event from `contexts.csv`. When your data comes in another shape, such as another CSV layout, several files or Parquet, Claude Code writes a `convert.py` beside it that rewrites `events.csv` and `contexts.csv`, saves it only after you approve a preview, and reruns it before each review when a source file is newer. It needs python3, and the duckdb CLI only for a source such as Parquet. When the directory has no `policy.yaml`, Claude Code proposes one from the profile of your events and writes it only after you approve it. `nodloop check --data-dir <dir>` prints what nodloop reads there and the error that stops it, and writes nothing. Setup warns when `contexts.csv` is missing, since every event then reads the change context `unknown`. Setup fails when `policy.yaml` names a metric or dimension that no event carries, so a misspelled name never leaves reviews without their numbers. A running server instead reports such a name in every review, so an export taken during an outage still gets reviewed.
-
-</details>
-
-<details>
-<summary>Format of events.csv and contexts.csv</summary>
-
-`events.csv` needs the columns `event_id`, `timestamp` in RFC 3339, `metric` and `value`, in any order. Every other named column is a dimension of the series, such as a source or a region, so its values must repeat across rows. A column that differs on every row, like a row id or a note, splits every series into single points. A row repeated with the same value is read once, and one repeated with another value fails the load with both lines named.
-
-`contexts.csv` needs the columns `event_id` and `change_context`, one row per event, and the context is one that `policy.yaml` declares under `contexts`, each with a name and whether it breaks the baseline. A policy without that list declares `no_known_change`, `planned_operational_change`, `measurement_context_changed`, `data_availability_issue` and `unknown`, and only the measurement and data availability ones break the baseline. An event without a row reads `unknown`. When a review finds something on an event whose context is `unknown`, or is declared without breaking the baseline while the numbers moved, Claude Code asks what changed and offers to add the row, declare the context or mark it as breaking the baseline, and edits only after you approve. A bad row in either file fails only the tools that read events, so the queue and the verdicts keep working while you fix it.
-
-</details>
-
-<details>
-<summary>Layout of procedure files</summary>
-
-Each procedure is a `.md` file directly under `procedures/`, and setup fails when there is none. Setup warns about Markdown it will not read, such as `.markdown` files or a subfolder, or a link to one, that holds `.md` files at any depth or that it cannot open. The `#` heading is the title and each heading below it is a step. The first step is a check the review must list and never cites for a cause, so an overview or a list of likely causes must not come first. A heading named exactly `Decide` states the decision and is never cited for a cause, while a heading named Decision is read as an ordinary step. A paragraph id comes from its heading text and its place within the section, so renaming a heading changes its ids and moving a section to the front makes it the check. [metric-anomaly-investigation.md](examples/demo/procedures/metric-anomaly-investigation.md) shows the shape. Ask Claude Code to import runbooks you keep in another form, such as a wiki export or a PDF: it drafts one procedure per runbook in this shape, shows each as a diff and writes it only after you approve it, and never edits the runbook itself.
-
-</details>
-
-<details>
-<summary>Analyzers of your own</summary>
-
-Besides the four built in rules, `policy.yaml` can run your own program per event, such as a latency percentile nodloop has no rule for:
-
-```yaml
-analyzers:
-  - rule: command
-    name: p99-latency
-    command: [./analyzers/latency.py]
-    timeout: 10s
-```
-
-The command starts in the data directory and a relative path resolves there. It reads one JSON object on stdin, `{"observation_version": 1, "event_id": ..., "change_context": ..., "points": [{"time", "metric", "value", "dims"}]}`, and sees no records or knowledge. It writes one JSON object on stdout, `{"observation_version": 1, "observations": [...]}`, where each observation needs `metric`, `current`, `baseline`, `change`, `severity` from 0 to 1, `adequate` and `summary`, and may add `target`, `window`, `samples` and `missing`. A missing number, an unknown key, a non zero exit or a run past the timeout becomes one observation that names the analyzer and the error, so the review holds instead of failing.
-
-</details>
+> Set `NODLOOP_SESSION=off` where Claude Code starts to keep the plugin without recording conversations. Answers are stored on your machine under `~/.nodloop/records` with keys, tokens and passwords redacted.
 
 ## Why nodloop
 
-- **Grounded in procedure paragraphs**: a cause without a citation, or a status that contradicts the causes, gets the review sent back once, and a second miss puts it on hold
-- **Corrections become approved knowledge**: a correction is used only after someone approves it, and only on events that match its scope
-- **Refuses instead of cutting**: when approving an item would outgrow the knowledge budget of a review, nodloop refuses and asks you to make room instead of cutting text or items you never see
-- **Guard blocks vetoed calls**: a PreToolUse hook blocks tool calls you've vetoed before they run, so the model can't talk its way past it
-- **Measured by eval**: the Measured numbers come from `nodloop eval`, with feedback off, corrections, scoped knowledge and unscoped knowledge side by side
+A CLAUDE.md or a memory file you edit by hand carries corrections too. nodloop adds four things to them.
+
+| | Hand kept notes | nodloop |
+|---|---|---|
+| Approval | whatever was written | only versions a named person approved, with their history |
+| Scope | every session reads every line | an item reaches only runs whose labels it matches |
+| Measurement | none | for each item, the runs that received it, how many you approved, how many you corrected again for the same reason |
+| Enforcement | a request in text | a forbidden tool call is blocked by the guard hook before it runs |
 
 ## How it works
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset=".github/loop-dark.svg">
-  <img alt="observe, context, select and record on the tool row; feedback, propose and approve on the human row; the loop returns to context" src=".github/loop-light.svg" width="760">
-</picture>
+```
+answer → run with labels → your nod → proposed item → approved by name
+   ↑                                                         ↓
+   ← ← ← the next prompt in the same place receives it ← ← ←
+```
+
+A run is one output of a producer with the labels of its situation. The built in producer is the Claude Code session, whose labels are `repo`, the directory holding `.git` above where you work, and `dir`, the path below it. A nod is approve, edit with the corrected output, or reject with what was wrong. An item is a `meaning`, how to read something in this place, or a `judgment`, what to do or not do, and its scope names a producer, labels a run must carry and labels it must not. A label must be one a recorded run already carries, so a misspelled label fails instead of making an item that matches nothing.
 
 <details>
-<summary>How reviews are checked, and how knowledge is approved, budgeted and kept fresh</summary>
+<summary>How items are approved, kept within budget and kept fresh</summary>
 
-A cause without a citation, or a status that contradicts the causes, gets the review sent back once, and a second miss puts it on hold. A Decide paragraph or a first step doesn't count as a citation for a cause. A corrected review goes through the same check against the procedures that fit the event now, so an edit that the next review could only follow into a hold is refused with the reason, including one that cites a paragraph a renamed heading took away. An edit that cites more than two paragraphs for one cause is refused too, because the next review keeps only the first two.
+An item is a candidate until a named person approves it. A new version may not reach runs the approved one never reached, and one that drops a veto is refused. All approved items one run may carry together are held to a size cap, and approval is refused when it would push them past it.
 
-A new version of a knowledge item that would reach events the approved one never reached is refused until the approved one is retired. If approving an item would make the knowledge a review carries outgrow its budget of 70,000 characters or 10 items, nodloop refuses and asks you to retire an item, replace one, scope it to other change contexts or compact the folder so each review carries fewer items, instead of cutting text or items you never see.
+When one run would carry more than five items, `approve` says a compaction is due. A compaction drafts fewer items that say each fact once and lose none, and the ledger refuses a draft that reaches runs an old item never reached, two new items of one kind for the same runs, or an old item no new item names. Before approval a coverage check reads each old item against the new ones and lists any fact they lose, through `nodloop knowledge check` with a separate model call or through the MCP tool `check_compaction`. Nothing is approved until the check passes and a person names themselves.
 
-Knowledge doesn't stay approved forever without a look. When a real check refutes a review, record the outcome and nodloop can propose a narrower version of the knowledge it used, or tell you to keep or retire it when it failed in every change context it covers. When real checks confirmed the reviews that used an item and none refuted them, nodloop can propose the same item as verified, which someone approves like any new version. An approved version is flagged as stale 90 days after its approval until someone reaffirms it. nodloop also keeps the approved items as one line each in `approved.md` of the record directory, and Claude Code adds the one line that imports it to a CLAUDE.md you pick, so sessions outside a review follow your corrections too. Ask Claude Code to look through earlier sessions for verdicts on reviews you never recorded and it lists them for you to pick, with keys, tokens and passwords removed before anything is written. Reviews, verdicts and knowledge versions are all kept in `~/.nodloop/records`. Ask Claude Code what an earlier review of an event said or used, and it reads the traces through `nodloop trace`. `nodloop report online` puts the reviews that applied knowledge beside those without on verdict rates, the time to a verdict and how many fields an edit changed. When you correct or reject a review, Claude Code asks what it got wrong, the status, a cause, a citation, the checks or something else, and the report counts those reason codes per week.
+When you record what a real check found with `outcome`, `nodloop knowledge health` shows the items whose runs were refuted as retire candidates and the stated items whose runs were confirmed as promotion candidates. `knowledge narrow <id> --version <n> --key dir` proposes a version that stops reaching the directories where it was refuted, and `knowledge promote` proposes one with basis verified. An approved version is stale 90 days after its approval or last reaffirm.
+
+`nodloop report loop` shows per approved item how many runs received it, how many of those you approved, how many you corrected again for the reason that taught it, and how long the correction took to become an item. `nodloop queue` lists the runs that wait for a verdict, with a random audit share.
 
 </details>
 
-## Measured
+## Any producer
 
-The eval holds out 12 of the 24 demo events and reviews them with Sonnet. With no feedback, 10 of 12 got the right status. With corrections or approved knowledge, all 12 did. Applying every knowledge item regardless of scope also gets 12, but drags in 15 items that don't belong.
-
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset=".github/measured-dark.svg">
-  <img alt="status accuracy 0.83 with feedback off and 1.00 with corrections, scoped knowledge and unscoped knowledge; unscoped knowledge lands 15 items the label does not expect" src=".github/measured-light.svg" width="760">
-</picture>
-
-<details>
-<summary>Demo eval table and how to reproduce it</summary>
-
-| condition | events | status acc | hold acc | citation p | citation r | required checks | first check | knowledge hit | misapplied | revised | mean cost usd |
-|---|---|---|---|---|---|---|---|---|---|---|---|
-| seed | 12 | 0.83 | 1.00 | 0.94 | 1.00 | 1.00 | 1.00 | 0.00 | 0 | 0 | 0.1045 |
-| feedback:off | 12 | 0.83 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | 0.00 | 0 | 1 | 0.1098 |
-| feedback:on | 12 | 1.00 | 1.00 | 0.92 | 1.00 | 1.00 | 0.75 | 0.00 | 0 | 0 | 0.0784 |
-| knowledge:on | 12 | 1.00 | 1.00 | 0.86 | 1.00 | 1.00 | 0.75 | 1.00 | 0 | 2 | 0.1142 |
-| knowledge:all | 12 | 1.00 | 1.00 | 0.78 | 0.92 | 1.00 | 0.75 | 1.00 | 15 | 1 | 0.1046 |
-
-To reproduce it, first set `NODLOOP_RECORD_DIR` to the absolute path of an empty directory, because the Quickstart reviewed and corrected the event of September 18 to 19, a holdout event, and holdout refuses records that already judge one. Then run `~/.nodloop/bin/nodloop eval seed --session demo` from the clone, correct the seed reviews with `feedback add`, import the demo knowledge with `knowledge import --file examples/demo/knowledge.jsonl`, then run `eval holdout --session demo` and `eval report --session demo` with the same binary. eval calls the `claude` CLI for every review. holdout stops before the first review when feedback:on has no corrected seed review or the knowledge conditions have no approved item, so leave a condition out with `--conditions` to run the rest. After a compaction, knowledge that replaced an item a label expects still counts as a hit.
-
-</details>
-
-### Beyond the demo
-
-Nothing in the core knows about the demo's domain. The same loop ran on 300 events built from the public [Tennessee Eastman Process data of Rieth et al.](https://doi.org/10.7910/DVN/6C3JR1), a simulated chemical plant with seeded faults. In 36 held-out events a trap decides the status. With no feedback, none of them got it right. With corrections all 36 did, and with scoped knowledge 35 did, which never landed on an event outside its scope. Applying every item regardless of scope landed 548 items that don't belong.
-
-<details>
-<summary>Tennessee Eastman eval table and setup</summary>
-
-Five procedures, four planted traps and a scripted reviewer stood in for a plant team, so no human took part. 150 events were seed and 150 held out, all reviewed with Sonnet.
-
-| condition | events | status acc | hold acc | citation p | citation r | required checks | first check | knowledge hit | misapplied | revised | mean cost usd |
-|---|---|---|---|---|---|---|---|---|---|---|---|
-| seed | 150 | 0.75 | 0.60 | 0.69 | 0.95 | 0.86 | 0.82 | 0.00 | 0 | 32 | 0.0877 |
-| feedback:off | 150 | 0.76 | 0.60 | 0.73 | 0.98 | 0.86 | 0.82 | 0.00 | 0 | 29 | 0.0907 |
-| feedback:on | 150 | 0.99 | 1.00 | 0.97 | 0.98 | 0.99 | 0.99 | 0.00 | 0 | 1 | 0.0587 |
-| knowledge:on | 150 | 0.99 | 1.00 | 0.81 | 0.98 | 0.98 | 0.93 | 1.00 | 0 | 25 | 0.0755 |
-| knowledge:all | 150 | 0.99 | 1.00 | 0.88 | 0.98 | 0.99 | 0.91 | 1.00 | 548 | 27 | 0.0854 |
-
-</details>
-
-## Any output
-
-The loop is not tied to the data review. Any tool can record what it made as a run, with the labels of its situation, take a nod on it and get back the approved items for the next run with the same labels. None of it needs a data directory.
+The loop is not tied to Claude Code. Any tool can record what it made as a run with the labels of its situation, take a nod on it and get back the approved items for its next run.
 
 ```
-~/.nodloop/bin/nodloop run record --producer session --label repo=nodloop --output answer.txt
-~/.nodloop/bin/nodloop feedback add --trace <run id> --verdict edit --edited corrected.json --reason "use git -C, never cd first"
-~/.nodloop/bin/nodloop knowledge propose --producer session --label repo=nodloop --trace <run id> --kind judgment --content "Use git -C <dir> instead of cd <dir> && git"
+~/.nodloop/bin/nodloop run record --producer review-bot --label repo=api --label task=review --output review.json
+~/.nodloop/bin/nodloop feedback add --trace <run id> --verdict edit --edited corrected.json --reason "a nil map read is not a panic"
+~/.nodloop/bin/nodloop knowledge propose --from <run id> --kind meaning --content "Reading a nil map in Go returns the zero value"
 ~/.nodloop/bin/nodloop knowledge approve <id> --version 1 --approver <your name>
-~/.nodloop/bin/nodloop knowledge for --producer session --label repo=nodloop
+~/.nodloop/bin/nodloop knowledge for --producer review-bot --label repo=api --label task=review
 ```
 
-In Claude Code the plugin does it on its own. Before each prompt a hook adds the approved items for the repository and directory you work in, and after each answer a hook records it as a run with the items it got, secrets redacted. When an answer was wrong, say so with `/nodloop:nod` and what was right: it records the verdict on that answer's run, offers to turn it into an item scoped to the repository, and approves it only when you name yourself. Set `NODLOOP_SESSION=off` where Claude Code starts to turn both off. The MCP tools `run` and `knowledge_for` do the same for any other producer, and `propose` with `from` set to a corrected run fills the producer and labels from it. A label must be one a recorded run already carries, so a misspelled label fails instead of making an item that matches nothing, and an item scoped to runs never reaches a data review. `nodloop report loop` then shows per approved item how many answers received it, how many of those you approved, how many you corrected again for the same reason, and how long the correction took to become an item.
+The MCP server offers the same as tools: `run`, `knowledge_for`, `feedback`, `outcome`, `propose` with `from` set to a corrected run, `approve`, the compaction tools, `queue`, `knowledge_health` and `reaffirm`. A producer never depends on nodloop and nodloop never depends on a producer.
 
 ## Guard
 
@@ -194,7 +103,7 @@ The seed vetoes for Bash read `commands`, which the guard derives from the Bash 
 
 A veto you write by hand can say `action: ask` to hand the call to you with its reason instead of blocking it, and a matching veto that blocks always wins over one that asks. Every block and ask is logged to `~/.nodloop/guard.jsonl` with the veto, the tool and the directory but never the command, and `nodloop guard log` prints the newest ones.
 
-A correction can become a veto too. Propose it as a judgment with a veto, and once someone approves it, nodloop writes it to an approved veto file under `~/.claude/nodloop` and the guard blocks that call from then on. Such a judgment acts only through the guard, so no review carries it and vetoes never use up a review's budget. Retiring the knowledge removes the veto, a new version that drops it is refused, and a veto you write by hand wins over an approved one with the same id.
+A correction can become a veto too. Propose it as a judgment with a veto, and once someone approves it, nodloop writes it to an approved veto file under `~/.claude/nodloop` and the guard blocks that call from then on. Such a judgment acts only through the guard, so no prompt receives it as text and vetoes never use up the budget of a run. Retiring the knowledge removes the veto, a new version that drops it is refused, and a veto you write by hand wins over an approved one with the same id.
 
 <details>
 <summary>Hook install, health check and where veto files are found</summary>
@@ -203,13 +112,24 @@ A correction can become a veto too. Propose it as a judgment with a veto, and on
 
 </details>
 
+## Records
+
+| What | Where |
+|---|---|
+| Runs, verdicts, outcomes, knowledge | `~/.nodloop/records`, or `--record-dir`, `NODLOOP_RECORD_DIR` or `record_dir` in `~/.nodloop/config.json` |
+| Approved vetoes | `~/.claude/nodloop/vetoes.approved.<hash>.yaml` |
+| Approved items as rules a CLAUDE.md may import | `approved.md` in the record directory, which `nodloop knowledge export` prints the import line for |
+| Guard decisions | `~/.nodloop/guard.jsonl` |
+
+Every record file is append only JSON lines. A status change of an item is a new record, so the history of every version stays.
+
 ## Supported
 
-macOS and Linux, or Windows through WSL. It runs as a Claude Code plugin. For Codex, Cursor or another MCP client, install it with `go install github.com/jeon-jihyeon/nodloop/cmd/nodloop@latest`, run `nodloop setup --data-dir <dir>` once and serve it with `nodloop mcp`. The server also offers the review steps and rules as an MCP prompt named `review`, generated from the same text as the review skill. Outside Claude Code nobody converts your data, so bring it in the layout above and run `nodloop check --data-dir <dir>` until it passes. nodloop has no reader for other formats such as Parquet or a DuckDB database and none is planned.
+macOS and Linux, or Windows through WSL. It runs as a Claude Code plugin. For Codex, Cursor or another MCP client, install it with `go install github.com/jeon-jihyeon/nodloop/cmd/nodloop@latest` and serve it with `nodloop mcp`. Such a client has no hooks from this plugin, so a producer there calls `run` and `knowledge_for` itself.
 
 ## Limits
 
-Every procedure whose scope fits the event goes to the model in full, and a procedure without a scope fits every event. A large set of broad procedures means a large context.
+The session labels are the repository and the directory, compared as exact strings. An item scoped to a repository reaches every prompt there, whatever the task. Whether an item reached a run it should not have is not measured yet. Versions before 0.6.0 reviewed incident data from an events file. That data review leaves this repository for a plugin of its own, and its knowledge records still load but reach no run.
 
 ## License
 
@@ -219,7 +139,7 @@ MIT. The nodloop name and logo are not part of the license. Please use your own 
 
 ## Resources
 
-- [Demo data set](examples/demo): 24 synthetic traffic events with procedures, policy, labels and knowledge
+- [Seed vetoes](examples/vetoes.yaml): guard vetoes for common shell mistakes
 - [Contributing](CONTRIBUTING.md): how to build, test and send changes
 - [Security](SECURITY.md): how to report a vulnerability
 - [Releases](https://github.com/jeon-jihyeon/nodloop/releases): darwin and linux archives the plugin downloads
