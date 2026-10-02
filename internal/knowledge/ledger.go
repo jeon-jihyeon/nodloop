@@ -205,7 +205,7 @@ func (l *Ledger) refused(ctx context.Context, err error) error {
 // 1. every record is checked before any lands so a bad file lands nothing
 // 2. a record the ledger already holds is skipped so importing one file again changes nothing
 // 3. a record older than the recorded history of its version fails with ErrImportStale
-// The records land as they are without the status change checks because a data set brings its seed this way
+// The records land as they are without the status change checks because they were decided where they were written
 func (l *Ledger) Import(ctx context.Context, records []Knowledge) (Set, error) {
 	var fresh Set
 	err := l.store.AppendDecided(ctx, func(all Set) ([]Knowledge, error) {

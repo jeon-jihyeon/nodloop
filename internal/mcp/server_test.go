@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeon-jihyeon/nodloop/internal/compact"
+	"github.com/jeon-jihyeon/nodloop/internal/extract"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	"github.com/jeon-jihyeon/nodloop/internal/mcp"
 	"github.com/jeon-jihyeon/nodloop/internal/testkit"
@@ -16,7 +17,7 @@ import (
 
 func newServer(st testkit.Stores, session string) *mcp.Server {
 	compactor := compact.New(st.Ledger, st.Traces, st.Feedback, st.Traces, st.Clock.Now)
-	return mcp.New(st.Traces, st.Feedback, st.Outcomes, st.Ledger, compactor, st.Clock.Now, session, "nodloop", "--record-dir /records")
+	return mcp.New(st.Traces, st.Feedback, st.Outcomes, st.Ledger, compactor, extract.New(st.Ledger, st.Traces, st.Feedback), st.Clock.Now, session, "nodloop", "--record-dir /records")
 }
 
 func connect(t *testing.T, st testkit.Stores) testkit.Client {
@@ -168,4 +169,57 @@ func TestServerCompaction(t *testing.T) {
 	}}))
 
 	assert.NoError(t, c.Run(t, "approve_compaction", map[string]any{"compaction": proposed.Compaction, "approver": "ann"}))
+}
+
+// An edit read through extraction becomes an add, and the same lesson from a second edit is a duplicate of the approved item
+func TestServerExtraction(t *testing.T) {
+	st := testkit.Open(t)
+	c := connect(t, st)
+	pass := map[string]any{"states": true, "holds": true, "fits": true, "why": "ok"}
+	lesson := "Run git with -C <dir> instead of changing into the directory"
+	first, second := recordRun(t, c, "nodloop"), recordRun(t, c, "nodloop")
+	for _, id := range []string{first, second} {
+		require.NoError(t, c.Run(t, "feedback", map[string]any{
+			"trace_id": id, "verdict": "edit", "reason_code": "approach", "edited_output": "git -C repo status",
+		}))
+	}
+	var read struct {
+		Edited string `json:"edited"`
+		Rules  string `json:"rules"`
+		Items  []any  `json:"items"`
+	}
+	require.NoError(t, c.Call(t, "extraction", map[string]any{"from": first}, &read))
+	assert.Equal(t, "git -C repo status", read.Edited)
+	assert.Equal(t, extract.Rules, read.Rules)
+	assert.Empty(t, read.Items)
+	var added struct {
+		Relation  extract.Relation `json:"relation"`
+		Candidate struct {
+			ID    string             `json:"id"`
+			Scope knowledge.RunScope `json:"scope"`
+		} `json:"candidate"`
+	}
+	require.NoError(t, c.Call(t, "propose_extraction", map[string]any{
+		"from": first, "relation": "add", "kind": "judgment", "content": lesson, "critique": pass,
+	}, &added))
+	assert.Equal(t, extract.RelationAdd, added.Relation)
+	assert.Equal(t, knowledge.RunScope{Producer: "session", Labels: trace.Labels{"repo": {"nodloop"}}}, added.Candidate.Scope)
+	require.NoError(t, c.Run(t, "approve", map[string]any{"id": added.Candidate.ID, "version": 1, "approver": "ann"}))
+
+	var dup struct {
+		Related struct {
+			ID string `json:"id"`
+		} `json:"related"`
+		Candidate any `json:"candidate"`
+	}
+	require.NoError(t, c.Call(t, "propose_extraction", map[string]any{
+		"from": second, "relation": "duplicate", "relates_to": added.Candidate.ID, "kind": "judgment", "content": lesson, "critique": pass,
+	}, &dup))
+
+	assert.Equal(t, added.Candidate.ID, dup.Related.ID)
+	assert.Nil(t, dup.Candidate)
+	err := c.Run(t, "propose_extraction", map[string]any{
+		"from": second, "relation": "add", "kind": "judgment", "content": lesson, "critique": map[string]any{"states": true, "holds": false, "fits": true, "why": "x"},
+	})
+	assert.ErrorContains(t, err, extract.ErrCriticRefused.Error())
 }

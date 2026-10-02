@@ -27,6 +27,8 @@ func TestHostOpenFails(t *testing.T) {
 		"compaction": {"id": "k"}, "propose_compaction": {"anchor": "k", "items": []any{}},
 		"check_compaction":   {"compaction": "c", "items": []any{}},
 		"approve_compaction": {"compaction": "c", "approver": "jed"},
+		"extraction":         {"from": "t"},
+		"propose_extraction": {"from": "t", "relation": "add", "kind": "judgment", "content": "x", "critique": map[string]any{"states": true, "holds": true, "fits": true, "why": "ok"}},
 		"queue":              {}, "knowledge_health": {}, "reaffirm": {"id": "k", "version": 1, "approver": "jed"},
 	}
 	tools := c.Tools(t)

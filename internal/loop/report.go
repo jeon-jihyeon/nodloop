@@ -109,7 +109,7 @@ func (h *History) Report(since time.Time) Report {
 	rep := Report{Since: since, Weeks: []Week{}}
 	weeks := map[time.Time]*Week{}
 	byWeek, byCohort := map[time.Time]*measures{}, map[*Cohort]*measures{}
-	for _, r := range h.reviews {
+	for _, r := range h.entries {
 		cohort := &rep.WithoutKnowledge
 		if len(r.applied()) > 0 {
 			cohort = &rep.KnowledgeApplied

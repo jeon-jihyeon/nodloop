@@ -60,8 +60,8 @@ func (f *knowledgeFlags) bind(fs *flag.FlagSet) {
 	fs.StringVar(&f.vetoExample, "veto-example", "",
 		`propose: a tool_input JSON object the veto must block such as {"command":"sed -i s/a/b/ f"}`)
 	fs.StringVar(&f.from, "from", "",
-		"propose: a run a person corrected by edit or reject. Producer, labels and evidence come from it unless given")
-	fs.StringVar(&f.model, "model", "", "compact and check: model alias or name. Empty means the llm default")
+		"propose and extract: a run a person corrected by edit or reject. propose fills producer, labels and evidence from it unless given")
+	fs.StringVar(&f.model, "model", "", "compact, check and extract: model alias or name. Empty means the llm default")
 }
 
 // The candidate the propose flags describe
@@ -148,6 +148,8 @@ func runKnowledge(
 		err = flags.runCompaction(ctx, args[0], id, a, client, stdout)
 	case args[0] == "propose":
 		err = flags.runPropose(ctx, a, stdout)
+	case args[0] == "extract":
+		err = flags.runExtract(ctx, a, client, stdout)
 	default:
 		err = flags.runRecords(ctx, args[0], id, a, stdout)
 	}
@@ -157,7 +159,7 @@ func runKnowledge(
 	return 0
 }
 
-// The actions over the knowledge records and the records they cite and never the policy
+// The actions over the knowledge records and the records they cite
 func (f knowledgeFlags) runRecords(ctx context.Context, action, id string, a app, stdout io.Writer) error {
 	ledger, err := a.ledger()
 	if err != nil {
@@ -491,7 +493,6 @@ func (c knowledgeCommand) vetoLine(count int) {
 }
 
 // Appends the records of a jsonl file as they are
-// The seed knowledge of a data set arrives this way
 func (c knowledgeCommand) importFile(ctx context.Context, path string) error {
 	if path == "" {
 		return fmt.Errorf("--file %w", errRequired)

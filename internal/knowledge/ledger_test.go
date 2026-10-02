@@ -468,7 +468,7 @@ func TestLedgerApprove(t *testing.T) {
 					"      source: nodloop knowledge k1 v1 approved by jed\n", nil},
 		},
 		{
-			"an item whose folder may outgrow the review is refused and nothing is appended",
+			"an item whose folder would pass the run caps is refused and nothing is appended",
 			args{[]knowledge.Knowledge{large, candidate}, 1, "jed"},
 			want{history: knowledge.Set{candidate}, err: knowledge.ErrFolderFull},
 		},
@@ -785,11 +785,11 @@ func TestLedgerApproveItemCap(t *testing.T) {
 	}{
 		{"the item that fills the review list is approved", args{approved: []group{{"k-", 9, nil, false}}}, want{status: knowledge.StatusApproved}},
 		{
-			"the item one past the review list is refused naming the items",
+			"the item one past the run list is refused naming the items",
 			args{approved: []group{{"k-", 10, nil, false}}},
 			want{
 				status: knowledge.StatusCandidate,
-				err: "knowledge: folder may outgrow the review: 497 of 9000 chars 11 of 10 items in runs of session with " +
+				err: "knowledge: folder would pass the run caps: 497 of 9000 chars 11 of 10 items in runs of session with " +
 					"k-0 v1 45 chars, k-1 v1 45 chars, k-2 v1 45 chars, k-3 v1 45 chars, k-4 v1 45 chars, " +
 					"k-5 v1 45 chars, k-6 v1 45 chars, k-7 v1 45 chars, k-8 v1 45 chars, k-9 v1 45 chars",
 			},
@@ -799,7 +799,7 @@ func TestLedgerApproveItemCap(t *testing.T) {
 			args{approved: []group{{"k-c", 10, commit, false}, {"k-p", 5, push, false}}, labels: commit},
 			want{
 				status: knowledge.StatusCandidate,
-				err: "knowledge: folder may outgrow the review: 650 of 9000 chars 11 of 10 items in runs of session with " +
+				err: "knowledge: folder would pass the run caps: 650 of 9000 chars 11 of 10 items in runs of session with " +
 					"k-c0 v1 59 chars, k-c1 v1 59 chars, k-c2 v1 59 chars, k-c3 v1 59 chars, k-c4 v1 59 chars, " +
 					"k-c5 v1 59 chars, k-c6 v1 59 chars, k-c7 v1 59 chars, k-c8 v1 59 chars, k-c9 v1 59 chars",
 			},
