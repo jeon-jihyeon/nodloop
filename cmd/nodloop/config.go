@@ -76,6 +76,14 @@ func resolveRecordConfig(getenv func(string) string, src, dataDir, recordDir str
 	}
 }
 
+// The record flag a command pasted into another shell needs when no data dir is set
+func (c config) recordArgs() string {
+	if c.recordDir == "" {
+		return ""
+	}
+	return "--record-dir " + shellWord(c.recordDir)
+}
+
 // The data flags a command pasted into another shell needs to read these directories
 // 1. that shell has neither the flags nor the env of the process that resolved them
 // 2. both are absolute because it may start in another folder

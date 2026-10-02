@@ -96,10 +96,7 @@ func TestRunMCP(t *testing.T) {
 // What a call answers when the config of that moment does not open
 func TestMCPOpen(t *testing.T) {
 	data := testkit.DemoDir(t)
-	const (
-		unset = `^` + envFileDir + ` is not set: run nodloop setup or set the variable\. Run .* setup --data-dir <dir>$`
-		fix   = `\. Fix what this names or run .* setup --data-dir <dir> again$`
-	)
+	const fix = `\. Fix what this names or run .* setup --data-dir <dir> again$`
 	type args struct {
 		// Values with the `{home}` and `{records}` placeholders
 		env map[string]string
@@ -118,7 +115,7 @@ func TestMCPOpen(t *testing.T) {
 		want want
 	}{
 		{"records default under home", args{map[string]string{"HOME": "{home}", envFileDir: data}, nil}, want{}},
-		{"nothing configured names setup", args{map[string]string{"HOME": "{home}"}, nil}, want{err: unset}},
+		{"nothing configured opens the records alone", args{map[string]string{"HOME": "{home}"}, nil}, want{}},
 		{
 			"broken config is kept and named",
 			args{map[string]string{"HOME": "{home}"}, map[string]string{".nodloop/config.json": "{broken"}},
@@ -135,11 +132,11 @@ func TestMCPOpen(t *testing.T) {
 			want{err: `^analysis: policy is not valid yaml: .*` + fix},
 		},
 		{
-			"config without a data dir names setup and is kept",
+			"config without a data dir opens the records alone and is kept",
 			args{map[string]string{"HOME": "{home}"}, map[string]string{".nodloop/config.json": `{"file_dir":""}`}},
-			want{err: unset, config: `{"file_dir":""}`},
+			want{config: `{"file_dir":""}`},
 		},
-		{"nothing configured without a home names setup", args{nil, nil}, want{err: unset}},
+		{"nothing configured without a home names the record dir", args{nil, nil}, want{err: `^home directory unknown`}},
 		{
 			"record dir that is a file is named",
 			args{map[string]string{envFileDir: data, envRecordDir: "{records}/regular"}, nil},
@@ -235,4 +232,57 @@ func setPolicyVersion(t *testing.T, dir, version string) {
 	_, rest, ok := strings.Cut(string(b), "\n")
 	require.True(t, ok)
 	require.NoError(t, os.WriteFile(path, []byte("version: "+version+"\n"+rest), 0o600))
+}
+
+// With no data dir the server keeps the loop of runs and every data tool names setup
+func TestMCPRecordsOnly(t *testing.T) {
+	home := t.TempDir()
+	now := func() time.Time { return time.Date(2026, 10, 2, 0, 0, 0, 0, time.UTC) }
+	o := mcpOpen{getenv: func(k string) string { return map[string]string{"HOME": home}[k] }, now: now, session: mcp.NewSession(now())}
+	c := testkit.Connect(t, mcp.NewHost(o.open, "test", "").ServeTransport)
+	var run struct {
+		TraceID string `json:"trace_id"`
+	}
+	require.NoError(t, c.Call(t, "run", map[string]any{
+		"producer": "session", "labels": map[string]any{"repo": []any{"nodloop"}}, "output": "cd repo && git status",
+	}, &run))
+	err := c.Run(t, "propose", map[string]any{"kind": "judgment", "content": "x", "from": run.TraceID})
+	assert.ErrorContains(t, err, mcp.ErrRunNotCorrected.Error())
+	err = c.Run(t, "feedback", map[string]any{
+		"trace_id": run.TraceID, "verdict": "edit", "edited_output": "x",
+		"edited": map[string]any{"status": "hold", "observations": []any{}, "causes": []any{}, "checks": []any{}, "open_questions": []any{}},
+	})
+	assert.ErrorContains(t, err, mcp.ErrEditedTwice.Error())
+	require.NoError(t, c.Run(t, "feedback", map[string]any{
+		"trace_id": run.TraceID, "verdict": "edit", "reason_code": "other", "edited_output": "git -C repo status",
+	}))
+	var proposed struct {
+		ID    string `json:"id"`
+		Scope struct {
+			Producer string              `json:"producer"`
+			Labels   map[string][]string `json:"labels"`
+		} `json:"scope"`
+	}
+	require.NoError(t, c.Call(t, "propose", map[string]any{
+		"id": "git-c", "kind": "judgment", "content": "use git -C instead of cd", "from": run.TraceID,
+	}, &proposed))
+	assert.Equal(t, "session", proposed.Scope.Producer)
+	assert.Equal(t, map[string][]string{"repo": {"nodloop"}}, proposed.Scope.Labels)
+	require.NoError(t, c.Run(t, "approve", map[string]any{"id": "git-c", "version": 1, "approver": "ann"}))
+	var got struct {
+		Items []struct {
+			ID string `json:"id"`
+		} `json:"items"`
+	}
+	require.NoError(t, c.Call(t, "knowledge_for", map[string]any{"producer": "session", "labels": map[string]any{"repo": []any{"nodloop"}}}, &got))
+	require.Len(t, got.Items, 1)
+	assert.Equal(t, "git-c", got.Items[0].ID)
+
+	assert.NoError(t, c.Run(t, "propose", map[string]any{
+		"kind": "meaning", "content": "a data item with no metric needs no data dir", "trace_ids": []any{run.TraceID},
+	}))
+	err = c.Run(t, "events", map[string]any{})
+	assert.ErrorContains(t, err, envFileDir+" is not set")
+	err = c.Run(t, "propose", map[string]any{"kind": "judgment", "content": "x", "from": run.TraceID, "labels": map[string]any{"repo": []any{"nodlop"}}})
+	assert.ErrorContains(t, err, "no run of session carries repo=nodlop")
 }
