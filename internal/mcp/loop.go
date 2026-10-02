@@ -9,12 +9,12 @@ import (
 )
 
 type queueInput struct {
-	Limit     *int     `json:"limit,omitempty" jsonschema:"reviews to list including audit samples. 10 by default and 0 lists every review"`
+	Limit     *int     `json:"limit,omitempty" jsonschema:"runs to list including audit samples. 10 by default and 0 lists every run"`
 	AuditRate *float64 `json:"audit_rate,omitempty" jsonschema:"share of the limit drawn at random from the rest of the order. 0.2 by default"`
 	Seed      *int64   `json:"seed,omitempty" jsonschema:"the same seed draws the same audit samples. The clock by default"`
 }
 
-// The item order with the recorded review of each so the user can judge it in place
+// The item order with the recorded output of each so the user can judge it in place
 func (s *Server) queue(ctx context.Context, _ *sdk.CallToolRequest, in queueInput) (*sdk.CallToolResult, any, error) {
 	opts := loop.QueueOptions{Limit: loop.QueueLimit, AuditRate: loop.QueueAuditRate, Seed: s.now().UnixNano()}
 	if in.Limit != nil {
@@ -38,7 +38,7 @@ func (s *Server) queue(ctx context.Context, _ *sdk.CallToolRequest, in queueInpu
 	for _, item := range items {
 		ids = append(ids, item.TraceID)
 	}
-	return nil, map[string]any{"seed": opts.Seed, "items": items, "reviews": h.Reviews(ids)}, nil
+	return nil, map[string]any{"seed": opts.Seed, "items": items, "outputs": h.Outputs(ids)}, nil
 }
 
 // Health rows and audit issues of every knowledge version
@@ -47,19 +47,7 @@ func (s *Server) knowledgeHealth(ctx context.Context, _ *sdk.CallToolRequest, _ 
 	if err != nil {
 		return nil, nil, err
 	}
-	procedures, err := s.src.Procedures(ctx)
-	if err != nil {
-		return nil, nil, err
-	}
-	metrics, err := s.src.Metrics(ctx)
-	if err != nil {
-		return nil, nil, err
-	}
-	dims, err := s.src.Dims(ctx)
-	if err != nil {
-		return nil, nil, err
-	}
-	return nil, map[string]any{"items": h.Health(s.now()), "issues": h.BrokenReferences(procedures, metrics, dims, s.policy.Contexts)}, nil
+	return nil, map[string]any{"items": h.Health(s.now()), "issues": h.BrokenReferences()}, nil
 }
 
 type reaffirmInput struct {

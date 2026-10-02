@@ -6,16 +6,12 @@ import (
 )
 
 var (
-	errHomeUnknown   = errors.New("home directory unknown")
-	errDataDirUnset  = errors.New(envFileDir + " is not set")
-	errUnknownSource = errors.New("unknown source")
-	errNoEvents      = errors.New("no events.csv")
+	errHomeUnknown = errors.New("home directory unknown")
 	// A run label is key=value and an applied item is id:version
-	errLabelFlag     = errors.New("bad --label")
-	errAppliedFlag   = errors.New("bad --applied")
-	errPolicyMissing = errors.New("no policy.yaml")
-	// A procedure whose scope names such a metric never reaches a review
-	errScopeUnobserved  = errors.New("a procedure scope names a metric no event carries")
+	errLabelFlag   = errors.New("bad --label")
+	errAppliedFlag = errors.New("bad --applied")
+	// A proposal from a run teaches what a person corrected
+	errNotCorrected     = errors.New("a proposal from a run needs a person's edit or reject on it")
 	errConfigInvalid    = errors.New(configFile + " is not valid JSON")
 	errUnexpectedOutput = errors.New("unexpected output")
 	errWrongAnswer      = errors.New("wrong answer")

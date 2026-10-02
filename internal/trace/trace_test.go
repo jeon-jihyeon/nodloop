@@ -15,9 +15,11 @@ func TestTraceRoundTrip(t *testing.T) {
 	base := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
 	in := trace.Trace{
 		ID:        trace.NewID(base),
-		Name:      trace.NameDiagnose,
-		SessionID: "eval-1",
-		Subject:   "tq-001",
+		Name:      trace.NameRun,
+		SessionID: "session-1",
+		Subject:   "commit",
+		Producer:  "session",
+		Labels:    trace.Labels{"repo": {"nodloop"}},
 		Ref:       "c1",
 		Time:      base,
 		Model:     "sonnet",
@@ -43,10 +45,9 @@ func TestNameValid(t *testing.T) {
 		args trace.Name
 		want bool
 	}{
-		{"context is known", trace.NameContext, true},
-		{"select is known", trace.NameSelect, true},
-		{"diagnose is known", trace.NameDiagnose, true},
-		{"revise is known", trace.NameRevise, true},
+		{"run is known", trace.NameRun, true},
+		{"check is known", trace.NameCheck, true},
+		{"a name of the data review is unknown now", "diagnose", false},
 		{"empty name is unknown", "", false},
 		{"misspelled name is unknown", "diagnosis", false},
 	}
@@ -54,26 +55,6 @@ func TestNameValid(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			assert.Equal(t, tc.want, tc.args.Valid())
-		})
-	}
-}
-
-func TestTraceCheckReview(t *testing.T) {
-	tcs := []struct {
-		name string
-		args trace.Trace
-		want error
-	}{
-		{"diagnose trace is a review", trace.Trace{ID: "d1", Name: trace.NameDiagnose}, nil},
-		{"failed diagnose trace is refused", trace.Trace{ID: "f1", Name: trace.NameDiagnose, Error: "model timed out"}, trace.ErrFailedRun},
-		{"revise trace is not a review", trace.Trace{ID: "r1", Name: trace.NameRevise}, trace.ErrNotReview},
-		{"context trace is not a review", trace.Trace{ID: "c1", Name: trace.NameContext}, trace.ErrNotReview},
-		{"select trace is not a review", trace.Trace{ID: "s1", Name: trace.NameSelect}, trace.ErrNotReview},
-	}
-	for _, tc := range tcs {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			assert.ErrorIs(t, tc.args.CheckReview(), tc.want)
 		})
 	}
 }
@@ -136,7 +117,7 @@ func TestUsagePromptTokens(t *testing.T) {
 func TestFilterMatches(t *testing.T) {
 	tr := trace.Trace{
 		ID:        "d1",
-		Name:      trace.NameDiagnose,
+		Name:      trace.NameRun,
 		SessionID: "eval-1",
 		Subject:   "tq-001",
 		Ref:       "c1",
@@ -150,8 +131,8 @@ func TestFilterMatches(t *testing.T) {
 		{"empty filter matches all", trace.Filter{}, true},
 		{"same id matches", trace.Filter{ID: "d1"}, true},
 		{"other id does not match", trace.Filter{ID: "d2"}, false},
-		{"same name matches", trace.Filter{Name: trace.NameDiagnose}, true},
-		{"other name does not match", trace.Filter{Name: trace.NameContext}, false},
+		{"same name matches", trace.Filter{Name: trace.NameRun}, true},
+		{"other name does not match", trace.Filter{Name: trace.NameCheck}, false},
 		{"same session matches", trace.Filter{SessionID: "eval-1"}, true},
 		{"other session does not match", trace.Filter{SessionID: "eval-2"}, false},
 		{"same subject matches", trace.Filter{Subject: "tq-001"}, true},
@@ -197,33 +178,6 @@ func TestNewIDDiffersWithinOneMillisecond(t *testing.T) {
 	assert.NotEqual(t, trace.NewID(at), trace.NewID(at))
 }
 
-func TestTracesPending(t *testing.T) {
-	open := trace.Trace{ID: "c1", Name: trace.NameContext}
-	closed := trace.Trace{ID: "c2", Name: trace.NameContext}
-	review := trace.Trace{ID: "d1", Name: trace.NameDiagnose, Ref: "c2"}
-	selection := trace.Trace{ID: "s1", Name: trace.NameSelect, Ref: "c1"}
-	unlinked := trace.Trace{ID: "d2", Name: trace.NameDiagnose}
-	later := trace.Trace{ID: "c3", Name: trace.NameContext}
-	tcs := []struct {
-		name string
-		args trace.Traces
-		want trace.Traces
-	}{
-		{"no traces have nothing pending", nil, nil},
-		{"context without a diagnose is pending", trace.Traces{open}, trace.Traces{open}},
-		{"diagnose referring to a context closes it", trace.Traces{review, closed, open}, trace.Traces{open}},
-		{"select referring to a context leaves it pending", trace.Traces{selection, open}, trace.Traces{open}},
-		{"diagnose without a ref closes nothing", trace.Traces{unlinked, open}, trace.Traces{open}},
-		{"pending contexts keep the input order", trace.Traces{later, open}, trace.Traces{later, open}},
-	}
-	for _, tc := range tcs {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			assert.Equal(t, tc.want, tc.args.Pending())
-		})
-	}
-}
-
 func TestTraceCheckRun(t *testing.T) {
 	tcs := []struct {
 		name string
@@ -231,12 +185,9 @@ func TestTraceCheckRun(t *testing.T) {
 		want error
 	}{
 		{"a run is cited", trace.Trace{ID: "u1", Name: trace.NameRun}, nil},
-		{"a review is cited", trace.Trace{ID: "d1", Name: trace.NameDiagnose}, nil},
+		{"a review of the data review is refused now", trace.Trace{ID: "d1", Name: "diagnose"}, trace.ErrNotRun},
 		{"a failed run is refused", trace.Trace{ID: "u2", Name: trace.NameRun, Error: "cancelled"}, trace.ErrFailedRun},
-		{"a failed review is refused", trace.Trace{ID: "f1", Name: trace.NameDiagnose, Error: "model timed out"}, trace.ErrFailedRun},
-		{"a context trace is refused", trace.Trace{ID: "c1", Name: trace.NameContext}, trace.ErrNotRun},
-		{"a select trace is refused", trace.Trace{ID: "s1", Name: trace.NameSelect}, trace.ErrNotRun},
-		{"a revise trace is refused", trace.Trace{ID: "r1", Name: trace.NameRevise}, trace.ErrNotRun},
+		{"a check trace is refused", trace.Trace{ID: "c1", Name: trace.NameCheck}, trace.ErrNotRun},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
@@ -317,7 +268,7 @@ func TestTracesVocabulary(t *testing.T) {
 		{Name: trace.NameRun, Producer: "session", Labels: trace.Labels{"repo": {"nodloop"}, "task": {"commit"}}},
 		{Name: trace.NameRun, Producer: "session", Labels: trace.Labels{"repo": {"nodloop", "other"}}},
 		{Name: trace.NameRun, Producer: "ci", Labels: trace.Labels{"repo": {"ci-only"}}},
-		{Name: trace.NameDiagnose, Producer: "session", Labels: trace.Labels{"repo": {"not-a-run"}}},
+		{Name: trace.NameCheck, Producer: "session", Labels: trace.Labels{"repo": {"not-a-run"}}},
 	}
 
 	got := ts.Vocabulary("session")

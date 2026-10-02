@@ -6,10 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
-	"strings"
 	"time"
 
-	"github.com/jeon-jihyeon/nodloop/internal/evidence"
 	"github.com/jeon-jihyeon/nodloop/internal/veto"
 )
 
@@ -77,12 +75,8 @@ type Knowledge struct {
 	Version int    `json:"version"`
 	Kind    Kind   `json:"kind"`
 	Content string `json:"content"`
-	// Every set field must match the event
-	Scope Scope `json:"scope"`
-	// Change contexts where it must not apply even when Scope matches
-	Exceptions []evidence.Context `json:"exceptions,omitempty"`
 	// Where the item applies among the runs of one producer
-	// Nil for an item of the data review, which Scope and Exceptions describe
+	// Nil on a record of the data review written before 0.8.0, which reaches no run and can only be retired
 	Run *RunScope `json:"run,omitempty"`
 	// At least one reference is required
 	Evidence Evidence `json:"evidence"`
@@ -122,10 +116,9 @@ type Knowledge struct {
 // A safety cap and not a tuning knob since the compaction trigger keeps folders far smaller
 const ReviewChars = 70_000
 
-// Approved items one review offers as knowledge candidates
+// Approved items one run receives
 // One list Claude Code can show on one screen
-// Approval never grows a change context past it so no event offers more items than the list shows
-// unless the ledger held more before the cap
+// Approval never grows a folder past it unless the ledger held more before the cap
 const ReviewItems = 10
 
 // Approved items a folder holds before it is crowded
@@ -134,10 +127,7 @@ const FolderItems = 5
 
 // Folders are measured with the text a review sees so the budget and the review cap count the same characters
 func (k Knowledge) Text() string {
-	if k.Run != nil {
-		return fmt.Sprintf("\n[%s v%d %s] %s\nScope: %s\n", k.ID, k.Version, k.Kind, k.Content, k.Run)
-	}
-	return fmt.Sprintf("\n[%s v%d %s] %s\nScope: %s\n", k.ID, k.Version, k.Kind, k.Content, k.Scope)
+	return fmt.Sprintf("\n[%s v%d %s] %s\nScope: %s\n", k.ID, k.Version, k.Kind, k.Content, k.reachText())
 }
 
 // Tool call rule of a judgment
@@ -179,7 +169,7 @@ func (v Veto) check(id, reason string) error {
 	return nil
 }
 
-func (k Knowledge) validate(contexts evidence.Contexts) error {
+func (k Knowledge) validate() error {
 	if k.ID == "" {
 		return ErrIDRequired
 	}
@@ -202,7 +192,7 @@ func (k Knowledge) validate(contexts evidence.Contexts) error {
 	case k.Author == "":
 		return ErrAuthorRequired
 	}
-	if err := k.checkScope(contexts); err != nil {
+	if err := k.checkScope(); err != nil {
 		return err
 	}
 	if k.Veto == nil {
@@ -225,40 +215,13 @@ func (k Knowledge) checkVersion() error {
 	return nil
 }
 
-// Fails with ErrScopeInvalid when no event could ever match the scope and the exceptions
-// 1. a change context or exception the data set does not declare matches no event
-// 2. exceptions that cover every change context left leave the item nothing to apply to
-// A misspelled exception would otherwise let the item reach the events the person meant to exclude
-func (k Knowledge) checkScope(contexts evidence.Contexts) error {
-	if k.Run != nil {
-		if !k.Scope.Empty() || len(k.Scope.Dims) > 0 || len(k.Exceptions) > 0 {
-			return ErrScopeMixed
-		}
-		return k.Run.check()
+// Fails with ErrScopeRequired on an item without a run scope
+// A record of the data review written before 0.8.0 is only read, never proposed or approved again
+func (k Knowledge) checkScope() error {
+	if k.Run == nil {
+		return fmt.Errorf("%w: %s", ErrScopeRequired, k.ID)
 	}
-	for _, c := range k.Scope.ChangeContexts {
-		if !contexts.Valid(c) {
-			return fmt.Errorf("%w: change context %q is not one of %v", ErrScopeInvalid, c, contexts.Names())
-		}
-	}
-	for _, c := range k.Exceptions {
-		if !contexts.Valid(c) {
-			return fmt.Errorf("%w: exception %q is not one of %v", ErrScopeInvalid, c, contexts.Names())
-		}
-	}
-	if k.Excluded(contexts) {
-		return fmt.Errorf("%w: the exceptions %v cover every change context of the scope", ErrScopeInvalid, k.Exceptions)
-	}
-	return nil
-}
-
-// Whether the exceptions leave no change context the item could apply to
-// An item scoped to no change context may apply to every declared one
-func (k Knowledge) Excluded(contexts evidence.Contexts) bool {
-	if len(k.Scope.ChangeContexts) == 0 {
-		return k.excepts(contexts.Names())
-	}
-	return k.excepts(k.Scope.ChangeContexts)
+	return k.Run.check()
 }
 
 // Whether the veto of the item still blocks the example of the old veto
@@ -295,105 +258,12 @@ func (k Knowledge) changed(status Status, approver string, now time.Time) Knowle
 	return k
 }
 
-// The draft over the fields code filled from a correction
-// 1. a scope axis the draft sets replaces the filled one so a person can widen or narrow it
-// 2. evidence adds up with the filled references first
-// 3. basis falls back to the filled one
-func (k Knowledge) Filled(scope Scope, ev Evidence, basis Basis) Knowledge {
-	if len(k.Scope.ChangeContexts) == 0 {
-		k.Scope.ChangeContexts = scope.ChangeContexts
-	}
-	if len(k.Scope.Metrics) == 0 {
-		k.Scope.Metrics = scope.Metrics
-	}
-	if len(k.Scope.Dims) == 0 {
-		k.Scope.Dims = scope.Dims
-	}
-	k.Evidence = ev.union(k.Evidence)
-	if k.Basis == "" {
-		k.Basis = basis
-	}
-	return k
-}
-
-// Whether one review may carry both items
-// 1. their change contexts intersect
-// 2. neither excepts every change context the other is scoped to
-// Metrics and dims split nothing because one event often moves several metrics and carries several dims
-func (k Knowledge) sharesFolder(other Knowledge) bool {
-	if k.Run != nil || other.Run != nil {
-		return false
-	}
-	return k.Scope.Intersects(evidence.Scope{ChangeContexts: other.Scope.ChangeContexts}) &&
-		!k.excepts(other.Scope.ChangeContexts) && !other.excepts(k.Scope.ChangeContexts)
-}
-
-// An empty list is every change context and no exception covers all of them
-func (k Knowledge) excepts(contexts []evidence.Context) bool {
-	if len(contexts) == 0 {
-		return false
-	}
-	for _, c := range contexts {
-		if !slices.Contains(k.Exceptions, c) {
-			return false
-		}
-	}
-	return true
-}
-
-func (k Knowledge) applies(changeContext evidence.Context, moved Moved, dims Dims) bool {
-	return k.mayApply(changeContext) && k.Scope.admits(changeContext, moved, dims)
-}
-
-// Whether the item applies to some event of the change context whatever its metrics and dims
-func (k Knowledge) mayApply(changeContext evidence.Context) bool {
-	return k.Status == StatusApproved && k.carriedIn(changeContext)
-}
-
-// Whether a review of the change context may carry the item whatever its status
-// A judgment with a veto acts on tool calls through the guard so no review carries it
-// Otherwise vetoes would fill the review caps and a compaction could never free them because it keeps every veto apart
-func (k Knowledge) carriedIn(changeContext evidence.Context) bool {
-	return k.Veto == nil && k.reaches(changeContext)
-}
-
-// The scope and the exceptions in one line so a refusal can quote what a new version must keep
+// The scope in one line so a refusal can quote what a new version must keep
 func (k Knowledge) reachText() string {
-	if k.Run != nil {
-		return k.Run.String()
+	if k.Run == nil {
+		return "no run, a record of the data review"
 	}
-	if len(k.Exceptions) == 0 {
-		return k.Scope.String()
-	}
-	except := make([]string, len(k.Exceptions))
-	for i, c := range k.Exceptions {
-		except[i] = string(c)
-	}
-	return k.Scope.String() + ". except " + strings.Join(except, " and ")
-}
-
-// Whether the scope and the exceptions leave the change context to the item whatever its status
-// An item with a run scope reaches no change context
-func (k Knowledge) reaches(changeContext evidence.Context) bool {
-	return k.Run == nil && !slices.Contains(k.Exceptions, changeContext) && k.Scope.MatchesContext(changeContext)
-}
-
-// Whether the item reaches every event of the change context and the metric that carries the dims
-// 1. an empty metric stands for every metric so only an item without metrics reaches it
-// 2. a dim value of the item that the dims lack leaves out the events of every other value
-func (k Knowledge) covers(changeContext evidence.Context, metric string, dims map[string]string) bool {
-	if !k.reaches(changeContext) {
-		return false
-	}
-	if len(k.Scope.Metrics) > 0 && (metric == "" || !slices.Contains(k.Scope.Metrics, metric)) {
-		return false
-	}
-	for key, value := range k.Scope.Dims {
-		if dims[key] != value {
-			return false
-		}
-	}
-	return true
+	return k.Run.String()
 }
 
 // Whether this version stands in for the id instead of the current one with status and version

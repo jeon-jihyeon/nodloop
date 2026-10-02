@@ -4,23 +4,16 @@ import (
 	"fmt"
 	"strings"
 	"unicode/utf8"
-
-	"github.com/jeon-jihyeon/nodloop/internal/evidence"
 )
 
-// The approved knowledge a review may carry together with one item
-// 1. full when its text passes ReviewChars or its items pass ReviewItems and a review would be cut
-// 2. crowded when one review would carry more than FolderItems items a compaction anchored at the item covers
-// An event carries one change context so the caps and the crowding hold the heaviest change context the item reaches
-// and never the union of every change context it spans
+// The approved knowledge one run may carry together with one item
+// 1. full when its text passes ReviewChars or its items pass ReviewItems and a run would be cut
+// 2. crowded when one run would carry more than FolderItems items a compaction anchored at the item covers
 type Folder struct {
 	// Runes of the item text and the texts of Carried
 	Chars int
 	// The other approved items a review of Context carries with the item
 	Carried Set
-	// The change context the item reaches whose review carries the most
-	// Empty when no review carries the item such as a judgment with a veto
-	Context evidence.Context
 	// Replayable approved items the heaviest review carries with the item counting the item
 	// Zero unless the item is approved and an event can replay it because only such an anchor can be compacted
 	Compactable int
@@ -38,30 +31,13 @@ func (f Folder) Full() bool {
 	return f.Chars > ReviewChars || f.Size() > ReviewItems
 }
 
-// Whether a review of f breaks a cap before one of other does
-// 1. a full folder first
-// 2. then more items
-// 3. then more chars
-func (f Folder) heavier(other Folder) bool {
-	if f.Full() != other.Full() {
-		return f.Full()
-	}
-	if f.Size() != other.Size() {
-		return f.Size() > other.Size()
-	}
-	return f.Chars > other.Chars
-}
-
 // Both caps the folder is held to for the person who picks the way out
 func (f Folder) load() string {
 	load := fmt.Sprintf("%d of %d chars %d of %d items", f.Chars, ReviewChars, f.Size(), ReviewItems)
-	if f.Producer != "" {
-		return load + " in runs of " + f.Producer
-	}
-	if f.Context == "" {
+	if f.Producer == "" {
 		return load
 	}
-	return load + " in " + string(f.Context)
+	return load + " in runs of " + f.Producer
 }
 
 // Crowded never refuses an approval

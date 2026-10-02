@@ -6,6 +6,7 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
+	"github.com/jeon-jihyeon/nodloop/internal/trace"
 )
 
 func TestFolderSize(t *testing.T) {
@@ -71,6 +72,7 @@ func TestFolderCrowded(t *testing.T) {
 
 func TestFolderString(t *testing.T) {
 	t.Parallel()
+	run := &knowledge.RunScope{Producer: "session", Labels: trace.Labels{"repo": {"nodloop"}}}
 	tcs := []struct {
 		name string
 		args knowledge.Folder
@@ -80,10 +82,10 @@ func TestFolderString(t *testing.T) {
 		{
 			"every other item comes with its version and the runes of its text",
 			knowledge.Folder{Carried: knowledge.Set{
-				{ID: "k-a", Version: 1, Kind: knowledge.KindMeaning, Content: "one"},
-				{ID: "k-b", Version: 2, Kind: knowledge.KindJudgment, Content: "두 개 🙂"},
+				{ID: "k-a", Version: 1, Kind: knowledge.KindMeaning, Content: "one", Run: run},
+				{ID: "k-b", Version: 2, Kind: knowledge.KindJudgment, Content: "두 개 🙂", Run: run},
 			}},
-			"k-a v1 39 chars, k-b v2 42 chars",
+			"k-a v1 59 chars, k-b v2 62 chars",
 		},
 	}
 	for _, tc := range tcs {

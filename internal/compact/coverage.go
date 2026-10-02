@@ -99,7 +99,7 @@ func (c *Compactor) Record(ctx context.Context, id string, answers []CoverageAns
 		return knowledge.Coverage{}, err
 	}
 	now := c.now()
-	if err := c.replays.Append(ctx, trace.Trace{
+	if err := c.checks.Append(ctx, trace.Trace{
 		ID: trace.NewID(now), Name: trace.NameCheck, SessionID: id, Time: now, Input: json.RawMessage("{}"), Output: out,
 	}); err != nil {
 		return knowledge.Coverage{}, err
@@ -109,7 +109,7 @@ func (c *Compactor) Record(ctx context.Context, id string, answers []CoverageAns
 
 // The newest coverage recorded for the compaction
 func (c *Compactor) Coverage(ctx context.Context, id string) (knowledge.Coverage, error) {
-	checks, err := c.replays.List(ctx, trace.Filter{Name: trace.NameCheck, SessionID: id})
+	checks, err := c.checks.List(ctx, trace.Filter{Name: trace.NameCheck, SessionID: id})
 	if err != nil {
 		return knowledge.Coverage{}, err
 	}
@@ -140,21 +140,4 @@ func coverageText(c knowledge.Compaction) string {
 		fmt.Fprintf(&b, "\n[%s] %s\nReplaces: %s\n", k.ID, k.Content, strings.Join(names, ", "))
 	}
 	return b.String()
-}
-
-// Every draft scoped to runs names labels some recorded run of its producer carries
-func (c *Compactor) recorded(ctx context.Context, drafts []knowledge.Knowledge) error {
-	runs, err := c.traces.List(ctx, trace.Filter{Name: trace.NameRun})
-	if err != nil {
-		return err
-	}
-	for i, k := range drafts {
-		if k.Run == nil {
-			continue
-		}
-		if err := k.Run.Recorded(runs.Vocabulary(k.Run.Producer)); err != nil {
-			return fmt.Errorf("draft %d: %w", i+1, err)
-		}
-	}
-	return nil
 }

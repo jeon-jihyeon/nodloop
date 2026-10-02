@@ -51,27 +51,7 @@ func (c knowledgeCommand) audit(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	src, err := c.app.source()
-	if err != nil {
-		return err
-	}
-	procedures, err := src.Procedures(ctx)
-	if err != nil {
-		return err
-	}
-	metrics, err := src.Metrics(ctx)
-	if err != nil {
-		return err
-	}
-	dims, err := src.Dims(ctx)
-	if err != nil {
-		return err
-	}
-	contexts, err := c.app.contexts()
-	if err != nil {
-		return err
-	}
-	return json.NewEncoder(c.out).Encode(h.BrokenReferences(procedures, metrics, dims, contexts))
+	return json.NewEncoder(c.out).Encode(h.BrokenReferences())
 }
 
 // Without a version the approved version of the id is the one reaffirmed
@@ -93,52 +73,23 @@ func (c knowledgeCommand) reaffirm(ctx context.Context, id string, version int, 
 	return nil
 }
 
-// Proposes the next version without the change contexts where its conversation reviews were refuted
+// Proposes the next version that excepts the values of the key its refuted runs carried
 // Prints the candidate like propose so the person sees what approval would change
 func (c knowledgeCommand) narrow(ctx context.Context, id string, version int, key, author string) error {
 	if id == "" || version <= 0 {
 		return fmt.Errorf("narrow: an id and --version %w", errRequired)
 	}
+	if key == "" {
+		return fmt.Errorf("narrow: --key, the label whose refuted values the item stops reaching, %w", errRequired)
+	}
 	h, err := c.app.history(ctx)
 	if err != nil {
 		return err
 	}
-	k, err := c.ledger.Approved(ctx, id, version)
-	if err != nil {
-		return err
-	}
-	if k.Run != nil {
-		return c.narrowRun(ctx, h, k, key, author)
-	}
-	contexts, err := c.app.contexts()
-	if err != nil {
-		return err
-	}
-	k, overlaps, err := c.ledger.Narrow(ctx, id, version, h.RefutedContexts(id, version, contexts), h.RefutedTraces(id, version), author)
-	if errors.Is(err, knowledge.ErrNarrowExhausted) {
-		return fmt.Errorf("%w. Narrowing cannot help because every change context of the version was refuted. "+
-			"Keep the version or retire it by name with nodloop knowledge retire %s --version %d --approver <name>",
-			err, id, version)
-	}
-	if err != nil {
-		return err
-	}
-	fmt.Fprintf(c.out, "%s\tv%d\t%s\tscope %s\texceptions %v\n", k.ID, k.Version, k.Status, k.Scope, k.Exceptions)
-	for _, o := range overlaps {
-		fmt.Fprintf(c.out, "overlaps\t%s\tv%d\t%s\n", o.ID, o.Version, o.Status)
-	}
-	return c.folder(ctx, k.ID, k.Version)
-}
-
-// A run item narrows by the values of one label key its refuted runs carried
-func (c knowledgeCommand) narrowRun(ctx context.Context, h *loop.History, k knowledge.Knowledge, key, author string) error {
-	if key == "" {
-		return fmt.Errorf("narrow: a run item needs --key, the label whose refuted values it stops reaching: %w", errRequired)
-	}
-	n, overlaps, err := c.ledger.NarrowRun(ctx, k.ID, k.Version, key, h.RefutedValues(k.ID, k.Version, key), h.RefutedTraces(k.ID, k.Version), author)
+	n, overlaps, err := c.ledger.Narrow(ctx, id, version, key, h.RefutedValues(id, version, key), h.RefutedTraces(id, version), author)
 	if errors.Is(err, knowledge.ErrNarrowExhausted) {
 		return fmt.Errorf("%w. Keep the version or retire it by name with nodloop knowledge retire %s --version %d --approver <name>",
-			err, k.ID, k.Version)
+			err, id, version)
 	}
 	if err != nil {
 		return err
@@ -200,8 +151,8 @@ func (c loopCommand) online(ctx context.Context, since time.Time) error {
 func runQueue(args []string, getenv func(string) string, now func() time.Time, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("queue", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	var data dataFlags
-	data.bind(fs)
+	var records recordFlags
+	records.bind(fs)
 	opts := loop.QueueOptions{}
 	fs.IntVar(&opts.Limit, "limit", loop.QueueLimit, "reviews to list including audit samples. 0 lists every review")
 	fs.Float64Var(&opts.AuditRate, "audit-rate", loop.QueueAuditRate, "share of the limit drawn at random from the rest of the order")
@@ -212,7 +163,7 @@ func runQueue(args []string, getenv func(string) string, now func() time.Time, s
 	if fs.NArg() != 0 {
 		return fail(stderr, "queue", fmt.Errorf("%w %q", errUnknownAction, fs.Arg(0)))
 	}
-	a, err := data.app(getenv, now)
+	a, err := records.app(getenv, now)
 	if err != nil {
 		return fail(stderr, "queue", err)
 	}
@@ -234,8 +185,8 @@ func runReport(args []string, getenv func(string) string, now func() time.Time, 
 	}
 	fs := flag.NewFlagSet("report online", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	var data dataFlags
-	data.bind(fs)
+	var records recordFlags
+	records.bind(fs)
 	since := fs.String("since", "", "only verdicts and outcomes from this RFC3339 time on")
 	if err := fs.Parse(args[1:]); err != nil {
 		return 1
@@ -250,7 +201,7 @@ func runReport(args []string, getenv func(string) string, now func() time.Time, 
 			return fail(stderr, "report", err)
 		}
 	}
-	a, err := data.app(getenv, now)
+	a, err := records.app(getenv, now)
 	if err != nil {
 		return fail(stderr, "report", err)
 	}
@@ -264,12 +215,12 @@ func runReport(args []string, getenv func(string) string, now func() time.Time, 
 func runReportLoop(args []string, getenv func(string) string, now func() time.Time, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("report loop", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	var data dataFlags
-	data.bind(fs)
+	var records recordFlags
+	records.bind(fs)
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
-	a, err := data.records(getenv, now)
+	a, err := records.app(getenv, now)
 	if err != nil {
 		return fail(stderr, "report", err)
 	}

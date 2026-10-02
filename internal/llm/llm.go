@@ -36,8 +36,8 @@ type Response struct {
 	Duration       time.Duration
 }
 
-// The consumer is diagnose but the interface lives here because mockgen generates llmmock from this file
-// llmmock cannot import diagnose without an upward import
+// The consumer is compact but the interface lives here because mockgen generates llmmock from this file
+// llmmock cannot import compact without an upward import
 type Client interface {
 	Complete(ctx context.Context, req Request) (Response, error)
 }

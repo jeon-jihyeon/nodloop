@@ -36,7 +36,7 @@ func TestNewReplays(t *testing.T) {
 	require.NoError(t, err)
 	ctx := context.Background()
 	tr := trace.Trace{
-		ID: "r1", Name: trace.NameDiagnose, SessionID: "c-1", Tags: []string{"replay"}, Input: json.RawMessage(`{}`),
+		ID: "r1", Name: trace.NameRun, SessionID: "c-1", Tags: []string{"replay"}, Input: json.RawMessage(`{}`),
 		Output: json.RawMessage(`{}`),
 	}
 	require.NoError(t, replays.Append(ctx, tr))

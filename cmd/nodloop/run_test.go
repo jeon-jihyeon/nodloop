@@ -142,7 +142,7 @@ func TestRunKnowledgeForRuns(t *testing.T) {
 	assert.Contains(t, stderr, "no run of session carries repo=nodlop")
 	code, _, stderr = knowledgeRun("propose", "--kind", "judgment", "--content", "x", "--trace", run, "--label", "repo=nodloop")
 	assert.Equal(t, 1, code)
-	assert.Contains(t, stderr, "--label and --except need --producer")
+	assert.Contains(t, stderr, "propose: --producer or --from is required")
 	code, stdout, stderr := knowledgeRun(append(propose, "--label", "repo=nodloop")...)
 	require.Equal(t, 0, code, stderr)
 	assert.Contains(t, stdout, "scope\truns of session. repo=nodloop\n")

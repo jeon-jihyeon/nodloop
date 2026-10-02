@@ -19,10 +19,10 @@ func runTrace(args []string, getenv func(string) string, now func() time.Time, s
 	}
 	fs := flag.NewFlagSet("trace "+args[0], flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	var data dataFlags
-	data.bind(fs)
+	var records recordFlags
+	records.bind(fs)
 	var f trace.Filter
-	name := fs.String("name", "", "pipeline name such as diagnose")
+	name := fs.String("name", "", "trace name such as run")
 	fs.StringVar(&f.SessionID, "session", "", "session id")
 	fs.StringVar(&f.Subject, "subject", "", "subject such as an event id")
 	fs.IntVar(&f.Limit, "limit", 0, "newest n traces. 0 means all")
@@ -39,7 +39,7 @@ func runTrace(args []string, getenv func(string) string, now func() time.Time, s
 		err := fmt.Errorf("%w %q. Use one of %s", errUnknownTraceName, *name, strings.Join(names, ", "))
 		return fail(stderr, "trace", err)
 	}
-	a, err := data.app(getenv, now)
+	a, err := records.app(getenv, now)
 	if err != nil {
 		return fail(stderr, "trace", err)
 	}
@@ -52,8 +52,6 @@ func runTrace(args []string, getenv func(string) string, now func() time.Time, s
 	switch args[0] {
 	case "list":
 		err = cmd.list(ctx, f)
-	case "pending":
-		err = cmd.pending(ctx)
 	case "show":
 		err = cmd.show(ctx, id)
 	default:
@@ -77,17 +75,6 @@ func (c traceCommand) list(ctx context.Context, f trace.Filter) error {
 	}
 	for _, t := range traces {
 		fmt.Fprintf(c.out, "%s\t%s\t%s\t%s\t$%.4f\n", t.ID, t.Time.Format(time.RFC3339), t.Name, t.Subject, t.Usage.CostUSD)
-	}
-	return nil
-}
-
-func (c traceCommand) pending(ctx context.Context) error {
-	all, err := c.store.List(ctx, trace.Filter{})
-	if err != nil {
-		return err
-	}
-	for _, t := range all.Pending() {
-		fmt.Fprintf(c.out, "%s\t%s\t%s\n", t.ID, t.Time.Format(time.RFC3339), t.Subject)
 	}
 	return nil
 }

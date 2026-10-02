@@ -15,8 +15,8 @@ import (
 // A backticked lower case word after the word call is read as a tool name
 func TestSkillTools(t *testing.T) {
 	called := regexp.MustCompile("[Cc]all `([a-z_]+)`")
-	// Tools of the first 0.5 build that the server no longer serves
-	removed := regexp.MustCompile("`(setup|infer_policy)`")
+	// Tools of the data review that the server no longer serves
+	removed := regexp.MustCompile("`(setup|infer_policy|events|observe|context|select|record|detail|pending)`")
 	type want struct {
 		// Tools the skill must call
 		tools []string
@@ -29,11 +29,6 @@ func TestSkillTools(t *testing.T) {
 		want want
 	}{
 		{
-			"the setup skill runs check and setup and calls events",
-			"../../plugin/skills/setup/SKILL.md",
-			want{tools: []string{"events"}, commands: []string{"nodloop check --data-dir", "nodloop setup --data-dir"}},
-		},
-		{
 			"the sessions skill records verdicts and proposes knowledge and runs the list and the export through the CLI",
 			"../../plugin/skills/sessions/SKILL.md",
 			want{
@@ -42,18 +37,10 @@ func TestSkillTools(t *testing.T) {
 			},
 		},
 		{
-			"the review skill calls the review tools and reads past traces and the report through the CLI",
-			"../../plugin/skills/review/SKILL.md",
-			want{
-				tools:    []string{"context", "observe", "record", "select"},
-				commands: []string{"nodloop trace list --subject", "nodloop trace show", "nodloop report online", "nodloop check --data-dir"},
-			},
-		},
-		{
 			"the nod skill records verdicts on runs and proposes knowledge from them",
 			"../../plugin/skills/nod/SKILL.md",
 			want{
-				tools:    []string{"feedback", "propose", "approve", "run"},
+				tools:    []string{"feedback", "propose", "approve", "run", "compaction", "propose_compaction", "check_compaction", "approve_compaction"},
 				commands: []string{"nodloop trace list --name run", "nodloop trace show", "nodloop knowledge for --producer session"},
 			},
 		},
@@ -79,24 +66,6 @@ func TestSkillTools(t *testing.T) {
 				assert.Contains(t, text, "`~/.nodloop/bin/"+command)
 			}
 			assert.Empty(t, removed.FindAllString(text, -1))
-		})
-	}
-}
-
-// Every Bash allow rule README offers covers a command the setup skill runs
-// 1. the rule starts with the command text so no wildcard comes before the subcommand
-// 2. the command text is the stable link and not the versioned plugin path that changes on update
-func TestReadmeAllowRules(t *testing.T) {
-	readme, err := os.ReadFile("../../README.md")
-	require.NoError(t, err)
-	skill, err := os.ReadFile("../../plugin/skills/setup/SKILL.md")
-	require.NoError(t, err)
-	rules := regexp.MustCompile(`"Bash\(([^)]*) \*\)"`).FindAllStringSubmatch(string(readme), -1)
-	require.Len(t, rules, 2)
-	for _, rule := range rules {
-		t.Run(rule[1], func(t *testing.T) {
-			assert.NotContains(t, rule[1], "*")
-			assert.Contains(t, string(skill), "`"+rule[1]+" ")
 		})
 	}
 }
