@@ -22,7 +22,7 @@ type Trace struct {
 	// What the run was about in a few words
 	Subject string `json:"subject,omitempty"`
 	// A trace this one belongs to
-	// Written by the data review before 0.8.0 and read as recorded
+	// Written by the data review before 0.6.0 and read as recorded
 	Ref   string    `json:"ref,omitempty"`
 	Time  time.Time `json:"time"`
 	Model string    `json:"model,omitempty"`

@@ -24,7 +24,7 @@ body:
     id: steps
     attributes:
       label: Steps to reproduce
-      description: Commands or the conversation turn, with the data directory layout if it matters
+      description: Commands or the conversation turn, with the labels of the run if they matter
     validations:
       required: true
   - type: textarea
@@ -37,4 +37,4 @@ body:
     id: trace
     attributes:
       label: Trace or record
-      description: Output of `nodloop trace show <id>` when a review is involved. Remove anything private
+      description: Output of `nodloop trace show <id>` when a run is involved. Remove anything private
