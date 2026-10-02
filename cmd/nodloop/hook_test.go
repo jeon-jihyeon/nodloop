@@ -215,3 +215,39 @@ func TestRunReportLoop(t *testing.T) {
 	assert.Equal(t, "git-c\tv1\tapplied 1\tfollowed 1 of 1\trepeat 0\tsettle -\n"+
 		"misapplied\tnot measured: no label says which runs an item should have reached\n", stdout.String())
 }
+
+// A run item narrows by the dir of its refuted run and promotes on its confirmed run, all on the records alone
+func TestRunKnowledgeLifecycle(t *testing.T) {
+	home, records, _ := hookHome(t, "use git -C")
+	getenv := func(k string) string { return map[string]string{"HOME": home, envRecordDir: records}[k] }
+	out := filepath.Join(home, "answer.txt")
+	require.NoError(t, os.WriteFile(out, []byte("answer"), 0o600))
+	record := func(dir string) string {
+		var id bytes.Buffer
+		require.Equal(t, 0, runRun([]string{"record", "--producer", sessionProducer, "--label", "repo=nodloop", "--label", "dir=" + dir,
+			"--applied", "git-c:1", "--output", out}, getenv, time.Now, &id, &bytes.Buffer{}))
+		return strings.TrimSpace(id.String())
+	}
+	refuted, confirmed := record("docs"), record(".")
+	for id, result := range map[string]string{refuted: "refuted", confirmed: "confirmed"} {
+		var stderr bytes.Buffer
+		require.Equal(t, 0, runFeedback([]string{"outcome", "--trace", id, "--result", result}, getenv, time.Now, &bytes.Buffer{}, &stderr), stderr.String())
+	}
+	knowledgeRun := func(args ...string) (int, string, string) {
+		var stdout, stderr bytes.Buffer
+		code := runKnowledge(args, getenv, nil, time.Now, &stdout, &stderr)
+		return code, stdout.String(), stderr.String()
+	}
+
+	code, _, stderr := knowledgeRun("narrow", "git-c", "--version", "1")
+	assert.Equal(t, 1, code)
+	assert.Contains(t, stderr, "a run item needs --key")
+	code, stdout, stderr := knowledgeRun("narrow", "git-c", "--version", "1", "--key", "dir")
+	require.Equal(t, 0, code, stderr)
+	assert.Contains(t, stdout, "git-c\tv2\tcandidate\tscope runs of session. repo=nodloop. except dir=docs\n")
+	code, _, stderr = knowledgeRun("retire", "git-c", "--version", "2", "--approver", "ann")
+	require.Equal(t, 0, code, stderr)
+	code, stdout, stderr = knowledgeRun("promote", "git-c", "--version", "1")
+	require.Equal(t, 0, code, stderr)
+	assert.Contains(t, stdout, "git-c\tv3\tcandidate\tbasis verified\toutcomes ["+confirmed+"]\n")
+}

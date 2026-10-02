@@ -3,10 +3,12 @@ package knowledge
 import (
 	"context"
 	"fmt"
+	"maps"
 	"slices"
 	"time"
 
 	"github.com/jeon-jihyeon/nodloop/internal/evidence"
+	"github.com/jeon-jihyeon/nodloop/internal/trace"
 )
 
 // Days an approved version stays fresh after its approval or its last reaffirm
@@ -80,6 +82,49 @@ func (l *Ledger) Narrow(
 		draft.Evidence.OutcomeTraceIDs = append(slices.Clone(k.Evidence.OutcomeTraceIDs), traceIDs...)
 		return all.propose(draft, now, l.contexts)
 	})
+}
+
+// Proposes the next version of the approved run item that excepts the values of the key where its runs were refuted
+// 1. the refuted runs join the outcome evidence
+// 2. fails with ErrNarrowInvalid for an item without a run scope or without values
+// 3. fails with ErrNarrowExhausted when the scope requires that key and every value it allows would be excepted
+// The version is checked under the store lock like Narrow
+func (l *Ledger) NarrowRun(
+	ctx context.Context, id string, version int, key string, values, traceIDs []string, author string,
+) (Knowledge, Set, error) {
+	return l.appendCandidate(ctx, func(all Set, now time.Time) (Knowledge, error) {
+		k, err := all.currentApproved(id, version)
+		if err != nil {
+			return Knowledge{}, err
+		}
+		draft, err := k.narrowedRun(key, values)
+		if err != nil {
+			return Knowledge{}, err
+		}
+		draft.Author = author
+		draft.Evidence.OutcomeTraceIDs = append(slices.Clone(k.Evidence.OutcomeTraceIDs), traceIDs...)
+		return all.propose(draft, now, l.contexts)
+	})
+}
+
+// The run item with the values of the key added to its exceptions
+func (k Knowledge) narrowedRun(key string, values []string) (Knowledge, error) {
+	if k.Run == nil {
+		return Knowledge{}, fmt.Errorf("%w: %s v%d is not scoped to runs", ErrNarrowInvalid, k.ID, k.Version)
+	}
+	if key == "" || len(values) == 0 {
+		return Knowledge{}, fmt.Errorf("%w: no refuted value of %q", ErrNarrowInvalid, key)
+	}
+	run := RunScope{Producer: k.Run.Producer, Labels: maps.Clone(k.Run.Labels), Except: maps.Clone(k.Run.Except)}
+	if run.Except == nil {
+		run.Except = trace.Labels{}
+	}
+	run.Except[key] = slices.Concat(run.Except[key], values)
+	if allowed, ok := run.Labels[key]; ok && !slices.ContainsFunc(allowed, func(v string) bool { return !slices.Contains(run.Except[key], v) }) {
+		return Knowledge{}, fmt.Errorf("%w: %s v%d would except every %s it allows", ErrNarrowExhausted, k.ID, k.Version, key)
+	}
+	k.Run = &run
+	return k, nil
 }
 
 // Proposes the next version of the current approved version with basis verified on the confirmed reviews

@@ -80,6 +80,15 @@ func TestHistoryRuns(t *testing.T) {
 		assert.Zero(t, got.Agreement.Samples)
 		assert.Zero(t, got.Agreement.Excluded)
 	})
+	t.Run("the dirs of refuted runs that applied the version are the values to narrow", func(t *testing.T) {
+		refuted := sessionRun(t, "r4", 4, "nodloop", gitC)
+		refuted.Labels["dir"] = []string{"docs"}
+		h, err := loop.New(append(runs, refuted), verdicts, append(outcomes, outcome("r4", feedback.ResultRefuted, monday.Add(5*time.Hour))), items)
+		require.NoError(t, err)
+		assert.Equal(t, []string{"docs"}, h.RefutedValues("git-c", 1, "dir"))
+		assert.Equal(t, []string{"r4"}, h.RefutedTraces("git-c", 1))
+		assert.Empty(t, h.RefutedValues("git-c", 1, "task"))
+	})
 	t.Run("a label no run carries any more is a broken reference", func(t *testing.T) {
 		moved := runItem("moved", knowledge.BasisStated)
 		moved.Run.Labels = trace.Labels{"repo": {"renamed"}}

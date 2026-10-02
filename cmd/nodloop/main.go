@@ -88,8 +88,9 @@ commands:
   knowledge audit           References of current items that no longer resolve
   knowledge reaffirm <id> --approver <name> [--version <n>]
                             Record that a named person rechecked the approved version. Its review deadline starts again
-  knowledge narrow <id> --version <n> [--author <a>]
-                            Propose the next version without the change contexts where its reviews were refuted
+  knowledge narrow <id> --version <n> [--key <label key>] [--author <a>]
+                            Propose the next version without the change contexts where its reviews were refuted.
+                            A run item needs --key and excepts the values of that label its refuted runs carried
                             Fails naming the retire command when every change context of the version was refuted
   knowledge promote <id> --version <n> [--author <a>]
                             Propose the next version with basis verified and the reviews whose outcome confirmed it

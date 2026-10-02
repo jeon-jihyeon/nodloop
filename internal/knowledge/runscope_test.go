@@ -253,3 +253,64 @@ func TestRunScopeRecorded(t *testing.T) {
 		})
 	}
 }
+
+func TestLedgerNarrowRun(t *testing.T) {
+	type args struct {
+		scope  *knowledge.RunScope
+		key    string
+		values []string
+	}
+	type want struct {
+		except trace.Labels
+		err    error
+	}
+	tcs := []struct {
+		name string
+		args args
+		want want
+	}{
+		{
+			"the refuted dirs become exceptions",
+			args{&knowledge.RunScope{Producer: "session", Labels: trace.Labels{"repo": {"nodloop"}}}, "dir", []string{"docs", "tmp"}},
+			want{except: trace.Labels{"dir": {"docs", "tmp"}}},
+		},
+		{
+			"an exception already there is kept once",
+			args{&knowledge.RunScope{Producer: "session", Except: trace.Labels{"dir": {"docs"}}}, "dir", []string{"docs", "tmp"}},
+			want{except: trace.Labels{"dir": {"docs", "tmp"}}},
+		},
+		{
+			"excepting every value the scope allows is refused",
+			args{&knowledge.RunScope{Producer: "session", Labels: trace.Labels{"repo": {"nodloop"}}}, "repo", []string{"nodloop"}},
+			want{err: knowledge.ErrNarrowExhausted},
+		},
+		{"no refuted value is refused", args{&knowledge.RunScope{Producer: "session"}, "dir", nil}, want{err: knowledge.ErrNarrowInvalid}},
+		{"an item of the data review is refused", args{nil, "dir", []string{"docs"}}, want{err: knowledge.ErrNarrowInvalid}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ctx := context.Background()
+			l := runLedger(t)
+			draft := runItem("k1", tc.args.scope)
+			if tc.args.scope == nil {
+				draft.Evidence = knowledge.Evidence{ParagraphIDs: []string{"p#1"}}
+			}
+			_, _, err := l.Propose(ctx, draft)
+			require.NoError(t, err)
+			require.NoError(t, testkit.Err(l.Approve(ctx, "k1", 1, "ann")))
+
+			got, _, err := l.NarrowRun(ctx, "k1", 1, tc.args.key, tc.args.values, []string{"refuted-run"}, "author")
+
+			require.ErrorIs(t, err, tc.want.err)
+			if tc.want.err != nil {
+				return
+			}
+			assert.Equal(t, 2, got.Version)
+			assert.Equal(t, tc.want.except, got.Run.Except)
+			assert.Equal(t, tc.args.scope.Labels, got.Run.Labels)
+			assert.Contains(t, got.Evidence.OutcomeTraceIDs, "refuted-run")
+			assert.NoError(t, testkit.Err(l.Approve(ctx, "k1", 2, "ann")), "a narrowed version never widens")
+		})
+	}
+}

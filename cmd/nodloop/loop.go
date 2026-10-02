@@ -95,13 +95,20 @@ func (c knowledgeCommand) reaffirm(ctx context.Context, id string, version int, 
 
 // Proposes the next version without the change contexts where its conversation reviews were refuted
 // Prints the candidate like propose so the person sees what approval would change
-func (c knowledgeCommand) narrow(ctx context.Context, id string, version int, author string) error {
+func (c knowledgeCommand) narrow(ctx context.Context, id string, version int, key, author string) error {
 	if id == "" || version <= 0 {
 		return fmt.Errorf("narrow: an id and --version %w", errRequired)
 	}
 	h, err := c.app.history(ctx)
 	if err != nil {
 		return err
+	}
+	k, err := c.ledger.Approved(ctx, id, version)
+	if err != nil {
+		return err
+	}
+	if k.Run != nil {
+		return c.narrowRun(ctx, h, k, key, author)
 	}
 	contexts, err := c.app.contexts()
 	if err != nil {
@@ -121,6 +128,26 @@ func (c knowledgeCommand) narrow(ctx context.Context, id string, version int, au
 		fmt.Fprintf(c.out, "overlaps\t%s\tv%d\t%s\n", o.ID, o.Version, o.Status)
 	}
 	return c.folder(ctx, k.ID, k.Version)
+}
+
+// A run item narrows by the values of one label key its refuted runs carried
+func (c knowledgeCommand) narrowRun(ctx context.Context, h *loop.History, k knowledge.Knowledge, key, author string) error {
+	if key == "" {
+		return fmt.Errorf("narrow: a run item needs --key, the label whose refuted values it stops reaching: %w", errRequired)
+	}
+	n, overlaps, err := c.ledger.NarrowRun(ctx, k.ID, k.Version, key, h.RefutedValues(k.ID, k.Version, key), h.RefutedTraces(k.ID, k.Version), author)
+	if errors.Is(err, knowledge.ErrNarrowExhausted) {
+		return fmt.Errorf("%w. Keep the version or retire it by name with nodloop knowledge retire %s --version %d --approver <name>",
+			err, k.ID, k.Version)
+	}
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(c.out, "%s\tv%d\t%s\tscope %s\n", n.ID, n.Version, n.Status, n.Run)
+	for _, o := range overlaps {
+		fmt.Fprintf(c.out, "overlaps\t%s\tv%d\t%s\n", o.ID, o.Version, o.Status)
+	}
+	return c.folder(ctx, n.ID, n.Version)
 }
 
 // Proposes the next version with basis verified on the reviews whose outcome confirmed it

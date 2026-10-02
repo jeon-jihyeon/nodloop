@@ -32,7 +32,7 @@ type knowledgeFlags struct {
 	from                                                               string
 	version, parallel                                                  int
 	contexts, metrics, exceptions, paragraphs, feedbackIDs, outcomeIDs listFlag
-	producer                                                           string
+	producer, key                                                      string
 	labels, except                                                     labelFlag
 	vetoTool, vetoField, vetoMatch, vetoUnless, vetoExample            string
 	model                                                              string
@@ -58,6 +58,7 @@ func (f *knowledgeFlags) bind(fs *flag.FlagSet) {
 	fs.StringVar(&f.producer, "producer", "", "propose and for: the producer whose runs the item applies to")
 	fs.Var(&f.labels, "label", "propose and for: key=value a run must carry. Repeatable")
 	fs.Var(&f.except, "except", "propose: key=value a run must not carry. Repeatable")
+	fs.StringVar(&f.key, "key", "", "narrow: the label key of a run item whose refuted values it stops reaching")
 	fs.Var(&f.paragraphs, "evidence-paragraph", "procedure paragraph id. Repeatable")
 	fs.Var(&f.feedbackIDs, "evidence-feedback", "diagnose trace id whose feedback supports it. Repeatable")
 	fs.Var(&f.outcomeIDs, "evidence-outcome", "diagnose trace id whose outcome supports it. Repeatable")
@@ -221,7 +222,7 @@ func (f knowledgeFlags) runHealth(ctx context.Context, action, id string, cmd kn
 	case "reaffirm":
 		return cmd.reaffirm(ctx, id, f.version, f.approver)
 	case "narrow":
-		return cmd.narrow(ctx, id, f.version, f.author)
+		return cmd.narrow(ctx, id, f.version, f.key, f.author)
 	default:
 		return cmd.promote(ctx, id, f.version, f.author)
 	}
