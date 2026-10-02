@@ -48,6 +48,9 @@ commands:
                             List traces newest first
   trace show <id>           Print one trace as JSON
   trace pending             List context traces that no review recorded
+  hook prompt | hook stop   The Claude Code conversation hooks the plugin registers. prompt adds the approved items of
+                            producer session for the repo and dir of cwd as context. stop records the answer as a run.
+                            Both always exit 0 and do nothing when NODLOOP_SESSION is off
   run record --producer <p> --output <file> [--label <key=value>] [--subject <s>] [--applied <id:version>]
                             Record one output of any producer as a run trace and print its id for feedback.
                             Output that is not JSON is kept as text. Needs only the record directory
@@ -174,6 +177,7 @@ func run(args []string, getenv func(string) string, stdin io.Reader, stdout io.W
 		"analysis": func(args []string) int { return runAnalysis(args, getenv, time.Now, stdout, stderr) },
 		"trace":    func(args []string) int { return runTrace(args, getenv, time.Now, stdout, stderr) },
 		"run":      func(args []string) int { return runRun(args, getenv, time.Now, stdout, stderr) },
+		"hook":     func(args []string) int { return runHook(args, getenv, time.Now, stdin, stdout, stderr) },
 		"feedback": func(args []string) int { return runFeedback(args, getenv, time.Now, stdout, stderr) },
 		"queue":    func(args []string) int { return runQueue(args, getenv, time.Now, stdout, stderr) },
 		"report":   func(args []string) int { return runReport(args, getenv, time.Now, stdout, stderr) },

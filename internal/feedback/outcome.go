@@ -49,7 +49,7 @@ func NewOutcome(traceID string, result Result, confirmedCause, note, reviewer st
 		reviewer = ReviewerAuthor
 	}
 	if reviewer == ReviewerSession {
-		confirmedCause, note = redact(confirmedCause), redact(note)
+		confirmedCause, note = Redact(confirmedCause), Redact(note)
 	}
 	return Outcome{
 		TraceID: traceID, Time: now.UTC(), Result: result, ConfirmedCause: confirmedCause, Note: note,
