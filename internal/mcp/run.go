@@ -49,17 +49,18 @@ type runInput struct {
 
 // Records one output so a person can nod on it
 func (s *Server) run(ctx context.Context, _ *sdk.CallToolRequest, in runInput) (*sdk.CallToolResult, any, error) {
-	output, ok := in.Output.(string)
-	b := []byte(output)
-	if !ok {
-		var err error
-		if b, err = json.Marshal(in.Output); err != nil {
-			return nil, nil, err
-		}
+	// Text stays a JSON string even when it reads as a number, and secrets go before anything is written
+	b, err := json.Marshal(in.Output)
+	if err != nil {
+		return nil, nil, err
 	}
+	b = []byte(feedback.Redact(string(b)))
 	input, err := json.Marshal(map[string][]knowledge.Ref{"applied": in.Applied})
 	if err != nil {
 		return nil, nil, err
+	}
+	if in.Producer == "" {
+		return nil, nil, trace.ErrProducerRequired
 	}
 	tr, err := trace.NewRun(in.Producer, in.Subject, in.Labels, input, b, s.now())
 	if err != nil {
@@ -85,8 +86,11 @@ type runItem struct {
 	Scope   knowledge.RunScope `json:"scope"`
 }
 
-// The approved items a run with these labels applies and whether they pass the review caps together
+// The approved items a run with these labels applies and whether they pass the run caps together
 func (s *Server) knowledgeFor(ctx context.Context, _ *sdk.CallToolRequest, in knowledgeForInput) (*sdk.CallToolResult, any, error) {
+	if in.Producer == "" {
+		return nil, nil, trace.ErrProducerRequired
+	}
 	all, err := s.ledger.All(ctx)
 	if err != nil {
 		return nil, nil, err
@@ -99,7 +103,7 @@ func (s *Server) knowledgeFor(ctx context.Context, _ *sdk.CallToolRequest, in kn
 		chars += utf8.RuneCountInString(k.Text())
 	}
 	return nil, map[string]any{
-		"items": out, "chars": chars, "over_budget": chars > knowledge.ReviewChars || len(items) > knowledge.ReviewItems,
+		"items": out, "chars": chars, "over_budget": chars > knowledge.RunChars || len(items) > knowledge.RunItems,
 	}, nil
 }
 
@@ -143,14 +147,15 @@ func (s *Server) proposeRun(ctx context.Context, in proposeInput, draft knowledg
 	}, nil
 }
 
-// The latest verdict a person gave on the trace is an edit or a reject
+// The latest verdict on the trace is an edit or a reject
+// A session verdict counts because the user picked it from the transcript before it was recorded
 func (s *Server) corrected(ctx context.Context, traceID string) error {
 	verdicts, err := s.verdicts.List(ctx, feedback.Filter{TraceID: traceID})
 	if err != nil {
 		return err
 	}
-	human := feedback.Records(verdicts).Human().Latest()
-	if len(human) == 0 || !human[0].Corrects() {
+	latest := feedback.Records(verdicts).Latest()
+	if len(latest) == 0 || !latest[0].Corrects() {
 		return fmt.Errorf("%w: %s", ErrRunNotCorrected, traceID)
 	}
 	return nil

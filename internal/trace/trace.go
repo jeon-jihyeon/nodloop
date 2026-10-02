@@ -86,7 +86,7 @@ func NewRun(producer, subject string, labels Labels, input json.RawMessage, outp
 	if producer == "" {
 		return Trace{}, ErrProducerRequired
 	}
-	labels, err := labels.Normalized()
+	labels, err := labels.runLabels()
 	if err != nil {
 		return Trace{}, err
 	}

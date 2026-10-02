@@ -15,7 +15,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/nodloop\" hook stop"
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/nodloop\" hook stop",
+            "async": true
           }
         ]
       }

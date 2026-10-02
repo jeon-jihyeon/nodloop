@@ -96,7 +96,7 @@ func (s Set) folder(item Knowledge) Folder {
 }
 
 // The run folder of the item when the set holds it past a cap and bigger than before
-// 1. a folder past ReviewChars grows when its chars grow and one past ReviewItems when its items grow
+// 1. a folder past RunChars grows when its chars grow and one past RunItems when its items grow
 // 2. a folder already past a cap that does not grow passes so a replacement never needs a retire first
 func (s Set) outgrows(before Set, item Knowledge) (Folder, bool) {
 	if item.Run == nil || item.Veto != nil {
@@ -104,10 +104,10 @@ func (s Set) outgrows(before Set, item Knowledge) (Folder, bool) {
 	}
 	f := s.runFolder(item)
 	was := before.runCarried("", *item.Run)
-	return f, (f.Chars > ReviewChars && f.Chars > was.runes()) || (f.Size() > ReviewItems && f.Size() > len(was))
+	return f, (f.Chars > RunChars && f.Chars > was.runes()) || (f.Size() > RunItems && f.Size() > len(was))
 }
 
-// Runes of the texts a review sees
+// Runes of the texts a run receives
 func (s Set) runes() int {
 	n := 0
 	for _, k := range s {
@@ -223,14 +223,14 @@ func (s Set) propose(draft Knowledge, now time.Time) (Knowledge, error) {
 }
 
 // The records of an approval with the approved record first and the record it supersedes after it
-// 1. a candidate of a compaction is refused because only ApproveCompaction checks its replay
+// 1. a candidate of a compaction is refused because only ApproveCompaction checks its coverage
 // 2. a candidate built on a version that a compaction retired is refused because approving it would undo that compaction
 // 3. a new version that drops or weakens the veto of the approved version is refused with ErrVetoLifted
 // Only a retire by a named person lifts a veto
-// 4. a new version that reaches events the approved version never reached is refused with ErrScopeWidened
+// 4. a new version that reaches runs the approved version never reached is refused with ErrScopeWidened
 // Only a retire by a named person widens the scope the same way
-// 5. an approval that pushes a review past ReviewChars or ReviewItems or grows one already past them is refused
-// So a new version that replaces an item in a review already past a cap passes while that review does not grow
+// 5. an approval that pushes a run past RunChars or RunItems or grows one already past them is refused
+// So a new version that replaces an item in a run already past a cap passes while that run does not grow
 func (s Set) approval(id string, version int, approver string, now time.Time) ([]Knowledge, error) {
 	history, err := s.historyOf(id)
 	if err != nil {
@@ -241,7 +241,7 @@ func (s Set) approval(id string, version int, approver string, now time.Time) ([
 		return nil, err
 	}
 	if from.Status == StatusCandidate && from.Compaction != "" {
-		return nil, fmt.Errorf("%w: approve compaction %s with a passing replay", ErrCompactionInvalid, from.Compaction)
+		return nil, fmt.Errorf("%w: approve compaction %s with a passing coverage check", ErrCompactionInvalid, from.Compaction)
 	}
 	if retired, ok := s.compactedBase(from); ok {
 		return nil, fmt.Errorf("%w: %s v%d was built on v%d, which compaction %s retired. Retire v%d and propose the change on the item that replaced v%d",
@@ -427,45 +427,6 @@ func (s Set) latest(id string, version int) (Knowledge, error) {
 	return Knowledge{}, fmt.Errorf("%w: %s version %d", ErrNotFound, id, version)
 }
 
-// The id of the version first and then every id its compactions replaced in first seen order
-// 1. a compaction names only its direct parents so the walk follows each of them in turn
-// 2. the earlier versions of an id are walked too
-// A revision of a compacted item carries only its own evidence and still stands for what the compaction replaced
-// 3. a version met twice is walked once so a draft that reuses an old id ends
-// 4. a version missing from the set stands for its own id alone
-func (s Set) Lineage(ref Ref) []string {
-	ids := []string{}
-	walked := map[Ref]bool{}
-	next := []Ref{ref}
-	for len(next) > 0 {
-		r := next[0]
-		next = next[1:]
-		if walked[r] {
-			continue
-		}
-		walked[r] = true
-		if !slices.Contains(ids, r.ID) {
-			ids = append(ids, r.ID)
-		}
-		if k, err := s.latest(r.ID, r.Version); err == nil {
-			next = append(next, k.Evidence.Knowledge...)
-		}
-		next = append(next, s.history(r.ID).before(r.Version)...)
-	}
-	return ids
-}
-
-// The versions below version as refs
-func (s Set) before(version int) []Ref {
-	out := []Ref{}
-	for _, k := range s {
-		if k.Version < version {
-			out = append(out, Ref{ID: k.ID, Version: k.Version})
-		}
-	}
-	return out
-}
-
 // Whether ref takes over the outcome of a run of the producer with the labels that applied the versions in applied
 // 1. the run applied a version a compaction merged into ref and never ref itself
 // 2. ref still reaches the run by its producer and labels
@@ -474,7 +435,7 @@ func (s Set) before(version int) []Ref {
 // A compaction restates the facts of the versions it merged so their open outcomes stay with the fact
 func (s Set) Inherits(ref Ref, traceID string, applied []Ref, producer string, labels trace.Labels) bool {
 	k, err := s.latest(ref.ID, ref.Version)
-	if err != nil || slices.Contains(applied, ref) || k.Run == nil || !k.Run.admits(producer, labels) {
+	if err != nil || slices.Contains(applied, ref) || k.Run == nil || !k.Run.Admits(producer, labels) {
 		return false
 	}
 	merged := s.merged(ref)

@@ -28,13 +28,13 @@ func (f *feedbackFlags) bind(fs *flag.FlagSet) {
 	fs.StringVar(&f.reviewer, "reviewer", "", "reviewer such as author")
 	fs.IntVar(&f.limit, "limit", 0, "newest n records. 0 means all")
 	fs.StringVar(&f.code, "reason-code", "",
-		"add: what the output got wrong with edit or reject. status, cause, citation, checks or other")
+		"add: what the output got wrong with edit or reject. fact, approach, scope, form or other")
 	fs.StringVar(&f.reason, "reason", "", "add: why the verdict was given")
 	fs.StringVar(&f.edited, "edited", "", "add: file holding the corrected output JSON")
 	fs.StringVar(&f.result, "result", "", "outcome: confirmed, refuted or inconclusive")
 	fs.StringVar(&f.cause, "cause", "", "outcome: the cause that was confirmed")
 	fs.StringVar(&f.note, "note", "", "outcome: free text")
-	fs.BoolVar(&f.audit, "audit", false, "add: review selected by random audit")
+	fs.BoolVar(&f.audit, "audit", false, "add: run selected by random audit")
 }
 
 func (f feedbackFlags) filter() feedback.Filter {

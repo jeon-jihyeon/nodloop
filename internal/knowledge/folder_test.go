@@ -34,13 +34,13 @@ func TestFolderFull(t *testing.T) {
 		args knowledge.Folder
 		want bool
 	}{
-		{"a folder under the review chars is not full", knowledge.Folder{Chars: knowledge.ReviewChars - 1}, false},
-		{"a folder at the review chars is not full", knowledge.Folder{Chars: knowledge.ReviewChars}, false},
-		{"a folder over the review chars is full", knowledge.Folder{Chars: knowledge.ReviewChars + 1}, true},
-		{"a folder at the review items is not full", knowledge.Folder{Carried: make(knowledge.Set, knowledge.ReviewItems-1)}, false},
+		{"a folder under the review chars is not full", knowledge.Folder{Chars: knowledge.RunChars - 1}, false},
+		{"a folder at the review chars is not full", knowledge.Folder{Chars: knowledge.RunChars}, false},
+		{"a folder over the review chars is full", knowledge.Folder{Chars: knowledge.RunChars + 1}, true},
+		{"a folder at the review items is not full", knowledge.Folder{Carried: make(knowledge.Set, knowledge.RunItems-1)}, false},
 		{
 			"a folder over the review items is full though its text fits",
-			knowledge.Folder{Chars: 1, Carried: make(knowledge.Set, knowledge.ReviewItems)}, true,
+			knowledge.Folder{Chars: 1, Carried: make(knowledge.Set, knowledge.RunItems)}, true,
 		},
 	}
 	for _, tc := range tcs {

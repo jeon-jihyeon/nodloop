@@ -36,7 +36,7 @@ func runFolder(t *testing.T) (testkit.Stores, *compact.Compactor, knowledge.Comp
 		require.NoError(t, err)
 		require.NoError(t, testkit.Err(s.Ledger.Approve(ctx, id, 1, "ann")))
 	}
-	c := compact.New(s.Ledger, s.Traces, s.Feedback, s.Replays, s.Clock.Now)
+	c := compact.New(s.Ledger, s.Traces, s.Feedback, s.Traces, s.Clock.Now)
 	f, err := c.Folder(ctx, "a")
 	require.NoError(t, err)
 	require.Len(t, f.Items, 2)
@@ -68,6 +68,9 @@ func TestCompactRuns(t *testing.T) {
 		{"a lost fact is refused", []compact.CoverageAnswer{
 			{Old: "a", CoveredBy: []string{"a"}}, {Old: "b", CoveredBy: []string{"a"}, Lost: []string{"the word never"}},
 		}, want{approveErr: knowledge.ErrCoverageNotPassed}},
+		{"an old item answered twice is refused when recorded", []compact.CoverageAnswer{
+			{Old: "a", CoveredBy: []string{"a"}}, {Old: "b", CoveredBy: []string{"a"}}, {Old: "b", CoveredBy: []string{"a"}, Lost: []string{"x"}},
+		}, want{recordErr: compact.ErrCoverageInvalid, approveErr: compact.ErrNoCoverage}},
 		{"an id outside the compaction is refused when recorded", []compact.CoverageAnswer{
 			{Old: "a", CoveredBy: []string{"z"}},
 		}, want{recordErr: compact.ErrCoverageInvalid, approveErr: compact.ErrNoCoverage}},
@@ -113,16 +116,19 @@ func TestCompactRunsRefusals(t *testing.T) {
 		{"a draft without the repo label widens", []compact.Item{
 			{Kind: knowledge.KindJudgment, Content: "x", From: both, Producer: "session"},
 		}, knowledge.ErrCompactionInvalid},
-		{"a draft without a producer reaches runs of no old item", []compact.Item{
+		{"a draft without a producer reaches none of the runs the old items reached", []compact.Item{
 			{Kind: knowledge.KindJudgment, Content: "x", From: both, Labels: repo},
-		}, knowledge.ErrCompactionInvalid},
+		}, compact.ErrReachLost},
+		{"a draft narrower than the old items loses the runs they reached", []compact.Item{
+			{Kind: knowledge.KindJudgment, Content: "x", From: both, Producer: "session", Labels: map[string][]string{"repo": {"nodloop"}, "task": {"commit"}}},
+		}, compact.ErrReachLost},
 		{"two judgments for the same runs overlap", []compact.Item{
 			{ID: "a", Kind: knowledge.KindJudgment, Content: "x", From: []string{"a"}, Producer: "session", Labels: repo},
 			{ID: "b", Kind: knowledge.KindJudgment, Content: "y", From: []string{"b"}, Producer: "session", Labels: repo},
 		}, knowledge.ErrCompactionOverlap},
-		{"an old item left unnamed is refused", []compact.Item{
+		{"an old item left unnamed loses the runs it reached", []compact.Item{
 			{Kind: knowledge.KindJudgment, Content: "x", From: []string{"a"}, Producer: "session", Labels: repo},
-		}, knowledge.ErrCompactionInvalid},
+		}, compact.ErrReachLost},
 		{"a label no run carries is refused", []compact.Item{
 			{Kind: knowledge.KindJudgment, Content: "x", From: both, Producer: "session", Labels: map[string][]string{"repo": {"nodlop"}}},
 		}, knowledge.ErrScopeUnobserved},
@@ -135,6 +141,9 @@ func TestCompactRunsRefusals(t *testing.T) {
 			run, err := trace.NewRun("session", "", trace.Labels{"repo": {"nodloop"}}, nil, []byte("x"), at)
 			require.NoError(t, err)
 			require.NoError(t, s.Traces.Append(ctx, run))
+			commit, err := trace.NewRun("session", "", trace.Labels{"repo": {"nodloop"}, "task": {"commit"}}, nil, []byte("x"), at)
+			require.NoError(t, err)
+			require.NoError(t, s.Traces.Append(ctx, commit))
 			for _, id := range []string{"a", "b"} {
 				_, _, err := s.Ledger.Propose(ctx, knowledge.Knowledge{
 					ID: id, Kind: knowledge.KindJudgment, Content: id, Author: "author",
@@ -144,7 +153,7 @@ func TestCompactRunsRefusals(t *testing.T) {
 				require.NoError(t, err)
 				require.NoError(t, testkit.Err(s.Ledger.Approve(ctx, id, 1, "ann")))
 			}
-			c := compact.New(s.Ledger, s.Traces, s.Feedback, s.Replays, s.Clock.Now)
+			c := compact.New(s.Ledger, s.Traces, s.Feedback, s.Traces, s.Clock.Now)
 
 			_, err = c.Propose(ctx, "a", compact.Draft{Items: tc.args}, "")
 

@@ -13,7 +13,6 @@ import (
 // Where an item applies among the runs of one producer
 // 1. every key of Labels must hold a value the run carries
 // 2. no key of Except may hold one
-// An item with a run scope never reaches a data review and an item with a data scope never reaches a run
 type RunScope struct {
 	Producer string       `json:"producer"`
 	Labels   trace.Labels `json:"labels,omitempty"`
@@ -47,7 +46,8 @@ func (r RunScope) normalized() (RunScope, error) {
 	return RunScope{Producer: r.Producer, Labels: labels, Except: except}, nil
 }
 
-func (r RunScope) admits(producer string, labels trace.Labels) bool {
+// Whether a run of the producer with the labels receives an item of this scope
+func (r RunScope) Admits(producer string, labels trace.Labels) bool {
 	if r.Producer != producer {
 		return false
 	}
@@ -83,7 +83,7 @@ func (r RunScope) overlaps(other RunScope) bool {
 // Whether r reaches a run that old never reached
 // 1. another producer or a key old requires that r drops widens it
 // 2. a value r allows under a key that old does not allow widens it
-// 3. an exception old makes that r lifts widens it
+// 3. an exception old makes that r lifts widens it unless the labels r requires leave that value out
 func (r RunScope) widens(old RunScope) bool {
 	if r.Producer != old.Producer {
 		return true
@@ -95,7 +95,9 @@ func (r RunScope) widens(old RunScope) bool {
 		}
 	}
 	for key, values := range old.Except {
-		if slices.ContainsFunc(values, func(v string) bool { return !r.Except.Has(key, v) }) {
+		allowed, required := r.Labels[key]
+		lifted := func(v string) bool { return !r.Except.Has(key, v) && (!required || slices.Contains(allowed, v)) }
+		if slices.ContainsFunc(values, lifted) {
 			return true
 		}
 	}
@@ -141,7 +143,7 @@ func carriesAny(labels trace.Labels, key string, values []string) bool {
 func (s Set) For(producer string, labels trace.Labels) Set {
 	out := Set{}
 	for _, k := range s.Current() {
-		if k.Status == StatusApproved && k.Veto == nil && k.Run != nil && k.Run.admits(producer, labels) {
+		if k.Status == StatusApproved && k.Veto == nil && k.Run != nil && k.Run.Admits(producer, labels) {
 			out = append(out, k)
 		}
 	}

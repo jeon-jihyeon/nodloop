@@ -7,7 +7,7 @@
     {
       "name": "nodloop",
       "source": "./plugin",
-      "description": "Procedure-grounded incident reviews inside Claude Code. Your corrections become approved knowledge that feeds the next review."
+      "description": "Your nods and corrections on AI output, recorded and carried to the next run in the same place once a named person approves them."
     }
   ]
 }

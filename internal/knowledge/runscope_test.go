@@ -156,6 +156,11 @@ func TestLedgerApproveRunScope(t *testing.T) {
 			args{&knowledge.RunScope{Producer: "session", Except: trace.Labels{"task": {"docs"}}}, &knowledge.RunScope{Producer: "session"}},
 			knowledge.ErrScopeWidened,
 		},
+		{
+			"an exception the required labels already leave out may be dropped",
+			args{&knowledge.RunScope{Producer: "session", Except: trace.Labels{"env": {"prod"}}}, &knowledge.RunScope{Producer: "session", Labels: trace.Labels{"env": {"dev"}}}},
+			nil,
+		},
 		{"another producer is refused", args{&knowledge.RunScope{Producer: "session", Labels: repo}, &knowledge.RunScope{Producer: "ci", Labels: repo}}, knowledge.ErrScopeWidened},
 	}
 	for _, tc := range tcs {
@@ -181,7 +186,7 @@ func TestLedgerRunFolder(t *testing.T) {
 	ctx := context.Background()
 	l := runLedger(t)
 	big := runItem("big", &knowledge.RunScope{Producer: "session"})
-	big.Content = strings.Repeat("x", knowledge.ReviewChars-200)
+	big.Content = strings.Repeat("x", knowledge.RunChars-200)
 	_, _, err := l.Propose(ctx, big)
 	require.NoError(t, err)
 	require.NoError(t, testkit.Err(l.Approve(ctx, "big", 1, "ann")))

@@ -21,7 +21,7 @@ func (r Result) Valid() bool {
 }
 
 // What turned out to be true after someone checked
-// A different fact from the verdict on the review
+// A different fact from the verdict on the output
 type Outcome struct {
 	TraceID string    `json:"trace_id"`
 	Time    time.Time `json:"time"`
@@ -66,8 +66,8 @@ func (f OutcomeFilter) Matches(o Outcome) bool {
 	return f.TraceID == "" || o.TraceID == f.TraceID
 }
 
-// Whether the check refuted the review at or after at such as the time of a verdict on it
-// A person who judged the review again after the refutation stands behind the review once more
+// Whether the check refuted the run at or after at such as the time of a verdict on it
+// A person who judged the run again after the refutation stands behind it once more
 func (o Outcome) RefutedSince(at time.Time) bool {
 	return o.Result == ResultRefuted && !o.Time.Before(at)
 }

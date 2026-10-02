@@ -373,9 +373,9 @@ func TestLedgerApprove(t *testing.T) {
 	compacted.Compaction, compacted.CompactionSize = "c-1", 1
 	compactedApproved := compacted
 	compactedApproved.Status, compactedApproved.Approver, compactedApproved.ApprovedAt = knowledge.StatusApproved, "ann", at
-	// Its text alone nearly fills ReviewChars in runes so any other item of its folder overflows it
+	// Its text alone nearly fills RunChars in runes so any other item of its folder overflows it
 	large := approved
-	large.ID, large.Content = "k-large", strings.Repeat("가", knowledge.ReviewChars-100)
+	large.ID, large.Content = "k-large", strings.Repeat("가", knowledge.RunChars-100)
 	largeTask := large
 	largeTask.Run = &knowledge.RunScope{Producer: "session", Labels: trace.Labels{"task": {"commit"}}}
 	// v2 and v3 were proposed from v1 and v2 was approved after them
@@ -789,7 +789,7 @@ func TestLedgerApproveItemCap(t *testing.T) {
 			args{approved: []group{{"k-", 10, nil, false}}},
 			want{
 				status: knowledge.StatusCandidate,
-				err: "knowledge: folder may outgrow the review: 497 of 70000 chars 11 of 10 items in runs of session with " +
+				err: "knowledge: folder may outgrow the review: 497 of 9000 chars 11 of 10 items in runs of session with " +
 					"k-0 v1 45 chars, k-1 v1 45 chars, k-2 v1 45 chars, k-3 v1 45 chars, k-4 v1 45 chars, " +
 					"k-5 v1 45 chars, k-6 v1 45 chars, k-7 v1 45 chars, k-8 v1 45 chars, k-9 v1 45 chars",
 			},
@@ -799,7 +799,7 @@ func TestLedgerApproveItemCap(t *testing.T) {
 			args{approved: []group{{"k-c", 10, commit, false}, {"k-p", 5, push, false}}, labels: commit},
 			want{
 				status: knowledge.StatusCandidate,
-				err: "knowledge: folder may outgrow the review: 650 of 70000 chars 11 of 10 items in runs of session with " +
+				err: "knowledge: folder may outgrow the review: 650 of 9000 chars 11 of 10 items in runs of session with " +
 					"k-c0 v1 59 chars, k-c1 v1 59 chars, k-c2 v1 59 chars, k-c3 v1 59 chars, k-c4 v1 59 chars, " +
 					"k-c5 v1 59 chars, k-c6 v1 59 chars, k-c7 v1 59 chars, k-c8 v1 59 chars, k-c9 v1 59 chars",
 			},
@@ -881,7 +881,7 @@ func TestLedgerApproveInOverfullFolder(t *testing.T) {
 		k.Base = 1
 		return k
 	}
-	large := item("large", 1, knowledge.StatusApproved, strings.Repeat("가", knowledge.ReviewChars), commit)
+	large := item("large", 1, knowledge.StatusApproved, strings.Repeat("가", knowledge.RunChars), commit)
 	retired := item("k-0", 1, knowledge.StatusRetired, "one", commit)
 	reapproved := version("one", commit)
 	reapproved.Base = 0

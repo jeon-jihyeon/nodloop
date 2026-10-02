@@ -51,7 +51,7 @@ func TestRunsReport(t *testing.T) {
 				verdict("taught", feedback.VerdictEdit, feedback.ReasonOther, 0),
 				verdict("a1", feedback.VerdictApprove, "", 3*time.Hour),
 				verdict("a2", feedback.VerdictReject, feedback.ReasonOther, 3*time.Hour),
-				verdict("a3", feedback.VerdictEdit, feedback.ReasonCitation, 3*time.Hour),
+				verdict("a3", feedback.VerdictEdit, feedback.ReasonApproach, 3*time.Hour),
 				verdict("a5", feedback.VerdictReject, feedback.ReasonOther, 3*time.Hour),
 			}, item()},
 			[]loop.RunItem{{ID: "git-c", Version: 1, Applied: 4, Judged: 3, Followed: 1, Repeat: 1, Settle: 2 * time.Hour}},

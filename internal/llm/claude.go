@@ -20,7 +20,7 @@ const (
 	// Structured output is an internal tool call so at least 2 is needed
 	defaultMaxTurns = 3
 	defaultBudget   = 0.5
-	// Concentration reviews with sonnet take 90 to 110 seconds so a 120 second timeout cut one review in ten
+	// A model call that drafts or checks a compaction with sonnet may take two minutes so 120 seconds would cut some
 	defaultTimeout = 240 * time.Second
 	stderrLimit    = 200
 )

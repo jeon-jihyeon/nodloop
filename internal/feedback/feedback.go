@@ -30,20 +30,21 @@ func (v Verdict) Valid() bool {
 	return ok
 }
 
-// What the corrected review got wrong
+// What the corrected output got wrong
 type ReasonCode string
 
 const (
-	ReasonStatus   ReasonCode = "status"   // the status was wrong
-	ReasonCause    ReasonCode = "cause"    // a cause was wrong or missing
-	ReasonCitation ReasonCode = "citation" // a cited paragraph does not state the cause
-	ReasonChecks   ReasonCode = "checks"   // a check was missing or out of order
+	ReasonFact     ReasonCode = "fact"     // a fact or a claim was wrong
+	ReasonApproach ReasonCode = "approach" // the way it went about the task was wrong
+	ReasonScope    ReasonCode = "scope"    // it did more or less than asked
+	ReasonForm     ReasonCode = "form"     // the content was right and the form was not
 	ReasonOther    ReasonCode = "other"    // none of the above
 )
 
 // In the order a person is asked
 // Four codes and other so one question with four options and its free answer covers them
-var reasonCodes = []ReasonCode{ReasonStatus, ReasonCause, ReasonCitation, ReasonChecks, ReasonOther}
+// Records written before 0.6.0 may hold the codes of the data review and still read
+var reasonCodes = []ReasonCode{ReasonFact, ReasonApproach, ReasonScope, ReasonForm, ReasonOther}
 
 func ReasonCodes() []ReasonCode {
 	return slices.Clone(reasonCodes)
@@ -76,19 +77,19 @@ type Feedback struct {
 	ReasonCode ReasonCode `json:"reason_code,omitempty"`
 	Reason     string     `json:"reason,omitempty"`
 	// Present when Verdict is edit
-	// The corrected output in full so eval can diff it against the trace output
+	// The corrected output in full so a report can diff it against the run output
 	Edited json.RawMessage `json:"edited,omitempty"`
 	// author for the project author
 	// session for implicit feedback
 	Reviewer string `json:"reviewer"`
-	// Set when the review was a random audit sample of the queue
+	// Set when the run was a random audit sample of the queue
 	Audit bool `json:"audit,omitempty"`
 }
 
 // The reviewer defaults to author
-// 1. an edit verdict carries a valid JSON edited review and no other verdict carries one
+// 1. an edit verdict carries a valid JSON edited output and no other verdict carries one
 // 2. a reason code is optional and only a correction carries one because an approval corrects nothing
-// 3. a session record has the secrets of its reason and edited review redacted before it is checked
+// 3. a session record has the secrets of its reason and edited output redacted before it is checked
 // A person's own record is kept as written
 func New(
 	traceID string, verdict Verdict, code ReasonCode, reason string, edited json.RawMessage, reviewer string, now time.Time,
@@ -125,7 +126,7 @@ func New(
 	}, nil
 }
 
-// Whether the verdict says the review was wrong so it can teach the next one
+// Whether the verdict says the output was wrong so it can teach the next run
 func (f Feedback) Corrects() bool {
 	return f.Verdict == VerdictEdit || f.Verdict == VerdictReject
 }
@@ -135,10 +136,10 @@ func (f Feedback) Implicit() bool {
 	return f.Reviewer == ReviewerSession
 }
 
-// How many top level fields of the recorded review the edit changed added or removed
+// How many top level fields of the recorded output the edit changed added or removed
 // 1. any verdict but edit changed nothing
-// 2. a review or an edit that is not a JSON object counts as no change because no field can be compared
-// eval and the online report read edit size by this one rule
+// 2. an output or an edit that is not a JSON object counts as no change because no field can be compared
+// Every report reads edit size by this one rule
 func (f Feedback) EditWidth(original json.RawMessage) int {
 	var before, after map[string]json.RawMessage
 	if f.Verdict != VerdictEdit || json.Unmarshal(original, &before) != nil || json.Unmarshal(f.Edited, &after) != nil {
@@ -202,7 +203,7 @@ type stamped interface {
 type listing[T stamped] []T
 
 // The records a person gave in the order the input has them
-// A session record is never a person's word so it neither teaches a review nor replaces a person's record
+// A session record is never a person's word so it neither teaches a run nor replaces a person's record
 func (l listing[T]) Human() listing[T] {
 	out := make(listing[T], 0, len(l))
 	for _, r := range l {

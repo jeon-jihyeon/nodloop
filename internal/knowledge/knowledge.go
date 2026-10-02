@@ -30,7 +30,7 @@ type Status string
 
 const (
 	StatusCandidate  Status = "candidate"  // extracted and never applied
-	StatusApproved   Status = "approved"   // active for reviews whose event fits the scope
+	StatusApproved   Status = "approved"   // active for runs that fit the scope
 	StatusRetired    Status = "retired"    // withdrawn by a person
 	StatusSuperseded Status = "superseded" // replaced by a newer approved version of the same id
 )
@@ -110,22 +110,21 @@ type Knowledge struct {
 	CompactionSize int `json:"compaction_size,omitempty"`
 }
 
-// Runes of approved knowledge one review carries
-// 1. the smallest supported model context is 200 thousand tokens or about 700 thousand characters at 3.5 characters per token
-// 2. knowledge gets one tenth because the rest of the window carries what nodloop does not control
-// A safety cap and not a tuning knob since the compaction trigger keeps folders far smaller
-const ReviewChars = 70_000
+// Runes of approved knowledge one run carries
+// Claude Code moves hook context past 10000 characters into a file and shows a preview only
+// so the items one run may carry stay under that with room for the line that introduces them
+const RunChars = 9_000
 
 // Approved items one run receives
 // One list Claude Code can show on one screen
 // Approval never grows a folder past it unless the ledger held more before the cap
-const ReviewItems = 10
+const RunItems = 10
 
 // Approved items a folder holds before it is crowded
-// Half of ReviewItems so a compaction is offered while approval still has room
+// Half of RunItems so a compaction is offered while approval still has room
 const FolderItems = 5
 
-// Folders are measured with the text a review sees so the budget and the review cap count the same characters
+// Folders are measured with the text a run receives so the budget and the run cap count the same characters
 func (k Knowledge) Text() string {
 	return fmt.Sprintf("\n[%s v%d %s] %s\nScope: %s\n", k.ID, k.Version, k.Kind, k.Content, k.reachText())
 }

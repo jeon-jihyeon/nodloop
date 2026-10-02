@@ -17,4 +17,4 @@ body:
     id: evidence
     attributes:
       label: Evidence
-      description: A trace id, an eval report line or a transcript excerpt that shows the gap
+      description: A trace id, a `report loop` line or a transcript excerpt that shows the gap

@@ -24,7 +24,7 @@ func runTrace(args []string, getenv func(string) string, now func() time.Time, s
 	var f trace.Filter
 	name := fs.String("name", "", "trace name such as run")
 	fs.StringVar(&f.SessionID, "session", "", "session id")
-	fs.StringVar(&f.Subject, "subject", "", "subject such as an event id")
+	fs.StringVar(&f.Subject, "subject", "", "subject such as a task or file name")
 	fs.IntVar(&f.Limit, "limit", 0, "newest n traces. 0 means all")
 	id, err := parseID(fs, args[1:])
 	if err != nil {

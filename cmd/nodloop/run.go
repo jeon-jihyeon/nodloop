@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jeon-jihyeon/nodloop/internal/feedback"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
 )
@@ -102,7 +103,7 @@ func (c runCommand) record(
 	if err != nil {
 		return err
 	}
-	tr, err := trace.NewRun(producer, subject, labels, input, output, c.app.now())
+	tr, err := trace.NewRun(producer, subject, labels, input, []byte(feedback.Redact(string(output))), c.app.now())
 	if err != nil {
 		return err
 	}

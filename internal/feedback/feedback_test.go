@@ -17,7 +17,7 @@ func TestFeedbackRoundTrip(t *testing.T) {
 		TraceID:    "00019974a1b2c3d4deadbeef",
 		Time:       time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC),
 		Verdict:    feedback.VerdictEdit,
-		ReasonCode: feedback.ReasonChecks,
+		ReasonCode: feedback.ReasonScope,
 		Reason:     "reorder checks",
 		Edited:     json.RawMessage(`{"order":["db","cache"]}`),
 		Reviewer:   "author",
@@ -108,17 +108,17 @@ func TestNew(t *testing.T) {
 		},
 		{
 			"an edit keeps its reason code",
-			args{traceID: "t1", verdict: feedback.VerdictEdit, code: feedback.ReasonChecks, edited: hold},
+			args{traceID: "t1", verdict: feedback.VerdictEdit, code: feedback.ReasonScope, edited: hold},
 			want{feedback: feedback.Feedback{
-				TraceID: "t1", Time: utc, Verdict: feedback.VerdictEdit, ReasonCode: feedback.ReasonChecks, Reason: "why",
+				TraceID: "t1", Time: utc, Verdict: feedback.VerdictEdit, ReasonCode: feedback.ReasonScope, Reason: "why",
 				Edited: hold, Reviewer: "author",
 			}},
 		},
 		{
 			"a reject keeps its reason code",
-			args{traceID: "t1", verdict: feedback.VerdictReject, code: feedback.ReasonCause},
+			args{traceID: "t1", verdict: feedback.VerdictReject, code: feedback.ReasonFact},
 			want{feedback: feedback.Feedback{
-				TraceID: "t1", Time: utc, Verdict: feedback.VerdictReject, ReasonCode: feedback.ReasonCause, Reason: "why",
+				TraceID: "t1", Time: utc, Verdict: feedback.VerdictReject, ReasonCode: feedback.ReasonFact, Reason: "why",
 				Reviewer: "author",
 			}},
 		},
@@ -129,7 +129,7 @@ func TestNew(t *testing.T) {
 		},
 		{
 			"an approval with a reason code fails",
-			args{traceID: "t1", verdict: feedback.VerdictApprove, code: feedback.ReasonStatus},
+			args{traceID: "t1", verdict: feedback.VerdictApprove, code: feedback.ReasonForm},
 			want{err: feedback.ErrReasonCodeUnexpected},
 		},
 	}

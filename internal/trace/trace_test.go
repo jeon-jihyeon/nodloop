@@ -227,9 +227,14 @@ func TestNewRun(t *testing.T) {
 			want{input: `{}`, output: `"use git -C"`},
 		},
 		{
-			"labels are sorted and deduplicated",
-			args{producer: "session", labels: trace.Labels{"path": {"b.go", "a.go", "b.go"}}, input: `{"applied":[]}`, output: `1`},
-			want{labels: trace.Labels{"path": {"a.go", "b.go"}}, input: `{"applied":[]}`, output: `1`},
+			"a repeated value counts once",
+			args{producer: "session", labels: trace.Labels{"path": {"a.go", "a.go"}}, input: `{"applied":[]}`, output: `1`},
+			want{labels: trace.Labels{"path": {"a.go"}}, input: `{"applied":[]}`, output: `1`},
+		},
+		{
+			"two values under one key are refused",
+			args{producer: "session", labels: trace.Labels{"path": {"b.go", "a.go"}}, output: "x"},
+			want{err: trace.ErrLabelValues},
 		},
 		{"a run without a producer is refused", args{output: "x"}, want{err: trace.ErrProducerRequired}},
 		{"an empty key is refused", args{producer: "session", labels: trace.Labels{"": {"x"}}, output: "x"}, want{err: trace.ErrLabelEmpty}},

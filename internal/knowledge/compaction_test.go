@@ -893,10 +893,10 @@ func TestLedgerApproveCompaction(t *testing.T) {
 	uncovered := edited(func(cv *knowledge.Coverage) { cv.Items = cv.Items[:2] })
 	other := edited(func(cv *knowledge.Coverage) { cv.Compaction = "c-other" })
 	large := seeds.a
-	large.ID, large.Content = "large", strings.Repeat("가", knowledge.ReviewChars)
+	large.ID, large.Content = "large", strings.Repeat("가", knowledge.RunChars)
 	large.Evidence = knowledge.Evidence{FeedbackTraceIDs: []string{"t-large"}}
 	longer := seeds.drafts()
-	longer[0].Content = strings.Repeat("가", knowledge.ReviewChars)
+	longer[0].Content = strings.Repeat("가", knowledge.RunChars)
 	// Nine items push the review of the folder past the item cap before the compaction
 	var crowd []knowledge.Knowledge
 	for i := range 9 {

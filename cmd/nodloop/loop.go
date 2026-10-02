@@ -101,7 +101,7 @@ func (c knowledgeCommand) narrow(ctx context.Context, id string, version int, ke
 	return c.folder(ctx, n.ID, n.Version)
 }
 
-// Proposes the next version with basis verified on the reviews whose outcome confirmed it
+// Proposes the next version with basis verified on the runs whose outcome confirmed it
 // Prints the candidate like narrow so the person sees what approval would change
 func (c knowledgeCommand) promote(ctx context.Context, id string, version int, author string) error {
 	if id == "" || version <= 0 {
@@ -154,7 +154,7 @@ func runQueue(args []string, getenv func(string) string, now func() time.Time, s
 	var records recordFlags
 	records.bind(fs)
 	opts := loop.QueueOptions{}
-	fs.IntVar(&opts.Limit, "limit", loop.QueueLimit, "reviews to list including audit samples. 0 lists every review")
+	fs.IntVar(&opts.Limit, "limit", loop.QueueLimit, "runs to list including audit samples. 0 lists every run")
 	fs.Float64Var(&opts.AuditRate, "audit-rate", loop.QueueAuditRate, "share of the limit drawn at random from the rest of the order")
 	fs.Int64Var(&opts.Seed, "seed", now().UnixNano(), "the same seed draws the same audit samples")
 	if err := fs.Parse(args); err != nil {

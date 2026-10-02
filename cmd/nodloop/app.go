@@ -64,15 +64,6 @@ func (a app) traces() (*tracefile.Store, error) {
 	return tracefile.New(dir)
 }
 
-// The coverage checks of compactions beside the traces
-func (a app) checks() (*tracefile.Store, error) {
-	dir, err := a.makeRecordDir()
-	if err != nil {
-		return nil, err
-	}
-	return tracefile.NewReplays(dir)
-}
-
 func (a app) feedback() (*feedbackfile.Store, error) {
 	dir, err := a.makeRecordDir()
 	if err != nil {
@@ -115,11 +106,7 @@ func (a app) compactor(ledger *knowledge.Ledger) (*compact.Compactor, error) {
 	if err != nil {
 		return nil, err
 	}
-	checks, err := a.checks()
-	if err != nil {
-		return nil, err
-	}
-	return compact.New(ledger, traces, verdicts, checks, a.now), nil
+	return compact.New(ledger, traces, verdicts, traces, a.now), nil
 }
 
 // The prefix and the clock milliseconds in hex and two random bytes so two ids in one millisecond differ

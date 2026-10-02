@@ -74,6 +74,11 @@ func (f knowledgeFlags) draft() (knowledge.Knowledge, error) {
 	if err != nil {
 		return knowledge.Knowledge{}, err
 	}
+	// A person may claim verified only by naming the outcome that confirmed it
+	// knowledge promote fills the confirmed runs itself
+	if knowledge.Basis(f.basis) == knowledge.BasisVerified && len(f.outcomeIDs) == 0 {
+		return knowledge.Knowledge{}, fmt.Errorf("propose: --evidence-outcome %w with --basis verified", errRequired)
+	}
 	return knowledge.Knowledge{
 		Run:      &knowledge.RunScope{Producer: f.producer, Labels: trace.Labels(f.labels), Except: trace.Labels(f.except)},
 		ID:       f.id,
@@ -269,7 +274,7 @@ func (c knowledgeCommand) fromRun(ctx context.Context, id string, draft knowledg
 	if err != nil {
 		return knowledge.Knowledge{}, err
 	}
-	if human := feedback.Records(verdicts).Human().Latest(); len(human) == 0 || !human[0].Corrects() {
+	if latest := feedback.Records(verdicts).Latest(); len(latest) == 0 || !latest[0].Corrects() {
 		return knowledge.Knowledge{}, fmt.Errorf("%w: %s", errNotCorrected, id)
 	}
 	if draft.Run.Producer == "" {
@@ -360,7 +365,7 @@ func (c knowledgeCommand) folder(ctx context.Context, id string, version int) er
 		return nil
 	}
 	fmt.Fprintf(c.out, "folder\t%d of %d chars\t%d of %d items in runs of %s\t%s\n",
-		f.Chars, knowledge.ReviewChars, f.Size(), knowledge.ReviewItems, f.Producer, f)
+		f.Chars, knowledge.RunChars, f.Size(), knowledge.RunItems, f.Producer, f)
 	return nil
 }
 

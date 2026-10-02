@@ -124,7 +124,7 @@ func (rs refusals) has(err error) bool {
 }
 
 // One model call writes the draft and code proposes it
-// A refusal of the code checks is sent back once with its text like record sends a review back once
+// A refusal of the code checks is sent back once with its text so the model corrects it in one more call
 // The second refusal is returned as it is
 // A folder with a pending compaction is refused before the model call because its draft would be refused
 func (c *Compactor) Draft(ctx context.Context, client llm.Client, f Folder, model, author string) (knowledge.Compaction, error) {

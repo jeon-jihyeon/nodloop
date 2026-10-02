@@ -169,41 +169,6 @@ func TestSetFind(t *testing.T) {
 	}
 }
 
-// k-c v1 compacts k-a and k-b and k-d v1 compacts k-c and k-e
-// k-a v2 reuses its id to replace k-a v1 and k-b v1
-// k-c v2 revises the compacted k-c v1 with evidence of its own
-func TestSetLineage(t *testing.T) {
-	t.Parallel()
-	ref := func(id string, version int) knowledge.Ref { return knowledge.Ref{ID: id, Version: version} }
-	set := knowledge.Set{
-		{ID: "k-c", Version: 2, Evidence: knowledge.Evidence{FeedbackTraceIDs: []string{"fb-1"}}},
-		{ID: "k-d", Version: 1, Evidence: knowledge.Evidence{Knowledge: []knowledge.Ref{ref("k-c", 1), ref("k-e", 1)}}},
-		{ID: "k-a", Version: 2, Evidence: knowledge.Evidence{Knowledge: []knowledge.Ref{ref("k-a", 1), ref("k-b", 1)}}},
-		{ID: "k-c", Version: 1, Evidence: knowledge.Evidence{Knowledge: []knowledge.Ref{ref("k-a", 1), ref("k-b", 1)}}},
-		{ID: "k-e", Version: 1},
-		{ID: "k-b", Version: 1},
-		{ID: "k-a", Version: 1},
-	}
-	tcs := []struct {
-		name string
-		args knowledge.Ref
-		want []string
-	}{
-		{"a plain item stands for itself", ref("k-e", 1), []string{"k-e"}},
-		{"a compacted item stands for the items it replaced", ref("k-c", 1), []string{"k-c", "k-a", "k-b"}},
-		{"a chained compaction reaches every ancestor", ref("k-d", 1), []string{"k-d", "k-c", "k-e", "k-a", "k-b"}},
-		{"a revised compacted item keeps the items its earlier version replaced", ref("k-c", 2), []string{"k-c", "k-a", "k-b"}},
-		{"a draft that reuses an old id ends", ref("k-a", 2), []string{"k-a", "k-b"}},
-		{"an unknown version stands for its own id", ref("k-z", 3), []string{"k-z"}},
-	}
-	for _, tc := range tcs {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			assert.Equal(t, tc.want, set.Lineage(tc.args))
-		})
-	}
-}
-
 // k-c v1 compacts k-a v1 and k-b v1 and k-d v1 compacts k-c v1
 // k-e v1 cites k-a v1 as evidence without a compaction
 // k-f v1 compacts k-a v1 and narrows it to commit runs

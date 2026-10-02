@@ -15,7 +15,7 @@ import (
 )
 
 // The compaction actions of the knowledge command
-// They review and so open the whole pipeline while the other knowledge actions read the records alone
+// They call a model and read runs and verdicts while the other knowledge actions read the ledger alone
 func (f knowledgeFlags) runCompaction(
 	ctx context.Context, action, id string, a app, client llm.Client, stdout io.Writer,
 ) error {

@@ -33,7 +33,7 @@ func (k Knowledge) Stale(now time.Time) bool {
 }
 
 // Records that a named person rechecked the current approved version
-// 1. the approved record is appended again with the reaffirm time and the approver and nothing a review sees changes
+// 1. the approved record is appended again with the reaffirm time and the approver and nothing a run receives changes
 // 2. the version is checked under the store lock
 // So a reaffirm never reopens a version that a concurrent retire closed
 // 3. the exports follow because they name the approver
@@ -100,11 +100,11 @@ func (k Knowledge) narrowedRun(key string, values []string) (Knowledge, error) {
 	return k, nil
 }
 
-// Proposes the next version of the current approved version with basis verified on the confirmed reviews
+// Proposes the next version of the current approved version with basis verified on the confirmed runs
 // 1. content and scope and exceptions and veto stay so the approval replaces the version without widening or lifting
-// 2. the confirmed reviews join the outcome evidence
+// 2. the confirmed runs join the outcome evidence
 // 3. the candidate is approved like any new version by a named person
-// 1. fails with ErrPromoteInvalid when no confirmed review is given
+// 1. fails with ErrPromoteInvalid when no confirmed run is given
 // 2. fails with ErrPromoteVerified when the version is verified already
 // The version is checked under the store lock like Narrow
 func (l *Ledger) Promote(ctx context.Context, id string, version int, traceIDs []string, author string) (Knowledge, Set, error) {
@@ -114,7 +114,7 @@ func (l *Ledger) Promote(ctx context.Context, id string, version int, traceIDs [
 			return Knowledge{}, err
 		}
 		if len(traceIDs) == 0 {
-			return Knowledge{}, fmt.Errorf("%w: %s v%d has no confirmed review", ErrPromoteInvalid, id, version)
+			return Knowledge{}, fmt.Errorf("%w: %s v%d has no confirmed run", ErrPromoteInvalid, id, version)
 		}
 		if k.Basis == BasisVerified {
 			return Knowledge{}, fmt.Errorf("%w: %s v%d", ErrPromoteVerified, id, version)
