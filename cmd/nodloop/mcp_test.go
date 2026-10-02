@@ -286,3 +286,50 @@ func TestMCPRecordsOnly(t *testing.T) {
 	err = c.Run(t, "propose", map[string]any{"kind": "judgment", "content": "x", "from": run.TraceID, "labels": map[string]any{"repo": []any{"nodlop"}}})
 	assert.ErrorContains(t, err, "no run of session carries repo=nodlop")
 }
+
+// Two run items of one repo compact over MCP with no data dir: folder, draft, the conversation's coverage check and approval
+func TestMCPRecordsCompaction(t *testing.T) {
+	home := t.TempDir()
+	now := func() time.Time { return time.Date(2026, 10, 2, 0, 0, 0, 0, time.UTC) }
+	o := mcpOpen{getenv: func(k string) string { return map[string]string{"HOME": home}[k] }, now: now, session: mcp.NewSession(now())}
+	c := testkit.Connect(t, mcp.NewHost(o.open, "test", "").ServeTransport)
+	var run struct {
+		TraceID string `json:"trace_id"`
+	}
+	require.NoError(t, c.Call(t, "run", map[string]any{"producer": "session", "labels": map[string]any{"repo": []any{"nodloop"}}, "output": "x"}, &run))
+	for _, id := range []string{"a", "b"} {
+		require.NoError(t, c.Run(t, "propose", map[string]any{
+			"id": id, "kind": "judgment", "content": "rule " + id, "trace_ids": []any{run.TraceID},
+			"producer": "session", "labels": map[string]any{"repo": []any{"nodloop"}},
+		}))
+		require.NoError(t, c.Run(t, "approve", map[string]any{"id": id, "version": 1, "approver": "ann"}))
+	}
+	var folder struct {
+		Items []struct {
+			ID string `json:"id"`
+		} `json:"items"`
+	}
+	require.NoError(t, c.Call(t, "compaction", map[string]any{"id": "a"}, &folder))
+	require.Len(t, folder.Items, 2)
+	var proposed struct {
+		Compaction string `json:"compaction"`
+		Check      string `json:"check"`
+	}
+	require.NoError(t, c.Call(t, "propose_compaction", map[string]any{"anchor": "a", "items": []any{map[string]any{
+		"id": "a", "kind": "judgment", "content": "rule a and rule b", "from": []any{"a", "b"},
+		"producer": "session", "labels": map[string]any{"repo": []any{"nodloop"}},
+	}}}, &proposed))
+	assert.Contains(t, proposed.Check, "check_compaction")
+	err := c.Run(t, "approve_compaction", map[string]any{"compaction": proposed.Compaction, "approver": "ann"})
+	assert.ErrorContains(t, err, "no coverage check")
+	var checked struct {
+		Passed bool   `json:"passed"`
+		Why    string `json:"why"`
+	}
+	require.NoError(t, c.Call(t, "check_compaction", map[string]any{"compaction": proposed.Compaction, "items": []any{
+		map[string]any{"old": "a", "covered_by": []any{"a"}}, map[string]any{"old": "b", "covered_by": []any{"a"}},
+	}}, &checked))
+	require.True(t, checked.Passed, checked.Why)
+
+	assert.NoError(t, c.Run(t, "approve_compaction", map[string]any{"compaction": proposed.Compaction, "approver": "ann"}))
+}

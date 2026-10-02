@@ -162,7 +162,7 @@ func runKnowledge(
 	}
 	ctx := context.Background()
 	switch {
-	case slices.Contains([]string{"compact", "compaction", "replay", "approve-compaction"}, args[0]):
+	case slices.Contains([]string{"compact", "compaction", "replay", "check", "approve-compaction"}, args[0]):
 		err = flags.runCompaction(ctx, args[0], id, a, client, stdout, stderr)
 	case args[0] == "propose":
 		err = flags.runPropose(ctx, a, client, stdout)

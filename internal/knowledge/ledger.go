@@ -307,16 +307,13 @@ func (l *Ledger) Preview(ctx context.Context, id string) (*Preview, error) {
 }
 
 // Approves the new items of a compaction and retires the old ones on behalf of a named person
-// 1. refused unless the replay names this compaction and passed
+// 1. refused unless the check, a replay or a coverage, names this compaction and passed
 // 2. the approved and superseded and retired records land in one write
 // 3. a second call appends only the records still missing such as those of a legacy call cut between two appends
 // 4. vetoes are exported once after the records
-func (l *Ledger) ApproveCompaction(ctx context.Context, id, approver string, replay Replay) (Compaction, error) {
-	if replay.Compaction != id || !replay.Passed() {
-		return Compaction{}, fmt.Errorf("%w: %s", ErrReplayNotPassed, id)
-	}
+func (l *Ledger) ApproveCompaction(ctx context.Context, id, approver string, check Check) (Compaction, error) {
 	err := l.store.AppendDecided(ctx, func(all Set) ([]Knowledge, error) {
-		return all.compactionApproval(id, approver, l.now().UTC(), l.contexts)
+		return all.compactionApproval(id, approver, check, l.now().UTC(), l.contexts)
 	})
 	if err != nil {
 		return Compaction{}, err

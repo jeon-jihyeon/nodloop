@@ -22,19 +22,17 @@ func (f knowledgeFlags) runCompaction(
 	if id == "" {
 		return fmt.Errorf("%s: an id %w", action, errRequired)
 	}
-	p, err := a.pipeline()
+	cmd, err := a.compactionCommand(client, stdout, stderr)
 	if err != nil {
 		return err
-	}
-	cmd := compactionCommand{
-		pipeline: p, compactor: p.compactor(), client: client, out: stdout, log: stderr,
-		records: a.knowledgeCommand(p.ledger, stdout),
 	}
 	switch action {
 	case "compact":
 		return cmd.compact(ctx, id, f.model, f.author)
 	case "compaction":
 		return cmd.show(ctx, id)
+	case "check":
+		return cmd.check(ctx, id, f.model)
 	case "replay":
 		return cmd.replay(ctx, id, compact.ReplayOptions{Events: f.events, Parallel: f.parallel, Model: f.model, Log: stderr})
 	default:
@@ -42,9 +40,37 @@ func (f knowledgeFlags) runCompaction(
 	}
 }
 
+// The command over the whole pipeline with a data dir and over the records alone without one
+// Without a data dir only a folder of run items compacts and a replay fails naming the data dir
+func (a app) compactionCommand(client llm.Client, stdout, stderr io.Writer) (compactionCommand, error) {
+	if a.cfg.dataDir != "" {
+		p, err := a.pipeline()
+		if err != nil {
+			return compactionCommand{}, err
+		}
+		return compactionCommand{
+			pipeline: p, ledger: p.ledger, compactor: p.compactor(), client: client, out: stdout, log: stderr,
+			records: a.knowledgeCommand(p.ledger, stdout),
+		}, nil
+	}
+	ledger, err := a.ledger()
+	if err != nil {
+		return compactionCommand{}, err
+	}
+	compactor, err := a.compactor(ledger)
+	if err != nil {
+		return compactionCommand{}, err
+	}
+	return compactionCommand{
+		ledger: ledger, compactor: compactor, client: client, out: stdout, log: stderr, records: a.knowledgeCommand(ledger, stdout),
+	}, nil
+}
+
 // Results on out and replay progress on log
 type compactionCommand struct {
+	// Zero without a data dir
 	pipeline  pipeline
+	ledger    *knowledge.Ledger
 	compactor *compact.Compactor
 	client    llm.Client
 	records   knowledgeCommand
@@ -68,9 +94,34 @@ func (c compactionCommand) compact(ctx context.Context, anchor, model, author st
 		return err
 	}
 	c.printCompaction(proposed)
+	if f.Runs {
+		fmt.Fprintf(c.out, "next\tnodloop knowledge check %s reads every old item against the new ones with one model call\n", proposed.ID)
+		return nil
+	}
 	fmt.Fprintf(c.out, "next\tnodloop knowledge replay %s reviews %d events with one or two model calls each\n",
 		proposed.ID, len(f.Replay))
 	return nil
+}
+
+// One model call checks that the new items state every old item and the answer is recorded for the approval
+func (c compactionCommand) check(ctx context.Context, id, model string) error {
+	cov, err := c.compactor.Check(ctx, c.client, id, model)
+	if err != nil {
+		return err
+	}
+	c.printCoverage(cov)
+	return nil
+}
+
+func (c compactionCommand) printCoverage(cov knowledge.Coverage) {
+	for _, it := range cov.Items {
+		by := make([]string, 0, len(it.CoveredBy))
+		for _, ref := range it.CoveredBy {
+			by = append(by, fmt.Sprintf("%s v%d", ref.ID, ref.Version))
+		}
+		fmt.Fprintf(c.out, "covered\t%s v%d\tby %s\tlost %s\n", it.Old.ID, it.Old.Version,
+			cmp.Or(strings.Join(by, ", "), "-"), cmp.Or(strings.Join(it.Lost, "; "), "-"))
+	}
 }
 
 func (c compactionCommand) printCompaction(compaction knowledge.Compaction) {
@@ -85,11 +136,23 @@ func (c compactionCommand) printCompaction(compaction knowledge.Compaction) {
 
 // The new and old items and the replay result as it reads now
 func (c compactionCommand) show(ctx context.Context, id string) error {
-	compaction, err := c.pipeline.ledger.Compaction(ctx, id)
+	compaction, err := c.ledger.Compaction(ctx, id)
 	if err != nil {
 		return err
 	}
 	c.printCompaction(compaction)
+	if compaction.Items[0].Run != nil {
+		cov, err := c.compactor.Coverage(ctx, id)
+		if errors.Is(err, compact.ErrNoCoverage) {
+			fmt.Fprintf(c.out, "coverage\tnone yet. Run nodloop knowledge check %s\n", id)
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		c.printCoverage(cov)
+		return nil
+	}
 	r, err := c.compactor.Result(ctx, id)
 	if err != nil {
 		return err
@@ -116,6 +179,9 @@ func (c compactionCommand) replay(ctx context.Context, id string, opts compact.R
 		count = len(opts.Events)
 	}
 	fmt.Fprintf(c.out, "replay\t%s\t%d events\n", id, count)
+	if c.pipeline.src == nil {
+		return fmt.Errorf("%w: %s", compact.ErrNoData, id)
+	}
 	d, err := c.pipeline.replayDiagnoser(ctx, c.client, id)
 	if err != nil {
 		return err
@@ -133,7 +199,7 @@ func (c compactionCommand) approve(ctx context.Context, id, approver string) err
 	if approver == "" {
 		return fmt.Errorf("approve-compaction: --approver %w", errRequired)
 	}
-	before, err := c.pipeline.ledger.All(ctx)
+	before, err := c.ledger.All(ctx)
 	if err != nil {
 		return err
 	}
@@ -145,7 +211,7 @@ func (c compactionCommand) approve(ctx context.Context, id, approver string) err
 	if err != nil {
 		return err
 	}
-	after, err := c.pipeline.ledger.All(ctx)
+	after, err := c.ledger.All(ctx)
 	if err != nil {
 		return err
 	}

@@ -132,5 +132,9 @@ func (o mcpOpen) records(missing error) (*mcp.Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	return mcp.NewRecords(traces, verdicts, outcomes, ledger, o.now, o.session, executable(), a.cfg.recordArgs(), missing), nil
+	compactor, err := a.compactor(ledger)
+	if err != nil {
+		return nil, err
+	}
+	return mcp.NewRecords(traces, verdicts, outcomes, ledger, compactor, o.now, o.session, executable(), a.cfg.recordArgs(), missing), nil
 }

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/jeon-jihyeon/nodloop/internal/evidence"
 	"github.com/jeon-jihyeon/nodloop/internal/feedback"
@@ -55,6 +56,8 @@ type Folder struct {
 	// A compaction of these items still waiting for its replay and approval
 	// Empty when none
 	Pending string
+	// Whether the items are scoped to runs, which a coverage check verifies instead of a replay
+	Runs bool
 }
 
 // Verdicts of the evidence traces
@@ -63,9 +66,16 @@ type FeedbackStore interface {
 	List(ctx context.Context, f feedback.Filter) ([]feedback.Feedback, error)
 }
 
-// The evidence traces and the replay traces
+// The evidence traces
 // Newest first
 type TraceStore interface {
+	List(ctx context.Context, f trace.Filter) (trace.Traces, error)
+}
+
+// The replay traces and the coverage checks
+// Newest first
+type ReplayStore interface {
+	Append(ctx context.Context, t trace.Trace) error
 	List(ctx context.Context, f trace.Filter) (trace.Traces, error)
 }
 
@@ -90,13 +100,16 @@ type Compactor struct {
 	traces   TraceStore
 	feedback FeedbackStore
 	outcomes OutcomeStore
-	replays  TraceStore
+	replays  ReplayStore
+	now      func() time.Time
 }
 
+// src may be nil on records alone, where only a folder of run items can be compacted
 func New(
-	src Source, ledger *knowledge.Ledger, traces TraceStore, verdicts FeedbackStore, outcomes OutcomeStore, replays TraceStore,
+	src Source, ledger *knowledge.Ledger, traces TraceStore, verdicts FeedbackStore, outcomes OutcomeStore, replays ReplayStore,
+	now func() time.Time,
 ) *Compactor {
-	return &Compactor{src: src, ledger: ledger, traces: traces, feedback: verdicts, outcomes: outcomes, replays: replays}
+	return &Compactor{src: src, ledger: ledger, traces: traces, feedback: verdicts, outcomes: outcomes, replays: replays, now: now}
 }
 
 // The anchor and its folder items split by whether an event can replay them
@@ -111,12 +124,18 @@ func (c *Compactor) Folder(ctx context.Context, anchor string) (Folder, error) {
 	if err != nil {
 		return Folder{}, err
 	}
-	f := Folder{Anchor: anchor, Compactable: compactable, Pending: all.PendingCompaction(compactable.Items)}
+	f := Folder{Anchor: anchor, Compactable: compactable, Pending: all.PendingCompaction(compactable.Items), Runs: compactable.Items[0].Run != nil}
 	reviews, err := c.evidence(ctx, f.Items)
 	if err != nil {
 		return Folder{}, err
 	}
 	f.Corrections = reviews.corrections()
+	if f.Runs {
+		return f, nil
+	}
+	if c.src == nil {
+		return Folder{}, fmt.Errorf("%w: %s", ErrNoData, anchor)
+	}
 	if f.Replay, f.Unverifiable, err = c.expectations(ctx, reviews); err != nil {
 		return Folder{}, err
 	}
@@ -125,7 +144,7 @@ func (c *Compactor) Folder(ctx context.Context, anchor string) (Folder, error) {
 
 // Approval needs a replay so a folder without an expected status cannot be compacted
 func (f Folder) replayable() error {
-	if len(f.Replay) == 0 {
+	if !f.Runs && len(f.Replay) == 0 {
 		return fmt.Errorf("%w: %s has no label and no edit or approve verdict on the events %s",
 			ErrNothingToReplay, f.Anchor, strings.Join(f.Unverifiable, ", "))
 	}
@@ -173,8 +192,11 @@ func (c *Compactor) propose(ctx context.Context, f Folder, d Draft, author strin
 	return proposed, f.Replay, nil
 }
 
-// Fails naming the draft whose scope names a metric or dim value no event carries
+// Fails naming the draft whose scope names a metric or dim value no event carries or a label no run carries
 func (c *Compactor) observed(ctx context.Context, drafts []knowledge.Knowledge) error {
+	if slices.ContainsFunc(drafts, func(k knowledge.Knowledge) bool { return k.Run != nil }) {
+		return c.recorded(ctx, drafts)
+	}
 	metrics, err := c.src.Metrics(ctx)
 	if err != nil {
 		return err
@@ -191,9 +213,20 @@ func (c *Compactor) observed(ctx context.Context, drafts []knowledge.Knowledge) 
 	return nil
 }
 
-// Approves the compaction on behalf of a named person once its replay passed
+// Approves the compaction on behalf of a named person once its replay or its coverage check passed
 // A replay that has not passed fails with the events that missed their expectation
 func (c *Compactor) Approve(ctx context.Context, id, approver string) (knowledge.Compaction, error) {
+	compaction, err := c.ledger.Compaction(ctx, id)
+	if err != nil {
+		return knowledge.Compaction{}, err
+	}
+	if compaction.Items[0].Run != nil {
+		cov, err := c.Coverage(ctx, id)
+		if err != nil {
+			return knowledge.Compaction{}, err
+		}
+		return c.ledger.ApproveCompaction(ctx, id, approver, cov)
+	}
 	r, err := c.Result(ctx, id)
 	if err != nil {
 		return knowledge.Compaction{}, err
