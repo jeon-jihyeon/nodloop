@@ -38,7 +38,7 @@ func TestSkillTools(t *testing.T) {
 			"../../plugin/skills/sessions/SKILL.md",
 			want{
 				tools:    []string{"feedback", "propose", "approve"},
-				commands: []string{"nodloop feedback list --trace", "nodloop knowledge export"},
+				commands: []string{"nodloop feedback list --trace", "nodloop knowledge export", "nodloop trace list --name run --session"},
 			},
 		},
 		{
@@ -47,6 +47,14 @@ func TestSkillTools(t *testing.T) {
 			want{
 				tools:    []string{"context", "observe", "record", "select"},
 				commands: []string{"nodloop trace list --subject", "nodloop trace show", "nodloop report online", "nodloop check --data-dir"},
+			},
+		},
+		{
+			"the nod skill records verdicts on runs and proposes knowledge from them",
+			"../../plugin/skills/nod/SKILL.md",
+			want{
+				tools:    []string{"feedback", "propose", "approve", "run"},
+				commands: []string{"nodloop trace list --name run", "nodloop trace show", "nodloop knowledge for --producer session"},
 			},
 		},
 	}
