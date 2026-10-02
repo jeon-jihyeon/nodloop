@@ -178,7 +178,7 @@ The loop is not tied to the data review. Any tool can record what it made as a r
 ~/.nodloop/bin/nodloop knowledge for --producer session --label repo=nodloop
 ```
 
-In Claude Code the MCP tools `run` and `knowledge_for` do the same, and `propose` with `from` set to a corrected run fills the producer and labels from it. A label must be one a recorded run already carries, so a misspelled label fails instead of making an item that matches nothing, and an item scoped to runs never reaches a data review.
+In Claude Code the plugin does it on its own. Before each prompt a hook adds the approved items for the repository and directory you work in, and after each answer a hook records it as a run with the items it got, secrets redacted. Set `NODLOOP_SESSION=off` where Claude Code starts to turn both off. The MCP tools `run` and `knowledge_for` do the same for any other producer, and `propose` with `from` set to a corrected run fills the producer and labels from it. A label must be one a recorded run already carries, so a misspelled label fails instead of making an item that matches nothing, and an item scoped to runs never reaches a data review.
 
 ## Guard
 
