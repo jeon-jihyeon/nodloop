@@ -108,18 +108,14 @@ func (h *History) rank(candidates []review) []QueueItem {
 		if r.statedOnly(versions) {
 			item.signal(ReasonStatedOnly)
 		}
-		if !h.knowledge.Covers(r.ChangeContext) {
+		if !h.covers(r) {
 			item.signal(ReasonNoApprovedContext)
 		}
 		if len(r.applied()) == 0 {
 			item.signal(ReasonNoKnowledge)
 		}
-		item.Citations = len(r.Diagnosis.Citations())
-		switch item.Citations {
-		case 0:
-			item.signal(ReasonNoCitations)
-		case 1:
-			item.signal(ReasonFewCitations)
+		if !r.isRun() {
+			r.citations(&item)
 		}
 		items = append(items, item)
 	}
@@ -127,13 +123,33 @@ func (h *History) rank(candidates []review) []QueueItem {
 	return items
 }
 
-// The share of earlier human verdicts in the change context of the review that corrected
+// Whether an approved item reaches the place of the entry
+// A review asks the change context and a run the producer and its labels
+func (h *History) covers(r review) bool {
+	if r.isRun() {
+		return len(h.knowledge.For(r.trace.Producer, r.trace.Labels)) > 0
+	}
+	return h.knowledge.Covers(r.ChangeContext)
+}
+
+// Only a review cites paragraphs, so a run is never ranked for citing none
+func (r review) citations(item *QueueItem) {
+	item.Citations = len(r.Diagnosis.Citations())
+	switch item.Citations {
+	case 0:
+		item.signal(ReasonNoCitations)
+	case 1:
+		item.signal(ReasonFewCitations)
+	}
+}
+
+// The share of earlier human verdicts in the place of the entry that corrected
 // Weighted up to the full weight of past corrections
 // Only verdicts given before the review was recorded count so a later correction never ranks an older review
 func (h *History) pastCorrections(item *QueueItem, r review) {
 	for _, past := range h.reviews {
 		fb, ok := h.verdicts[past.trace.ID]
-		if !ok || past.ChangeContext != r.ChangeContext || !fb.Time.Before(r.trace.Time) {
+		if !ok || !past.samePlace(r) || !fb.Time.Before(r.trace.Time) {
 			continue
 		}
 		item.ContextReviewed++

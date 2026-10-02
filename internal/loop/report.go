@@ -153,7 +153,9 @@ func (h *History) Report(since time.Time) Report {
 			continue
 		}
 		cohort.Verdicts.add(fb.Verdict, fb.ReasonCode)
-		h.agree(&rep.Agreement, r, fb)
+		if !r.isRun() {
+			h.agree(&rep.Agreement, r, fb)
+		}
 		start := weekOf(fb.Time)
 		if weeks[start] == nil {
 			weeks[start], byWeek[start] = &Week{Start: start}, &measures{}

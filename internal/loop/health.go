@@ -10,6 +10,7 @@ import (
 	"github.com/jeon-jihyeon/nodloop/internal/evidence"
 	"github.com/jeon-jihyeon/nodloop/internal/feedback"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
+	"github.com/jeon-jihyeon/nodloop/internal/trace"
 )
 
 // How the conversation reviews that applied one knowledge version held up
@@ -127,7 +128,7 @@ func (h *History) BrokenReferences(
 	procedures evidence.Procedures, metrics []string, dims knowledge.Dims, contexts evidence.Contexts,
 ) []Issue {
 	refs := references{feedback: h.withFeedback, outcomes: h.withOutcome, paragraphs: map[string]bool{},
-		versions: map[knowledge.Ref]bool{}, metrics: metrics, dims: dims, contexts: contexts}
+		versions: map[knowledge.Ref]bool{}, metrics: metrics, dims: dims, contexts: contexts, vocabulary: h.vocabulary}
 	for _, p := range procedures.Paragraphs() {
 		refs.paragraphs[string(p.ID)] = true
 	}
@@ -149,6 +150,8 @@ type references struct {
 	dims                           knowledge.Dims
 	// A scope context the policy no longer declares reaches no event
 	contexts evidence.Contexts
+	// Labels the runs of each producer carry
+	vocabulary map[string]trace.Labels
 }
 
 // One issue per broken reference of the item in field order
@@ -166,6 +169,9 @@ func (refs references) issues(k knowledge.Knowledge) []Issue {
 	for _, ref := range k.Evidence.Knowledge {
 		found.check("knowledge", fmt.Sprintf("%s v%d", ref.ID, ref.Version), refs.versions[ref])
 	}
+	if k.Run != nil {
+		return refs.runIssues(found, *k.Run)
+	}
 	for _, c := range k.Scope.ChangeContexts {
 		found.check("change_contexts", string(c), refs.contexts.Valid(c))
 	}
@@ -178,6 +184,22 @@ func (refs references) issues(k knowledge.Knowledge) []Issue {
 	}
 	for _, key := range slices.Sorted(maps.Keys(k.Scope.Dims)) {
 		found.check("dims", key+"="+k.Scope.Dims[key], refs.dims.Has(key, k.Scope.Dims[key]))
+	}
+	return found.list
+}
+
+// A label no run of the producer carries any more, so the item reaches no run
+func (refs references) runIssues(found issues, run knowledge.RunScope) []Issue {
+	vocab := refs.vocabulary[run.Producer]
+	for _, field := range []struct {
+		name   string
+		labels trace.Labels
+	}{{"labels", run.Labels}, {"except", run.Except}} {
+		for _, key := range slices.Sorted(maps.Keys(field.labels)) {
+			for _, v := range field.labels[key] {
+				found.check(field.name, key+"="+v, vocab.Has(key, v))
+			}
+		}
 	}
 	return found.list
 }
