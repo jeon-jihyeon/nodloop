@@ -153,7 +153,7 @@ func (l *Ledger) appendCandidate(ctx context.Context, decide func(all Set, now t
 		if k, err = decide(all, l.now().UTC()); err != nil {
 			return nil, err
 		}
-		overlaps = all.Overlaps(k.ID, k.Kind, k.Scope)
+		overlaps = all.overlapsWith(k)
 		return []Knowledge{k}, nil
 	})
 	if err != nil {

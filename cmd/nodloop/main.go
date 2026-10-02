@@ -68,6 +68,10 @@ commands:
                     [--veto-tool <t> --veto-field <f> --veto-match <re> [--veto-unless <re>] --veto-example <json>]
                             Add a candidate knowledge record and list its overlaps. The author is "author" unless given
                             A judgment with a veto becomes a guard veto once approved
+  knowledge propose --producer <p> [--label <key=value>] [--except <key=value>] --kind <k> --content <text> --trace <run id> [the other propose flags]
+                            Scope the candidate to the runs of a producer. Every label must be one a recorded run of it carries
+  knowledge for --producer <p> [--label <key=value>]
+                            The approved items a run of the producer with these labels applies, and their size
   knowledge propose --from <trace id> --kind <k> [--content <text>] [--model <m>] [the other propose flags]
                             Fill scope, evidence and basis from a review corrected by edit or reject. Without --content
                             claude -p drafts one sentence from the correction and the candidate is marked drafted

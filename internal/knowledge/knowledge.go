@@ -81,6 +81,9 @@ type Knowledge struct {
 	Scope Scope `json:"scope"`
 	// Change contexts where it must not apply even when Scope matches
 	Exceptions []evidence.Context `json:"exceptions,omitempty"`
+	// Where the item applies among the runs of one producer
+	// Nil for an item of the data review, which Scope and Exceptions describe
+	Run *RunScope `json:"run,omitempty"`
 	// At least one reference is required
 	Evidence Evidence `json:"evidence"`
 	Basis    Basis    `json:"basis"`
@@ -131,6 +134,9 @@ const FolderItems = 5
 
 // Folders are measured with the text a review sees so the budget and the review cap count the same characters
 func (k Knowledge) Text() string {
+	if k.Run != nil {
+		return fmt.Sprintf("\n[%s v%d %s] %s\nScope: %s\n", k.ID, k.Version, k.Kind, k.Content, k.Run)
+	}
 	return fmt.Sprintf("\n[%s v%d %s] %s\nScope: %s\n", k.ID, k.Version, k.Kind, k.Content, k.Scope)
 }
 
@@ -224,6 +230,12 @@ func (k Knowledge) checkVersion() error {
 // 2. exceptions that cover every change context left leave the item nothing to apply to
 // A misspelled exception would otherwise let the item reach the events the person meant to exclude
 func (k Knowledge) checkScope(contexts evidence.Contexts) error {
+	if k.Run != nil {
+		if !k.Scope.Empty() || len(k.Scope.Dims) > 0 || len(k.Exceptions) > 0 {
+			return ErrScopeMixed
+		}
+		return k.Run.check()
+	}
 	for _, c := range k.Scope.ChangeContexts {
 		if !contexts.Valid(c) {
 			return fmt.Errorf("%w: change context %q is not one of %v", ErrScopeInvalid, c, contexts.Names())
@@ -309,6 +321,9 @@ func (k Knowledge) Filled(scope Scope, ev Evidence, basis Basis) Knowledge {
 // 2. neither excepts every change context the other is scoped to
 // Metrics and dims split nothing because one event often moves several metrics and carries several dims
 func (k Knowledge) sharesFolder(other Knowledge) bool {
+	if k.Run != nil || other.Run != nil {
+		return false
+	}
 	return k.Scope.Intersects(evidence.Scope{ChangeContexts: other.Scope.ChangeContexts}) &&
 		!k.excepts(other.Scope.ChangeContexts) && !other.excepts(k.Scope.ChangeContexts)
 }
@@ -344,6 +359,9 @@ func (k Knowledge) carriedIn(changeContext evidence.Context) bool {
 
 // The scope and the exceptions in one line so a refusal can quote what a new version must keep
 func (k Knowledge) reachText() string {
+	if k.Run != nil {
+		return k.Run.String()
+	}
 	if len(k.Exceptions) == 0 {
 		return k.Scope.String()
 	}
@@ -355,8 +373,9 @@ func (k Knowledge) reachText() string {
 }
 
 // Whether the scope and the exceptions leave the change context to the item whatever its status
+// An item with a run scope reaches no change context
 func (k Knowledge) reaches(changeContext evidence.Context) bool {
-	return !slices.Contains(k.Exceptions, changeContext) && k.Scope.MatchesContext(changeContext)
+	return k.Run == nil && !slices.Contains(k.Exceptions, changeContext) && k.Scope.MatchesContext(changeContext)
 }
 
 // Whether the item reaches every event of the change context and the metric that carries the dims
