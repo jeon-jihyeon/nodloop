@@ -44,6 +44,63 @@ type Compaction struct {
 	Replaced Set
 }
 
+// What a compaction must pass before a person may approve it
+// A replay of the reviews for items of the data review and a coverage check for items of runs
+type Check interface {
+	// Fails naming why the check does not let the compaction through
+	verify(c Compaction) error
+}
+
+// Which new items state each old item of a compaction and what they lose
+// The check of a compaction of run items, since a run cannot be replayed
+type Coverage struct {
+	Compaction string         `json:"compaction"`
+	Items      []CoverageItem `json:"items"`
+}
+
+type CoverageItem struct {
+	Old Ref `json:"old"`
+	// The new items that state the old item
+	CoveredBy []Ref `json:"covered_by"`
+	// Facts of the old item no new item states
+	Lost []string `json:"lost,omitempty"`
+}
+
+// Passes when it is of this compaction, every old item is covered by its new items and no fact is lost
+// Fails with ErrCoverageNotPassed naming the first reason
+func (cv Coverage) Passes(c Compaction) error {
+	return cv.verify(c)
+}
+
+func (cv Coverage) verify(c Compaction) error {
+	if cv.Compaction != c.ID {
+		return fmt.Errorf("%w: the coverage is of %q and not of %s", ErrCoverageNotPassed, cv.Compaction, c.ID)
+	}
+	for _, old := range c.Replaced {
+		ref := Ref{ID: old.ID, Version: old.Version}
+		i := slices.IndexFunc(cv.Items, func(it CoverageItem) bool { return it.Old == ref })
+		switch {
+		case i < 0 || len(cv.Items[i].CoveredBy) == 0:
+			return fmt.Errorf("%w: no new item states %s v%d", ErrCoverageNotPassed, old.ID, old.Version)
+		case len(cv.Items[i].Lost) > 0:
+			return fmt.Errorf("%w: %s v%d loses %s", ErrCoverageNotPassed, old.ID, old.Version, strings.Join(cv.Items[i].Lost, "; "))
+		}
+		for _, by := range cv.Items[i].CoveredBy {
+			if !slices.ContainsFunc(c.Items, by.names) {
+				return fmt.Errorf("%w: %s v%d is not a new item of %s", ErrCoverageNotPassed, by.ID, by.Version, c.ID)
+			}
+		}
+	}
+	return nil
+}
+
+func (r Replay) verify(c Compaction) error {
+	if r.Compaction != c.ID || !r.Passed() {
+		return fmt.Errorf("%w: %s", ErrReplayNotPassed, c.ID)
+	}
+	return nil
+}
+
 // Every event the old items came from reviewed again with the new items in their place
 type Replay struct {
 	Compaction string
@@ -98,7 +155,7 @@ func (s Set) Compactable(anchor string, contexts evidence.Contexts) (Compactable
 		return Compactable{}, fmt.Errorf("%w: %s has no approved version", ErrNotFound, anchor)
 	}
 	if k.Run != nil {
-		return Compactable{}, fmt.Errorf("%w: %s is scoped to runs, which are not compacted yet", ErrCompactionInvalid, anchor)
+		return Compactable{Items: append(Set{*k}, s.runCarried(k.ID, *k.Run)...), Excluded: Set{}, Contexts: contexts}, nil
 	}
 	if !k.Evidence.Replayable() {
 		return Compactable{}, fmt.Errorf("%w: %s", ErrParagraphOnly, anchor)
@@ -125,7 +182,11 @@ func (s Set) compactable(anchor Knowledge, contexts evidence.Contexts) Compactab
 // The most items one review of a change context the anchor reaches carries
 // Crowding counts one review and never the union because an event carries one change context
 // No review carries a veto so vetoes never make a compaction due
+// A run folder holds only items one run may carry with the anchor so all of them count
 func (c Compactable) heaviest() int {
+	if c.Items[0].Run != nil {
+		return len(c.Items)
+	}
 	n := 0
 	for _, changeContext := range c.Contexts.Names() {
 		if !c.Items[0].carriedIn(changeContext) {
@@ -266,7 +327,19 @@ func (e Evidence) union(other Evidence) Evidence {
 // Fails with ErrCompactionInvalid naming the first event the draft reaches and an item it names does not reach
 // The draft carries the facts of every item it names so a wider draft would carry a fact to events its item never reached
 // and a replay of the old events never shows it
+// A draft scoped to runs must reach no run that one of the items it names never reached
 func (s Set) checkWidening(d Knowledge, contexts evidence.Contexts) error {
+	if d.Run != nil || slices.ContainsFunc(s, func(k Knowledge) bool { return k.Run != nil }) {
+		for _, k := range s {
+			if d.Run == nil || k.Run == nil || d.Run.widens(*k.Run) {
+				return fmt.Errorf("%w: it carries the facts of %s to runs that %s never reached, whose scope is %s. "+
+					"Give each draft only the producer, labels and exceptions every item it names reaches, "+
+					"and repeat a general fact in each draft that needs it",
+					ErrCompactionInvalid, k.ID, k.ID, k.reachText())
+			}
+		}
+		return nil
+	}
 	k, reached, ok := s.widened(d, contexts)
 	if !ok {
 		return nil
@@ -323,6 +396,10 @@ func (s Set) uncovering(changeContext evidence.Context, metric string, dims map[
 func (s Set) checkExclusive() error {
 	for i, a := range s {
 		for _, b := range s[i+1:] {
+			if a.Kind == b.Kind && a.sharesRun(b) && (a.Veto == nil || b.Veto == nil) {
+				return fmt.Errorf("%w: %s and %s are both %s items one run may carry and no label splits them",
+					ErrCompactionOverlap, a.ID, b.ID, a.Kind)
+			}
 			if a.Kind == b.Kind && a.sharesFolder(b) && a.Scope.overlaps(b.Scope) && (a.Veto == nil || b.Veto == nil) {
 				return fmt.Errorf("%w: %s and %s are both %s items of one folder and no metric or dim value splits them",
 					ErrCompactionOverlap, a.ID, b.ID, a.Kind)
@@ -330,6 +407,11 @@ func (s Set) checkExclusive() error {
 		}
 	}
 	return nil
+}
+
+// Whether one run may carry both items
+func (k Knowledge) sharesRun(other Knowledge) bool {
+	return k.Run != nil && other.Run != nil && k.Run.overlaps(*other.Run)
 }
 
 // Every old veto is kept by the veto of a new judgment that names its item
@@ -561,9 +643,12 @@ func (s Set) approveCompaction(c Compaction, approver string, now time.Time, con
 // The records that approve the compaction of id
 // 1. an approver is required once the compaction is found
 // 2. an approval that pushes a review past a cap or grows one already past it is refused like one of Approve
-func (s Set) compactionApproval(id, approver string, now time.Time, contexts evidence.Contexts) ([]Knowledge, error) {
+func (s Set) compactionApproval(id, approver string, check Check, now time.Time, contexts evidence.Contexts) ([]Knowledge, error) {
 	c, err := s.compaction(id)
 	if err != nil {
+		return nil, err
+	}
+	if err := check.verify(c); err != nil {
 		return nil, err
 	}
 	if approver == "" {

@@ -28,6 +28,7 @@ var (
 	ErrCompactionPending    = errors.New("knowledge: another compaction of the same items is pending")
 	ErrParagraphOnly        = errors.New("knowledge: item cites only procedure paragraphs and has nothing to replay")
 	ErrReplayNotPassed      = errors.New("knowledge: the replay of the compaction has not passed")
+	ErrCoverageNotPassed    = errors.New("knowledge: the coverage check of the compaction has not passed")
 	ErrNarrowInvalid        = errors.New("knowledge: narrowing needs a refuted change context")
 	ErrNarrowExhausted      = errors.New("knowledge: narrowing would leave no change context of the version")
 	ErrPromoteInvalid       = errors.New("knowledge: promotion needs a confirmed outcome")

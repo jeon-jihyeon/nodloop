@@ -11,6 +11,7 @@ import (
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/jeon-jihyeon/nodloop/internal/compact"
 	"github.com/jeon-jihyeon/nodloop/internal/diagnose"
 	"github.com/jeon-jihyeon/nodloop/internal/feedback"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
@@ -20,13 +21,36 @@ import (
 // A server over the records alone for a client with no data directory
 // Every tool of the data review answers missing and the tools of runs, nods and knowledge work
 func NewRecords(
-	traces TraceStore, verdicts FeedbackStore, outcomes OutcomeStore, ledger *knowledge.Ledger, now func() time.Time,
-	session diagnose.Session, exe, dataArgs string, missing error,
+	traces TraceStore, verdicts FeedbackStore, outcomes OutcomeStore, ledger *knowledge.Ledger, compactor *compact.Compactor,
+	now func() time.Time, session diagnose.Session, exe, dataArgs string, missing error,
 ) *Server {
 	return &Server{
-		traces: traces, verdicts: verdicts, outcomes: outcomes, ledger: ledger, now: now, session: session,
+		traces: traces, verdicts: verdicts, outcomes: outcomes, ledger: ledger, compactor: compactor, now: now, session: session,
 		exe: exe, dataArgs: dataArgs, missing: missing,
 	}
+}
+
+type checkCompactionInput struct {
+	Compaction string                   `json:"compaction" jsonschema:"the compaction id from propose_compaction"`
+	Items      []compact.CoverageAnswer `json:"items" jsonschema:"one entry per old item: the new items that state it and every fact of it no new item states"`
+}
+
+// Records the coverage the conversation checked for a compaction of run items
+// Approval reads the newest one, so a fixed draft is checked again before approve_compaction
+func (s *Server) checkCompaction(ctx context.Context, _ *sdk.CallToolRequest, in checkCompactionInput) (*sdk.CallToolResult, any, error) {
+	cov, err := s.compactor.Record(ctx, in.Compaction, in.Items)
+	if err != nil {
+		return nil, nil, err
+	}
+	c, err := s.ledger.Compaction(ctx, in.Compaction)
+	if err != nil {
+		return nil, nil, err
+	}
+	answer := map[string]any{"compaction": cov.Compaction, "items": cov.Items, "passed": true}
+	if err := cov.Passes(c); err != nil {
+		answer["passed"], answer["why"] = false, err.Error()
+	}
+	return nil, answer, nil
 }
 
 // A tool of the data review answers the missing data dir of a records server instead of reading nil stores

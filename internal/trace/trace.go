@@ -53,11 +53,12 @@ const (
 	NameDiagnose Name = "diagnose" // review recorded from a context
 	NameRevise   Name = "revise"   // first submission of a context sent back with its defects
 	NameRun      Name = "run"      // output any producer recorded through the core tools
+	NameCheck    Name = "check"    // coverage check of a compaction of run items
 )
 
 // Every name in a fixed order for messages
 func Names() []Name {
-	return []Name{NameContext, NameSelect, NameDiagnose, NameRevise, NameRun}
+	return []Name{NameContext, NameSelect, NameDiagnose, NameRevise, NameRun, NameCheck}
 }
 
 func (n Name) Valid() bool {

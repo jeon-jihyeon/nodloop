@@ -112,8 +112,11 @@ commands:
                             Print the new and old items and the replay result
   knowledge replay <compaction id> [--model <m>] [--events <ids>] [--parallel <n>]
                             Review every event the old items came from again with the new items through claude -p
+  knowledge check <compaction id> [--model <m>]
+                            For a compaction of run items, one claude -p call lists for every old item the new items
+                            that state it and the facts they lose, and records it as the coverage check
   knowledge approve-compaction <compaction id> --approver <name>
-                            Approve the new items and retire the old ones once the replay passed
+                            Approve the new items and retire the old ones once the replay or the coverage check passed
   knowledge export          Write the approved vetoes and approved.md of the record directory again after a failed export
                             and print the line that imports approved.md from a CLAUDE.md
   diagnose --event <id> [--examples <n>] [--knowledge none or selected or all] [--model <m>] [--session <s>] [--tag <t>]

@@ -222,8 +222,9 @@ func TestLedgerRunFolder(t *testing.T) {
 	_, err = l.Approve(ctx, "more", 1, "ann")
 	assert.ErrorIs(t, err, knowledge.ErrFolderFull)
 	assert.NoError(t, testkit.Err(l.Approve(ctx, "apart", 1, "ann")), "another producer shares no run")
-	_, err = l.Compactable(ctx, "big")
-	assert.ErrorIs(t, err, knowledge.ErrCompactionInvalid)
+	compactable, err := l.Compactable(ctx, "big")
+	require.NoError(t, err)
+	assert.Len(t, compactable.Items, 1, "the item that waits for approval and the item of another producer stay out")
 }
 
 func TestRunScopeRecorded(t *testing.T) {
