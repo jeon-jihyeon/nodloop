@@ -9,8 +9,10 @@ import (
 	"io"
 	"time"
 
+	"github.com/jeon-jihyeon/nodloop/internal/feedback"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	"github.com/jeon-jihyeon/nodloop/internal/loop"
+	"github.com/jeon-jihyeon/nodloop/internal/trace"
 )
 
 // The conversation records joined once for the loop views
@@ -197,6 +199,9 @@ func runReport(args []string, getenv func(string) string, now func() time.Time, 
 	if len(args) == 0 {
 		return fail(stderr, "report", errNoAction)
 	}
+	if args[0] == "loop" {
+		return runReportLoop(args[1:], getenv, now, stdout, stderr)
+	}
 	if args[0] != "online" {
 		return fail(stderr, "report", fmt.Errorf("%w %q", errUnknownAction, args[0]))
 	}
@@ -226,4 +231,61 @@ func runReport(args []string, getenv func(string) string, now func() time.Time, 
 		return fail(stderr, "report", err)
 	}
 	return 0
+}
+
+// How each approved run item fared on the runs that applied it, over the records alone
+func runReportLoop(args []string, getenv func(string) string, now func() time.Time, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("report loop", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	var data dataFlags
+	data.bind(fs)
+	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	a, err := data.records(getenv, now)
+	if err != nil {
+		return fail(stderr, "report", err)
+	}
+	if err := (loopCommand{app: a, out: stdout}).runs(context.Background()); err != nil {
+		return fail(stderr, "report", err)
+	}
+	return 0
+}
+
+// One line per approved run item: applied, followed of judged, repeat and settle, then a line that misapplied is not measured
+func (c loopCommand) runs(ctx context.Context) error {
+	traces, err := c.app.traces()
+	if err != nil {
+		return err
+	}
+	runs, err := traces.List(ctx, trace.Filter{Name: trace.NameRun})
+	if err != nil {
+		return err
+	}
+	verdicts, err := c.app.feedback()
+	if err != nil {
+		return err
+	}
+	records, err := verdicts.List(ctx, feedback.Filter{})
+	if err != nil {
+		return err
+	}
+	ledger, err := c.app.ledger()
+	if err != nil {
+		return err
+	}
+	items, err := ledger.All(ctx)
+	if err != nil {
+		return err
+	}
+	for _, row := range loop.NewRuns(runs, records).Report(items) {
+		settle := "-"
+		if row.Settle > 0 {
+			settle = max(row.Settle.Round(time.Second), time.Second).String()
+		}
+		fmt.Fprintf(c.out, "%s\tv%d\tapplied %d\tfollowed %d of %d\trepeat %d\tsettle %s\n",
+			row.ID, row.Version, row.Applied, row.Followed, row.Judged, row.Repeat, settle)
+	}
+	fmt.Fprintln(c.out, "misapplied\tnot measured: no label says which runs an item should have reached")
+	return nil
 }

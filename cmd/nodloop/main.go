@@ -59,6 +59,9 @@ commands:
   report online [--since <RFC3339>]
                             Weekly verdict rates, waits and edit widths, first status against the settled status,
                             and the reviews with and without knowledge compared on verdicts, outcomes, waits and edit widths
+  report loop               Per approved run item: runs that applied it, how many a person approved of those judged,
+                            how many were corrected again for the reason that taught it, and the time from that
+                            correction to the approval. Needs only the record directory
   feedback list [--trace <id>] [--verdict <v>] [--reviewer <r>] [--limit <n>]
                             List feedback newest first with the reason code or a dash after the verdict
   feedback add --trace <id> --verdict <v> [--reason-code <c>] [--reason <r>] [--edited <file>] [--reviewer <r>] [--audit]
