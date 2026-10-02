@@ -8,10 +8,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeon-jihyeon/nodloop/internal/evidence"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge/file"
 	"github.com/jeon-jihyeon/nodloop/internal/testkit"
+	"github.com/jeon-jihyeon/nodloop/internal/trace"
 	"github.com/jeon-jihyeon/nodloop/internal/veto"
 	vetofile "github.com/jeon-jihyeon/nodloop/internal/veto/file"
 )
@@ -20,8 +20,9 @@ func TestKnowledgeValidate(t *testing.T) {
 	t.Parallel()
 	at := time.Date(2026, 9, 23, 0, 0, 0, 0, time.UTC)
 	valid := knowledge.Knowledge{
-		ID: "k1", Version: 1, Kind: knowledge.KindMeaning, Content: "clicks and conversions use different time bases",
-		Evidence: knowledge.Evidence{ParagraphIDs: []string{"p#1"}}, Basis: knowledge.BasisStated,
+		ID: "k1", Version: 1, Kind: knowledge.KindMeaning, Content: "commits in this repo are signed",
+		Run:      &knowledge.RunScope{Producer: "session", Labels: trace.Labels{"repo": {"nodloop"}}},
+		Evidence: knowledge.Evidence{FeedbackTraceIDs: []string{"t1"}}, Basis: knowledge.BasisStated,
 		Status: knowledge.StatusCandidate, Author: "author", Time: at,
 	}
 	approved := valid
@@ -76,12 +77,11 @@ func TestKnowledgeValidate(t *testing.T) {
 		k.Veto = &knowledge.Veto{Tool: tool, When: sed.When, Example: sed.Example}
 		return k
 	}
-	scoped := func(contexts, exceptions []evidence.Context) knowledge.Knowledge {
+	scoped := func(run *knowledge.RunScope) knowledge.Knowledge {
 		k := valid
-		k.Scope.ChangeContexts, k.Exceptions = contexts, exceptions
+		k.Run = run
 		return k
 	}
-	noChange, planned := evidence.ContextNoKnownChange, evidence.ContextPlannedChange
 	tcs := []struct {
 		name string
 		args knowledge.Knowledge
@@ -112,11 +112,15 @@ func TestKnowledgeValidate(t *testing.T) {
 		{"veto on a lower case tool fails", toolVeto("bash"), veto.ErrToolUnknown},
 		{"veto on a permission rule fails", toolVeto("Bash(sed -i:*)"), veto.ErrToolUnknown},
 		{"veto with one unknown tool in its list fails", toolVeto("Edit|write"), knowledge.ErrVetoInvalid},
-		{"scope with a valid change context and exception is valid", scoped([]evidence.Context{noChange, planned}, []evidence.Context{planned}), nil},
-		{"misspelled change context fails", scoped([]evidence.Context{"no-known-change"}, nil), knowledge.ErrScopeInvalid},
-		{"misspelled exception fails", scoped(nil, []evidence.Context{"planned_change"}), knowledge.ErrScopeInvalid},
-		{"exception of the only scoped context fails", scoped([]evidence.Context{noChange}, []evidence.Context{noChange}), knowledge.ErrScopeInvalid},
-		{"exceptions of every context on an unscoped item fail", scoped(nil, evidence.DefaultContexts().Names()), knowledge.ErrScopeInvalid},
+		{
+			"run scope with labels and exceptions is valid",
+			scoped(&knowledge.RunScope{Producer: "session", Labels: trace.Labels{"repo": {"nodloop"}}, Except: trace.Labels{"task": {"docs"}}}),
+			nil,
+		},
+		{"missing run scope fails", scoped(nil), knowledge.ErrScopeRequired},
+		{"run scope without a producer fails", scoped(&knowledge.RunScope{Labels: trace.Labels{"repo": {"nodloop"}}}), knowledge.ErrScopeInvalid},
+		{"empty label value fails", scoped(&knowledge.RunScope{Producer: "session", Labels: trace.Labels{"repo": {""}}}), knowledge.ErrScopeInvalid},
+		{"exception without a value fails", scoped(&knowledge.RunScope{Producer: "session", Except: trace.Labels{"task": nil}}), knowledge.ErrScopeInvalid},
 	}
 	ctx := context.Background()
 	for _, tc := range tcs {
@@ -125,57 +129,10 @@ func TestKnowledgeValidate(t *testing.T) {
 			store, err := file.New(t.TempDir())
 			require.NoError(t, err)
 			l := knowledge.NewLedger(
-				store, vetofile.NewApprovedFile(t.TempDir(), "records"), evidence.DefaultContexts(),
+				store, vetofile.NewApprovedFile(t.TempDir(), "records"),
 				func() time.Time { return at }, func(prefix string) string { return prefix + "new" },
 			)
 			assert.ErrorIs(t, testkit.Err(l.Import(ctx, []knowledge.Knowledge{tc.args})), tc.want)
-		})
-	}
-}
-
-func TestKnowledgeFilled(t *testing.T) {
-	filled := knowledge.Knowledge{
-		Scope: knowledge.Scope{Scope: evidence.Scope{
-			ChangeContexts: []evidence.Context{evidence.ContextNoKnownChange}, Metrics: []string{"click_count"},
-		}},
-		Evidence: knowledge.Evidence{FeedbackTraceIDs: []string{"t1"}},
-		Basis:    knowledge.BasisStated,
-	}
-	tcs := []struct {
-		name string
-		args knowledge.Knowledge
-		want knowledge.Knowledge
-	}{
-		{"an empty draft takes every filled field", knowledge.Knowledge{Content: "c"}, func() knowledge.Knowledge {
-			k := filled
-			k.Content = "c"
-			return k
-		}()},
-		{
-			"a set axis replaces the filled one and evidence adds up without repeats",
-			knowledge.Knowledge{
-				Scope: knowledge.Scope{
-					Scope: evidence.Scope{Metrics: []string{"conversion_count"}}, Dims: map[string]string{"platform": "ios"},
-				},
-				Evidence: knowledge.Evidence{FeedbackTraceIDs: []string{"t1", "t2"}, ParagraphIDs: []string{"p#1"}},
-				Basis:    knowledge.BasisVerified,
-			},
-			knowledge.Knowledge{
-				Scope: knowledge.Scope{
-					Scope: evidence.Scope{
-						ChangeContexts: []evidence.Context{evidence.ContextNoKnownChange}, Metrics: []string{"conversion_count"},
-					},
-					Dims: map[string]string{"platform": "ios"},
-				},
-				Evidence: knowledge.Evidence{FeedbackTraceIDs: []string{"t1", "t2"}, ParagraphIDs: []string{"p#1"}},
-				Basis:    knowledge.BasisVerified,
-			},
-		},
-	}
-	for _, tc := range tcs {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			assert.Equal(t, tc.want, tc.args.Filled(filled.Scope, filled.Evidence, filled.Basis))
 		})
 	}
 }

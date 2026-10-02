@@ -9,8 +9,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeon-jihyeon/nodloop/internal/diagnose"
-	"github.com/jeon-jihyeon/nodloop/internal/evidence"
 	"github.com/jeon-jihyeon/nodloop/internal/feedback"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	"github.com/jeon-jihyeon/nodloop/internal/loop"
@@ -21,93 +19,15 @@ import (
 // A Monday so week bounds are easy to read
 var monday = time.Date(2026, 9, 28, 9, 0, 0, 0, time.UTC)
 
-// One diagnose trace as the conversation records it
-// The zero value is a conversation review under no known change that applied nothing and cites one paragraph
-type review struct {
-	id, ref string
-	batch   bool
-	// Empty for a conversation review and a one-off batch review
-	session   string
-	failed    bool
-	context   evidence.Context
-	knowledge []diagnose.AppliedKnowledge
-	status    evidence.Status
-	cites     []string
-	tags      []string
-	at        time.Time
-}
-
-func (r review) trace(t *testing.T) trace.Trace {
+// One run of producer session in the repo at monday plus offset hours
+func sessionRun(t *testing.T, id string, offset int, repo string, applied ...knowledge.Ref) trace.Trace {
 	t.Helper()
-	mode := diagnose.ModeInteractive
-	if r.batch {
-		mode = diagnose.ModeBatch
-	}
-	in, err := json.Marshal(map[string]any{
-		"mode": mode, "change_context": orContext(r.context), "knowledge": orKnowledge(r.knowledge),
-	})
+	in, err := json.Marshal(map[string][]knowledge.Ref{"applied": applied})
 	require.NoError(t, err)
-	status := r.status
-	if status == "" {
-		status = evidence.StatusReadyForReview
+	return trace.Trace{
+		ID: id, Name: trace.NameRun, Producer: "session", Labels: trace.Labels{"repo": {repo}},
+		Time: monday.Add(time.Duration(offset) * time.Hour), Input: in, Output: json.RawMessage(`{"answer":"` + id + `"}`),
 	}
-	cites := r.cites
-	if cites == nil {
-		cites = []string{"p#1"}
-	}
-	out, err := json.Marshal(diagnose.Diagnosis{
-		Status: status, Causes: []diagnose.Cause{{Summary: "cause", ParagraphIDs: cites}}, Checks: diagnose.Checks{},
-	})
-	require.NoError(t, err)
-	tr := trace.Trace{
-		ID: r.id, Name: trace.NameDiagnose, SessionID: r.session, Subject: "ev-" + r.id, Ref: r.ref, Time: r.at, Input: in, Output: out,
-		Tags: r.tags,
-	}
-	if tr.Ref == "" {
-		tr.Ref = "ctx-" + r.id
-	}
-	if tr.Time.IsZero() {
-		tr.Time = monday
-	}
-	if r.failed {
-		tr.Error, tr.Output = "model failed", nil
-	}
-	return tr
-}
-
-func orContext(c evidence.Context) evidence.Context {
-	if c == "" {
-		return evidence.ContextNoKnownChange
-	}
-	return c
-}
-
-func orKnowledge(k []diagnose.AppliedKnowledge) []diagnose.AppliedKnowledge {
-	if k == nil {
-		return []diagnose.AppliedKnowledge{}
-	}
-	return k
-}
-
-func traces(t *testing.T, reviews ...review) trace.Traces {
-	t.Helper()
-	out := make(trace.Traces, 0, len(reviews))
-	for _, r := range reviews {
-		out = append(out, r.trace(t))
-	}
-	return out
-}
-
-// The first submission of a context sent back with the status
-func revise(t *testing.T, ref string, status evidence.Status) trace.Trace {
-	t.Helper()
-	out, err := json.Marshal(diagnose.Diagnosis{Status: status})
-	require.NoError(t, err)
-	return trace.Trace{ID: "revise-" + ref, Name: trace.NameRevise, Ref: ref, Time: monday, Output: out}
-}
-
-func applied(id string, version int) diagnose.AppliedKnowledge {
-	return diagnose.AppliedKnowledge{ID: id, Version: version, Chars: 40}
 }
 
 func verdict(traceID string, v feedback.Verdict, at time.Time) feedback.Feedback {
@@ -118,126 +38,49 @@ func outcome(traceID string, r feedback.Result, at time.Time) feedback.Outcome {
 	return feedback.Outcome{TraceID: traceID, Result: r, Time: at, Reviewer: feedback.ReviewerAuthor}
 }
 
-func item(id string, version int, status knowledge.Status) knowledge.Knowledge {
+// An approved stated item for the runs of the repo nodloop that cites the run taught
+func runItem(id string, version int) knowledge.Knowledge {
 	return knowledge.Knowledge{
-		ID: id, Version: version, Kind: knowledge.KindMeaning, Content: id, Status: status, Basis: knowledge.BasisStated,
-		Evidence: knowledge.Evidence{ParagraphIDs: []string{"p#1"}}, Author: "author", Approver: "ann",
+		ID: id, Version: version, Kind: knowledge.KindJudgment, Content: id, Status: knowledge.StatusApproved, Basis: knowledge.BasisStated,
+		Run:      &knowledge.RunScope{Producer: "session", Labels: trace.Labels{"repo": {"nodloop"}}},
+		Evidence: knowledge.Evidence{FeedbackTraceIDs: []string{"taught"}}, Author: "author", Approver: "ann",
 		ApprovedAt: monday, Time: monday,
 	}
 }
 
+// Failed runs and traces of other names stay out and the human records are the latest
 func TestNew(t *testing.T) {
-	failed := review{id: "r2", failed: true}.trace(t)
-	failed.Output = json.RawMessage(`not json`)
-	brokenRevise := revise(t, "ctx-r3", evidence.StatusHold)
-	brokenRevise.Output = json.RawMessage(`not json`)
-	type args struct {
-		traces   trace.Traces
-		verdicts feedback.Records
+	gitC := knowledge.Ref{ID: "git-c", Version: 1}
+	failed := sessionRun(t, "failed", 1, "nodloop", gitC)
+	failed.Error = "cancelled"
+	traces := trace.Traces{
+		sessionRun(t, "r1", 1, "nodloop", gitC), failed,
+		{ID: "check", Name: trace.NameCheck, SessionID: "c-1", Time: monday},
 	}
-	tcs := []struct {
-		name string
-		args args
-		want int
-	}{
-		{"a failed review is never read", args{traces: trace.Traces{failed}}, 0},
-		{"a revise output that does not read is skipped", args{traces: trace.Traces{brokenRevise}}, 0},
-		{"a batch review of an eval session stays out of the queue", args{traces: traces(t, review{id: "r4", batch: true, session: "s1"})}, 0},
-		{"a one-off batch review without a session joins the queue", args{traces: traces(t, review{id: "r7", batch: true})}, 1},
-		{
-			"a session verdict leaves the review pending",
-			args{
-				traces: traces(t, review{id: "r5"}),
-				verdicts: feedback.Records{{
-					TraceID: "r5", Verdict: feedback.VerdictApprove, Time: monday, Reviewer: feedback.ReviewerSession,
-				}},
-			},
-			1,
-		},
-		{
-			"a human verdict takes the review off the queue",
-			args{traces: traces(t, review{id: "r6"}), verdicts: feedback.Records{verdict("r6", feedback.VerdictApprove, monday)}},
-			0,
-		},
+	verdicts := feedback.Records{
+		verdict("r1", feedback.VerdictReject, monday.Add(2*time.Hour)),
+		verdict("r1", feedback.VerdictApprove, monday.Add(3*time.Hour)),
+		{TraceID: "r1", Verdict: feedback.VerdictEdit, Time: monday.Add(4 * time.Hour), Reviewer: feedback.ReviewerSession},
 	}
-	for _, tc := range tcs {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			h, err := loop.New(tc.args.traces, tc.args.verdicts, nil, nil)
-			require.NoError(t, err)
-			got, err := h.Queue(loop.QueueOptions{})
-			require.NoError(t, err)
-			assert.Len(t, got, tc.want)
-		})
-	}
+
+	h := loop.New(traces, verdicts, nil, knowledge.Set{runItem("git-c", 1)})
+
+	got := h.Health(monday)
+	require.Len(t, got, 1)
+	assert.Equal(t, 1, got[0].Applied, "the failed run applied nothing a person could judge")
+	assert.Equal(t, 1, got[0].Approved, "a later approve replaces the reject and a session verdict is no person's word")
+	assert.Equal(t, map[string]json.RawMessage{"r1": json.RawMessage(`{"answer":"r1"}`)}, h.Outputs([]string{"r1", "failed", "check"}))
 }
 
+// Load reads the run traces of the stores
 func TestLoad(t *testing.T) {
 	ctx := context.Background()
-	st := testkit.Open(t)
-	require.NoError(t, st.Traces.Append(ctx, review{id: "r1"}.trace(t)))
-	type want struct {
-		loaded bool
-		err    error
-	}
-	tcs := []struct {
-		name string
-		args loop.FeedbackStore
-		want want
-	}{
-		{"the stores are joined", st.Feedback, want{loaded: true}},
-		{
-			"a failing feedback read fails the load",
-			&testkit.FlakyFeedback{Store: st.Feedback, Reads: testkit.Reads{Err: assert.AnError}},
-			want{err: assert.AnError},
-		},
-	}
-	for _, tc := range tcs {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			h, err := loop.Load(ctx, st.Traces, tc.args, st.Outcomes, st.Ledger)
-			assert.ErrorIs(t, err, tc.want.err)
-			assert.Equal(t, tc.want.loaded, h != nil)
-		})
-	}
-}
+	s := testkit.Open(t)
+	require.NoError(t, s.Traces.Append(ctx, sessionRun(t, "r1", 1, "nodloop")))
+	require.NoError(t, s.Feedback.Append(ctx, verdict("r1", feedback.VerdictApprove, monday.Add(time.Hour))))
 
-func TestHistoryReviews(t *testing.T) {
-	all := traces(t, review{id: "r1"}, review{id: "r2"}, review{id: "batch", batch: true, session: "s1"})
-	h, err := loop.New(all, nil, nil, nil)
+	h, err := loop.Load(ctx, s.Traces, s.Feedback, s.Outcomes, s.Ledger)
+
 	require.NoError(t, err)
-	tcs := []struct {
-		name string
-		args []string
-		want map[string]json.RawMessage
-	}{
-		{"a named review comes back with its output", []string{"r2"}, map[string]json.RawMessage{"r2": all[1].Output}},
-		{"an id of a batch review or of no trace is left out", []string{"batch", "nope"}, map[string]json.RawMessage{}},
-	}
-	for _, tc := range tcs {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			assert.Equal(t, tc.want, h.Reviews(tc.args))
-		})
-	}
-}
-
-func TestNewMalformed(t *testing.T) {
-	broken := review{id: "r1"}.trace(t)
-	broken.Output = json.RawMessage(`{"status":"maybe"}`)
-	tcs := []struct {
-		name string
-		args trace.Traces
-		want error
-	}{
-		{"a malformed review fails the join", trace.Traces{broken}, diagnose.ErrMalformed},
-	}
-	for _, tc := range tcs {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			h, err := loop.New(tc.args, nil, nil, nil)
-			assert.ErrorIs(t, err, tc.want)
-			assert.Nil(t, h)
-		})
-	}
+	assert.Equal(t, 1, h.Report(time.Time{}).WithoutKnowledge.Verdicts.Approve)
 }

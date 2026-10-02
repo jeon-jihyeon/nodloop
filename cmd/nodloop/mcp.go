@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -12,20 +11,19 @@ import (
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/jeon-jihyeon/nodloop/internal/diagnose"
 	"github.com/jeon-jihyeon/nodloop/internal/mcp"
 )
 
 // The server starts whatever its config so the conversation can tell the user what to fix
-// Every call opens the config of that moment so a setup run through the CLI needs no reconnect
+// Every call opens the config of that moment so a change of record dir needs no reconnect
 func runMCP(
 	args []string, getenv func(string) string, now func() time.Time,
 	stdin io.Reader, stdout io.WriteCloser, stderr io.Writer,
 ) int {
 	fs := flag.NewFlagSet("mcp", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	var data dataFlags
-	data.bind(fs)
+	var records recordFlags
+	records.bind(fs)
 	list := fs.Bool("list", false, "print the tool names and exit")
 	if err := fs.Parse(args); err != nil {
 		return 1
@@ -35,10 +33,10 @@ func runMCP(
 		cmd.list()
 		return 0
 	}
-	open := mcpOpen{flags: data, getenv: getenv, now: now, session: mcp.NewSession(now())}.open
+	open := mcpOpen{flags: records, getenv: getenv, now: now, session: mcp.NewSession(now())}.open
 	instructions := pluginVersion(getenv(envPluginVersion)).mismatch(buildVersion(), executable())
 	if instructions != "" {
-		instructions += ". Tell the user this before the first review"
+		instructions += ". Tell the user this before the first answer"
 	}
 	if err := mcp.NewHost(open, buildVersion(), instructions).ServeTransport(context.Background(), cmd.transport()); err != nil {
 		return fail(stderr, "mcp", err)
@@ -85,36 +83,19 @@ func (c mcpCommand) transport() sdk.Transport {
 // What every tool call of one server process opens
 // The flags and variables of the process still win over the saved config
 type mcpOpen struct {
-	flags  dataFlags
+	flags  recordFlags
 	getenv func(string) string
 	now    func() time.Time
 	// Made once at start so a change of record dir between calls keeps one session
-	session diagnose.Session
+	session string
 }
 
-// The cause comes first and then the way out
-// 1. without a data dir the server works on the records alone and every data tool answers how to set one up
-// 2. any other cause asks to fix what it names first
-// 3. the next call reads the saved config so no reconnect is ever asked
+// The server over the record directory of that moment
+// A config that cannot be read is named with the way out
 func (o mcpOpen) open(context.Context) (*mcp.Server, error) {
 	a, err := o.flags.app(o.getenv, o.now)
-	if errors.Is(err, errDataDirUnset) {
-		return o.records(fmt.Errorf("%w. Run %s setup --data-dir <dir>", err, executable()))
-	}
-	if err == nil {
-		var s *mcp.Server
-		if s, err = a.server(o.session); err == nil {
-			return s, nil
-		}
-	}
-	return nil, fmt.Errorf("%w. Fix what this names or run %s setup --data-dir <dir> again", err, executable())
-}
-
-// The server of runs, nods and knowledge over the record directory
-func (o mcpOpen) records(missing error) (*mcp.Server, error) {
-	a, err := o.flags.records(o.getenv, o.now)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w. Fix what this names, or set --record-dir or %s", err, envRecordDir)
 	}
 	traces, err := a.traces()
 	if err != nil {
@@ -136,5 +117,5 @@ func (o mcpOpen) records(missing error) (*mcp.Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	return mcp.NewRecords(traces, verdicts, outcomes, ledger, compactor, o.now, o.session, executable(), a.cfg.recordArgs(), missing), nil
+	return mcp.New(traces, verdicts, outcomes, ledger, compactor, o.now, o.session, executable(), a.cfg.recordArgs()), nil
 }

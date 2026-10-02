@@ -41,7 +41,7 @@ func runHook(args []string, getenv func(string) string, now func() time.Time, st
 		fmt.Fprintln(stderr, "nodloop hook:", err)
 		return 0
 	}
-	a, err := dataFlags{}.records(getenv, now)
+	a, err := recordFlags{}.app(getenv, now)
 	if err != nil {
 		fmt.Fprintln(stderr, "nodloop hook:", err)
 		return 0

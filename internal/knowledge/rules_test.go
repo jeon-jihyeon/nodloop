@@ -10,20 +10,22 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeon-jihyeon/nodloop/internal/evidence"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge/file"
 	"github.com/jeon-jihyeon/nodloop/internal/testkit"
+	"github.com/jeon-jihyeon/nodloop/internal/trace"
 )
 
 func TestSetRules(t *testing.T) {
 	approved := func(id string, kind knowledge.Kind, content string) knowledge.Knowledge {
-		return knowledge.Knowledge{ID: id, Version: 2, Kind: kind, Content: content, Status: knowledge.StatusApproved, Approver: "ann"}
+		return knowledge.Knowledge{
+			ID: id, Version: 2, Kind: kind, Content: content, Status: knowledge.StatusApproved, Approver: "ann",
+			Run: &knowledge.RunScope{Producer: "session"},
+		}
 	}
-	lag := approved("k-lag", knowledge.KindMeaning, "Conversions arrive up to 4 hours late.\nThe newest hours read low.")
-	lag.Scope = knowledge.Scope{Scope: evidence.Scope{Metrics: []string{"conversion_count"}}}
-	lag.Exceptions = []evidence.Context{evidence.ContextMeasurementChanged}
-	hold := approved("k-hold", knowledge.KindJudgment, "Hold while the tracking change is unconfirmed")
+	sign := approved("k-sign", knowledge.KindMeaning, "Commits here are signed.\nAn unsigned commit is rejected.")
+	sign.Run = &knowledge.RunScope{Producer: "session", Labels: trace.Labels{"repo": {"nodloop"}}, Except: trace.Labels{"task": {"docs", "draft"}}}
+	hold := approved("k-hold", knowledge.KindJudgment, "Ask before a force push")
 	sed := approved("k-sed", knowledge.KindJudgment, "Never edit files with sed -i")
 	sed.Veto = &knowledge.Veto{Tool: "Bash"}
 	candidate := approved("k-draft", knowledge.KindMeaning, "not approved yet")
@@ -36,13 +38,13 @@ func TestSetRules(t *testing.T) {
 		{"no approved item renders nothing", knowledge.Set{candidate}, ""},
 		{
 			"meaning leads judgment and each item is one line in id order",
-			knowledge.Set{sed, lag, hold, candidate},
+			knowledge.Set{sed, sign, hold, candidate},
 			"\n## Meaning\n\n" +
-				"- k-lag v2: Conversions arrive up to 4 hours late. The newest hours read low. " +
-				"Scope: metrics conversion_count. except measurement_context_changed. Approved by ann\n" +
+				"- k-sign v2: Commits here are signed. An unsigned commit is rejected. " +
+				"Scope: runs of session. repo=nodloop. except task=docs|draft. Approved by ann\n" +
 				"\n## Judgment\n\n" +
-				"- k-hold v2: Hold while the tracking change is unconfirmed. Scope: any event. Approved by ann\n" +
-				"- k-sed v2: Never edit files with sed -i. Scope: any event. Approved by ann. The guard blocks the call it forbids\n",
+				"- k-hold v2: Ask before a force push. Scope: runs of session. Approved by ann\n" +
+				"- k-sed v2: Never edit files with sed -i. Scope: runs of session. Approved by ann. The guard blocks the call it forbids\n",
 		},
 	}
 	for _, tc := range tcs {
@@ -57,8 +59,9 @@ func TestSetRules(t *testing.T) {
 func TestLedgerExportRules(t *testing.T) {
 	at := time.Date(2026, 10, 2, 0, 0, 0, 0, time.UTC)
 	draft := knowledge.Knowledge{
-		ID: "k-lag", Kind: knowledge.KindMeaning, Content: "conversions lag clicks", Author: "author",
-		Evidence: knowledge.Evidence{ParagraphIDs: []string{"p#1"}},
+		ID: "k-lag", Kind: knowledge.KindMeaning, Content: "commits here are signed", Author: "author",
+		Run:      &knowledge.RunScope{Producer: "session", Labels: trace.Labels{"repo": {"nodloop"}}},
+		Evidence: knowledge.Evidence{FeedbackTraceIDs: []string{"t1"}},
 	}
 	type step func(ctx context.Context, l *knowledge.Ledger) error
 	approve := func(ctx context.Context, l *knowledge.Ledger) error {
@@ -70,7 +73,7 @@ func TestLedgerExportRules(t *testing.T) {
 	reaffirm := func(ctx context.Context, l *knowledge.Ledger) error {
 		return testkit.Err(l.Reaffirm(ctx, "k-lag", 1, "cy"))
 	}
-	line := "- k-lag v1: conversions lag clicks. Scope: any event. Approved by "
+	line := "- k-lag v1: commits here are signed. Scope: runs of session. repo=nodloop. Approved by "
 	tcs := []struct {
 		name string
 		args []step
@@ -101,7 +104,7 @@ func TestLedgerExportRules(t *testing.T) {
 				return
 			}
 			require.NoError(t, err)
-			_, body, _ := strings.Cut(string(got), "It never overrides an observation\n")
+			_, body, _ := strings.Cut(string(got), "It never overrides what the user asks now\n")
 			assert.Equal(t, tc.want, "\n"+strings.TrimPrefix(body, "\n"))
 		})
 	}
@@ -114,7 +117,8 @@ func TestLedgerExportRulesFails(t *testing.T) {
 	dir := t.TempDir()
 	l, _ := newTestLedger(t, dir, time.Date(2026, 10, 2, 0, 0, 0, 0, time.UTC))
 	_, _, err := l.Propose(ctx, knowledge.Knowledge{
-		ID: "k-lag", Kind: knowledge.KindMeaning, Content: "lag", Author: "author", Evidence: knowledge.Evidence{ParagraphIDs: []string{"p#1"}},
+		ID: "k-lag", Kind: knowledge.KindMeaning, Content: "lag", Author: "author", Evidence: knowledge.Evidence{FeedbackTraceIDs: []string{"t1"}},
+		Run: &knowledge.RunScope{Producer: "session"},
 	})
 	require.NoError(t, err)
 	require.NoError(t, os.Mkdir(file.RulesPath(dir), 0o700))

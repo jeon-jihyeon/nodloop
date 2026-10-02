@@ -11,12 +11,9 @@ import (
 	"path/filepath"
 	"reflect"
 	"slices"
-	"strings"
 	"time"
 	"unicode/utf8"
 
-	"github.com/jeon-jihyeon/nodloop/internal/diagnose"
-	"github.com/jeon-jihyeon/nodloop/internal/evidence"
 	"github.com/jeon-jihyeon/nodloop/internal/feedback"
 	"github.com/jeon-jihyeon/nodloop/internal/jsonl"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
@@ -28,16 +25,13 @@ import (
 // Flags of the knowledge subcommands
 // Each action reads the ones it needs
 type knowledgeFlags struct {
-	id, kind, content, basis, approver, author, status, traceID, file  string
-	from                                                               string
-	version, parallel                                                  int
-	contexts, metrics, exceptions, paragraphs, feedbackIDs, outcomeIDs listFlag
-	producer, key                                                      string
-	labels, except                                                     labelFlag
-	vetoTool, vetoField, vetoMatch, vetoUnless, vetoExample            string
-	model                                                              string
-	events                                                             idList
-	stale                                                              bool
+	id, kind, content, basis, approver, author, status, traceID, file string
+	from, producer, key, model                                        string
+	version                                                           int
+	feedbackIDs, outcomeIDs                                           listFlag
+	labels, except                                                    labelFlag
+	vetoTool, vetoField, vetoMatch, vetoUnless, vetoExample           string
+	stale                                                             bool
 }
 
 func (f *knowledgeFlags) bind(fs *flag.FlagSet) {
@@ -50,18 +44,14 @@ func (f *knowledgeFlags) bind(fs *flag.FlagSet) {
 	fs.StringVar(&f.approver, "approver", "", "name of the person approving or retiring")
 	fs.StringVar(&f.author, "author", feedback.ReviewerAuthor, "who proposed")
 	fs.StringVar(&f.status, "status", "", "list: candidate, approved, retired or superseded")
-	fs.StringVar(&f.traceID, "trace", "", "propose: the diagnose trace whose feedback is the evidence")
+	fs.StringVar(&f.traceID, "trace", "", "propose: the run whose feedback is the evidence")
 	fs.StringVar(&f.file, "file", "", "import: a jsonl file of knowledge records")
-	fs.Var(&f.contexts, "scope-context", "change context the item applies to. Repeatable")
-	fs.Var(&f.metrics, "scope-metric", "metric the item applies to. Repeatable")
-	fs.Var(&f.exceptions, "exception", "change context where it must not apply. Repeatable")
 	fs.StringVar(&f.producer, "producer", "", "propose and for: the producer whose runs the item applies to")
 	fs.Var(&f.labels, "label", "propose and for: key=value a run must carry. Repeatable")
 	fs.Var(&f.except, "except", "propose: key=value a run must not carry. Repeatable")
-	fs.StringVar(&f.key, "key", "", "narrow: the label key of a run item whose refuted values it stops reaching")
-	fs.Var(&f.paragraphs, "evidence-paragraph", "procedure paragraph id. Repeatable")
-	fs.Var(&f.feedbackIDs, "evidence-feedback", "diagnose trace id whose feedback supports it. Repeatable")
-	fs.Var(&f.outcomeIDs, "evidence-outcome", "diagnose trace id whose outcome supports it. Repeatable")
+	fs.StringVar(&f.key, "key", "", "narrow: the label key whose refuted values the item stops reaching")
+	fs.Var(&f.feedbackIDs, "evidence-feedback", "run id whose feedback supports it. Repeatable")
+	fs.Var(&f.outcomeIDs, "evidence-outcome", "run id whose outcome supports it. Repeatable")
 	fs.StringVar(&f.vetoTool, "veto-tool", "",
 		"propose: tool a judgment forbids such as Bash. Approval makes it a guard veto")
 	fs.StringVar(&f.vetoField, "veto-field", "", "propose: tool_input field the veto matches such as commands, one line per simple command derived from command")
@@ -70,12 +60,8 @@ func (f *knowledgeFlags) bind(fs *flag.FlagSet) {
 	fs.StringVar(&f.vetoExample, "veto-example", "",
 		`propose: a tool_input JSON object the veto must block such as {"command":"sed -i s/a/b/ f"}`)
 	fs.StringVar(&f.from, "from", "",
-		"propose: the diagnose trace of a review corrected by edit or reject. Scope, evidence and basis come from it. "+
-			"When no metric moved it needs --scope-context and refuses --scope-metric, "+
-			"since a metric scope would never reach an event like the corrected one")
-	fs.StringVar(&f.model, "model", "", "compact, replay and propose --from: model alias or name. Empty means the llm default")
-	fs.Var(&f.events, "events", "replay: comma separated event ids to replay again. Empty means every replay event")
-	fs.IntVar(&f.parallel, "parallel", 0, "replay: reviews in flight at once. 0 means 4")
+		"propose: a run a person corrected by edit or reject. Producer, labels and evidence come from it unless given")
+	fs.StringVar(&f.model, "model", "", "compact and check: model alias or name. Empty means the llm default")
 }
 
 // The candidate the propose flags describe
@@ -88,24 +74,15 @@ func (f knowledgeFlags) draft() (knowledge.Knowledge, error) {
 	if err != nil {
 		return knowledge.Knowledge{}, err
 	}
-	var run *knowledge.RunScope
-	switch {
-	case f.producer != "":
-		run = &knowledge.RunScope{Producer: f.producer, Labels: trace.Labels(f.labels), Except: trace.Labels(f.except)}
-	case len(f.labels) > 0 || len(f.except) > 0:
-		return knowledge.Knowledge{}, fmt.Errorf("%w: --label and --except need --producer", errLabelFlag)
-	}
 	return knowledge.Knowledge{
-		Run:        run,
-		ID:         f.id,
-		Kind:       knowledge.Kind(f.kind),
-		Content:    f.content,
-		Scope:      knowledge.Scope{Scope: evidence.Scope{ChangeContexts: f.contexts.contexts(), Metrics: f.metrics}},
-		Exceptions: f.exceptions.contexts(),
-		Evidence:   knowledge.Evidence{FeedbackTraceIDs: feedbackIDs, OutcomeTraceIDs: f.outcomeIDs, ParagraphIDs: f.paragraphs},
-		Basis:      knowledge.Basis(f.basis),
-		Author:     f.author,
-		Veto:       v,
+		Run:      &knowledge.RunScope{Producer: f.producer, Labels: trace.Labels(f.labels), Except: trace.Labels(f.except)},
+		ID:       f.id,
+		Kind:     knowledge.Kind(f.kind),
+		Content:  f.content,
+		Evidence: knowledge.Evidence{FeedbackTraceIDs: feedbackIDs, OutcomeTraceIDs: f.outcomeIDs},
+		Basis:    knowledge.Basis(f.basis),
+		Author:   f.author,
+		Veto:     v,
 	}, nil
 }
 
@@ -148,24 +125,24 @@ func runKnowledge(
 	}
 	fs := flag.NewFlagSet("knowledge "+args[0], flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	var data dataFlags
-	data.bind(fs)
+	var records recordFlags
+	records.bind(fs)
 	var flags knowledgeFlags
 	flags.bind(fs)
 	id, err := parseID(fs, args[1:])
 	if err != nil {
 		return 1
 	}
-	a, err := data.records(getenv, now)
+	a, err := records.app(getenv, now)
 	if err != nil {
 		return fail(stderr, "knowledge", err)
 	}
 	ctx := context.Background()
 	switch {
-	case slices.Contains([]string{"compact", "compaction", "replay", "check", "approve-compaction"}, args[0]):
-		err = flags.runCompaction(ctx, args[0], id, a, client, stdout, stderr)
+	case slices.Contains([]string{"compact", "compaction", "check", "approve-compaction"}, args[0]):
+		err = flags.runCompaction(ctx, args[0], id, a, client, stdout)
 	case args[0] == "propose":
-		err = flags.runPropose(ctx, a, client, stdout)
+		err = flags.runPropose(ctx, a, stdout)
 	default:
 		err = flags.runRecords(ctx, args[0], id, a, stdout)
 	}
@@ -248,57 +225,63 @@ func (a app) knowledgeCommand(ledger *knowledge.Ledger, out io.Writer) knowledge
 	}
 }
 
-// A proposal from the flags alone reads the records only
-// One filled from a corrected review reads the review through the diagnoser and so opens the whole pipeline
-func (f knowledgeFlags) runPropose(ctx context.Context, a app, client llm.Client, stdout io.Writer) error {
+// A proposal from the flags, filled from a corrected run when --from names one
+func (f knowledgeFlags) runPropose(ctx context.Context, a app, stdout io.Writer) error {
 	draft, err := f.draft()
 	if err != nil {
 		return err
 	}
-	if f.from == "" {
-		ledger, err := a.ledger()
-		if err != nil {
+	ledger, err := a.ledger()
+	if err != nil {
+		return err
+	}
+	cmd := a.knowledgeCommand(ledger, stdout)
+	if f.from != "" {
+		if draft, err = cmd.fromRun(ctx, f.from, draft); err != nil {
 			return err
 		}
-		return a.knowledgeCommand(ledger, stdout).propose(ctx, draft)
 	}
-	p, err := a.pipeline()
-	if err != nil {
-		return err
+	if draft.Run.Producer == "" {
+		return fmt.Errorf("propose: --producer or --from %w", errRequired)
 	}
-	return a.knowledgeCommand(p.ledger, stdout).proposeFrom(ctx, p.diagnoser(client), f.from, draft, f.model)
+	return cmd.propose(ctx, draft)
 }
 
-// Code fills scope and evidence and basis from the correction and the fields of the draft replace or add to them
-// Without content one model call drafts it and the candidate says so
-func (c knowledgeCommand) proposeFrom(
-	ctx context.Context, d *diagnose.Diagnoser, from string, draft knowledge.Knowledge, model string,
-) error {
-	correction, err := d.Correction(ctx, from)
+// The draft with the producer and labels of a run a person corrected and the run as evidence
+// The producer and labels the flags gave win over those of the run
+func (c knowledgeCommand) fromRun(ctx context.Context, id string, draft knowledge.Knowledge) (knowledge.Knowledge, error) {
+	traces, err := c.app.traces()
 	if err != nil {
-		return err
+		return knowledge.Knowledge{}, err
 	}
-	draft, err = correction.Proposal(draft)
+	tr, err := traces.Get(ctx, id)
 	if err != nil {
-		return err
+		return knowledge.Knowledge{}, err
 	}
-	// Checked before the model call so a misspelled scope never costs a draft
-	if err := c.check(ctx, draft); err != nil {
-		return err
+	if err := tr.CheckRun(); err != nil {
+		return knowledge.Knowledge{}, err
 	}
-	if draft.Content != "" {
-		return c.add(ctx, draft)
-	}
-	written, err := d.DraftContent(ctx, correction, model)
+	store, err := c.app.feedback()
 	if err != nil {
-		return err
+		return knowledge.Knowledge{}, err
 	}
-	draft.Content, draft.Drafted = written.Content, true
-	if err := c.add(ctx, draft); err != nil {
-		return err
+	verdicts, err := store.List(ctx, feedback.Filter{TraceID: id})
+	if err != nil {
+		return knowledge.Knowledge{}, err
 	}
-	fmt.Fprintf(c.out, "drafted\t%.4f usd\t%s\n", written.CostUSD, written.Content)
-	return nil
+	if human := feedback.Records(verdicts).Human().Latest(); len(human) == 0 || !human[0].Corrects() {
+		return knowledge.Knowledge{}, fmt.Errorf("%w: %s", errNotCorrected, id)
+	}
+	if draft.Run.Producer == "" {
+		draft.Run.Producer = tr.Producer
+	}
+	if len(draft.Run.Labels) == 0 {
+		draft.Run.Labels = tr.Labels
+	}
+	if !slices.Contains(draft.Evidence.FeedbackTraceIDs, id) {
+		draft.Evidence.FeedbackTraceIDs = append(draft.Evidence.FeedbackTraceIDs, id)
+	}
+	return draft, nil
 }
 
 func (c knowledgeCommand) propose(ctx context.Context, draft knowledge.Knowledge) error {
@@ -308,18 +291,15 @@ func (c knowledgeCommand) propose(ctx context.Context, draft knowledge.Knowledge
 	return c.add(ctx, draft)
 }
 
-// Every cited review or run must be recorded and every scope value carried by some event or run
+// Every cited run must be recorded and every label carried by some run of the producer
 func (c knowledgeCommand) check(ctx context.Context, draft knowledge.Knowledge) error {
 	if err := c.app.checkRuns(ctx, draft.Evidence.TraceIDs()...); err != nil {
 		return err
 	}
-	if draft.Run != nil {
-		return c.recorded(ctx, *draft.Run)
-	}
-	return c.observed(ctx, draft.Scope)
+	return c.recorded(ctx, *draft.Run)
 }
 
-// Reads the runs of the producer and never the data dir
+// Reads the runs of the producer
 func (c knowledgeCommand) recorded(ctx context.Context, run knowledge.RunScope) error {
 	store, err := c.app.traces()
 	if err != nil {
@@ -357,11 +337,7 @@ func (c knowledgeCommand) add(ctx context.Context, draft knowledge.Knowledge) er
 	if err != nil {
 		return err
 	}
-	scope := fmt.Sprint(k.Scope)
-	if k.Run != nil {
-		scope = k.Run.String()
-	}
-	fmt.Fprintf(c.out, "%s\tv%d\t%s\nscope\t%s\n", k.ID, k.Version, k.Status, scope)
+	fmt.Fprintf(c.out, "%s\tv%d\t%s\nscope\t%s\n", k.ID, k.Version, k.Status, k.Run)
 	for _, o := range overlaps {
 		fmt.Fprintf(c.out, "overlaps\t%s\tv%d\t%s\n", o.ID, o.Version, o.Status)
 	}
@@ -373,72 +349,29 @@ func (c knowledgeCommand) add(ctx context.Context, draft knowledge.Knowledge) er
 	return c.folder(ctx, k.ID, k.Version)
 }
 
-// A scope without metrics and dims names no value of the data set so the events are never read
-func (c knowledgeCommand) observed(ctx context.Context, scope knowledge.Scope) error {
-	if len(scope.Metrics) == 0 && len(scope.Dims) == 0 {
-		return nil
-	}
-	src, err := c.app.source()
-	if err != nil {
-		return err
-	}
-	metrics, err := src.Metrics(ctx)
-	if err != nil {
-		return err
-	}
-	dims, err := src.Dims(ctx)
-	if err != nil {
-		return err
-	}
-	return scope.Observed(metrics, dims)
-}
-
 // The folder a version joins with its size
 func (c knowledgeCommand) folder(ctx context.Context, id string, version int) error {
 	f, err := c.ledger.Folder(ctx, id, version)
 	if err != nil {
 		return err
 	}
-	if f.Producer != "" {
-		fmt.Fprintf(c.out, "folder\t%d of %d chars\t%d of %d items in runs of %s\t%s\n",
-			f.Chars, knowledge.ReviewChars, f.Size(), knowledge.ReviewItems, f.Producer, f)
+	if f.Producer == "" {
+		fmt.Fprintln(c.out, "folder\tnone because a judgment with a veto acts through the guard and joins no run")
 		return nil
 	}
-	if f.Context == "" {
-		fmt.Fprintln(c.out, "folder\tnone because no review carries a veto")
-		return nil
-	}
-	fmt.Fprintf(c.out, "folder\t%d of %d chars\t%d of %d items in %s\t%s\n",
-		f.Chars, knowledge.ReviewChars, f.Size(), knowledge.ReviewItems, f.Context, f)
+	fmt.Fprintf(c.out, "folder\t%d of %d chars\t%d of %d items in runs of %s\t%s\n",
+		f.Chars, knowledge.ReviewChars, f.Size(), knowledge.ReviewItems, f.Producer, f)
 	return nil
 }
 
-// A line when the folder of an approved version is crowded
-// 1. compaction due when a compaction could pass its replay
-// 2. compaction blocked with the events that lack an expected status when none of them has one
-// 3. compaction unknown with the reason when the folder cannot be checked since the approval is already recorded
+// A line when one run would carry more than FolderItems approved items with the version
 func (c knowledgeCommand) compaction(ctx context.Context, id string, version int) error {
 	f, err := c.ledger.Folder(ctx, id, version)
 	if err != nil || !f.Crowded() {
 		return err
 	}
-	compactor, err := c.app.compactor(c.ledger)
-	if err != nil {
-		fmt.Fprintf(c.out, "compaction unknown\t%s\n", err)
-		return nil
-	}
-	cf, err := compactor.Folder(ctx, id)
-	switch {
-	case err != nil:
-		fmt.Fprintf(c.out, "compaction unknown\t%s\n", err)
-	case cf.Due():
-		fmt.Fprintf(c.out, "compaction due\ta review of one change context carries more than %d approved items an event can replay. "+
-			"Run nodloop knowledge compact %s\n", knowledge.FolderItems, id)
-	default:
-		fmt.Fprintf(c.out, "compaction blocked\ta review of one change context carries more than %d approved items "+
-			"but no evidence event has a label or an edit or approve verdict: %s\n",
-			knowledge.FolderItems, strings.Join(cf.Unverifiable, ", "))
-	}
+	fmt.Fprintf(c.out, "compaction due\tone run carries more than %d approved items with it. Run nodloop knowledge compact %s\n",
+		knowledge.FolderItems, id)
 	return nil
 }
 

@@ -12,7 +12,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeon-jihyeon/nodloop/internal/testkit"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
 	tracefile "github.com/jeon-jihyeon/nodloop/internal/trace/file"
 )
@@ -23,12 +22,12 @@ func TestRunTrace(t *testing.T) {
 	require.NoError(t, err)
 	base := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
 	older := trace.Trace{
-		ID: trace.NewID(base), Name: trace.NameDiagnose, Subject: "tq-001", Time: base, Input: json.RawMessage(`{}`),
+		ID: trace.NewID(base), Name: trace.NameRun, Producer: "session", Subject: "commit", Time: base, Input: json.RawMessage(`{}`),
 		Usage: trace.Usage{CostUSD: 0.01},
 	}
 	newer := trace.Trace{
-		ID: trace.NewID(base.Add(time.Second)), Name: trace.NameContext, Subject: "tq-002", Time: base.Add(time.Second),
-		Input: json.RawMessage(`{"mode":"interactive"}`),
+		ID: trace.NewID(base.Add(time.Second)), Name: trace.NameCheck, SessionID: "c-1", Subject: "c-1", Time: base.Add(time.Second),
+		Input: json.RawMessage(`{}`),
 	}
 	ctx := context.Background()
 	require.NoError(t, store.Append(ctx, older))
@@ -37,10 +36,9 @@ func TestRunTrace(t *testing.T) {
 	require.NoError(t, err)
 	regular := filepath.Join(t.TempDir(), "regular")
 	require.NoError(t, os.WriteFile(regular, nil, 0o600))
-	data := testkit.DemoDir(t)
-	withDir := map[string]string{envFileDir: data, envRecordDir: dir}
-	olderLine := older.ID + "\t2026-09-22T12:00:00Z\tdiagnose\ttq-001\t$0.0100\n"
-	newerLine := newer.ID + "\t2026-09-22T12:00:01Z\tcontext\ttq-002\t$0.0000\n"
+	withDir := map[string]string{envRecordDir: dir}
+	olderLine := older.ID + "\t2026-09-22T12:00:00Z\trun\tcommit\t$0.0100\n"
+	newerLine := newer.ID + "\t2026-09-22T12:00:01Z\tcheck\tc-1\t$0.0000\n"
 	type args struct {
 		args []string
 		env  map[string]string
@@ -59,29 +57,24 @@ func TestRunTrace(t *testing.T) {
 		{"list prints newest first", args{[]string{"list"}, withDir}, want{0, newerLine + olderLine, `^$`}},
 		{
 			"list by name excludes others",
-			args{[]string{"list", "--name", string(trace.NameDiagnose)}, withDir},
+			args{[]string{"list", "--name", string(trace.NameRun)}, withDir},
 			want{0, olderLine, `^$`},
 		},
 		{
 			"list by an unknown name fails",
 			args{[]string{"list", "--name", "diagnosis"}, withDir},
-			want{1, "", `^nodloop trace: unknown trace name "diagnosis". Use one of context, select, diagnose, revise, run, check\n\n`},
+			want{1, "", `^nodloop trace: unknown trace name "diagnosis". Use one of run, check\n\n`},
 		},
 		{"list limit keeps the newest", args{[]string{"list", "--limit", "1"}, withDir}, want{0, newerLine, `^$`}},
-		{
-			"pending lists unreviewed context traces",
-			args{[]string{"pending"}, withDir},
-			want{0, newer.ID + "\t2026-09-22T12:00:01Z\ttq-002\n", `^$`},
-		},
 		{"show prints the trace", args{[]string{"show", older.ID}, withDir}, want{0, string(shown) + "\n", `^$`}},
 		{
 			"show takes flags after the id",
-			args{[]string{"show", older.ID, "--data-dir", data, "--record-dir", dir}, nil},
+			args{[]string{"show", older.ID, "--record-dir", dir}, nil},
 			want{0, string(shown) + "\n", `^$`},
 		},
 		{
 			"show takes flags before the id",
-			args{[]string{"show", "--data-dir", data, "--record-dir", dir, older.ID}, nil},
+			args{[]string{"show", "--record-dir", dir, older.ID}, nil},
 			want{0, string(shown) + "\n", `^$`},
 		},
 		{
@@ -95,19 +88,14 @@ func TestRunTrace(t *testing.T) {
 			want{1, "", `^nodloop trace: an id is required\n\nusage:`},
 		},
 		{
-			"missing data dir env fails",
+			"no home and no record dir fails",
 			args{[]string{"list"}, nil},
-			want{1, "", `^nodloop trace: ` + envFileDir + ` is not set: `},
+			want{1, "", `^nodloop trace: home directory unknown: `},
 		},
 		{
 			"record dir that is a file fails",
 			args{[]string{"list", "--record-dir", regular}, withDir},
 			want{1, "", `^nodloop trace: record dir: `},
-		},
-		{
-			"unknown source fails",
-			args{[]string{"list", "--source", "postgres"}, withDir},
-			want{1, "", `^nodloop trace: unknown source: "postgres"\n$`},
 		},
 		{
 			"unknown flag fails",

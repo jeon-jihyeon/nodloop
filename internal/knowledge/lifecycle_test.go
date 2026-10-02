@@ -9,10 +9,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeon-jihyeon/nodloop/internal/evidence"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	knowledgefile "github.com/jeon-jihyeon/nodloop/internal/knowledge/file"
 	"github.com/jeon-jihyeon/nodloop/internal/testkit"
+	"github.com/jeon-jihyeon/nodloop/internal/trace"
 	vetofile "github.com/jeon-jihyeon/nodloop/internal/veto/file"
 )
 
@@ -81,8 +81,8 @@ func TestLedgerReaffirm(t *testing.T) {
 	old := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	now := old.AddDate(0, 0, 100)
 	item := knowledge.Knowledge{
-		ID: "item", Version: 1, Kind: knowledge.KindMeaning, Content: "units",
-		Evidence: knowledge.Evidence{ParagraphIDs: []string{"p"}}, Basis: knowledge.BasisStated,
+		ID: "item", Version: 1, Kind: knowledge.KindMeaning, Content: "units", Run: repoRun(),
+		Evidence: knowledge.Evidence{FeedbackTraceIDs: []string{"t1"}}, Basis: knowledge.BasisStated,
 		Status: knowledge.StatusApproved, Author: "author", Approver: "first", ApprovedAt: old, Time: old,
 	}
 	next := item
@@ -166,8 +166,8 @@ func TestLedgerReaffirm(t *testing.T) {
 func TestLedgerReaffirmConcurrentWrite(t *testing.T) {
 	now := time.Date(2026, 9, 28, 0, 0, 0, 0, time.UTC)
 	item := knowledge.Knowledge{
-		ID: "item", Version: 1, Kind: knowledge.KindMeaning, Content: "units",
-		Evidence: knowledge.Evidence{ParagraphIDs: []string{"p"}}, Basis: knowledge.BasisStated,
+		ID: "item", Version: 1, Kind: knowledge.KindMeaning, Content: "units", Run: repoRun(),
+		Evidence: knowledge.Evidence{FeedbackTraceIDs: []string{"t1"}}, Basis: knowledge.BasisStated,
 		Status: knowledge.StatusApproved, Author: "author", Approver: "first", Time: now,
 	}
 	type want struct {
@@ -198,7 +198,7 @@ func TestLedgerReaffirmConcurrentWrite(t *testing.T) {
 			open := func() *knowledge.Ledger {
 				store, err := knowledgefile.New(dir)
 				require.NoError(t, err)
-				return knowledge.NewLedger(store, sink, evidence.DefaultContexts(), func() time.Time { return now }, func(p string) string { return p })
+				return knowledge.NewLedger(store, sink, func() time.Time { return now }, func(p string) string { return p })
 			}
 			require.NoError(t, testkit.Err(open().Import(ctx, []knowledge.Knowledge{item})))
 			first, second := open(), open()
@@ -221,42 +221,31 @@ func TestLedgerReaffirmConcurrentWrite(t *testing.T) {
 	}
 }
 
+// The checks of a narrowing that hold whatever key it excepts
 func TestLedgerNarrow(t *testing.T) {
 	at := time.Date(2026, 9, 28, 0, 0, 0, 0, time.UTC)
 	base := knowledge.Knowledge{
 		ID: "item", Version: 1, Kind: knowledge.KindMeaning, Content: "lag",
+		Run:      &knowledge.RunScope{Producer: "session", Labels: trace.Labels{"repo": {"nodloop"}, "task": {"commit", "push"}}},
 		Evidence: knowledge.Evidence{FeedbackTraceIDs: []string{"f1"}}, Basis: knowledge.BasisVerified,
 		Status: knowledge.StatusApproved, Author: "author", Approver: "ann", ApprovedAt: at, Time: at,
 	}
-	scoped := base
-	scoped.Scope = knowledge.Scope{Scope: evidence.Scope{
-		ChangeContexts: []evidence.Context{evidence.ContextPlannedChange, evidence.ContextUnknown},
-	}}
-	unscoped := base
-	unscoped.Exceptions = []evidence.Context{evidence.ContextMeasurementChanged}
-	nearlyAll := base
-	nearlyAll.Exceptions = []evidence.Context{
-		evidence.ContextNoKnownChange, evidence.ContextMeasurementChanged, evidence.ContextDataAvailability,
-		evidence.ContextUnknown,
-	}
 	candidate := base
 	candidate.Status, candidate.Approver, candidate.ApprovedAt = knowledge.StatusCandidate, "", time.Time{}
-	compacted := scoped
+	compacted := base
 	compacted.Compaction, compacted.CompactionSize = "c-1", 1
 	compacted.ReviewedAt = at
-	planned := []evidence.Context{evidence.ContextPlannedChange}
 	type args struct {
-		item     knowledge.Knowledge
-		version  int
-		contexts []evidence.Context
+		item    knowledge.Knowledge
+		version int
+		values  []string
 	}
 	// The fields a narrowing sets or clears on the candidate
 	type candidateView struct {
 		version    int
 		status     knowledge.Status
 		author     string
-		contexts   []evidence.Context
-		exceptions []evidence.Context
+		except     trace.Labels
 		outcomes   []string
 		feedback   []string
 		compaction string
@@ -270,55 +259,22 @@ func TestLedgerNarrow(t *testing.T) {
 		supersedes int
 		err        error
 	}
-	narrowed := func(contexts, exceptions []evidence.Context) candidateView {
-		return candidateView{
-			version: 2, status: knowledge.StatusCandidate, author: "jed", contexts: contexts, exceptions: exceptions,
-			outcomes: []string{"r2", "r1"}, feedback: []string{"f1"},
-		}
+	narrowed := candidateView{
+		version: 2, status: knowledge.StatusCandidate, author: "jed", except: trace.Labels{"task": {"push"}},
+		outcomes: []string{"r2", "r1"}, feedback: []string{"f1"},
 	}
-	unknown := []evidence.Context{evidence.ContextUnknown}
+	push := []string{"push"}
 	tcs := []struct {
 		name string
 		args args
 		want want
 	}{
-		{"a scoped item drops the refuted context", args{scoped, 1, planned}, want{narrowed(unknown, nil), 2, 1, nil}},
-		{
-			"an unscoped item takes the refuted context as an exception",
-			args{unscoped, 1, planned},
-			want{narrowed(nil, []evidence.Context{evidence.ContextMeasurementChanged, planned[0]}), 2, 1, nil},
-		},
-		{
-			"an exception already held is not repeated",
-			args{unscoped, 1, []evidence.Context{evidence.ContextMeasurementChanged}},
-			want{narrowed(nil, []evidence.Context{evidence.ContextMeasurementChanged}), 2, 1, nil},
-		},
-		{
-			"a compacted and reaffirmed version narrows as a plain proposal",
-			args{compacted, 1, planned},
-			want{narrowed(unknown, nil), 2, 1, nil},
-		},
-		{"no refuted context is refused", args{scoped, 1, nil}, want{records: 1, err: knowledge.ErrNarrowInvalid}},
-		{
-			"a scope left empty is refused",
-			args{scoped, 1, []evidence.Context{evidence.ContextPlannedChange, evidence.ContextUnknown}},
-			want{records: 1, err: knowledge.ErrNarrowExhausted},
-		},
-		{
-			"exceptions over every context are refused",
-			args{nearlyAll, 1, planned},
-			want{records: 1, err: knowledge.ErrNarrowExhausted},
-		},
-		{
-			"a version that is not approved is refused",
-			args{candidate, 1, planned},
-			want{records: 1, err: knowledge.ErrVersionUnapproved},
-		},
-		{
-			"a version that is not current is refused",
-			args{scoped, 2, planned},
-			want{records: 1, err: knowledge.ErrVersionUnapproved},
-		},
+		{"the refuted value becomes an exception", args{base, 1, push}, want{narrowed, 2, 1, nil}},
+		{"a compacted and reaffirmed version narrows as a plain proposal", args{compacted, 1, push}, want{narrowed, 2, 1, nil}},
+		{"no refuted value is refused", args{base, 1, nil}, want{records: 1, err: knowledge.ErrNarrowInvalid}},
+		{"excepting every value the scope allows is refused", args{base, 1, []string{"commit", "push"}}, want{records: 1, err: knowledge.ErrNarrowExhausted}},
+		{"a version that is not approved is refused", args{candidate, 1, push}, want{records: 1, err: knowledge.ErrVersionUnapproved}},
+		{"a version that is not current is refused", args{base, 2, push}, want{records: 1, err: knowledge.ErrVersionUnapproved}},
 	}
 	ctx := context.Background()
 	for _, tc := range tcs {
@@ -327,17 +283,20 @@ func TestLedgerNarrow(t *testing.T) {
 			ledger, _ := newTestLedger(t, t.TempDir(), at.Add(time.Hour))
 			require.NoError(t, testkit.Err(ledger.Import(ctx, []knowledge.Knowledge{tc.args.item})))
 
-			got, _, err := ledger.Narrow(ctx, "item", tc.args.version, tc.args.contexts, []string{"r2", "r1"}, "jed")
+			got, _, err := ledger.Narrow(ctx, "item", tc.args.version, "task", tc.args.values, []string{"r2", "r1"}, "jed")
 			history, historyErr := ledger.History(ctx, "item")
 			require.NoError(t, historyErr)
 			approved, _ := ledger.Approve(ctx, "item", 2, "ann")
 
 			assert.ErrorIs(t, err, tc.want.err)
-			assert.Equal(t, tc.want.candidate, candidateView{
-				version: got.Version, status: got.Status, author: got.Author, contexts: got.Scope.ChangeContexts,
-				exceptions: got.Exceptions, outcomes: got.Evidence.OutcomeTraceIDs, feedback: got.Evidence.FeedbackTraceIDs,
-				compaction: got.Compaction, reviewedAt: got.ReviewedAt,
-			})
+			view := candidateView{
+				version: got.Version, status: got.Status, author: got.Author, outcomes: got.Evidence.OutcomeTraceIDs,
+				feedback: got.Evidence.FeedbackTraceIDs, compaction: got.Compaction, reviewedAt: got.ReviewedAt,
+			}
+			if got.Run != nil {
+				view.except = got.Run.Except
+			}
+			assert.Equal(t, tc.want.candidate, view)
 			assert.Len(t, history, tc.want.records)
 			assert.Equal(t, tc.want.supersedes, approved.Supersedes)
 		})
@@ -347,8 +306,7 @@ func TestLedgerNarrow(t *testing.T) {
 func TestLedgerPromote(t *testing.T) {
 	at := time.Date(2026, 9, 28, 0, 0, 0, 0, time.UTC)
 	stated := knowledge.Knowledge{
-		ID: "item", Version: 1, Kind: knowledge.KindJudgment, Content: "lag",
-		Scope:    knowledge.Scope{Scope: evidence.Scope{ChangeContexts: []evidence.Context{evidence.ContextPlannedChange}}},
+		ID: "item", Version: 1, Kind: knowledge.KindJudgment, Content: "lag", Run: repoRun(),
 		Evidence: knowledge.Evidence{FeedbackTraceIDs: []string{"f1"}, OutcomeTraceIDs: []string{"r0"}}, Basis: knowledge.BasisStated,
 		Status: knowledge.StatusApproved, Author: "author", Approver: "ann", ApprovedAt: at, Time: at,
 	}
@@ -368,7 +326,7 @@ func TestLedgerPromote(t *testing.T) {
 		basis    knowledge.Basis
 		author   string
 		content  string
-		contexts []evidence.Context
+		run      *knowledge.RunScope
 		outcomes []string
 	}
 	type want struct {
@@ -390,7 +348,7 @@ func TestLedgerPromote(t *testing.T) {
 			want{
 				candidateView{
 					version: 2, status: knowledge.StatusCandidate, basis: knowledge.BasisVerified, author: "jed", content: "lag",
-					contexts: []evidence.Context{evidence.ContextPlannedChange}, outcomes: []string{"r0", "r1", "r2"},
+					run: repoRun(), outcomes: []string{"r0", "r1", "r2"},
 				},
 				2, 1, nil,
 			},
@@ -415,7 +373,7 @@ func TestLedgerPromote(t *testing.T) {
 			assert.ErrorIs(t, err, tc.want.err)
 			assert.Equal(t, tc.want.candidate, candidateView{
 				version: got.Version, status: got.Status, basis: got.Basis, author: got.Author, content: got.Content,
-				contexts: got.Scope.ChangeContexts, outcomes: got.Evidence.OutcomeTraceIDs,
+				run: got.Run, outcomes: got.Evidence.OutcomeTraceIDs,
 			})
 			assert.Len(t, history, tc.want.records)
 			assert.Equal(t, tc.want.supersedes, approved.Supersedes)

@@ -4,41 +4,38 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 	"time"
-	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeon-jihyeon/nodloop/internal/evidence"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge/file"
 	"github.com/jeon-jihyeon/nodloop/internal/testkit"
+	"github.com/jeon-jihyeon/nodloop/internal/trace"
 	vetofile "github.com/jeon-jihyeon/nodloop/internal/veto/file"
 )
 
-// One folder of conversion items
-// 1. a and b are meanings and j is a judgment with a veto and all three are replayable
-// 2. p cites only a paragraph so a compaction leaves it out
-// 3. far sits in another folder because it names another change context
+// One folder of commit and push runs in the nodloop repo
+// 1. a and b are meanings and j is a judgment with a veto
+// 2. j acts through the guard so only a compaction anchored at j covers it
+// 3. far sits in another folder because it names another repo
 type compactionSeeds struct {
-	a, b, j, p, far knowledge.Knowledge
-	at              time.Time
+	a, b, j, far knowledge.Knowledge
+	at           time.Time
 }
 
 func newCompactionSeeds() compactionSeeds {
 	at := time.Date(2026, 9, 28, 0, 0, 0, 0, time.UTC)
-	conversions := knowledge.Scope{Scope: evidence.Scope{
-		ChangeContexts: []evidence.Context{evidence.ContextNoKnownChange, evidence.ContextPlannedChange},
-		Metrics:        []string{"conversion_count"},
-	}}
 	base := knowledge.Knowledge{
-		Version: 1, Kind: knowledge.KindMeaning, Scope: conversions, Basis: knowledge.BasisStated,
+		Version: 1, Kind: knowledge.KindMeaning, Basis: knowledge.BasisStated,
+		Run:    &knowledge.RunScope{Producer: "session", Labels: trace.Labels{"repo": {"nodloop"}, "task": {"commit", "push"}}},
 		Status: knowledge.StatusApproved, Approver: "ann", ApprovedAt: at, Author: "author", Time: at,
 	}
 	a := base
@@ -55,31 +52,27 @@ func newCompactionSeeds() compactionSeeds {
 		Tool: "Bash", When: []knowledge.VetoCondition{{Field: "command", Match: `sed\s+-i`}},
 		Example: map[string]any{"command": "sed -i s/a/b/ f"},
 	}
-	p := base
-	p.ID, p.Content, p.Evidence = "p", "paragraph only", knowledge.Evidence{ParagraphIDs: []string{"p#2"}}
 	far := base
 	far.ID, far.Content, far.Evidence = "far", "clicks", knowledge.Evidence{FeedbackTraceIDs: []string{"t4"}}
-	far.Scope = knowledge.Scope{Scope: evidence.Scope{
-		ChangeContexts: []evidence.Context{evidence.ContextMeasurementChanged}, Metrics: []string{"click_count"},
-	}}
-	return compactionSeeds{a: a, b: b, j: j, p: p, far: far, at: at}
+	far.Run = &knowledge.RunScope{Producer: "session", Labels: trace.Labels{"repo": {"other"}}}
+	return compactionSeeds{a: a, b: b, j: j, far: far, at: at}
 }
 
 func (s compactionSeeds) all() []knowledge.Knowledge {
-	return []knowledge.Knowledge{s.a, s.b, s.j, s.p, s.far}
+	return []knowledge.Knowledge{s.a, s.b, s.j, s.far}
 }
 
 // A meaning that replaces a and b and a judgment that keeps the veto of j under its id
 func (s compactionSeeds) drafts() []knowledge.Knowledge {
 	meaning := knowledge.Knowledge{
-		Kind: knowledge.KindMeaning, Content: "lag and basis", Scope: s.a.Scope, Author: "claude",
+		Kind: knowledge.KindMeaning, Content: "lag and basis", Run: s.a.Run, Author: "claude",
 		Evidence: knowledge.Evidence{
 			Knowledge: []knowledge.Ref{{ID: "a", Version: 1}, {ID: "b", Version: 1}}, ParagraphIDs: []string{"p#3"},
 			FeedbackTraceIDs: []string{"ignored"},
 		},
 	}
 	judgment := knowledge.Knowledge{
-		ID: "j", Kind: knowledge.KindJudgment, Content: "never edit in place", Scope: s.a.Scope, Author: "claude",
+		ID: "j", Kind: knowledge.KindJudgment, Content: "never edit in place", Run: s.a.Run, Author: "claude",
 		Evidence: knowledge.Evidence{Knowledge: []knowledge.Ref{{ID: "j", Version: 1}}},
 		Veto: &knowledge.Veto{
 			Tool: "Bash", When: []knowledge.VetoCondition{{Field: "command", Match: `sed\s+-i`}},
@@ -101,7 +94,7 @@ func newTestLedger(t *testing.T, dir string, at time.Time) (*knowledge.Ledger, s
 		counts[prefix]++
 		return fmt.Sprintf("%s%d", prefix, counts[prefix])
 	}
-	l := knowledge.NewLedger(store, vetofile.NewApprovedFile(home, "records"), evidence.DefaultContexts(), func() time.Time { return at }, newID)
+	l := knowledge.NewLedger(store, vetofile.NewApprovedFile(home, "records"), func() time.Time { return at }, newID)
 	return l, vetofile.NewApprovedFile(home, "records").Path()
 }
 
@@ -116,6 +109,28 @@ func dropNewest(t *testing.T, dir string, n int) {
 	require.NoError(t, os.WriteFile(path, []byte(strings.Join(lines, "")), 0o600))
 }
 
+// A coverage of the compaction that states every old item by every new item and loses nothing
+func coverage(c knowledge.Compaction) knowledge.Coverage {
+	by := make([]knowledge.Ref, 0, len(c.Items))
+	for _, k := range c.Items {
+		by = append(by, knowledge.Ref{ID: k.ID, Version: k.Version})
+	}
+	cv := knowledge.Coverage{Compaction: c.ID}
+	for _, old := range c.Replaced {
+		cv.Items = append(cv.Items, knowledge.CoverageItem{Old: knowledge.Ref{ID: old.ID, Version: old.Version}, CoveredBy: by})
+	}
+	return cv
+}
+
+// Approves the compaction of id with a coverage that passes
+func approveCompaction(ctx context.Context, l *knowledge.Ledger, id, approver string) (knowledge.Compaction, error) {
+	c, err := l.Compaction(ctx, id)
+	if err != nil {
+		return knowledge.Compaction{}, err
+	}
+	return l.ApproveCompaction(ctx, id, approver, coverage(c))
+}
+
 func TestLedgerProposeCompaction(t *testing.T) {
 	seeds := newCompactionSeeds()
 	now := seeds.at.Add(time.Hour)
@@ -128,7 +143,7 @@ func TestLedgerProposeCompaction(t *testing.T) {
 		err        error
 	}
 	meaning := knowledge.Knowledge{
-		ID: "k-1", Version: 1, Kind: knowledge.KindMeaning, Content: "lag and basis", Scope: seeds.a.Scope,
+		ID: "k-1", Version: 1, Kind: knowledge.KindMeaning, Content: "lag and basis", Run: seeds.a.Run,
 		Evidence: knowledge.Evidence{
 			FeedbackTraceIDs: []string{"t1", "t2"}, OutcomeTraceIDs: []string{"o1"}, ParagraphIDs: []string{"p#1", "p#3"},
 			Knowledge: []knowledge.Ref{{ID: "a", Version: 1}, {ID: "b", Version: 1}},
@@ -140,7 +155,7 @@ func TestLedgerProposeCompaction(t *testing.T) {
 	judgment.Version, judgment.Base, judgment.Basis, judgment.Status = 2, 1, knowledge.BasisVerified, knowledge.StatusCandidate
 	judgment.Time, judgment.Compaction, judgment.CompactionSize = now, "c-1", 2
 	judgment.Evidence.FeedbackTraceIDs = []string{"t3"}
-	replaced := knowledge.Set{seeds.a, seeds.b, seeds.j}
+	replaced := knowledge.Set{seeds.j, seeds.a, seeds.b}
 
 	oneDraft := seeds.drafts()[:1]
 	namesNothing := seeds.drafts()
@@ -164,31 +179,32 @@ func TestLedgerProposeCompaction(t *testing.T) {
 	exampleVeto[1].Veto.When = []knowledge.VetoCondition{{Field: "command", Match: `^sed -i s/a/b/ f$`}}
 	exampleVeto[1].Veto.Example = seeds.j.Veto.Example
 
-	planned := []evidence.Context{evidence.ContextPlannedChange}
+	task := func(value string) *knowledge.RunScope {
+		return &knowledge.RunScope{Producer: "session", Labels: trace.Labels{"repo": {"nodloop"}, "task": {value}}}
+	}
 	overlapping := seeds.drafts()
 	second := overlapping[0]
 	second.Evidence.Knowledge = []knowledge.Ref{{ID: "b", Version: 1}}
 	overlapping[0].Evidence.Knowledge = []knowledge.Ref{{ID: "a", Version: 1}}
 	overlapping = append(overlapping, second)
 	partitioned := seeds.drafts()
-	second.Scope.ChangeContexts = planned
+	second.Run = task("push")
 	partitioned[0].Evidence.Knowledge = []knowledge.Ref{{ID: "a", Version: 1}}
-	partitioned[0].Exceptions = planned
+	partitioned[0].Run = task("commit")
 	partitioned = append(partitioned, second)
-	byException := meaning
-	byException.Exceptions = planned
-	byException.Evidence = knowledge.Evidence{
+	byCommit := meaning
+	byCommit.Run = task("commit")
+	byCommit.Evidence = knowledge.Evidence{
 		FeedbackTraceIDs: []string{"t1"}, ParagraphIDs: []string{"p#3"}, Knowledge: []knowledge.Ref{{ID: "a", Version: 1}},
 	}
-	byContext := meaning
-	byContext.ID, byContext.Basis = "k-2", knowledge.BasisVerified
-	byContext.Scope.ChangeContexts = planned
-	byContext.Evidence = knowledge.Evidence{
+	byPush := meaning
+	byPush.ID, byPush.Basis, byPush.Run = "k-2", knowledge.BasisVerified, task("push")
+	byPush.Evidence = knowledge.Evidence{
 		FeedbackTraceIDs: []string{"t2", "t1"}, OutcomeTraceIDs: []string{"o1"}, ParagraphIDs: []string{"p#1", "p#3"},
 		Knowledge: []knowledge.Ref{{ID: "b", Version: 1}},
 	}
 	threeWay := judgment
-	byException.CompactionSize, threeWay.CompactionSize, byContext.CompactionSize = 3, 3, 3
+	byCommit.CompactionSize, threeWay.CompactionSize, byPush.CompactionSize = 3, 3, 3
 
 	tcs := []struct {
 		name string
@@ -197,45 +213,45 @@ func TestLedgerProposeCompaction(t *testing.T) {
 	}{
 		{
 			"candidates carry the compaction id and evidence built from the old items they name",
-			args{"a", seeds.drafts()},
+			args{"j", seeds.drafts()},
 			want{compaction: knowledge.Compaction{ID: "c-1", Items: knowledge.Set{meaning, judgment}, Replaced: replaced}},
 		},
 		{"an anchor that is not approved is not found", args{"none", seeds.drafts()}, want{err: knowledge.ErrNotFound}},
-		{"an anchor that cites only paragraphs is refused", args{"p", seeds.drafts()}, want{err: knowledge.ErrParagraphOnly}},
 		{
-			"a folder of one replayable item is refused",
-			args{"far", seeds.drafts()},
+			"a meaning anchor leaves the vetoed judgment out of its folder so a name of it is refused",
+			args{"a", seeds.drafts()},
 			want{err: knowledge.ErrCompactionInvalid},
 		},
-		{"no draft is refused", args{"a", nil}, want{err: knowledge.ErrCompactionInvalid}},
-		{"an old item no draft names is refused", args{"a", oneDraft}, want{err: knowledge.ErrCompactionInvalid}},
-		{"a draft that names nothing is refused", args{"a", namesNothing}, want{err: knowledge.ErrCompactionInvalid}},
-		{"a name outside the folder is refused", args{"a", outsideFolder}, want{err: knowledge.ErrCompactionInvalid}},
-		{"a name of an older version is refused", args{"a", olderVersion}, want{err: knowledge.ErrCompactionInvalid}},
+		{"a folder of one item is refused", args{"far", seeds.drafts()}, want{err: knowledge.ErrCompactionInvalid}},
+		{"no draft is refused", args{"j", nil}, want{err: knowledge.ErrCompactionInvalid}},
+		{"an old item no draft names is refused", args{"j", oneDraft}, want{err: knowledge.ErrCompactionInvalid}},
+		{"a draft that names nothing is refused", args{"j", namesNothing}, want{err: knowledge.ErrCompactionInvalid}},
+		{"a name outside the folder is refused", args{"j", outsideFolder}, want{err: knowledge.ErrCompactionInvalid}},
+		{"a name of an older version is refused", args{"j", olderVersion}, want{err: knowledge.ErrCompactionInvalid}},
 		{
 			"a draft that takes the id of an item outside the compaction is refused",
-			args{"a", outsideID},
+			args{"j", outsideID},
 			want{err: knowledge.ErrCompactionInvalid},
 		},
-		{"two drafts of one id are refused", args{"a", repeatedID}, want{err: knowledge.ErrCompactionInvalid}},
-		{"an invalid draft is refused with its own error", args{"a", noContent}, want{err: knowledge.ErrContentRequired}},
-		{"two meanings of one folder overlap", args{"a", overlapping}, want{err: knowledge.ErrCompactionOverlap}},
+		{"two drafts of one id are refused", args{"j", repeatedID}, want{err: knowledge.ErrCompactionInvalid}},
+		{"an invalid draft is refused with its own error", args{"j", noContent}, want{err: knowledge.ErrContentRequired}},
+		{"two meanings one run may carry overlap", args{"j", overlapping}, want{err: knowledge.ErrCompactionOverlap}},
 		{
-			"exceptions that cover every context of the other meaning partition them",
-			args{"a", partitioned},
+			"two meanings split by a label value with none in common pass",
+			args{"j", partitioned},
 			want{compaction: knowledge.Compaction{
-				ID: "c-1", Items: knowledge.Set{byException, threeWay, byContext}, Replaced: replaced,
+				ID: "c-1", Items: knowledge.Set{byCommit, threeWay, byPush}, Replaced: replaced,
 			}},
 		},
-		{"dropping the veto of an old judgment is refused", args{"a", noVeto}, want{err: knowledge.ErrCompactionVeto}},
+		{"dropping the veto of an old judgment is refused", args{"j", noVeto}, want{err: knowledge.ErrCompactionVeto}},
 		{
 			"a new veto that lets the old example through is refused",
-			args{"a", weakVeto},
+			args{"j", weakVeto},
 			want{err: knowledge.ErrCompactionVeto},
 		},
 		{
 			"a new veto that blocks only the old example is refused",
-			args{"a", exampleVeto},
+			args{"j", exampleVeto},
 			want{err: knowledge.ErrCompactionVeto},
 		},
 	}
@@ -260,125 +276,123 @@ func TestLedgerProposeCompaction(t *testing.T) {
 	}
 }
 
-// Two meanings of one folder split by the value of one dim
-// Both except planned changes so each reaches no known changes only
+// A general meaning g and two meanings split by the value of one label
+// A run carries g and at most one of the two so each fact must stay on the runs its item reached
+// All three except docs work
 func TestLedgerProposeCompactionScope(t *testing.T) {
 	at := time.Date(2026, 9, 28, 0, 0, 0, 0, time.UTC)
-	planned := []evidence.Context{evidence.ContextPlannedChange}
-	scope := knowledge.Scope{Scope: evidence.Scope{
-		ChangeContexts: []evidence.Context{evidence.ContextNoKnownChange, evidence.ContextPlannedChange},
-		Metrics:        []string{"conversion_count", "click_count"},
-	}}
+	scope := func(labels trace.Labels) *knowledge.RunScope {
+		return &knowledge.RunScope{Producer: "session", Labels: labels, Except: trace.Labels{"task": {"docs"}}}
+	}
 	base := knowledge.Knowledge{
-		Version: 1, Kind: knowledge.KindMeaning, Exceptions: planned, Basis: knowledge.BasisStated,
+		Version: 1, Kind: knowledge.KindMeaning, Basis: knowledge.BasisStated,
 		Status: knowledge.StatusApproved, Approver: "ann", ApprovedAt: at, Author: "author", Time: at,
 	}
-	shop, sports := base, base
+	g, shop, sports := base, base, base
+	g.ID, g.Content, g.Evidence = "g", "general fact", knowledge.Evidence{FeedbackTraceIDs: []string{"t0"}}
+	g.Run = scope(trace.Labels{"repo": {"nodloop"}})
 	shop.ID, shop.Content, shop.Evidence = "shop", "shop fact", knowledge.Evidence{FeedbackTraceIDs: []string{"t1"}}
-	shop.Scope = scope
-	shop.Scope.Dims = map[string]string{"topic": "shopping"}
+	shop.Run = scope(trace.Labels{"repo": {"nodloop"}, "topic": {"shopping"}})
 	sports.ID, sports.Content, sports.Evidence = "sports", "sports fact", knowledge.Evidence{FeedbackTraceIDs: []string{"t2"}}
-	sports.Scope = scope
-	sports.Scope.Dims = map[string]string{"topic": "sports"}
+	sports.Run = scope(trace.Labels{"repo": {"nodloop"}, "topic": {"sports"}})
+	// A draft of the old item that repeats the general fact under the scope of the old item
 	draftOf := func(old knowledge.Knowledge, edit func(*knowledge.Knowledge)) knowledge.Knowledge {
 		d := knowledge.Knowledge{
-			ID: old.ID, Kind: old.Kind, Content: old.Content + " kept", Scope: old.Scope, Exceptions: old.Exceptions,
-			Author: "claude", Evidence: knowledge.Evidence{Knowledge: []knowledge.Ref{{ID: old.ID, Version: 1}}},
+			ID: old.ID, Kind: old.Kind, Content: old.Content + " and general fact", Author: "claude",
+			Run:      &knowledge.RunScope{Producer: old.Run.Producer, Labels: maps.Clone(old.Run.Labels), Except: maps.Clone(old.Run.Except)},
+			Evidence: knowledge.Evidence{Knowledge: []knowledge.Ref{{ID: old.ID, Version: 1}, {ID: "g", Version: 1}}},
 		}
 		edit(&d)
 		return d
 	}
 	keep := func(*knowledge.Knowledge) {}
-	namesBoth := func(d *knowledge.Knowledge) {
-		d.ID, d.Evidence.Knowledge = "", []knowledge.Ref{{ID: "shop", Version: 1}, {ID: "sports", Version: 1}}
+	own := func(d *knowledge.Knowledge) { d.Evidence.Knowledge = d.Evidence.Knowledge[:1] }
+	label := func(key string, values ...string) func(*knowledge.Knowledge) {
+		return func(d *knowledge.Knowledge) { d.Run.Labels[key] = values }
 	}
 	merged := func(edit func(*knowledge.Knowledge)) []knowledge.Knowledge {
 		return []knowledge.Knowledge{draftOf(shop, func(d *knowledge.Knowledge) {
-			namesBoth(d)
+			d.ID = ""
+			d.Evidence.Knowledge = append(d.Evidence.Knowledge, knowledge.Ref{ID: "sports", Version: 1})
 			edit(d)
 		})}
 	}
-	type want struct {
-		// Dims of every proposed item
-		dims []map[string]string
-		err  error
+	unnamed := func(edit func(*knowledge.Knowledge)) func(*knowledge.Knowledge) {
+		return func(d *knowledge.Knowledge) {
+			d.ID = ""
+			edit(d)
+		}
 	}
-	shopping, sporting := map[string]string{"topic": "shopping"}, map[string]string{"topic": "sports"}
+	type want struct {
+		// Labels of every proposed item
+		labels []trace.Labels
+		err    error
+		// A part of the error text
+		message string
+	}
+	shopping := trace.Labels{"repo": {"nodloop"}, "topic": {"shopping"}}
+	sporting := trace.Labels{"repo": {"nodloop"}, "topic": {"sports"}}
 	tcs := []struct {
-		name   string
-		drafts []knowledge.Knowledge
-		want   want
+		name string
+		args []knowledge.Knowledge
+		want want
 	}{
 		{
-			"dims keep two meanings of one folder apart",
+			"one draft per label value that repeats the general fact passes",
 			[]knowledge.Knowledge{draftOf(shop, keep), draftOf(sports, keep)},
-			want{dims: []map[string]string{shopping, sporting}},
+			want{labels: []trace.Labels{shopping, sporting}},
 		},
 		{
-			"a merged meaning that drops the dims is refused",
-			merged(func(d *knowledge.Knowledge) { d.Scope.Dims = nil }),
-			want{err: knowledge.ErrCompactionInvalid},
+			"a merged draft that drops the label would carry each fact to every topic and is refused",
+			merged(func(d *knowledge.Knowledge) { delete(d.Run.Labels, "topic") }),
+			want{err: knowledge.ErrCompactionInvalid, message: "carries the facts of shop to runs that shop never reached"},
 		},
 		{
-			"a merged meaning that keeps one dim value would carry the sports fact to shopping events and is refused",
+			"a merged draft that keeps one value would carry the sports fact to shopping runs and is refused",
 			merged(keep),
-			want{err: knowledge.ErrCompactionInvalid},
+			want{err: knowledge.ErrCompactionInvalid, message: "carries the facts of sports to runs that sports never reached"},
 		},
 		{
 			"a draft that drops the exceptions its items share is refused",
-			[]knowledge.Knowledge{draftOf(shop, func(d *knowledge.Knowledge) { d.Exceptions = nil }), draftOf(sports, keep)},
+			[]knowledge.Knowledge{draftOf(shop, func(d *knowledge.Knowledge) { d.Run.Except = nil }), draftOf(sports, keep)},
 			want{err: knowledge.ErrCompactionInvalid},
 		},
 		{
-			"a draft that adds a change context is refused",
-			[]knowledge.Knowledge{
-				draftOf(shop, func(d *knowledge.Knowledge) {
-					d.Scope.ChangeContexts = append(d.Scope.ChangeContexts, evidence.ContextMeasurementChanged)
-				}),
-				draftOf(sports, keep),
-			},
+			"a draft that adds a label value is refused",
+			[]knowledge.Knowledge{draftOf(shop, label("repo", "nodloop", "other")), draftOf(sports, keep)},
 			want{err: knowledge.ErrCompactionInvalid},
 		},
 		{
-			"a draft that adds a metric is refused",
-			[]knowledge.Knowledge{
-				draftOf(shop, func(d *knowledge.Knowledge) { d.Scope.Metrics = append(d.Scope.Metrics, "order_count") }),
-				draftOf(sports, keep),
-			},
+			"a draft that drops a label key reaches every value and is refused",
+			[]knowledge.Knowledge{draftOf(shop, func(d *knowledge.Knowledge) { delete(d.Run.Labels, "repo") }), draftOf(sports, keep)},
 			want{err: knowledge.ErrCompactionInvalid},
 		},
 		{
-			"a draft without metrics reaches every metric and is refused",
-			[]knowledge.Knowledge{draftOf(shop, func(d *knowledge.Knowledge) { d.Scope.Metrics = nil }), draftOf(sports, keep)},
-			want{err: knowledge.ErrCompactionInvalid},
-		},
-		{
-			"two meanings split by metrics with none in common pass",
+			"two meanings split by a label value with none in common pass",
 			[]knowledge.Knowledge{
-				draftOf(shop, func(d *knowledge.Knowledge) { d.Scope.Metrics = []string{"conversion_count"} }),
-				draftOf(shop, func(d *knowledge.Knowledge) { d.ID, d.Scope.Metrics = "", []string{"click_count"} }),
+				draftOf(shop, label("task", "commit")),
+				draftOf(shop, unnamed(label("task", "push"))),
 				draftOf(sports, keep),
 			},
-			want{dims: []map[string]string{shopping, shopping, sporting}},
+			want{labels: []trace.Labels{
+				{"repo": {"nodloop"}, "task": {"commit"}, "topic": {"shopping"}},
+				{"repo": {"nodloop"}, "task": {"push"}, "topic": {"shopping"}},
+				sporting,
+			}},
 		},
 		{
-			"two meanings whose metric lists share one overlap",
-			[]knowledge.Knowledge{
-				draftOf(shop, func(d *knowledge.Knowledge) { d.Scope.Metrics = []string{"conversion_count"} }),
-				draftOf(shop, func(d *knowledge.Knowledge) { d.ID = "" }),
-				draftOf(sports, keep),
-			},
+			"two meanings whose values share one overlap",
+			[]knowledge.Knowledge{draftOf(shop, label("task", "commit")), draftOf(shop, unnamed(keep)), draftOf(sports, keep)},
 			want{err: knowledge.ErrCompactionOverlap},
 		},
 		{
-			"two meanings whose dims differ in keys but not in values overlap",
-			[]knowledge.Knowledge{
-				draftOf(shop, keep),
-				draftOf(shop, func(d *knowledge.Knowledge) {
-					d.ID, d.Scope.Dims = "", map[string]string{"topic": "shopping", "platform": "ios"}
-				}),
-				draftOf(sports, keep),
-			},
+			"two meanings whose labels differ in keys but not in values overlap",
+			[]knowledge.Knowledge{draftOf(shop, keep), draftOf(shop, unnamed(label("platform", "ios"))), draftOf(sports, keep)},
+			want{err: knowledge.ErrCompactionOverlap},
+		},
+		{
+			"a general draft beside the drafts of each value overlaps them",
+			[]knowledge.Knowledge{draftOf(shop, own), draftOf(sports, own), draftOf(g, own)},
 			want{err: knowledge.ErrCompactionOverlap},
 		},
 	}
@@ -387,16 +401,19 @@ func TestLedgerProposeCompactionScope(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			l, _ := newTestLedger(t, t.TempDir(), at)
-			require.NoError(t, testkit.Err(l.Import(ctx, []knowledge.Knowledge{shop, sports})))
+			require.NoError(t, testkit.Err(l.Import(ctx, []knowledge.Knowledge{g, shop, sports})))
 
-			got, err := l.ProposeCompaction(ctx, "shop", tc.drafts)
-			var dims []map[string]string
+			got, err := l.ProposeCompaction(ctx, "g", tc.args)
+			var labels []trace.Labels
 			for _, k := range got.Items {
-				dims = append(dims, k.Scope.Dims)
+				labels = append(labels, k.Run.Labels)
 			}
 
 			assert.ErrorIs(t, err, tc.want.err)
-			assert.Equal(t, tc.want.dims, dims)
+			if tc.want.message != "" {
+				assert.ErrorContains(t, err, tc.want.message)
+			}
+			assert.Equal(t, tc.want.labels, labels)
 		})
 	}
 }
@@ -465,7 +482,8 @@ func TestSetPendingCompaction(t *testing.T) {
 	}
 }
 
-// A second proposal over the same folder waits until the first is abandoned or can never be approved
+// A second proposal over items of the first waits until the first is abandoned or can never be approved
+// The first is anchored at j and the second at a with the meaning draft alone
 func TestLedgerProposeCompactionAgain(t *testing.T) {
 	type args struct {
 		// Candidates of the first proposal retired before the second
@@ -476,7 +494,7 @@ func TestLedgerProposeCompactionAgain(t *testing.T) {
 	type want struct {
 		err     error
 		records int
-		// Approving the second proposal after a passing replay
+		// Approving the second proposal with a passing coverage
 		approveErr error
 	}
 	tcs := []struct {
@@ -484,13 +502,13 @@ func TestLedgerProposeCompactionAgain(t *testing.T) {
 		args args
 		want want
 	}{
-		{"refused while the first is pending", args{}, want{knowledge.ErrCompactionPending, 7, knowledge.ErrNotFound}},
+		{"refused while the first is pending", args{}, want{knowledge.ErrCompactionPending, 6, knowledge.ErrNotFound}},
 		{
 			"accepted once a candidate of the first is retired",
 			args{retired: []knowledge.Ref{{ID: "k-1", Version: 1}}},
-			want{nil, 10, nil},
+			want{nil, 8, nil},
 		},
-		{"a proposal cut between two appends is replaced by the retry", args{cut: 1}, want{nil, 8, nil}},
+		{"a proposal cut between two appends is replaced by the retry", args{cut: 1}, want{nil, 6, nil}},
 	}
 	ctx := context.Background()
 	for _, tc := range tcs {
@@ -500,7 +518,7 @@ func TestLedgerProposeCompactionAgain(t *testing.T) {
 			dir := t.TempDir()
 			l, _ := newTestLedger(t, dir, seeds.at.Add(time.Hour))
 			require.NoError(t, testkit.Err(l.Import(ctx, seeds.all())))
-			_, err := l.ProposeCompaction(ctx, "a", seeds.drafts())
+			_, err := l.ProposeCompaction(ctx, "j", seeds.drafts())
 			require.NoError(t, err)
 			for _, ref := range tc.args.retired {
 				_, err = l.Retire(ctx, ref.ID, ref.Version, "ann")
@@ -508,13 +526,10 @@ func TestLedgerProposeCompactionAgain(t *testing.T) {
 			}
 			dropNewest(t, dir, tc.args.cut)
 
-			second, err := l.ProposeCompaction(ctx, "b", seeds.drafts())
+			second, err := l.ProposeCompaction(ctx, "a", seeds.drafts()[:1])
 			all, listErr := l.All(ctx)
 			require.NoError(t, listErr)
-			_, approveErr := l.ApproveCompaction(ctx, second.ID, "jed", knowledge.Replay{
-				Compaction: second.ID,
-				Events:     []knowledge.ReplayEvent{{EventID: "e1", Expected: evidence.StatusHold, Got: evidence.StatusHold}},
-			})
+			_, approveErr := approveCompaction(ctx, l, second.ID, "jed")
 
 			assert.ErrorIs(t, err, tc.want.err)
 			assert.Len(t, all, tc.want.records)
@@ -553,7 +568,7 @@ func TestLedgerProposeCompactionVetoTools(t *testing.T) {
 			drafts := seeds.drafts()
 			drafts[1].Veto.Tool = tc.args.newTools
 
-			got, err := l.ProposeCompaction(ctx, "a", drafts)
+			got, err := l.ProposeCompaction(ctx, "j", drafts)
 
 			assert.ErrorIs(t, err, tc.want.err)
 			assert.Len(t, got.Items, tc.want.items)
@@ -627,7 +642,7 @@ func TestLedgerProposeCompactionVetoConditions(t *testing.T) {
 			drafts[1].Veto.When = tc.args.when
 			drafts[1].Veto.Example = map[string]any{"command": tc.args.example}
 
-			got, err := l.ProposeCompaction(ctx, "a", drafts)
+			got, err := l.ProposeCompaction(ctx, "j", drafts)
 
 			assert.ErrorIs(t, err, tc.want.err)
 			assert.Len(t, got.Items, tc.want.items)
@@ -638,55 +653,36 @@ func TestLedgerProposeCompactionVetoConditions(t *testing.T) {
 	}
 }
 
-// j and k are two judgments of one folder with a sed veto and a perl veto
-// plain is k without its veto
-func TestLedgerProposeCompactionMergedVetoes(t *testing.T) {
+// Beside the judgment that keeps the veto of j a second judgment names j with a perl veto of its own
+// plain is that second judgment without its veto
+func TestLedgerProposeCompactionVetoesShareRun(t *testing.T) {
 	seeds := newCompactionSeeds()
-	k := seeds.j
-	k.ID, k.Content = "k", "never perl -i"
-	k.Scope.ChangeContexts = []evidence.Context{evidence.ContextPlannedChange}
-	k.Veto = &knowledge.Veto{
-		Tool: "Bash", When: []knowledge.VetoCondition{{Field: "command", Match: `perl\s+-i`}},
-		Example: map[string]any{"command": "perl -i -pe s/a/b/ f"},
+	perl := knowledge.Knowledge{
+		ID: "k", Kind: knowledge.KindJudgment, Content: "never perl -i", Run: seeds.j.Run, Author: "claude",
+		Evidence: knowledge.Evidence{Knowledge: []knowledge.Ref{{ID: "j", Version: 1}}},
+		Veto: &knowledge.Veto{
+			Tool: "Bash", When: []knowledge.VetoCondition{{Field: "command", Match: `perl\s+-i`}},
+			Example: map[string]any{"command": "perl -i -pe s/a/b/ f"},
+		},
 	}
-	separate := seeds.drafts()
-	kept := separate[1]
-	kept.ID, kept.Content, kept.Veto = k.ID, k.Content, k.Veto
-	kept.Scope, kept.Evidence.Knowledge = k.Scope, []knowledge.Ref{{ID: "k", Version: 1}}
-	separate[1].Exceptions = k.Scope.ChangeContexts
-	separate = append(separate, kept)
-	merged := seeds.drafts()
-	merged[1].Evidence.Knowledge = []knowledge.Ref{{ID: "j", Version: 1}, {ID: "k", Version: 1}}
-	merged[1].Scope = k.Scope
-	merged[1].Veto.When = []knowledge.VetoCondition{{Field: "command", Match: `(?:sed\s+-i)|(?:perl\s+-i)`}}
-	shared := append(seeds.drafts(), kept)
-	plain := k
+	plain := perl
 	plain.Veto = nil
-	plainKept := kept
-	plainKept.Veto = nil
-	sharedPlain := append(seeds.drafts(), plainKept)
-	type args struct {
-		k      knowledge.Knowledge
-		drafts []knowledge.Knowledge
-	}
 	tcs := []struct {
 		name string
-		args args
+		args []knowledge.Knowledge
 		want error
 	}{
-		{"one judgment per old veto is accepted", args{k, separate}, nil},
-		{"two vetoes merged into one alternation are refused", args{k, merged}, knowledge.ErrCompactionVeto},
-		{"two judgments that each keep an old veto may share a folder", args{k, shared}, nil},
-		{"a judgment without a veto may not share a folder with a veto judgment", args{plain, sharedPlain}, knowledge.ErrCompactionOverlap},
+		{"two judgments that each carry a veto may share a run", append(seeds.drafts(), perl), nil},
+		{"a judgment without a veto may not share a run with a veto judgment", append(seeds.drafts(), plain), knowledge.ErrCompactionOverlap},
 	}
 	ctx := context.Background()
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			l, _ := newTestLedger(t, t.TempDir(), seeds.at.Add(time.Hour))
-			require.NoError(t, testkit.Err(l.Import(ctx, append(seeds.all(), tc.args.k))))
+			require.NoError(t, testkit.Err(l.Import(ctx, seeds.all())))
 
-			_, err := l.ProposeCompaction(ctx, "a", tc.args.drafts)
+			_, err := l.ProposeCompaction(ctx, "j", tc.args)
 
 			assert.ErrorIs(t, err, tc.want)
 		})
@@ -710,7 +706,7 @@ func TestLedgerApproveRefusesCompactionCandidate(t *testing.T) {
 			require.NoError(t, testkit.Err(ledger.Import(ctx, seeds.all())))
 			drafts := seeds.drafts()
 			drafts[0].ID = "a"
-			proposed, err := ledger.ProposeCompaction(ctx, "a", drafts)
+			proposed, err := ledger.ProposeCompaction(ctx, "j", drafts)
 			require.NoError(t, err)
 			require.Greater(t, len(proposed.Items), tc.args)
 			before, err := ledger.All(ctx)
@@ -753,7 +749,7 @@ func TestLedgerCompactionCompleteness(t *testing.T) {
 			require.NoError(t, testkit.Err(l.Import(ctx, seeds.all())))
 			drafts := seeds.drafts()
 			drafts[0].Evidence.Knowledge = append(drafts[0].Evidence.Knowledge, knowledge.Ref{ID: "j", Version: 1})
-			proposed, err := l.ProposeCompaction(ctx, "a", drafts)
+			proposed, err := l.ProposeCompaction(ctx, "j", drafts)
 			require.NoError(t, err)
 			path := filepath.Join(dir, "knowledge.jsonl")
 			data, err := os.ReadFile(path)
@@ -772,22 +768,18 @@ func TestLedgerCompactionCompleteness(t *testing.T) {
 			require.NoError(t, err)
 			id := before[0].Compaction
 			got, lookupErr := l.Compaction(ctx, id)
-			_, previewErr := l.Preview(ctx, id)
 			_, individualErr := l.Approve(ctx, proposed.Items[0].ID, proposed.Items[0].Version, "jed")
-			replay := knowledge.Replay{Compaction: id, Events: []knowledge.ReplayEvent{
-				{EventID: "e1", Expected: evidence.StatusHold, Got: evidence.StatusHold},
-			}}
-			_, approveErr := l.ApproveCompaction(ctx, id, "jed", replay)
+			cv := coverage(proposed)
+			_, approveErr := l.ApproveCompaction(ctx, id, "jed", cv)
 			after, err := l.All(ctx)
 			require.NoError(t, err)
-			_, retryErr := l.ApproveCompaction(ctx, id, "jed", replay)
+			_, retryErr := l.ApproveCompaction(ctx, id, "jed", cv)
 			retried, err := l.All(ctx)
 			require.NoError(t, err)
 			vetoes, err := os.ReadFile(vetoPath)
 			require.NoError(t, err)
 
 			assert.ErrorIs(t, lookupErr, tc.want.err)
-			assert.ErrorIs(t, previewErr, tc.want.err)
 			assert.ErrorIs(t, individualErr, knowledge.ErrCompactionInvalid)
 			assert.ErrorIs(t, approveErr, tc.want.err)
 			assert.ErrorIs(t, retryErr, tc.want.err)
@@ -800,51 +792,66 @@ func TestLedgerCompactionCompleteness(t *testing.T) {
 	}
 }
 
-// The preview reads as approved while the ledger keeps its records
-func TestPreview(t *testing.T) {
-	seeds := newCompactionSeeds()
-	now := seeds.at.Add(time.Hour)
+func TestCoveragePasses(t *testing.T) {
+	ref := func(id string, version int) knowledge.Ref { return knowledge.Ref{ID: id, Version: version} }
+	c := knowledge.Compaction{
+		ID:       "c-1",
+		Items:    knowledge.Set{{ID: "k-1", Version: 1}},
+		Replaced: knowledge.Set{{ID: "a", Version: 1}, {ID: "b", Version: 1}},
+	}
+	covered := func(old knowledge.Ref, by ...knowledge.Ref) knowledge.CoverageItem {
+		return knowledge.CoverageItem{Old: old, CoveredBy: by}
+	}
 	tcs := []struct {
 		name string
-		args knowledge.Ref
-		want error
+		args knowledge.Coverage
+		// A part of the error text and empty when the coverage passes
+		want string
 	}{
-		{"a new item reads as approved", knowledge.Ref{ID: "k-1", Version: 1}, nil},
-		{"a kept id reads at its new version", knowledge.Ref{ID: "j", Version: 2}, nil},
 		{
-			"the old version of a kept id reads as superseded",
-			knowledge.Ref{ID: "j", Version: 1},
-			knowledge.ErrVersionUnapproved,
+			"every old item stated by a new item passes",
+			knowledge.Coverage{Compaction: "c-1", Items: []knowledge.CoverageItem{covered(ref("a", 1), ref("k-1", 1)), covered(ref("b", 1), ref("k-1", 1))}},
+			"",
 		},
-		{"a replaced item reads as retired", knowledge.Ref{ID: "a", Version: 1}, knowledge.ErrVersionUnapproved},
-		{"an item outside the compaction reads as before", knowledge.Ref{ID: "far", Version: 1}, nil},
+		{
+			"the coverage of another compaction fails",
+			knowledge.Coverage{Compaction: "c-2", Items: []knowledge.CoverageItem{covered(ref("a", 1), ref("k-1", 1)), covered(ref("b", 1), ref("k-1", 1))}},
+			`the coverage is of "c-2" and not of c-1`,
+		},
+		{
+			"an old item left out fails",
+			knowledge.Coverage{Compaction: "c-1", Items: []knowledge.CoverageItem{covered(ref("a", 1), ref("k-1", 1))}},
+			"no new item states b v1",
+		},
+		{
+			"an old item covered by nothing fails",
+			knowledge.Coverage{Compaction: "c-1", Items: []knowledge.CoverageItem{covered(ref("a", 1)), covered(ref("b", 1), ref("k-1", 1))}},
+			"no new item states a v1",
+		},
+		{
+			"a lost fact fails",
+			knowledge.Coverage{Compaction: "c-1", Items: []knowledge.CoverageItem{
+				{Old: ref("a", 1), CoveredBy: []knowledge.Ref{ref("k-1", 1)}, Lost: []string{"the four hour lag"}},
+				covered(ref("b", 1), ref("k-1", 1)),
+			}},
+			"a v1 loses the four hour lag",
+		},
+		{
+			"a cover that is no new item of the compaction fails",
+			knowledge.Coverage{Compaction: "c-1", Items: []knowledge.CoverageItem{covered(ref("a", 1), ref("k-2", 1)), covered(ref("b", 1), ref("k-1", 1))}},
+			"k-2 v1 is not a new item of c-1",
+		},
 	}
-	ctx := context.Background()
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			l, _ := newTestLedger(t, t.TempDir(), now)
-			require.NoError(t, testkit.Err(l.Import(ctx, seeds.all())))
-			c, err := l.ProposeCompaction(ctx, "a", seeds.drafts())
-			require.NoError(t, err)
-			before, err := l.All(ctx)
-			require.NoError(t, err)
-
-			preview, err := l.Preview(ctx, c.ID)
-			require.NoError(t, err)
-			set, err := preview.All(ctx)
-			require.NoError(t, err)
-			var approved []string
-			for _, k := range set.Approved() {
-				approved = append(approved, fmt.Sprintf("%s v%d", k.ID, k.Version))
+			err := tc.args.Passes(c)
+			if tc.want == "" {
+				assert.NoError(t, err)
+				return
 			}
-			_, lookupErr := preview.Approved(ctx, tc.args.ID, tc.args.Version)
-			after, err := l.All(ctx)
-			require.NoError(t, err)
-
-			assert.Equal(t, []string{"far v1", "j v2", "k-1 v1", "p v1"}, approved)
-			assert.ErrorIs(t, lookupErr, tc.want)
-			assert.Equal(t, before, after)
+			assert.ErrorIs(t, err, knowledge.ErrCoverageNotPassed)
+			assert.ErrorContains(t, err, tc.want)
 		})
 	}
 }
@@ -857,9 +864,11 @@ func TestLedgerApproveCompaction(t *testing.T) {
 		retired []knowledge.Ref
 		// Candidates appended as approved after the proposal as a cut approval leaves them
 		approved []knowledge.Ref
-		replay   knowledge.Replay
+		// The coverage handed to the approval built from the proposal
+		coverage func(knowledge.Compaction) knowledge.Coverage
 		approver string
-		extra    []knowledge.Knowledge
+		// Approved items of the folder that the meaning draft names beside a and b
+		extra []knowledge.Knowledge
 		// The drafts of seeds when nil
 		drafts []knowledge.Knowledge
 	}
@@ -871,38 +880,40 @@ func TestLedgerApproveCompaction(t *testing.T) {
 		vetoes bool
 		err    error
 	}
-	passed := knowledge.Replay{Compaction: "c-1", Events: []knowledge.ReplayEvent{
-		{EventID: "e1", Expected: evidence.StatusNoAction, Got: evidence.StatusNoAction, TraceID: "r1"},
-	}}
-	failed := passed
-	failed.Events = []knowledge.ReplayEvent{{EventID: "e1", Expected: evidence.StatusNoAction, Got: evidence.StatusHold}}
-	missing := passed
-	never := knowledge.ReplayEvent{EventID: "e2", Expected: evidence.StatusHold}
-	missing.Events = append(slices.Clone(passed.Events), never)
-	other := passed
-	other.Compaction = "c-other"
-	large := seeds.p
-	large.ID, large.Content = "large", strings.Repeat("가", knowledge.ReviewChars)
-	// Fills the review of the folder up to the char cap exactly
-	// No review carries the veto of j
-	filling := seeds.p
-	filling.ID, filling.Content = "filling", ""
-	used := utf8.RuneCountInString(filling.Text())
-	for _, k := range []knowledge.Knowledge{seeds.a, seeds.b, seeds.p} {
-		used += utf8.RuneCountInString(k.Text())
+	passed := coverage
+	edited := func(edit func(*knowledge.Coverage)) func(knowledge.Compaction) knowledge.Coverage {
+		return func(c knowledge.Compaction) knowledge.Coverage {
+			cv := coverage(c)
+			edit(&cv)
+			return cv
+		}
 	}
-	filling.Content = strings.Repeat("가", knowledge.ReviewChars-used)
+	none := func(knowledge.Compaction) knowledge.Coverage { return knowledge.Coverage{} }
+	lost := edited(func(cv *knowledge.Coverage) { cv.Items[1].Lost = []string{"the lag"} })
+	uncovered := edited(func(cv *knowledge.Coverage) { cv.Items = cv.Items[:2] })
+	other := edited(func(cv *knowledge.Coverage) { cv.Compaction = "c-other" })
+	large := seeds.a
+	large.ID, large.Content = "large", strings.Repeat("가", knowledge.ReviewChars)
+	large.Evidence = knowledge.Evidence{FeedbackTraceIDs: []string{"t-large"}}
 	longer := seeds.drafts()
-	longer[0].Content += strings.Repeat("x", 300)
-	// Nine items that cite only paragraphs push the review of the folder past the item cap before the compaction
+	longer[0].Content = strings.Repeat("가", knowledge.ReviewChars)
+	// Nine items push the review of the folder past the item cap before the compaction
 	var crowd []knowledge.Knowledge
 	for i := range 9 {
-		k := seeds.p
-		k.ID, k.Content = fmt.Sprintf("crowd-%d", i), fmt.Sprintf("paragraph fact %d", i)
+		k := seeds.a
+		k.ID, k.Content = fmt.Sprintf("crowd-%d", i), fmt.Sprintf("fact %d", i)
+		k.Evidence = knowledge.Evidence{FeedbackTraceIDs: []string{k.ID}}
 		crowd = append(crowd, k)
 	}
 	success := []string{
 		"k-1 v1 approved c-1", "j v2 approved c-1", "j v1 superseded c-1", "a v1 retired c-1", "b v1 retired c-1",
+	}
+	retired := func(extra []knowledge.Knowledge) []string {
+		out := slices.Clone(success)
+		for _, k := range extra {
+			out = append(out, k.ID+" v1 retired c-1")
+		}
+		return out
 	}
 	items := []string{"k-1 v1 approved", "j v2 approved"}
 	candidate := []knowledge.Ref{{ID: "k-1", Version: 1}}
@@ -913,52 +924,44 @@ func TestLedgerApproveCompaction(t *testing.T) {
 	}{
 		{
 			"approves the new items and retires the old ones",
-			args{replay: passed, approver: "jed"},
+			args{coverage: passed, approver: "jed"},
 			want{appended: success, items: items, vetoes: true},
 		},
 		{
 			"a second call after a partial append appends only what is missing",
-			args{approved: candidate, replay: passed, approver: "jed"},
+			args{approved: candidate, coverage: passed, approver: "jed"},
 			want{appended: success[1:], items: items, vetoes: true},
 		},
-		{"refused without a replay", args{approver: "jed"}, want{err: knowledge.ErrReplayNotPassed}},
-		{"refused after a failed replay", args{replay: failed, approver: "jed"}, want{err: knowledge.ErrReplayNotPassed}},
-		{
-			"refused when an event was never replayed",
-			args{replay: missing, approver: "jed"},
-			want{err: knowledge.ErrReplayNotPassed},
-		},
-		{
-			"refused with the replay of another compaction",
-			args{replay: other, approver: "jed"},
-			want{err: knowledge.ErrReplayNotPassed},
-		},
+		{"refused without a coverage", args{coverage: none, approver: "jed"}, want{err: knowledge.ErrCoverageNotPassed}},
+		{"refused when a fact is lost", args{coverage: lost, approver: "jed"}, want{err: knowledge.ErrCoverageNotPassed}},
+		{"refused when an old item is not covered", args{coverage: uncovered, approver: "jed"}, want{err: knowledge.ErrCoverageNotPassed}},
+		{"refused with the coverage of another compaction", args{coverage: other, approver: "jed"}, want{err: knowledge.ErrCoverageNotPassed}},
 		{
 			"refused when an old item changed since the proposal",
-			args{retired: []knowledge.Ref{{ID: "b", Version: 1}}, replay: passed, approver: "jed"},
+			args{retired: []knowledge.Ref{{ID: "b", Version: 1}}, coverage: passed, approver: "jed"},
 			want{err: knowledge.ErrCompactionOutdated},
 		},
 		{
 			"refused when a candidate of the compaction was retired",
-			args{retired: candidate, replay: passed, approver: "jed"},
+			args{retired: candidate, coverage: passed, approver: "jed"},
 			want{err: knowledge.ErrTransitionInvalid},
 		},
 		{
 			"refused when a new item pushes a review past the char cap",
-			args{replay: passed, approver: "jed", extra: []knowledge.Knowledge{filling}, drafts: longer},
+			args{coverage: passed, approver: "jed", drafts: longer},
 			want{err: knowledge.ErrFolderFull},
 		},
 		{
 			"a compaction that shrinks a review already past the char cap passes",
-			args{replay: passed, approver: "jed", extra: []knowledge.Knowledge{large}},
-			want{appended: success, items: items, vetoes: true},
+			args{coverage: passed, approver: "jed", extra: []knowledge.Knowledge{large}},
+			want{appended: retired([]knowledge.Knowledge{large}), items: items, vetoes: true},
 		},
 		{
 			"a compaction that shrinks a review already past the item cap passes",
-			args{replay: passed, approver: "jed", extra: crowd},
-			want{appended: success, items: items, vetoes: true},
+			args{coverage: passed, approver: "jed", extra: crowd},
+			want{appended: retired(crowd), items: items, vetoes: true},
 		},
-		{"refused without an approver", args{replay: passed}, want{err: knowledge.ErrApproverRequired}},
+		{"refused without an approver", args{coverage: passed}, want{err: knowledge.ErrApproverRequired}},
 	}
 	ctx := context.Background()
 	for _, tc := range tcs {
@@ -966,11 +969,14 @@ func TestLedgerApproveCompaction(t *testing.T) {
 			t.Parallel()
 			l, vetoPath := newTestLedger(t, t.TempDir(), now)
 			require.NoError(t, testkit.Err(l.Import(ctx, append(seeds.all(), tc.args.extra...))))
-			drafts := tc.args.drafts
+			drafts := slices.Clone(tc.args.drafts)
 			if drafts == nil {
 				drafts = seeds.drafts()
 			}
-			proposed, err := l.ProposeCompaction(ctx, "a", drafts)
+			for _, k := range tc.args.extra {
+				drafts[0].Evidence.Knowledge = append(slices.Clone(drafts[0].Evidence.Knowledge), knowledge.Ref{ID: k.ID, Version: k.Version})
+			}
+			proposed, err := l.ProposeCompaction(ctx, "j", drafts)
 			require.NoError(t, err)
 			for _, ref := range tc.args.retired {
 				_, err = l.Retire(ctx, ref.ID, ref.Version, "ann")
@@ -987,7 +993,7 @@ func TestLedgerApproveCompaction(t *testing.T) {
 			require.NoError(t, err)
 			require.NoError(t, os.RemoveAll(vetoPath))
 
-			got, err := l.ApproveCompaction(ctx, proposed.ID, tc.args.approver, tc.args.replay)
+			got, err := l.ApproveCompaction(ctx, proposed.ID, tc.args.approver, tc.args.coverage(proposed))
 			all, listErr := l.All(ctx)
 			require.NoError(t, listErr)
 			var appended, approved []string
@@ -1007,36 +1013,10 @@ func TestLedgerApproveCompaction(t *testing.T) {
 	}
 }
 
-func TestReplayPassed(t *testing.T) {
-	ok := knowledge.ReplayEvent{EventID: "e1", Expected: evidence.StatusHold, Got: evidence.StatusHold}
-	tcs := []struct {
-		name string
-		args knowledge.Replay
-		want bool
-	}{
-		{"no event does not pass", knowledge.Replay{}, false},
-		{"every event at its expectation passes", knowledge.Replay{Events: []knowledge.ReplayEvent{ok}}, true},
-		{
-			"a missing review fails",
-			knowledge.Replay{Events: []knowledge.ReplayEvent{ok, {EventID: "e2", Expected: evidence.StatusHold}}},
-			false,
-		},
-	}
-	for _, tc := range tcs {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			assert.Equal(t, tc.want, tc.args.Passed())
-		})
-	}
-}
-
-// A narrowed version proposed while a compaction of its id waited for the replay
+// A narrowed version proposed while a compaction of its id waited for approval
 // Approving it after the compaction would drop what the compaction merged so it is refused in either order
 func TestLedgerNarrowedDuringCompaction(t *testing.T) {
 	seeds := newCompactionSeeds()
-	passed := knowledge.Replay{Compaction: "c-1", Events: []knowledge.ReplayEvent{
-		{EventID: "e1", Expected: evidence.StatusNoAction, Got: evidence.StatusNoAction, TraceID: "r1"},
-	}}
 	type want struct {
 		narrowErr, compactionErr error
 		// id version and status of the approved j in the end
@@ -1059,7 +1039,7 @@ func TestLedgerNarrowedDuringCompaction(t *testing.T) {
 			require.NoError(t, err)
 			now := seeds.at
 			counts := map[string]int{}
-			l := knowledge.NewLedger(store, vetofile.NewApprovedFile(t.TempDir(), "records"), evidence.DefaultContexts(), func() time.Time {
+			l := knowledge.NewLedger(store, vetofile.NewApprovedFile(t.TempDir(), "records"), func() time.Time {
 				now = now.Add(time.Minute)
 				return now
 			}, func(prefix string) string {
@@ -1068,15 +1048,15 @@ func TestLedgerNarrowedDuringCompaction(t *testing.T) {
 			},
 			)
 			require.NoError(t, testkit.Err(l.Import(ctx, seeds.all())))
-			_, err = l.ProposeCompaction(ctx, "a", seeds.drafts())
+			_, err = l.ProposeCompaction(ctx, "j", seeds.drafts())
 			require.NoError(t, err)
-			narrowed, _, err := l.Narrow(ctx, "j", 1, []evidence.Context{evidence.ContextPlannedChange}, []string{"r9"}, "jed")
+			narrowed, _, err := l.Narrow(ctx, "j", 1, "task", []string{"push"}, []string{"r9"}, "jed")
 			require.NoError(t, err)
 			require.Equal(t, 3, narrowed.Version)
 
 			approvals := map[string]func() error{
 				"narrowed":   func() error { return testkit.Err(l.Approve(ctx, "j", 3, "jed")) },
-				"compaction": func() error { return testkit.Err(l.ApproveCompaction(ctx, "c-1", "jed", passed)) },
+				"compaction": func() error { return testkit.Err(approveCompaction(ctx, l, "c-1", "jed")) },
 			}
 			errs := map[string]error{}
 			for _, step := range tc.args {
@@ -1096,12 +1076,9 @@ func TestLedgerNarrowedDuringCompaction(t *testing.T) {
 // Approving it would bring back what the compaction merged so it is refused however the steps interleave
 func TestLedgerCandidateOfCompactedVersion(t *testing.T) {
 	seeds := newCompactionSeeds()
-	passed := knowledge.Replay{Compaction: "c-1", Events: []knowledge.ReplayEvent{
-		{EventID: "e1", Expected: evidence.StatusNoAction, Got: evidence.StatusNoAction, TraceID: "r1"},
-	}}
 	reword := func(id string) knowledge.Knowledge {
 		return knowledge.Knowledge{
-			ID: id, Kind: knowledge.KindMeaning, Content: id + " reworded", Scope: seeds.b.Scope,
+			ID: id, Kind: knowledge.KindMeaning, Content: id + " reworded", Run: seeds.b.Run,
 			Evidence: knowledge.Evidence{FeedbackTraceIDs: []string{"t9"}}, Author: "jed",
 		}
 	}
@@ -1121,10 +1098,10 @@ func TestLedgerCandidateOfCompactedVersion(t *testing.T) {
 			return testkit.Err(l.Import(ctx, []knowledge.Knowledge{stacked}))
 		},
 		"propose compaction": func(ctx context.Context, l *knowledge.Ledger) error {
-			return testkit.Err(l.ProposeCompaction(ctx, "a", seeds.drafts()))
+			return testkit.Err(l.ProposeCompaction(ctx, "j", seeds.drafts()))
 		},
 		"approve compaction": func(ctx context.Context, l *knowledge.Ledger) error {
-			return testkit.Err(l.ApproveCompaction(ctx, "c-1", "jed", passed))
+			return testkit.Err(approveCompaction(ctx, l, "c-1", "jed"))
 		},
 		"approve b v2": func(ctx context.Context, l *knowledge.Ledger) error {
 			return testkit.Err(l.Approve(ctx, "b", 2, "jed"))
@@ -1215,189 +1192,33 @@ func TestLedgerCandidateOfCompactedVersion(t *testing.T) {
 	}
 }
 
-// One unscoped meaning g and one replayable meaning per change context
-// Each review carries g and the item of its change context only
-func perContextSeeds(at time.Time) []knowledge.Knowledge {
-	base := knowledge.Knowledge{
-		Version: 1, Kind: knowledge.KindMeaning, Basis: knowledge.BasisStated,
-		Status: knowledge.StatusApproved, Approver: "ann", ApprovedAt: at, Author: "author", Time: at,
-	}
-	g := base
-	g.ID, g.Content, g.Evidence = "g", "general fact", knowledge.Evidence{FeedbackTraceIDs: []string{"t-g"}}
-	out := []knowledge.Knowledge{g}
-	for _, c := range evidence.DefaultContexts().Names() {
-		k := base
-		k.ID, k.Content = string(c), string(c)+" fact"
-		k.Scope = knowledge.Scope{Scope: evidence.Scope{ChangeContexts: []evidence.Context{c}}}
-		k.Evidence = knowledge.Evidence{FeedbackTraceIDs: []string{"t-" + string(c)}}
-		out = append(out, k)
-	}
-	return out
-}
-
-// Crowding counts the items one review carries and never the union of every change context the anchor spans
-func TestLedgerFolderCrowdedPerChangeContext(t *testing.T) {
-	at := time.Date(2026, 9, 28, 0, 0, 0, 0, time.UTC)
-	quiet := []evidence.Context{evidence.ContextNoKnownChange}
-	planned := []evidence.Context{evidence.ContextPlannedChange}
-	item := func(id string, contexts []evidence.Context) knowledge.Knowledge {
-		return knowledge.Knowledge{
-			ID: id, Version: 1, Kind: knowledge.KindMeaning, Content: id + " fact",
-			Scope:    knowledge.Scope{Scope: evidence.Scope{ChangeContexts: contexts}},
-			Evidence: knowledge.Evidence{FeedbackTraceIDs: []string{"t-" + id}}, Basis: knowledge.BasisStated,
-			Status: knowledge.StatusApproved, Approver: "ann", ApprovedAt: at, Author: "author", Time: at,
-		}
-	}
-	unscoped := []knowledge.Knowledge{item("g", nil)}
-	split := []knowledge.Knowledge{item("g", nil)}
-	for i := range 5 {
-		unscoped = append(unscoped, item(fmt.Sprintf("u%d", i), nil))
-	}
-	for i := range 3 {
-		split = append(split, item(fmt.Sprintf("q%d", i), quiet), item(fmt.Sprintf("p%d", i), planned))
-	}
-	type want struct {
-		compactable int
-		crowded     bool
-	}
-	tcs := []struct {
-		name string
-		args []knowledge.Knowledge
-		want want
-	}{
-		{"an unscoped item beside one item per change context is not crowded", perContextSeeds(at), want{2, false}},
-		{"six unscoped items are crowded", unscoped, want{6, true}},
-		{
-			"an unscoped item beside three items in each of two change contexts counts itself in both and is not crowded",
-			split, want{4, false},
-		},
-	}
-	ctx := context.Background()
-	for _, tc := range tcs {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			l, _ := newTestLedger(t, t.TempDir(), at)
-			require.NoError(t, testkit.Err(l.Import(ctx, tc.args)))
-			all, err := l.All(ctx)
-			require.NoError(t, err)
-			compactable, err := all.Compactable("g", evidence.DefaultContexts())
-			require.NoError(t, err)
-
-			got, err := l.Folder(ctx, "g", 1)
-
-			require.NoError(t, err)
-			assert.Equal(t, tc.want, want{got.Compactable, got.Crowded()})
-			assert.Equal(t, tc.want.crowded, compactable.Crowded())
-			assert.Len(t, compactable.Items, len(tc.args), "a compaction still covers the union")
-		})
-	}
-}
-
-// A compaction of the per change context folder keeps each fact on the events its item reached
-func TestLedgerProposeCompactionPerChangeContext(t *testing.T) {
-	at := time.Date(2026, 9, 28, 0, 0, 0, 0, time.UTC)
-	seeds := perContextSeeds(at)
-	general := knowledge.Ref{ID: "g", Version: 1}
-	perContext := func(withGeneral bool) []knowledge.Knowledge {
-		out := make([]knowledge.Knowledge, 0, len(seeds)-1)
-		for i, old := range seeds[1:] {
-			d := knowledge.Knowledge{
-				ID: old.ID, Kind: knowledge.KindMeaning, Content: old.Content, Scope: old.Scope, Author: "claude",
-				Evidence: knowledge.Evidence{Knowledge: []knowledge.Ref{{ID: old.ID, Version: 1}}},
-			}
-			if withGeneral {
-				d.Content += " and general fact"
-				d.Evidence.Knowledge = append(d.Evidence.Knowledge, general)
-			}
-			if i == 0 && withGeneral {
-				d.ID = "g"
-			}
-			out = append(out, d)
-		}
-		return out
-	}
-	allRefs := make([]knowledge.Ref, 0, len(seeds))
-	for _, k := range seeds {
-		allRefs = append(allRefs, knowledge.Ref{ID: k.ID, Version: 1})
-	}
-	merged := []knowledge.Knowledge{{
-		ID: "g", Kind: knowledge.KindMeaning, Content: "every fact", Author: "claude",
-		Evidence: knowledge.Evidence{Knowledge: allRefs},
-	}}
-	beside := append(perContext(false), knowledge.Knowledge{
-		ID: "g", Kind: knowledge.KindMeaning, Content: "general fact", Author: "claude",
-		Evidence: knowledge.Evidence{Knowledge: []knowledge.Ref{general}},
-	})
-	type want struct {
-		err error
-		// A part of the error text
-		message string
-		items   int
-	}
-	tcs := []struct {
-		name string
-		args []knowledge.Knowledge
-		want want
-	}{
-		{
-			"a merged unscoped draft would carry each fact to every change context and is refused",
-			merged, want{knowledge.ErrCompactionInvalid, "facts of planned_operational_change to events of change contexts no_known_change", 0},
-		},
-		{"one draft per change context that repeats the general fact passes", perContext(true), want{nil, "", 5}},
-		{"a general draft beside the change context drafts overlaps them", beside, want{knowledge.ErrCompactionOverlap, "", 0}},
-	}
-	ctx := context.Background()
-	for _, tc := range tcs {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			l, _ := newTestLedger(t, t.TempDir(), at)
-			require.NoError(t, testkit.Err(l.Import(ctx, seeds)))
-
-			got, err := l.ProposeCompaction(ctx, "g", tc.args)
-
-			assert.ErrorIs(t, err, tc.want.err)
-			if tc.want.message != "" {
-				assert.ErrorContains(t, err, tc.want.message)
-			}
-			assert.Len(t, got.Items, tc.want.items)
-		})
-	}
-}
-
-// A folder of one change context whose meanings are scoped to different metrics compacts into one draft per metric
+// A folder past the item cap compacts into drafts that one run never carries two of a kind
 // and the folder then takes approvals again
-func TestLedgerProposeCompactionPerMetric(t *testing.T) {
+func TestLedgerProposeCompactionFreesFolder(t *testing.T) {
 	at := time.Date(2026, 9, 28, 0, 0, 0, 0, time.UTC)
-	quiet := []evidence.Context{evidence.ContextNoKnownChange}
-	metrics := []string{"click_count", "conversion_count", "impression_count"}
-	// Twelve approved meanings of no_known_change that cycle through the metrics
+	repo := trace.Labels{"repo": {"nodloop"}}
+	// Twelve approved meanings of the repo that a ledger approved before the item cap left
 	var seeds []knowledge.Knowledge
 	for i := range 12 {
 		seeds = append(seeds, knowledge.Knowledge{
 			ID: fmt.Sprintf("k%02d", i), Version: 1, Kind: knowledge.KindMeaning, Content: fmt.Sprintf("fact %d", i),
-			Scope:    knowledge.Scope{Scope: evidence.Scope{ChangeContexts: quiet, Metrics: []string{metrics[i%len(metrics)]}}},
+			Run:      &knowledge.RunScope{Producer: "session", Labels: repo},
 			Evidence: knowledge.Evidence{FeedbackTraceIDs: []string{fmt.Sprintf("t%d", i)}}, Basis: knowledge.BasisStated,
 			Status: knowledge.StatusApproved, Approver: "ann", ApprovedAt: at, Author: "author", Time: at,
 		})
 	}
-	// One draft over the seeds of each listed metric group scoped to the given metrics
-	draft := func(groups []string, scoped []string) knowledge.Knowledge {
+	// One draft over the seeds from first up to last scoped to the labels
+	draft := func(first, last int, labels trace.Labels) knowledge.Knowledge {
 		d := knowledge.Knowledge{
-			Kind: knowledge.KindMeaning, Content: strings.Join(groups, " and ") + " facts", Author: "claude",
-			Scope: knowledge.Scope{Scope: evidence.Scope{ChangeContexts: quiet, Metrics: scoped}},
+			Kind: knowledge.KindMeaning, Content: fmt.Sprintf("facts %d to %d", first, last), Author: "claude",
+			Run: &knowledge.RunScope{Producer: "session", Labels: labels},
 		}
-		for _, k := range seeds {
-			if slices.Contains(groups, k.Scope.Metrics[0]) {
-				d.Evidence.Knowledge = append(d.Evidence.Knowledge, knowledge.Ref{ID: k.ID, Version: 1})
-			}
+		for _, k := range seeds[first:last] {
+			d.Evidence.Knowledge = append(d.Evidence.Knowledge, knowledge.Ref{ID: k.ID, Version: 1})
 		}
 		return d
 	}
-	perMetric := []knowledge.Knowledge{
-		draft(metrics[:1], metrics[:1]), draft(metrics[1:2], metrics[1:2]), draft(metrics[2:], metrics[2:]),
-	}
-	// The click facts split in two drafts that both name click_count
-	clicksTwice := slices.Concat(perMetric, []knowledge.Knowledge{draft(metrics[:1], metrics[:1])})
+	byTask := func(value string) trace.Labels { return trace.Labels{"repo": {"nodloop"}, "task": {value}} }
 	type want struct {
 		err error
 		// Items the compaction proposes
@@ -1410,20 +1231,20 @@ func TestLedgerProposeCompactionPerMetric(t *testing.T) {
 		args []knowledge.Knowledge
 		want want
 	}{
-		{"one draft per metric passes and the folder takes the next approval", perMetric, want{nil, 3, nil}},
+		{"one merged draft passes and the folder takes the next approval", []knowledge.Knowledge{draft(0, 12, repo)}, want{nil, 1, nil}},
 		{
-			"a merged draft over every metric reaches metrics each old item never reached and is refused",
-			[]knowledge.Knowledge{draft(metrics, metrics)},
+			"drafts split by a label value with none in common pass and the folder takes the next approval",
+			[]knowledge.Knowledge{draft(0, 6, byTask("commit")), draft(6, 12, byTask("push"))},
+			want{nil, 2, nil},
+		},
+		{
+			"a merged draft without labels reaches runs each old item never reached and is refused",
+			[]knowledge.Knowledge{draft(0, 12, nil)},
 			want{knowledge.ErrCompactionInvalid, 0, knowledge.ErrFolderFull},
 		},
 		{
-			"a merged draft without metrics reaches every metric and is refused",
-			[]knowledge.Knowledge{draft(metrics, nil)},
-			want{knowledge.ErrCompactionInvalid, 0, knowledge.ErrFolderFull},
-		},
-		{
-			"two drafts of one metric overlap and are refused",
-			clicksTwice,
+			"two drafts of the same labels overlap and are refused",
+			[]knowledge.Knowledge{draft(0, 6, repo), draft(6, 12, repo)},
 			want{knowledge.ErrCompactionOverlap, 0, knowledge.ErrFolderFull},
 		},
 	}
@@ -1436,14 +1257,11 @@ func TestLedgerProposeCompactionPerMetric(t *testing.T) {
 
 			got, err := l.ProposeCompaction(ctx, "k00", tc.args)
 			if err == nil {
-				require.NoError(t, testkit.Err(l.ApproveCompaction(ctx, got.ID, "jed", knowledge.Replay{
-					Compaction: got.ID,
-					Events:     []knowledge.ReplayEvent{{EventID: "e1", Expected: evidence.StatusHold, Got: evidence.StatusHold}},
-				})))
+				require.NoError(t, testkit.Err(l.ApproveCompaction(ctx, got.ID, "jed", coverage(got))))
 			}
 			next := knowledge.Knowledge{
 				ID: "k-next", Kind: knowledge.KindMeaning, Content: "next fact", Author: "author",
-				Scope:    knowledge.Scope{Scope: evidence.Scope{ChangeContexts: quiet, Metrics: metrics[:1]}},
+				Run:      &knowledge.RunScope{Producer: "session", Labels: repo},
 				Evidence: knowledge.Evidence{FeedbackTraceIDs: []string{"t-next"}},
 			}
 			_, _, proposeErr := l.Propose(ctx, next)
