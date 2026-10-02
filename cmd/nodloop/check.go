@@ -19,7 +19,7 @@ import (
 
 // Prints what the data dir holds as one JSON object and exits 1 when an error stopped the check
 // The report is printed either way so a proposal can start from the profile before any policy exists
-func runCheck(args []string, stdout, stderr io.Writer) int {
+func runCheck(args []string, getenv func(string) string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("check", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	dataDir := fs.String("data-dir", "", "reference data directory in the canonical layout")
@@ -33,6 +33,10 @@ func runCheck(args []string, stdout, stderr io.Writer) int {
 	report, err := dataCheck{dir: *dataDir, policyPath: *policy}.run(context.Background())
 	if err != nil {
 		report.Error = err.Error()
+	}
+	report.Version = buildVersion()
+	if w := pluginVersion(getenv(envPluginVersion)).mismatch(report.Version, executable()); w != "" {
+		report.Warnings = append(report.Warnings, w)
 	}
 	enc := json.NewEncoder(stdout)
 	enc.SetIndent("", "  ")
@@ -48,6 +52,8 @@ func runCheck(args []string, stdout, stderr io.Writer) int {
 // What a data dir holds as every command reads it
 // Filled as far as the check got
 type dataReport struct {
+	// The version of this binary so a user can tell it from the one the plugin expects
+	Version    string             `json:"version"`
 	DataDir    string             `json:"data_dir"`
 	Events     int                `json:"events"`
 	Profile    *analysis.Profile  `json:"profile,omitempty"`

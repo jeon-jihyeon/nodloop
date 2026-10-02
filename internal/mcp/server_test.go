@@ -47,7 +47,7 @@ const (
 func connect(t *testing.T, st testkit.Stores, exe, dataArgs string) testkit.Client {
 	t.Helper()
 	srv := newServer(t, st, mcp.NewSession(st.Clock.Now()), exe, dataArgs)
-	return testkit.Connect(t, mcp.NewHost(func(context.Context) (*mcp.Server, error) { return srv, nil }, "test").ServeTransport)
+	return testkit.Connect(t, mcp.NewHost(func(context.Context) (*mcp.Server, error) { return srv, nil }, "test", "").ServeTransport)
 }
 
 func newServer(t *testing.T, st testkit.Stores, session diagnose.Session, exe, dataArgs string) *mcp.Server {

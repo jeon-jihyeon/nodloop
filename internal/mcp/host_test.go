@@ -21,7 +21,7 @@ import (
 func TestHostOpenFails(t *testing.T) {
 	t.Parallel()
 	reason := errors.New("NODLOOP_FILE_DIR is not set. Run nodloop setup --data-dir <dir>")
-	c := testkit.Connect(t, mcp.NewHost(func(context.Context) (*mcp.Server, error) { return nil, reason }, "test").ServeTransport)
+	c := testkit.Connect(t, mcp.NewHost(func(context.Context) (*mcp.Server, error) { return nil, reason }, "test", "").ServeTransport)
 	// The smallest input each schema accepts so the call reaches the tool
 	inputs := map[string]map[string]any{
 		"knowledge_health": {},
@@ -50,7 +50,7 @@ func TestHostOpenFails(t *testing.T) {
 func TestHostServesReviewPrompt(t *testing.T) {
 	t.Parallel()
 	reason := errors.New("NODLOOP_FILE_DIR is not set")
-	c := testkit.Connect(t, mcp.NewHost(func(context.Context) (*mcp.Server, error) { return nil, reason }, "test").ServeTransport)
+	c := testkit.Connect(t, mcp.NewHost(func(context.Context) (*mcp.Server, error) { return nil, reason }, "test", "").ServeTransport)
 	generated, err := os.ReadFile("review.md")
 	require.NoError(t, err)
 
@@ -71,7 +71,7 @@ func TestHostSerializesCalls(t *testing.T) {
 		opened++
 		return newServer(t, st, session, "nodloop", ""), nil
 	}
-	c := testkit.Connect(t, mcp.NewHost(open, "test").ServeTransport)
+	c := testkit.Connect(t, mcp.NewHost(open, "test", "").ServeTransport)
 	b, err := os.ReadFile(reviewFile)
 	require.NoError(t, err)
 	var ctxAnswer struct {
@@ -101,4 +101,25 @@ func TestHostSerializesCalls(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, got, 1)
 	assert.Equal(t, calls+1, opened)
+}
+
+// The instructions given at construction reach the client in the handshake before any tool call
+func TestHostInstructions(t *testing.T) {
+	tcs := []struct {
+		name string
+		args string
+		want string
+	}{
+		{"none sends none", "", ""},
+		{"a sentence is sent as is", "nodloop dev while the plugin runs version 0.5.15", "nodloop dev while the plugin runs version 0.5.15"},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			reason := errors.New("not set up")
+			c := testkit.Connect(t, mcp.NewHost(func(context.Context) (*mcp.Server, error) { return nil, reason }, "test", tc.args).ServeTransport)
+
+			assert.Equal(t, tc.want, c.Instructions())
+		})
+	}
 }

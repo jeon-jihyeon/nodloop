@@ -386,6 +386,32 @@ func TestRunSetup(t *testing.T) {
 	}
 }
 
+// A binary of another version than the plugin runs is named among the warnings after the config is saved
+func TestRunSetupPluginVersion(t *testing.T) {
+	tcs := []struct {
+		name string
+		args string
+		want int
+	}{
+		{"outside the plugin", "", 0},
+		{"the version this binary is", buildVersion(), 0},
+		{"another version", "0.0.1", 1},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			home := t.TempDir()
+			getenv := func(k string) string { return map[string]string{"HOME": home, envPluginVersion: tc.args}[k] }
+			var stdout, stderr bytes.Buffer
+
+			got := runSetup([]string{"--data-dir", testkit.DemoDir(t)}, getenv, &stdout, &stderr)
+
+			require.Equal(t, 0, got, stderr.String())
+			assert.Equal(t, tc.want, strings.Count(stderr.String(), "while the plugin runs version 0.0.1"))
+		})
+	}
+}
+
 // A config.json kept in a dotfiles folder and linked into place
 func TestRunSetupConfigLink(t *testing.T) {
 	type args struct {

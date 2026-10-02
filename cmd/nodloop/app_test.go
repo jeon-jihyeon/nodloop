@@ -264,5 +264,5 @@ func TestAppServerLostMetric(t *testing.T) {
 func connectApp(t *testing.T, a app) testkit.Client {
 	t.Helper()
 	session := mcp.NewSession(a.now())
-	return testkit.Connect(t, mcp.NewHost(func(context.Context) (*mcp.Server, error) { return a.server(session) }, "test").ServeTransport)
+	return testkit.Connect(t, mcp.NewHost(func(context.Context) (*mcp.Server, error) { return a.server(session) }, "test", "").ServeTransport)
 }
