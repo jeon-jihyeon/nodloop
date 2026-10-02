@@ -203,7 +203,7 @@ func TestRunKnowledge(t *testing.T) {
 		{
 			"propose with a context trace as outcome evidence fails",
 			args{args: append(checkTracking, "--evidence-outcome", "c1")},
-			want{1, `^$`, `^nodloop knowledge: .*not a diagnose trace: c1 is a context trace\n$`},
+			want{1, `^$`, `^nodloop knowledge: .*not a recorded review or run: c1 is a context trace\n$`},
 		},
 		{
 			"approve without an approver fails",
