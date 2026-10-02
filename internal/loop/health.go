@@ -52,7 +52,7 @@ func (h *History) Health(now time.Time) []Health {
 		rows[ref] = &Health{ID: k.ID, Version: k.Version, Status: k.Status, LastReviewed: k.LastReviewed(), Stale: k.Stale(now)}
 		stated[ref] = k.Basis == knowledge.BasisStated
 	}
-	for _, r := range h.reviews {
+	for _, r := range h.entries {
 		for _, ref := range r.applied() {
 			if row := rows[ref]; row != nil {
 				row.add(h.verdicts[r.trace.ID].Verdict, h.outcomes[r.trace.ID].Result)
@@ -226,9 +226,9 @@ func (h *History) traces(ref knowledge.Ref, result feedback.Result) []string {
 }
 
 // The runs that applied the version or passed their outcome to it and whose latest outcome is result
-func (h *History) resulted(ref knowledge.Ref, result feedback.Result) []review {
-	var out []review
-	for _, r := range h.reviews {
+func (h *History) resulted(ref knowledge.Ref, result feedback.Result) []entry {
+	var out []entry
+	for _, r := range h.entries {
 		if h.outcomes[r.trace.ID].Result == result && slices.Contains(r.applied(), ref) {
 			out = append(out, r)
 		}
@@ -243,9 +243,9 @@ func (h *History) resulted(ref knowledge.Ref, result feedback.Result) []review {
 
 // The runs with an outcome that pass it to the version
 // A run that applied several merged versions counts once
-func (h *History) inherited(ref knowledge.Ref) []review {
-	var out []review
-	for _, r := range h.reviews {
+func (h *History) inherited(ref knowledge.Ref) []entry {
+	var out []entry
+	for _, r := range h.entries {
 		if _, ok := h.outcomes[r.trace.ID]; ok && h.knowledge.Inherits(ref, r.trace.ID, r.applied(), r.trace.Producer, r.trace.Labels) {
 			out = append(out, r)
 		}

@@ -41,7 +41,7 @@ func (s *Server) checkCompaction(ctx context.Context, _ *sdk.CallToolRequest, in
 
 type runInput struct {
 	Producer string              `json:"producer" jsonschema:"who made the output such as session"`
-	Labels   map[string][]string `json:"labels,omitempty" jsonschema:"the situation of the run as key to values such as repo, path or task. Knowledge scoped to these labels reaches it"`
+	Labels   map[string][]string `json:"labels,omitempty" jsonschema:"the situation of the run as key to values such as repo, dir or task. Knowledge scoped to these labels reaches it"`
 	Subject  string              `json:"subject,omitempty" jsonschema:"what the run was about in a few words"`
 	Output   any                 `json:"output" jsonschema:"the output as it was given to the person, a JSON value or text"`
 	Applied  []knowledge.Ref     `json:"applied,omitempty" jsonschema:"the knowledge items with their versions that the run applied, as knowledge_for answered them"`

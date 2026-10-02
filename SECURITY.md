@@ -23,7 +23,7 @@ nodloop runs locally. These are the surfaces worth attention.
 | Conversation hooks | `nodloop hook prompt` adds approved items to a prompt and `nodloop hook stop` records the last answer as a run with secrets redacted | A way for an answer or a label to make a hook write outside the record directory, block a prompt or keep a secret the redaction should remove is in scope |
 | Input files | Reads files named by `run record --output`, `knowledge import --file` and `feedback add --edited` | A crafted file that escapes its path or executes anything is in scope |
 | Records and config | Writes runs, feedback, outcomes, knowledge and coverage checks to the record directory and reads `~/.nodloop/config.json` | A write outside those paths is in scope |
-| Model calls | `llm probe`, `knowledge compact` and `knowledge check` run `claude -p`, or the binary `NODLOOP_CLAUDE_BIN` names | A way for a record or model output to change that command line is in scope |
+| Model calls | `llm probe`, `knowledge compact`, `knowledge check` and `knowledge extract` run `claude -p`, or the binary `NODLOOP_CLAUDE_BIN` names | A way for a record or model output to change that command line is in scope |
 
 The `plugin/bin/nodloop` launcher downloads a release archive from this repository over HTTPS into `~/.nodloop/bin` and checks it against `checksums.txt`. A way to make it fetch or run something else is in scope.
 

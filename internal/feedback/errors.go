@@ -10,6 +10,6 @@ var (
 	ErrEditedUnexpected     = errors.New("feedback: only an edit verdict carries an edited output")
 	ErrResultUnknown        = errors.New("feedback: result must be confirmed or refuted or inconclusive")
 	ErrCauseUnexpected      = errors.New("feedback: only a confirmed result names a confirmed cause")
-	ErrReasonCodeUnknown    = errors.New("feedback: reason code must be status or cause or citation or checks or other")
+	ErrReasonCodeUnknown    = errors.New("feedback: reason code must be fact or approach or scope or form or other")
 	ErrReasonCodeUnexpected = errors.New("feedback: only an edit or reject verdict carries a reason code")
 )

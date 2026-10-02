@@ -14,7 +14,7 @@ import (
 type Trace struct {
 	// Time sortable id built by NewID
 	ID string `json:"id"`
-	// Pipeline that produced the run
+	// run or check
 	Name Name `json:"name"`
 	// Groups runs
 	// A Claude Code session id or the id of a compaction its check belongs to
@@ -35,7 +35,7 @@ type Trace struct {
 	Error      string          `json:"error,omitempty"`
 	Usage      Usage           `json:"usage"`
 	DurationMS int64           `json:"duration_ms"`
-	// Conditions such as feedback:on
+	// Written before 0.6.0 and read as recorded
 	Tags []string `json:"tags,omitempty"`
 	// The producer that recorded a run trace
 	// Empty on every other name

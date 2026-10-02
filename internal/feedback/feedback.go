@@ -215,7 +215,7 @@ func (l listing[T]) Human() listing[T] {
 }
 
 // Newest record per trace id in the order the input has them
-// 1. a trace later approved stops being an edit or reject example
+// 1. a trace later approved stops counting as a correction
 // 2. a later check replaces an earlier outcome
 // 3. on a tie in time the record listed first wins
 // 4. that is the later append when the input comes newest first from a store

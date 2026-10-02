@@ -39,6 +39,9 @@ commands:
                             Add a candidate scoped to the runs of a producer and list its overlaps. Every label must be one
                             a recorded run carries. --from fills producer, labels and evidence from a run a person
                             corrected. A judgment with a veto becomes a guard veto once approved
+  knowledge extract --from <run id> [--model <m>] [--author <a>]
+                            Draft through claude -p what a correction of the run taught, check it with a second call against
+                            the items the run reaches, and propose an add or an update. A duplicate or a conflict names the item
   knowledge for --producer <p> [--label <key=value>]
                             The approved items a run of the producer with these labels applies, and their size
   knowledge list [--status <s>] [--kind <k>] [--stale]
@@ -193,8 +196,7 @@ func parseID(fs *flag.FlagSet, args []string) (string, error) {
 // A usage error adds the usage text
 func fail(stderr io.Writer, command string, err error) int {
 	fmt.Fprintf(stderr, "nodloop %s: %v\n", command, err)
-	if errors.Is(err, errUnknownAction) || errors.Is(err, errRequired) || errors.Is(err, errUnknownTraceName) ||
-		errors.Is(err, errSessionPath) {
+	if errors.Is(err, errUnknownAction) || errors.Is(err, errRequired) || errors.Is(err, errUnknownTraceName) {
 		fmt.Fprintf(stderr, "\n%s", usage)
 	}
 	return 1

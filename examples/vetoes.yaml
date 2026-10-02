@@ -17,7 +17,7 @@
 # Limits
 # 1. variables, aliases, functions and a command name the shell computes are matched as written
 # 2. the string given to bash -c or eval is not parsed so the seeds block those forms outright
-# 3. any option of a wrapper may take the next word so sudo -E nodloop eval is blocked
+# 3. any option of a wrapper may take the next word so sudo -E mytool eval is blocked
 # 4. text that neither bash nor zsh parses is matched as written line by line
 # 5. any sed option cluster holding i or the BSD I counts as in place so -ei with a script named i is blocked too
 vetoes:

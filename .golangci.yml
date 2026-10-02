@@ -29,7 +29,7 @@ linters:
         - name: exported
           disabled: true
     # Packages import downward only: domain → application → infra → controllers
-    # knowledge is the ledger, compact and loop sit above it and only mcp and cmd import them
+    # knowledge is the ledger, compact and extract and loop sit above it and only mcp and cmd import them
     # No package imports a producer: a producer reaches the core through the MCP tools or the CLI
     # cmd/nodloop is the composition root and imports everything
     # Test files may reach the testkit harness and the file stores so $test is left out where that matters
@@ -49,6 +49,8 @@ linters:
               desc: domain packages do not import knowledge
             - pkg: github.com/jeon-jihyeon/nodloop/internal/compact
               desc: domain packages do not import compact
+            - pkg: github.com/jeon-jihyeon/nodloop/internal/extract
+              desc: domain packages do not import extract
             - pkg: github.com/jeon-jihyeon/nodloop/internal/loop
               desc: domain packages do not import loop
             - pkg: github.com/jeon-jihyeon/nodloop/internal/guard
@@ -63,6 +65,7 @@ linters:
           files:
             - "**/internal/knowledge/**"
             - "**/internal/compact/**"
+            - "**/internal/extract/**"
             - "**/internal/loop/**"
             - "!**/internal/knowledge/file/**"
             - "!$test"
@@ -93,6 +96,8 @@ linters:
           deny:
             - pkg: github.com/jeon-jihyeon/nodloop/internal/compact
               desc: only mcp and cmd import compact
+            - pkg: github.com/jeon-jihyeon/nodloop/internal/extract
+              desc: only mcp and cmd import extract
             - pkg: github.com/jeon-jihyeon/nodloop/internal/loop
               desc: only mcp and cmd import loop
         compact:
@@ -101,11 +106,23 @@ linters:
           deny:
             - pkg: github.com/jeon-jihyeon/nodloop/internal/loop
               desc: only mcp and cmd import loop
+            - pkg: github.com/jeon-jihyeon/nodloop/internal/extract
+              desc: only mcp and cmd import extract
+        extract:
+          files:
+            - "**/internal/extract/**"
+          deny:
+            - pkg: github.com/jeon-jihyeon/nodloop/internal/compact
+              desc: extract and compact share only the ledger
+            - pkg: github.com/jeon-jihyeon/nodloop/internal/loop
+              desc: only mcp and cmd import loop
         loop:
           files:
             - "**/internal/loop/**"
           deny:
             - pkg: github.com/jeon-jihyeon/nodloop/internal/compact
+              desc: loop reads records through knowledge only
+            - pkg: github.com/jeon-jihyeon/nodloop/internal/extract
               desc: loop reads records through knowledge only
             - pkg: github.com/jeon-jihyeon/nodloop/internal/llm
               desc: loop never calls a model
@@ -116,6 +133,8 @@ linters:
             - pkg: github.com/jeon-jihyeon/nodloop/internal/knowledge
               desc: the hook needs vetoes only
             - pkg: github.com/jeon-jihyeon/nodloop/internal/compact
+              desc: the hook needs vetoes only
+            - pkg: github.com/jeon-jihyeon/nodloop/internal/extract
               desc: the hook needs vetoes only
             - pkg: github.com/jeon-jihyeon/nodloop/internal/loop
               desc: the hook needs vetoes only
@@ -147,6 +166,8 @@ linters:
             - "**/internal/testkit/**"
           deny:
             - pkg: github.com/jeon-jihyeon/nodloop/internal/compact
+              desc: the harness opens stores and never a module under test
+            - pkg: github.com/jeon-jihyeon/nodloop/internal/extract
               desc: the harness opens stores and never a module under test
             - pkg: github.com/jeon-jihyeon/nodloop/internal/loop
               desc: the harness opens stores and never a module under test

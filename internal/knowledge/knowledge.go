@@ -58,7 +58,7 @@ var transitions = map[Status][]Status{
 type Basis string
 
 const (
-	BasisStated   Basis = "stated"   // the reviewer said so
+	BasisStated   Basis = "stated"   // a person said so
 	BasisVerified Basis = "verified" // an outcome confirmed it
 )
 

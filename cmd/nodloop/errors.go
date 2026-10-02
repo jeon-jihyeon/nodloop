@@ -30,6 +30,4 @@ var (
 	errRequired         = errors.New("is required")
 	errUnknownTraceName = errors.New("unknown trace name")
 	errNoAction         = fmt.Errorf("an action %w", errRequired)
-	// The session names the report file so a separator would leave the record directory
-	errSessionPath = errors.New("must not contain a path separator")
 )

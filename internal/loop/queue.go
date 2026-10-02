@@ -66,7 +66,7 @@ func (item QueueItem) compare(other QueueItem) int {
 	return cmp.Or(cmp.Compare(other.Score, item.Score), item.Time.Compare(other.Time), cmp.Compare(item.TraceID, other.TraceID))
 }
 
-func (h *History) rank(candidates []review) []QueueItem {
+func (h *History) rank(candidates []entry) []QueueItem {
 	first := h.firstApplications(candidates)
 	versions := map[knowledge.Ref]knowledge.Knowledge{}
 	for _, k := range h.knowledge.Versions() {
@@ -100,8 +100,8 @@ func (h *History) rank(candidates []review) []QueueItem {
 // The share of earlier human verdicts in the place of the run that corrected
 // Weighted up to the full weight of past corrections
 // Only verdicts given before the run was recorded count so a later correction never ranks an older run
-func (h *History) pastCorrections(item *QueueItem, r review) {
-	for _, past := range h.reviews {
+func (h *History) pastCorrections(item *QueueItem, r entry) {
+	for _, past := range h.entries {
 		fb, ok := h.verdicts[past.trace.ID]
 		if !ok || !past.samePlace(r) || !fb.Time.Before(r.trace.Time) {
 			continue
@@ -117,9 +117,9 @@ func (h *History) pastCorrections(item *QueueItem, r review) {
 }
 
 // The trace id of the earliest run that applied each version among the history and the candidates
-func (h *History) firstApplications(candidates []review) map[knowledge.Ref]string {
+func (h *History) firstApplications(candidates []entry) map[knowledge.Ref]string {
 	earliest := map[knowledge.Ref]trace.Trace{}
-	for _, r := range slices.Concat(h.reviews, candidates) {
+	for _, r := range slices.Concat(h.entries, candidates) {
 		for _, ref := range r.applied() {
 			old, ok := earliest[ref]
 			if !ok || r.trace.Time.Before(old.Time) || (r.trace.Time.Equal(old.Time) && r.trace.ID < old.ID) {
@@ -182,8 +182,8 @@ func (h *History) Queue(opts QueueOptions) ([]QueueItem, error) {
 	if err := opts.validate(); err != nil {
 		return nil, err
 	}
-	var pending []review
-	for _, r := range h.reviews {
+	var pending []entry
+	for _, r := range h.entries {
 		if _, judged := h.verdicts[r.trace.ID]; !judged {
 			pending = append(pending, r)
 		}

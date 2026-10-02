@@ -36,7 +36,7 @@ On first run the plugin downloads its binary. From then on it records every answ
 > approve it, approver <your name>
 ```
 
-The nod records an edit on that answer's run, proposes one sentence of what it taught scoped to this repository, and approves it only when you name yourself. Before every later prompt in this repository a hook adds the approved items as context, so the next answer follows the correction without being told again. `~/.nodloop/bin/nodloop knowledge for --producer session --label repo=<repo> --label dir=<dir>` lists what a prompt in that directory receives.
+The nod records an edit on that answer's run, drafts one sentence of what it taught, has it checked against the items this repository already has, and approves it only when you name yourself. Before every later prompt in this repository a hook adds the approved items as context, so the next answer follows the correction without being told again. `~/.nodloop/bin/nodloop knowledge for --producer session --label repo=<repo> --label dir=<dir>` lists what a prompt in that directory receives.
 
 > [!TIP]
 > Set `NODLOOP_SESSION=off` where Claude Code starts to keep the plugin without recording conversations. Answers are stored on your machine under `~/.nodloop/records` with keys, tokens and passwords redacted.
@@ -65,6 +65,8 @@ A run is one output of a producer with the labels of its situation. The built in
 <details>
 <summary>How items are approved, kept within budget and kept fresh</summary>
 
+A lesson is drafted from the correction and read by a second check before you see it. That check refuses a sentence that copies the answer instead of stating a lesson, one that holds only for this answer, and a wrong relation to the items the run already reaches. The relation decides what happens: a new lesson becomes a candidate, one that sharpens an item becomes its next version, and one an item already says or contradicts proposes nothing and shows that item, so you reaffirm it or narrow or retire it. `nodloop knowledge extract --from <run id>` does the same outside a conversation.
+
 An item is a candidate until a named person approves it. A new version may not reach runs the approved one never reached, and one that drops a veto is refused. All approved items one run may carry together are held to a size cap, and approval is refused when it would push them past it.
 
 When one run would carry more than five items, `approve` says a compaction is due. A compaction drafts fewer items that say each fact once and lose none, and the ledger refuses a draft that reaches runs an old item never reached, two new items of one kind for the same runs, or an old item no new item names. Before approval a coverage check reads each old item against the new ones and lists any fact they lose, through `nodloop knowledge check` with a separate model call or through the MCP tool `check_compaction`. Nothing is approved until the check passes and a person names themselves.
@@ -87,7 +89,7 @@ The loop is not tied to Claude Code. Any tool can record what it made as a run w
 ~/.nodloop/bin/nodloop knowledge for --producer review-bot --label repo=api --label task=review
 ```
 
-The MCP server offers the same as tools: `run`, `knowledge_for`, `feedback`, `outcome`, `propose` with `from` set to a corrected run, `approve`, the compaction tools, `queue`, `knowledge_health` and `reaffirm`. A producer never depends on nodloop and nodloop never depends on a producer.
+The MCP server offers the same as tools: `run`, `knowledge_for`, `feedback`, `outcome`, `propose` with `from` set to a corrected run, `extraction` and `propose_extraction`, `approve`, the compaction tools, `queue`, `knowledge_health` and `reaffirm`. A producer never depends on nodloop and nodloop never depends on a producer.
 
 ## Guard
 
@@ -129,7 +131,7 @@ macOS and Linux, or Windows through WSL. It runs as a Claude Code plugin. For Co
 
 ## Limits
 
-The session labels are the repository and the directory, compared as exact strings. An item scoped to a repository reaches every prompt there, whatever the task. Whether an item reached a run it should not have is not measured yet. Versions before 0.6.0 reviewed incident data from an events file. That data review leaves this repository for a plugin of its own, and its knowledge records still list but reach no prompt until you retire them.
+The session labels are the repository and the directory, compared as exact strings. An item scoped to a repository reaches every prompt there, whatever the task. Whether an item reached a run it should not have is not measured yet. Versions before 0.6.0 reviewed incident data from an events file. That data review left this repository for a plugin of its own, and its knowledge records still list but reach no prompt until you retire them.
 
 ## License
 

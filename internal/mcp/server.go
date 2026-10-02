@@ -16,6 +16,7 @@ import (
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/jeon-jihyeon/nodloop/internal/compact"
+	"github.com/jeon-jihyeon/nodloop/internal/extract"
 	"github.com/jeon-jihyeon/nodloop/internal/feedback"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
@@ -55,6 +56,7 @@ type Server struct {
 	outcomes  OutcomeStore
 	ledger    *knowledge.Ledger
 	compactor *compact.Compactor
+	extractor *extract.Extractor
 	now       func() time.Time
 	// One per process so the runs of every call keep one session while the server opens per call
 	session string
@@ -67,10 +69,11 @@ type Server struct {
 
 func New(
 	traces TraceStore, verdicts FeedbackStore, outcomes OutcomeStore, ledger *knowledge.Ledger, compactor *compact.Compactor,
-	now func() time.Time, session, exe, recordArgs string,
+	extractor *extract.Extractor, now func() time.Time, session, exe, recordArgs string,
 ) *Server {
 	return &Server{
-		traces: traces, verdicts: verdicts, outcomes: outcomes, ledger: ledger, compactor: compactor, now: now, session: session,
+		traces: traces, verdicts: verdicts, outcomes: outcomes, ledger: ledger, compactor: compactor, extractor: extractor,
+		now: now, session: session,
 		exe: exe, recordArgs: recordArgs,
 	}
 }
@@ -80,7 +83,7 @@ func NewSession(now time.Time) string {
 	return sessionPrefix + trace.NewID(now)
 }
 
-// Needs no store so a caller can list the tools before any setup
+// Needs no store so a caller can list the tools before any store opens
 func Tools() []string {
 	names := make([]string, 0, len(tools))
 	for _, tl := range tools {
@@ -138,7 +141,13 @@ var tools = []tool{
 		"Different from the verdict on the output", (*Server).outcome),
 	newTool("propose", "Propose a knowledge candidate from a correction: the producer and the labels of the runs it applies to, "+
 		"or from set to a run the user corrected so code fills them. Every label must be one a recorded run carries. "+
-		"Answers the candidate, the items it overlaps and the folder it joins, and compaction_due when one run would carry more than five items", (*Server).propose),
+		"Answers the candidate, the items it overlaps and the folder it joins", (*Server).propose),
+	newTool("extraction", "Read what a lesson is drafted from after the user corrected a run with edit or reject: the output, the verdict, "+
+		"the edit, the approved items the run reaches, the rules, the schema and the critic questions. "+
+		"Draft by the rules, answer the critic questions as a second reader, then call propose_extraction", (*Server).extraction),
+	newTool("propose_extraction", "Propose the lesson of a correction with its relation to the items the run reaches: add a new item, "+
+		"update one, or name a duplicate or a conflict, which propose nothing. Code refuses a draft that is not one sentence, "+
+		"copies the output, names an item the run never reached or fails a critic question", (*Server).proposeExtraction),
 	newTool("approve", "Approve a knowledge candidate on behalf of a named person. "+
 		"Only call it when the user says so and gives their name. A judgment with a veto becomes a guard veto. "+
 		"A failure after the approval rides on the answer since the approval is recorded and approving again would fail", (*Server).approve),
