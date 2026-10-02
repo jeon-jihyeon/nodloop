@@ -103,9 +103,9 @@ func New(
 		return Feedback{}, err
 	}
 	if reviewer == ReviewerSession {
-		reason = redact(reason)
+		reason = Redact(reason)
 		if len(edited) > 0 {
-			edited = json.RawMessage(redact(string(edited)))
+			edited = json.RawMessage(Redact(string(edited)))
 		}
 	}
 	if verdict == VerdictEdit && len(edited) == 0 {

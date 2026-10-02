@@ -1,6 +1,7 @@
 package plugin_test
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -214,5 +215,31 @@ func TestLauncherStableLink(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, bins[tc.want.linked], target)
 		})
+	}
+}
+
+// The plugin registers the conversation hooks through the launcher so they run the binary of the plugin version
+func TestHooksJSON(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join("hooks", "hooks.json"))
+	require.NoError(t, err)
+	var got struct {
+		Hooks map[string][]struct {
+			Hooks []struct {
+				Type    string `json:"type"`
+				Command string `json:"command"`
+			} `json:"hooks"`
+		} `json:"hooks"`
+	}
+	require.NoError(t, json.Unmarshal(b, &got))
+	want := map[string]string{
+		"UserPromptSubmit": `"${CLAUDE_PLUGIN_ROOT}/bin/nodloop" hook prompt`,
+		"Stop":             `"${CLAUDE_PLUGIN_ROOT}/bin/nodloop" hook stop`,
+	}
+	require.Len(t, got.Hooks, len(want))
+	for event, command := range want {
+		require.Len(t, got.Hooks[event], 1, event)
+		require.Len(t, got.Hooks[event][0].Hooks, 1, event)
+		assert.Equal(t, "command", got.Hooks[event][0].Hooks[0].Type)
+		assert.Equal(t, command, got.Hooks[event][0].Hooks[0].Command)
 	}
 }

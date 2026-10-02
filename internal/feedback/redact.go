@@ -27,7 +27,8 @@ var secrets = []*regexp.Regexp{
 }
 
 // The text with every secret replaced the same way each time
-func redact(s string) string {
+// Session records and the answers a conversation records as runs pass it before they are written
+func Redact(s string) string {
 	for _, re := range secrets {
 		s = re.ReplaceAllString(s, "${1}"+redacted+"${2}")
 	}
