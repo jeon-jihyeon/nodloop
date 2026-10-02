@@ -189,7 +189,7 @@ func TestHostOpensPerCall(t *testing.T) {
 	getenv := func(k string) string { return map[string]string{"HOME": home}[k] }
 	now := func() time.Time { return time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC) }
 	open := mcpOpen{getenv: getenv, now: now, session: mcp.NewSession(now())}.open
-	c := testkit.Connect(t, mcp.NewHost(open, "test").ServeTransport)
+	c := testkit.Connect(t, mcp.NewHost(open, "test", "").ServeTransport)
 	setup := func(args ...string) {
 		var out, log bytes.Buffer
 		require.Equal(t, 0, runSetup(args, getenv, &out, &log), log.String())

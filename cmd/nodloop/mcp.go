@@ -36,7 +36,11 @@ func runMCP(
 		return 0
 	}
 	open := mcpOpen{flags: data, getenv: getenv, now: now, session: mcp.NewSession(now())}.open
-	if err := mcp.NewHost(open, buildVersion()).ServeTransport(context.Background(), cmd.transport()); err != nil {
+	instructions := pluginVersion(getenv(envPluginVersion)).mismatch(buildVersion(), executable())
+	if instructions != "" {
+		instructions += ". Tell the user this before the first review"
+	}
+	if err := mcp.NewHost(open, buildVersion(), instructions).ServeTransport(context.Background(), cmd.transport()); err != nil {
 		return fail(stderr, "mcp", err)
 	}
 	return 0

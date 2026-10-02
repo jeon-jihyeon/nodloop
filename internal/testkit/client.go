@@ -29,6 +29,11 @@ func Connect(t *testing.T, serve func(context.Context, sdk.Transport) error) Cli
 	return Client{session: session}
 }
 
+// What the server sent in the handshake for the model to read before any tool call
+func (c Client) Instructions() string {
+	return c.session.InitializeResult().Instructions
+}
+
 // For a call whose answer the test does not read
 func (c Client) Run(t *testing.T, name string, args any) error {
 	t.Helper()

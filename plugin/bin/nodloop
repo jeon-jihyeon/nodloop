@@ -3,7 +3,7 @@
 # 1. `~/.nodloop/bin/v<version>/nodloop` when a previous run fetched it
 # 2. the GitHub release of that version for this OS and architecture verified against its `checksums.txt`
 # 3. go install of the same version when Go is present and the release could not be fetched
-# 4. another nodloop on PATH with a warning because its version is unknown
+# 4. another nodloop on PATH when it answers the plugin version, or any version when NODLOOP_ALLOW_PATH is 1
 # Every source that runs is linked from the stable path so that path names the binary the plugin ran last
 # The version is read from the plugin manifest so the plugin and the binary it runs never drift
 set -eu
@@ -18,6 +18,8 @@ if [ -z "$version" ]; then
   exit 1
 fi
 TAG="v${version}"
+# Every binary it runs compares itself with this and names a mismatch where the conversation reads it
+export NODLOOP_PLUGIN_VERSION="$version"
 BIN_DIR="${HOME}/.nodloop/bin/${TAG}"
 BIN="${BIN_DIR}/nodloop"
 # A stable path for the user. `~/.nodloop/bin/nodloop setup --data-dir <dir>` works after the first start
@@ -115,7 +117,14 @@ if [ -n "$found" ] && [ ! "$found" -ef "$0" ]; then
   have=$("$found" version 2>/dev/null || echo unknown)
   case "$have" in
     "$version" | "v$version") ;;
-    *) echo "nodloop: running ${found} from PATH, version ${have} where the plugin expects ${version}" >&2 ;;
+    *)
+      # An older build lacks tools and flags the skills name and cannot warn about itself, so it runs only on request
+      if [ "${NODLOOP_ALLOW_PATH:-}" != 1 ]; then
+        echo "nodloop: ${found} on PATH is version ${have} but the plugin needs ${version} and could not fetch or build it. Restart Claude Code with network access, run go install github.com/${REPO}/cmd/nodloop@${TAG}, or set NODLOOP_ALLOW_PATH=1 where Claude Code starts to run that build anyway" >&2
+        exit 1
+      fi
+      echo "nodloop: running a PATH build of version ${have} at ${found} where the plugin expects ${version} because NODLOOP_ALLOW_PATH is 1" >&2
+      ;;
   esac
   case "$found" in
     /*) [ "$found" = "$STABLE" ] || [ "$found" -ef "$STABLE" ] || stable "$found" ;;

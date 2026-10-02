@@ -134,6 +134,23 @@ func buildVersion() string {
 	return version
 }
 
+// The version the plugin launcher runs this binary for
+// Empty outside the plugin
+type pluginVersion string
+
+// One sentence naming both versions and the binary when they differ
+// 1. a leading v on either side is the same version
+// 2. empty outside the plugin because nothing is expected there
+// 3. a dev build differs from every release because its tools may be older or newer than the skills
+func (want pluginVersion) mismatch(have, exe string) string {
+	expected := strings.TrimPrefix(string(want), "v")
+	if expected == "" || expected == strings.TrimPrefix(have, "v") {
+		return ""
+	}
+	return fmt.Sprintf("%s is nodloop %s while the plugin runs version %s, so a tool or a flag the skills name may be missing or work differently. "+
+		"Restart Claude Code with network access so the plugin fetches v%s, or put a build of v%s on PATH", exe, have, expected, expected, expected)
+}
+
 func main() {
 	os.Exit(run(os.Args[1:], os.Getenv, os.Stdin, os.Stdout, os.Stderr))
 }
@@ -154,7 +171,7 @@ func run(args []string, getenv func(string) string, stdin io.Reader, stdout io.W
 		"report":   func(args []string) int { return runReport(args, getenv, time.Now, stdout, stderr) },
 		"guard":    func(args []string) int { return runGuard(args, getenv, os.Executable, time.Now, stdin, stdout, stderr) },
 		"setup":    func(args []string) int { return runSetup(args, getenv, stdout, stderr) },
-		"check":    func(args []string) int { return runCheck(args, stdout, stderr) },
+		"check":    func(args []string) int { return runCheck(args, getenv, stdout, stderr) },
 		"llm":      func(args []string) int { return runLLM(args, claudeCLI(getenv), time.Now, stdout, stderr) },
 		"knowledge": func(args []string) int {
 			return runKnowledge(args, getenv, claudeCLI(getenv), time.Now, stdout, stderr)
