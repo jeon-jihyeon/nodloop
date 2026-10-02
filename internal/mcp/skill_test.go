@@ -40,7 +40,7 @@ func TestSkillTools(t *testing.T) {
 			"the nod skill records verdicts on runs and proposes knowledge from them",
 			"../../plugin/skills/nod/SKILL.md",
 			want{
-				tools:    []string{"feedback", "propose", "approve", "run", "compaction", "propose_compaction", "check_compaction", "approve_compaction"},
+				tools:    []string{"feedback", "propose", "extraction", "propose_extraction", "approve", "run", "compaction", "propose_compaction", "check_compaction", "approve_compaction"},
 				commands: []string{"nodloop trace list --name run", "nodloop trace show", "nodloop knowledge for --producer session"},
 			},
 		},

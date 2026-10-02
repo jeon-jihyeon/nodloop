@@ -18,7 +18,7 @@ var (
 	ErrVetoKind             = errors.New("knowledge: only a judgment carries a veto")
 	ErrVetoInvalid          = errors.New("knowledge: invalid veto")
 	ErrVetoExample          = errors.New("knowledge: veto does not block its example")
-	ErrFolderFull           = errors.New("knowledge: folder may outgrow the review")
+	ErrFolderFull           = errors.New("knowledge: folder would pass the run caps")
 	ErrExport               = errors.New("knowledge: approved knowledge was not exported")
 	ErrCompactionInvalid    = errors.New("knowledge: invalid compaction")
 	ErrCompactionIncomplete = errors.New("knowledge: incomplete compaction; propose again")

@@ -33,7 +33,7 @@ Tests that talk to a model are opt in:
 NODLOOP_LLM_LIVE=1 go test ./internal/llm/... -run Live
 ```
 
-Use haiku while iterating with `--model haiku` on the commands that call a model, such as `nodloop knowledge compact` and `nodloop knowledge check`.
+Use haiku while iterating with `--model haiku` on the commands that call a model, such as `nodloop knowledge compact`, `nodloop knowledge check` and `nodloop knowledge extract`.
 
 ## Layout
 
@@ -41,7 +41,7 @@ Use haiku while iterating with `--model haiku` on the commands that call a model
 |---|---|---|
 | Domain | `feedback`, `trace`, `llm`, `veto`, `settings`, `jsonl`, `atomicfile` | No imports from the layers above |
 | Core | `knowledge` | The ledger of items, their scopes and their history. Never a file store |
-| Application | `compact`, `loop` | Build on the core. They never import each other and only `mcp` and `cmd/nodloop` import them |
+| Application | `compact`, `extract`, `loop` | Build on the core. They never import each other and only `mcp` and `cmd/nodloop` import them |
 | Infra | the `file` subpackages | Implements the stores and the veto and settings files. Application code never imports one outside its tests |
 | Controllers | `cmd/nodloop`, `mcp`, `guard` | `cmd/nodloop` is the composition root and the only reader of the process environment |
 | Test harness | `testkit` | File stores in a temp directory and a fake clock |

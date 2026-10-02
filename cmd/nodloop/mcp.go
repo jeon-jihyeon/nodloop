@@ -11,6 +11,7 @@ import (
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/jeon-jihyeon/nodloop/internal/extract"
 	"github.com/jeon-jihyeon/nodloop/internal/mcp"
 )
 
@@ -117,5 +118,5 @@ func (o mcpOpen) open(context.Context) (*mcp.Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	return mcp.New(traces, verdicts, outcomes, ledger, compactor, o.now, o.session, executable(), a.cfg.recordArgs()), nil
+	return mcp.New(traces, verdicts, outcomes, ledger, compactor, extract.New(ledger, traces, verdicts), o.now, o.session, executable(), a.cfg.recordArgs()), nil
 }
