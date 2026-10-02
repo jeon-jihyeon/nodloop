@@ -225,25 +225,20 @@ var tools = []tool{
 		"Only call it when the user explicitly reaffirms and names themselves", (*Server).reaffirm),
 }
 
-// Only a diagnose trace is a review
-// feedback and outcome and propose take one as the trace they concern
-func (s *Server) checkReview(ctx context.Context, id string) error {
+// feedback and outcome and propose take a recorded review or run as the trace they concern
+func (s *Server) checkRun(ctx context.Context, id string) (trace.Trace, error) {
 	tr, err := s.traces.Get(ctx, id)
 	if err != nil {
-		return err
+		return trace.Trace{}, err
 	}
-	return tr.CheckReview()
+	return tr, tr.CheckRun()
 }
 
 // Checks the edit against the current procedures that apply to the event of the context trace the review was built on
 // Procedures that cannot be read count as empty
 // 1. an edit citing a paragraph is refused and the read error joins the refusal to say why
 // 2. an edit without citations such as a hold still passes
-func (s *Server) checkEdit(ctx context.Context, id string, edited json.RawMessage) error {
-	review, err := s.traces.Get(ctx, id)
-	if err != nil {
-		return err
-	}
+func (s *Server) checkEdit(ctx context.Context, review trace.Trace, edited json.RawMessage) error {
 	built, err := s.traces.Get(ctx, review.Ref)
 	if err != nil {
 		return err
@@ -399,7 +394,8 @@ func (r *editedReview) UnmarshalJSON(b []byte) error {
 }
 
 func (s *Server) feedback(ctx context.Context, _ *sdk.CallToolRequest, in feedbackInput) (*sdk.CallToolResult, any, error) {
-	if err := s.checkReview(ctx, in.TraceID); err != nil {
+	tr, err := s.checkRun(ctx, in.TraceID)
+	if err != nil {
 		return nil, nil, err
 	}
 	var edited json.RawMessage
@@ -410,8 +406,9 @@ func (s *Server) feedback(ctx context.Context, _ *sdk.CallToolRequest, in feedba
 	if err != nil {
 		return nil, nil, err
 	}
-	if len(fb.Edited) > 0 {
-		if err := s.checkEdit(ctx, fb.TraceID, fb.Edited); err != nil {
+	// Only an edit of a review cites procedure paragraphs to check
+	if len(fb.Edited) > 0 && tr.IsReview() {
+		if err := s.checkEdit(ctx, tr, fb.Edited); err != nil {
 			return nil, nil, err
 		}
 	}
@@ -431,7 +428,7 @@ type outcomeInput struct {
 }
 
 func (s *Server) outcome(ctx context.Context, _ *sdk.CallToolRequest, in outcomeInput) (*sdk.CallToolResult, any, error) {
-	if err := s.checkReview(ctx, in.TraceID); err != nil {
+	if _, err := s.checkRun(ctx, in.TraceID); err != nil {
 		return nil, nil, err
 	}
 	o, err := feedback.NewOutcome(in.TraceID, in.Result, in.ConfirmedCause, in.Note, in.Reviewer, s.now())
@@ -485,7 +482,7 @@ func (v *vetoInput) veto() *knowledge.Veto {
 
 func (s *Server) propose(ctx context.Context, _ *sdk.CallToolRequest, in proposeInput) (*sdk.CallToolResult, any, error) {
 	for _, id := range in.TraceIDs {
-		if err := s.checkReview(ctx, id); err != nil {
+		if _, err := s.checkRun(ctx, id); err != nil {
 			return nil, nil, err
 		}
 	}

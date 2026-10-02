@@ -1224,12 +1224,12 @@ func TestServerRefusals(t *testing.T) {
 		{
 			name: "feedback refuses a context trace that is not a review",
 			args: args{tool: "feedback", input: map[string]any{"trace_id": fresh.PendingID, "verdict": feedback.VerdictApprove}},
-			want: trace.ErrNotReview.Error(),
+			want: trace.ErrNotRun.Error(),
 		},
 		{
 			name: "outcome refuses a context trace that is not a review",
 			args: args{tool: "outcome", input: map[string]any{"trace_id": fresh.PendingID, "result": feedback.ResultConfirmed}},
-			want: trace.ErrNotReview.Error(),
+			want: trace.ErrNotRun.Error(),
 		},
 		{
 			name: "outcome refuses an unknown trace",
@@ -1246,7 +1246,7 @@ func TestServerRefusals(t *testing.T) {
 			args: args{tool: "propose", input: map[string]any{
 				"kind": knowledge.KindJudgment, "content": "check tracking first", "trace_ids": []string{fresh.PendingID},
 			}},
-			want: trace.ErrNotReview.Error(),
+			want: trace.ErrNotRun.Error(),
 		},
 		{
 			name: "propose refuses an unknown trace as evidence",

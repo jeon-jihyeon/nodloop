@@ -65,7 +65,7 @@ func TestTraceCheckReview(t *testing.T) {
 		want error
 	}{
 		{"diagnose trace is a review", trace.Trace{ID: "d1", Name: trace.NameDiagnose}, nil},
-		{"failed diagnose trace is refused", trace.Trace{ID: "f1", Name: trace.NameDiagnose, Error: "model timed out"}, trace.ErrFailedReview},
+		{"failed diagnose trace is refused", trace.Trace{ID: "f1", Name: trace.NameDiagnose, Error: "model timed out"}, trace.ErrFailedRun},
 		{"revise trace is not a review", trace.Trace{ID: "r1", Name: trace.NameRevise}, trace.ErrNotReview},
 		{"context trace is not a review", trace.Trace{ID: "c1", Name: trace.NameContext}, trace.ErrNotReview},
 		{"select trace is not a review", trace.Trace{ID: "s1", Name: trace.NameSelect}, trace.ErrNotReview},
@@ -222,4 +222,92 @@ func TestTracesPending(t *testing.T) {
 			assert.Equal(t, tc.want, tc.args.Pending())
 		})
 	}
+}
+
+func TestTraceCheckRun(t *testing.T) {
+	tcs := []struct {
+		name string
+		args trace.Trace
+		want error
+	}{
+		{"a run is cited", trace.Trace{ID: "u1", Name: trace.NameRun}, nil},
+		{"a review is cited", trace.Trace{ID: "d1", Name: trace.NameDiagnose}, nil},
+		{"a failed run is refused", trace.Trace{ID: "u2", Name: trace.NameRun, Error: "cancelled"}, trace.ErrFailedRun},
+		{"a failed review is refused", trace.Trace{ID: "f1", Name: trace.NameDiagnose, Error: "model timed out"}, trace.ErrFailedRun},
+		{"a context trace is refused", trace.Trace{ID: "c1", Name: trace.NameContext}, trace.ErrNotRun},
+		{"a select trace is refused", trace.Trace{ID: "s1", Name: trace.NameSelect}, trace.ErrNotRun},
+		{"a revise trace is refused", trace.Trace{ID: "r1", Name: trace.NameRevise}, trace.ErrNotRun},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.ErrorIs(t, tc.args.CheckRun(), tc.want)
+		})
+	}
+}
+
+func TestNewRun(t *testing.T) {
+	at := time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
+	type args struct {
+		producer string
+		labels   trace.Labels
+		input    string
+		output   string
+	}
+	type want struct {
+		labels trace.Labels
+		input  string
+		output string
+		err    error
+	}
+	tcs := []struct {
+		name string
+		args args
+		want want
+	}{
+		{
+			"JSON output is kept as it is",
+			args{producer: "session", output: `{"answer":"use git -C"}`},
+			want{input: `{}`, output: `{"answer":"use git -C"}`},
+		},
+		{
+			"text output becomes a JSON string",
+			args{producer: "session", output: "use git -C"},
+			want{input: `{}`, output: `"use git -C"`},
+		},
+		{
+			"labels are sorted and deduplicated",
+			args{producer: "session", labels: trace.Labels{"path": {"b.go", "a.go", "b.go"}}, input: `{"applied":[]}`, output: `1`},
+			want{labels: trace.Labels{"path": {"a.go", "b.go"}}, input: `{"applied":[]}`, output: `1`},
+		},
+		{"a run without a producer is refused", args{output: "x"}, want{err: trace.ErrProducerRequired}},
+		{"an empty key is refused", args{producer: "session", labels: trace.Labels{"": {"x"}}, output: "x"}, want{err: trace.ErrLabelEmpty}},
+		{"a key without values is refused", args{producer: "session", labels: trace.Labels{"repo": nil}, output: "x"}, want{err: trace.ErrLabelEmpty}},
+		{"an empty value is refused", args{producer: "session", labels: trace.Labels{"repo": {""}}, output: "x"}, want{err: trace.ErrLabelEmpty}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := trace.NewRun(tc.args.producer, "subject", tc.args.labels, json.RawMessage(tc.args.input), []byte(tc.args.output), at)
+
+			require.ErrorIs(t, err, tc.want.err)
+			if tc.want.err != nil {
+				return
+			}
+			assert.Equal(t, trace.NameRun, got.Name)
+			assert.Equal(t, tc.args.producer, got.Producer)
+			assert.Equal(t, tc.want.labels, got.Labels)
+			assert.JSONEq(t, tc.want.input, string(got.Input))
+			assert.JSONEq(t, tc.want.output, string(got.Output))
+			assert.NoError(t, got.CheckRun())
+		})
+	}
+}
+
+func TestLabelsHas(t *testing.T) {
+	labels := trace.Labels{"repo": {"nodloop"}}
+	assert.True(t, labels.Has("repo", "nodloop"))
+	assert.False(t, labels.Has("repo", "other"))
+	assert.False(t, labels.Has("path", "nodloop"))
 }

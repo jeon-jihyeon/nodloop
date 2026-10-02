@@ -48,6 +48,9 @@ commands:
                             List traces newest first
   trace show <id>           Print one trace as JSON
   trace pending             List context traces that no review recorded
+  run record --producer <p> --output <file> [--label <key=value>] [--subject <s>] [--applied <id:version>]
+                            Record one output of any producer as a run trace and print its id for feedback.
+                            Output that is not JSON is kept as text. Needs only the record directory
   queue [--limit <n>] [--audit-rate <share>] [--seed <n>]
                             Conversation reviews without a verdict in the order to check them, with a random audit share
   report online [--since <RFC3339>]
@@ -166,6 +169,7 @@ func run(args []string, getenv func(string) string, stdin io.Reader, stdout io.W
 		"evidence": func(args []string) int { return runEvidence(args, getenv, time.Now, stdout, stderr) },
 		"analysis": func(args []string) int { return runAnalysis(args, getenv, time.Now, stdout, stderr) },
 		"trace":    func(args []string) int { return runTrace(args, getenv, time.Now, stdout, stderr) },
+		"run":      func(args []string) int { return runRun(args, getenv, time.Now, stdout, stderr) },
 		"feedback": func(args []string) int { return runFeedback(args, getenv, time.Now, stdout, stderr) },
 		"queue":    func(args []string) int { return runQueue(args, getenv, time.Now, stdout, stderr) },
 		"report":   func(args []string) int { return runReport(args, getenv, time.Now, stdout, stderr) },

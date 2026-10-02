@@ -40,6 +40,19 @@ type config struct {
 // 4. the source is only checked since the file source is the one implementation
 // 5. the record dir is one absolute path because it names the records and the approved veto file of every process
 func resolveConfig(getenv func(string) string, src, dataDir, recordDir string) (config, error) {
+	cfg, err := resolveRecordConfig(getenv, src, dataDir, recordDir)
+	if err != nil {
+		return config{}, err
+	}
+	if cfg.dataDir == "" {
+		return config{}, fmt.Errorf("%w: run nodloop setup or set the variable", errDataDirUnset)
+	}
+	return cfg, nil
+}
+
+// The config of a command that works on the records alone
+// A data dir is resolved when one is set and left empty otherwise, so only a read of the data fails on it
+func resolveRecordConfig(getenv func(string) string, src, dataDir, recordDir string) (config, error) {
 	var uc userConfig
 	var homeRecords string
 	h := homeDir(getenv("HOME"))
@@ -55,9 +68,6 @@ func resolveConfig(getenv func(string) string, src, dataDir, recordDir string) (
 		return config{}, err
 	}
 	cfg := config{dataDir: cmp.Or(dataDir, getenv(envFileDir), uc.DataDir), recordDir: records, home: h}
-	if cfg.dataDir == "" {
-		return config{}, fmt.Errorf("%w: run nodloop setup or set the variable", errDataDirUnset)
-	}
 	switch s := source(cmp.Or(src, getenv(envSource), string(sourceFile))); s {
 	case sourceFile:
 		return cfg, nil

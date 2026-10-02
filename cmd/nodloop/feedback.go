@@ -60,7 +60,7 @@ func runFeedback(args []string, getenv func(string) string, now func() time.Time
 	if err := fs.Parse(args[1:]); err != nil {
 		return 1
 	}
-	a, err := data.app(getenv, now)
+	a, err := data.records(getenv, now)
 	if err != nil {
 		return fail(stderr, "feedback", err)
 	}
@@ -136,14 +136,15 @@ func (c feedbackCommand) add(
 	return nil
 }
 
-// The store a verdict goes to once the review it cites passed its checks
-// An edit is checked against the current procedures that apply to the event of the context trace the review was built on
+// The store a verdict goes to once the review or run it cites passed its checks
+// An edit of a review is checked against the current procedures that apply to the event of the context trace the review was built on
+// An edit of a run is any JSON and needs no data dir
 // A verdict reads neither the policy nor the events
 // A procedures folder that cannot be read counts as empty
 // 1. an edit citing a paragraph is refused and the read error joins the refusal to say why
 // 2. an edit without citations such as a hold still passes
 func (c feedbackCommand) checked(ctx context.Context, traceID string, edited json.RawMessage) (*feedbackfile.Store, error) {
-	if err := c.app.checkReviews(ctx, traceID); err != nil {
+	if err := c.app.checkRuns(ctx, traceID); err != nil {
 		return nil, err
 	}
 	if len(edited) == 0 {
@@ -156,6 +157,9 @@ func (c feedbackCommand) checked(ctx context.Context, traceID string, edited jso
 	review, err := traces.Get(ctx, traceID)
 	if err != nil {
 		return nil, err
+	}
+	if !review.IsReview() {
+		return c.app.feedback()
 	}
 	built, err := traces.Get(ctx, review.Ref)
 	if err != nil {
@@ -178,7 +182,7 @@ func (c feedbackCommand) outcome(
 	if err != nil {
 		return err
 	}
-	if err := c.app.checkReviews(ctx, o.TraceID); err != nil {
+	if err := c.app.checkRuns(ctx, o.TraceID); err != nil {
 		return err
 	}
 	store, err := c.app.outcomes()

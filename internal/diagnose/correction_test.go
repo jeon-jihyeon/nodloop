@@ -256,7 +256,7 @@ func TestCorrectionRefused(t *testing.T) {
 			diagnose.ErrMalformed,
 		},
 		{"a context trace is no review", args{id: "context"}, trace.ErrNotReview},
-		{"a failed review with a reject has nothing to correct", args{id: "failed"}, trace.ErrFailedReview},
+		{"a failed review with a reject has nothing to correct", args{id: "failed"}, trace.ErrFailedRun},
 		{"an unknown trace is not found", args{id: "nope"}, trace.ErrNotFound},
 	}
 	ctx := context.Background()

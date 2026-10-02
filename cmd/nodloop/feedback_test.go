@@ -194,12 +194,12 @@ func TestRunFeedback(t *testing.T) {
 		{
 			"add for a failed review names the failure",
 			args{[]string{"add", "--trace", "f1", "--verdict", "reject"}, "{traced}"},
-			want{1, "", `^nodloop feedback: ` + trace.ErrFailedReview.Error() + `: f1 failed: model timed out\n$`},
+			want{1, "", `^nodloop feedback: ` + trace.ErrFailedRun.Error() + `: f1 failed: model timed out\n$`},
 		},
 		{
 			"outcome for a failed review names the failure",
 			args{[]string{"outcome", "--trace", "f1", "--result", "confirmed"}, "{traced}"},
-			want{1, "", `^nodloop feedback: ` + trace.ErrFailedReview.Error() + `: f1 failed: model timed out\n$`},
+			want{1, "", `^nodloop feedback: ` + trace.ErrFailedRun.Error() + `: f1 failed: model timed out\n$`},
 		},
 		{
 			"add without a verdict fails before reading the edited file",
@@ -239,7 +239,7 @@ func TestRunFeedback(t *testing.T) {
 		{
 			"add for a context trace fails",
 			args{[]string{"add", "--trace", "c1", "--verdict", "approve"}, "{traced}"},
-			want{1, "", `^nodloop feedback: .*not a diagnose trace: c1 is a context trace\n$`},
+			want{1, "", `^nodloop feedback: .*not a recorded review or run: c1 is a context trace\n$`},
 		},
 		{
 			"add with a record dir that is a file fails",
@@ -274,7 +274,7 @@ func TestRunFeedback(t *testing.T) {
 		{
 			"outcome for a context trace fails",
 			args{[]string{"outcome", "--trace", "c1", "--result", "confirmed"}, "{traced}"},
-			want{1, "", `^nodloop feedback: .*not a diagnose trace: c1 is a context trace\n$`},
+			want{1, "", `^nodloop feedback: .*not a recorded review or run: c1 is a context trace\n$`},
 		},
 		{
 			"outcome with a record dir that is a file fails",
