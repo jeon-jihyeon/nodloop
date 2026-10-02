@@ -109,6 +109,9 @@ func (s Set) Covers(changeContext evidence.Context) bool {
 // 2. an upper bound per event since metrics and dims are left open
 // Another version of the item never counts because approval replaces it
 func (s Set) folder(item Knowledge, contexts evidence.Contexts) Folder {
+	if item.Run != nil {
+		return s.runFolder(item)
+	}
 	f := Folder{Chars: utf8.RuneCountInString(item.Text()), Carried: Set{}}
 	for _, c := range contexts.Names() {
 		if !item.carriedIn(c) {
@@ -136,6 +139,11 @@ func (s Set) folderIn(item Knowledge, changeContext evidence.Context) Folder {
 // 3. a review already past a cap that does not grow passes so a replacement never needs a retire first
 // Only a change context whose review carries the item can grow because every other change between the sets retires or supersedes
 func (s Set) outgrows(before Set, item Knowledge, contexts evidence.Contexts) (Folder, bool) {
+	if item.Run != nil {
+		f := s.runFolder(item)
+		was := before.runCarried("", *item.Run)
+		return f, (f.Chars > ReviewChars && f.Chars > was.runes()) || (f.Size() > ReviewItems && f.Size() > len(was))
+	}
 	for _, c := range contexts.Names() {
 		if !item.carriedIn(c) {
 			continue
@@ -174,7 +182,21 @@ func (s Set) runes() int {
 func (s Set) Overlaps(id string, kind Kind, scope Scope) Set {
 	out := Set{}
 	for _, other := range s.Current() {
-		if other.ID != id && other.Kind == kind && scope.overlaps(other.Scope) {
+		if other.ID != id && other.Kind == kind && other.Run == nil && scope.overlaps(other.Scope) {
+			out = append(out, other)
+		}
+	}
+	return out
+}
+
+// Current items other than the item of the same kind and the same scope form that may reach the same event or run
+func (s Set) overlapsWith(k Knowledge) Set {
+	if k.Run == nil {
+		return s.Overlaps(k.ID, k.Kind, k.Scope)
+	}
+	out := Set{}
+	for _, other := range s.Current() {
+		if other.ID != k.ID && other.Kind == k.Kind && other.Run != nil && k.Run.overlaps(*other.Run) {
 			out = append(out, other)
 		}
 	}
@@ -245,7 +267,7 @@ func (s Set) overlapsOf(id string) (Set, error) {
 	if k == nil {
 		return nil, fmt.Errorf("%w: %s", ErrNotFound, id)
 	}
-	return s.Overlaps(k.ID, k.Kind, k.Scope), nil
+	return s.overlapsWith(*k), nil
 }
 
 // The draft as the next candidate version of its id
@@ -255,6 +277,13 @@ func (s Set) overlapsOf(id string) (Set, error) {
 func (s Set) propose(draft Knowledge, now time.Time, contexts evidence.Contexts) (Knowledge, error) {
 	if draft.Basis == "" {
 		draft.Basis = BasisStated
+	}
+	if draft.Run != nil {
+		run, err := draft.Run.normalized()
+		if err != nil {
+			return Knowledge{}, err
+		}
+		draft.Run = &run
 	}
 	draft.Version, draft.Status, draft.Time = s.nextVersion(draft.ID), StatusCandidate, now
 	draft.Approver, draft.ApprovedAt, draft.ReviewedAt, draft.Supersedes = "", time.Time{}, time.Time{}, 0
@@ -299,14 +328,8 @@ func (s Set) approval(id string, version int, approver string, now time.Time, co
 	}
 	records := []Knowledge{to}
 	if superseded != nil {
-		if superseded.Veto != nil && !to.keepsVeto(*superseded.Veto) {
-			return nil, fmt.Errorf("%w: %s v%d does not block what v%d blocks. Restate the veto or retire v%d first",
-				ErrVetoLifted, id, version, superseded.Version, superseded.Version)
-		}
-		if _, reached, ok := (Set{*superseded}).widened(to, contexts); ok {
-			return nil, fmt.Errorf("%w: %s v%d reaches events of %s that v%d never reached. "+
-				"Propose again with the scope of v%d or a narrower one, which is %s, propose the wider part under a new id, or retire v%d first",
-				ErrScopeWidened, id, version, reached, superseded.Version, superseded.Version, superseded.reachText(), superseded.Version)
+		if err := to.replaces(*superseded, contexts); err != nil {
+			return nil, err
 		}
 		records = append(records, *superseded)
 	}
@@ -314,6 +337,27 @@ func (s Set) approval(id string, version int, approver string, now time.Time, co
 		return nil, fmt.Errorf("%w: %s with %s", ErrFolderFull, f.load(), f)
 	}
 	return records, nil
+}
+
+// A new version that replaces the approved one keeps its veto and reaches no event or run the old one never reached
+// Only a retire by a named person lifts a veto or widens the scope
+func (k Knowledge) replaces(old Knowledge, contexts evidence.Contexts) error {
+	if old.Veto != nil && !k.keepsVeto(*old.Veto) {
+		return fmt.Errorf("%w: %s v%d does not block what v%d blocks. Restate the veto or retire v%d first",
+			ErrVetoLifted, k.ID, k.Version, old.Version, old.Version)
+	}
+	if k.Run != nil || old.Run != nil {
+		if k.Run == nil || old.Run == nil || k.Run.widens(*old.Run) {
+			return fmt.Errorf("%w: %s v%d reaches runs that v%d never reached. "+
+				"Propose again with the scope of v%d or a narrower one, which is %s, propose the wider part under a new id, or retire v%d first",
+				ErrScopeWidened, k.ID, k.Version, old.Version, old.Version, old.reachText(), old.Version)
+		}
+	} else if _, reached, ok := (Set{old}).widened(k, contexts); ok {
+		return fmt.Errorf("%w: %s v%d reaches events of %s that v%d never reached. "+
+			"Propose again with the scope of v%d or a narrower one, which is %s, propose the wider part under a new id, or retire v%d first",
+			ErrScopeWidened, k.ID, k.Version, reached, old.Version, old.Version, old.reachText(), old.Version)
+	}
+	return nil
 }
 
 // The approved record and the approved record it supersedes when the id has one

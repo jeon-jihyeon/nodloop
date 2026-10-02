@@ -97,6 +97,9 @@ func (s Set) Compactable(anchor string, contexts evidence.Contexts) (Compactable
 	if k == nil || k.Status != StatusApproved {
 		return Compactable{}, fmt.Errorf("%w: %s has no approved version", ErrNotFound, anchor)
 	}
+	if k.Run != nil {
+		return Compactable{}, fmt.Errorf("%w: %s is scoped to runs, which are not compacted yet", ErrCompactionInvalid, anchor)
+	}
 	if !k.Evidence.Replayable() {
 		return Compactable{}, fmt.Errorf("%w: %s", ErrParagraphOnly, anchor)
 	}

@@ -33,6 +33,7 @@ var (
 	ErrPromoteInvalid       = errors.New("knowledge: promotion needs a confirmed outcome")
 	ErrPromoteVerified      = errors.New("knowledge: version is verified already")
 	ErrScopeInvalid         = errors.New("knowledge: scope names no event")
+	ErrScopeMixed           = errors.New("knowledge: an item is scoped to runs or to the data review, never both")
 	ErrScopeUnobserved      = errors.New("knowledge: scope names a value no event of the data set carries")
 	ErrCandidateOutdated    = errors.New("knowledge: candidate was not built from the approved version it would replace")
 	ErrVetoLifted           = errors.New("knowledge: new version would lift the veto of the approved version")
