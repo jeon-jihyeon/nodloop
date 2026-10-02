@@ -53,8 +53,8 @@ func runRun(args []string, getenv func(string) string, now func() time.Time, std
 	}
 	fs := flag.NewFlagSet("run "+args[0], flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	var data dataFlags
-	data.bind(fs)
+	var records recordFlags
+	records.bind(fs)
 	producer := fs.String("producer", "", "record: the producer that made the output such as session")
 	subject := fs.String("subject", "", "record: what the run was about in a few words")
 	output := fs.String("output", "", "record: file holding the output, JSON or text")
@@ -65,7 +65,7 @@ func runRun(args []string, getenv func(string) string, now func() time.Time, std
 	if err := fs.Parse(args[1:]); err != nil {
 		return 1
 	}
-	a, err := data.records(getenv, now)
+	a, err := records.app(getenv, now)
 	if err != nil {
 		return fail(stderr, "run", err)
 	}

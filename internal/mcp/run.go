@@ -6,29 +6,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
-	"time"
 	"unicode/utf8"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/jeon-jihyeon/nodloop/internal/compact"
-	"github.com/jeon-jihyeon/nodloop/internal/diagnose"
 	"github.com/jeon-jihyeon/nodloop/internal/feedback"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
 )
-
-// A server over the records alone for a client with no data directory
-// Every tool of the data review answers missing and the tools of runs, nods and knowledge work
-func NewRecords(
-	traces TraceStore, verdicts FeedbackStore, outcomes OutcomeStore, ledger *knowledge.Ledger, compactor *compact.Compactor,
-	now func() time.Time, session diagnose.Session, exe, dataArgs string, missing error,
-) *Server {
-	return &Server{
-		traces: traces, verdicts: verdicts, outcomes: outcomes, ledger: ledger, compactor: compactor, now: now, session: session,
-		exe: exe, dataArgs: dataArgs, missing: missing,
-	}
-}
 
 type checkCompactionInput struct {
 	Compaction string                   `json:"compaction" jsonschema:"the compaction id from propose_compaction"`
@@ -51,18 +37,6 @@ func (s *Server) checkCompaction(ctx context.Context, _ *sdk.CallToolRequest, in
 		answer["passed"], answer["why"] = false, err.Error()
 	}
 	return nil, answer, nil
-}
-
-// A tool of the data review answers the missing data dir of a records server instead of reading nil stores
-func needsData[In any](
-	h func(*Server, context.Context, *sdk.CallToolRequest, In) (*sdk.CallToolResult, any, error),
-) func(*Server, context.Context, *sdk.CallToolRequest, In) (*sdk.CallToolResult, any, error) {
-	return func(s *Server, ctx context.Context, req *sdk.CallToolRequest, in In) (*sdk.CallToolResult, any, error) {
-		if s.missing != nil {
-			return nil, nil, s.missing
-		}
-		return h(s, ctx, req, in)
-	}
 }
 
 type runInput struct {
@@ -91,7 +65,7 @@ func (s *Server) run(ctx context.Context, _ *sdk.CallToolRequest, in runInput) (
 	if err != nil {
 		return nil, nil, err
 	}
-	tr.SessionID = s.session.ID
+	tr.SessionID = s.session
 	if err := s.traces.Append(ctx, tr); err != nil {
 		return nil, nil, err
 	}
@@ -154,7 +128,7 @@ func (s *Server) proposeRun(ctx context.Context, in proposeInput, draft knowledg
 	if err := run.Recorded(runs.Vocabulary(run.Producer)); err != nil {
 		return nil, nil, err
 	}
-	draft.Scope, draft.Exceptions, draft.Run = knowledge.Scope{}, nil, &run
+	draft.Run = &run
 	k, overlaps, err := s.ledger.Propose(ctx, draft)
 	if err != nil {
 		return nil, nil, err

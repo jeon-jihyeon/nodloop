@@ -15,7 +15,72 @@ import (
 
 const usage = `usage: nodloop <command>
 
+Records the output of any producer as a run, takes a person's verdict on it and carries the approved
+corrections to the next run in the same place
+
 commands:
+  run record --producer <p> --output <file> [--label <key=value>] [--subject <s>] [--applied <id:version>]
+                            Record one output of any producer as a run and print its id for feedback.
+                            Output that is not JSON is kept as text
+  hook prompt | hook stop   The Claude Code conversation hooks the plugin registers. prompt adds the approved items of
+                            producer session for the repo and dir of cwd as context. stop records the answer as a run.
+                            Both always exit 0 and do nothing when NODLOOP_SESSION is off
+  feedback list [--trace <id>] [--verdict <v>] [--reviewer <r>] [--limit <n>]
+                            List feedback newest first with the reason code or a dash after the verdict
+  feedback add --trace <id> --verdict <v> [--reason-code <c>] [--reason <r>] [--edited <file>] [--reviewer <r>] [--audit]
+                            Append one verdict on a run. An edit carries the corrected output in full.
+                            An edit or reject may name what the output got wrong: status, cause, citation, checks or other
+  feedback outcome --trace <id> --result <r> [--cause <text>] [--note <n>] [--reviewer <r>]
+                            Record what a real check found: confirmed, refuted or inconclusive
+  knowledge propose --kind <k> --content <text> (--producer <p> [--label <key=value>] | --from <run id>)
+                    [--except <key=value>] [--id <id>] [--basis stated or verified] [--author <a>] [--trace <run id>]
+                    [--evidence-feedback <id>] [--evidence-outcome <id>]
+                    [--veto-tool <t> --veto-field <f> --veto-match <re> [--veto-unless <re>] --veto-example <json>]
+                            Add a candidate scoped to the runs of a producer and list its overlaps. Every label must be one
+                            a recorded run carries. --from fills producer, labels and evidence from a run a person
+                            corrected. A judgment with a veto becomes a guard veto once approved
+  knowledge for --producer <p> [--label <key=value>]
+                            The approved items a run of the producer with these labels applies, and their size
+  knowledge list [--status <s>] [--kind <k>] [--stale]
+                            Current version per id with a stale column. --status lists every version of that status
+  knowledge show <id>       Every record of one id
+  knowledge health          Verdict and outcome counts per knowledge version, retire candidates and review deadlines
+  knowledge audit           References of current items that no longer resolve
+  knowledge reaffirm <id> --approver <name> [--version <n>]
+                            Record that a named person rechecked the approved version. Its review deadline starts again
+  knowledge narrow <id> --version <n> --key <label key> [--author <a>]
+                            Propose the next version that excepts the values of that label its refuted runs carried
+  knowledge promote <id> --version <n> [--author <a>]
+                            Propose the next version with basis verified and the runs whose outcome confirmed it
+  knowledge overlaps <id>   Current items of the same kind that one run may carry together
+  knowledge approve <id> --version <n> --approver <name>
+                            Refused when one run would carry more than the caps, when it would lift the veto of the
+                            approved version or reach runs it never reached, or when it was not built from that version
+  knowledge retire <id> --version <n> --approver <name>
+  knowledge import --file <jsonl>
+                            Append the records of a file not yet recorded
+  knowledge compact <id> [--model <m>] [--author <a>]
+                            Draft through claude -p a smaller set of items for the runs the item reaches, with nothing said
+                            twice and nothing lost, and propose it
+  knowledge check <compaction id> [--model <m>]
+                            One claude -p call lists for every old item the new items that state it and the facts they lose,
+                            and records it as the coverage check
+  knowledge compaction <compaction id>
+                            Print the new and old items and the newest coverage check
+  knowledge approve-compaction <compaction id> --approver <name>
+                            Approve the new items and retire the old ones once the coverage check passed
+  knowledge export          Write the approved vetoes and approved.md of the record directory again after a failed export
+                            and print the line that imports approved.md from a CLAUDE.md
+  queue [--limit <n>] [--audit-rate <share>] [--seed <n>]
+                            Runs without a verdict in the order to check them, with a random audit share
+  report online [--since <RFC3339>]
+                            Weekly verdict rates, waits and edit widths, and the runs with and without knowledge compared
+  report loop               Per approved item: runs that applied it, how many a person approved of those judged,
+                            how many were corrected again for the reason that taught it, and the time from that
+                            correction to the approval
+  trace list [--name <n>] [--session <id>] [--subject <s>] [--limit <n>]
+                            List traces newest first
+  trace show <id>           Print one trace as JSON
   guard [--vetoes <path>]   PreToolUse hook. Reads hook input from stdin and blocks calls that match a veto,
                             or asks the person when the veto says action ask and no matching veto blocks.
                             Without --vetoes, loads every .claude/nodloop/vetoes.yaml from the hook cwd up to the git root
@@ -27,112 +92,12 @@ commands:
   guard install             Register this binary as a PreToolUse hook in ~/.claude/settings.json (backs up first)
                             Registers ~/.nodloop/bin/nodloop when it links to this binary and replaces a stale hook
   guard uninstall           Remove the hook registered by guard install
-  setup --data-dir <dir> [--record-dir <dir>]
-                            Point nodloop at a reference data directory such as examples/demo of the repository.
-                            Records go to ~/.nodloop/records unless --record-dir or NODLOOP_RECORD_DIR names another
-                            A rerun without --record-dir keeps the record dir saved before and prints the records in use
-  check --data-dir <dir> [--policy <file>]
-                            Check the canonical layout of a data directory and write nothing. Prints the events,
-                            their profile, the declared change contexts, the procedures, the policy and the warnings
-                            as JSON and exits 1 on the error that stopped it. --policy checks a draft in place of policy.yaml
+  mcp                       Serve the MCP tools on stdio. --list prints the tool names
   llm probe [--model <m>]   Send a minimal structured-output request through claude -p and print cost
-  evidence events           List events by their time range and dimension values. Event ids stay in events.csv
-  evidence event --id <id>  Print the time range, dimension values, change context and series of one event
-  evidence procedures       List procedures with their scope and paragraph count
-  evidence paragraphs       List procedure paragraph ids
-  evidence labels           List ground truth labels. Empty when the data directory has none
-  analysis observe --event <id>
-                            Print the observations of one event under the policy
-  analysis policy           Print the policy.yaml of the data directory
-  trace list [--name <n>] [--session <id>] [--subject <s>] [--limit <n>]
-                            List traces newest first
-  trace show <id>           Print one trace as JSON
-  trace pending             List context traces that no review recorded
-  hook prompt | hook stop   The Claude Code conversation hooks the plugin registers. prompt adds the approved items of
-                            producer session for the repo and dir of cwd as context. stop records the answer as a run.
-                            Both always exit 0 and do nothing when NODLOOP_SESSION is off
-  run record --producer <p> --output <file> [--label <key=value>] [--subject <s>] [--applied <id:version>]
-                            Record one output of any producer as a run trace and print its id for feedback.
-                            Output that is not JSON is kept as text. Needs only the record directory
-  queue [--limit <n>] [--audit-rate <share>] [--seed <n>]
-                            Conversation reviews without a verdict in the order to check them, with a random audit share
-  report online [--since <RFC3339>]
-                            Weekly verdict rates, waits and edit widths, first status against the settled status,
-                            and the reviews with and without knowledge compared on verdicts, outcomes, waits and edit widths
-  report loop               Per approved run item: runs that applied it, how many a person approved of those judged,
-                            how many were corrected again for the reason that taught it, and the time from that
-                            correction to the approval. Needs only the record directory
-  feedback list [--trace <id>] [--verdict <v>] [--reviewer <r>] [--limit <n>]
-                            List feedback newest first with the reason code or a dash after the verdict
-  feedback add --trace <id> --verdict <v> [--reason-code <c>] [--reason <r>] [--edited <file>] [--reviewer <r>] [--audit]
-                            Append one feedback record. An edit or reject may name what the review got wrong:
-                            status, cause, citation, checks or other
-  feedback outcome --trace <id> --result <r> [--cause <text>] [--note <n>] [--reviewer <r>]
-                            Record what a real check found: confirmed, refuted or inconclusive
-  knowledge propose --kind <k> --content <text> [--id <id>] [--basis stated or verified] [--author <a>] [--scope-context <c>] [--scope-metric <m>] [--exception <c>]
-                    [--evidence-paragraph <id>] [--evidence-feedback <id>] [--evidence-outcome <id>] [--trace <id>]
-                    [--veto-tool <t> --veto-field <f> --veto-match <re> [--veto-unless <re>] --veto-example <json>]
-                            Add a candidate knowledge record and list its overlaps. The author is "author" unless given
-                            A judgment with a veto becomes a guard veto once approved
-  knowledge propose --producer <p> [--label <key=value>] [--except <key=value>] --kind <k> --content <text> --trace <run id> [the other propose flags]
-                            Scope the candidate to the runs of a producer. Every label must be one a recorded run of it carries
-  knowledge for --producer <p> [--label <key=value>]
-                            The approved items a run of the producer with these labels applies, and their size
-  knowledge propose --from <trace id> --kind <k> [--content <text>] [--model <m>] [the other propose flags]
-                            Fill scope, evidence and basis from a review corrected by edit or reject. Without --content
-                            claude -p drafts one sentence from the correction and the candidate is marked drafted
-  knowledge list [--status <s>] [--kind <k>] [--stale]
-                            Current version per id with a stale column. --status lists every version of that status
-  knowledge show <id>       Every record of one id
-  knowledge health          Verdict and outcome counts per knowledge version, retire candidates and review deadlines
-  knowledge audit           References of current items that no longer resolve
-  knowledge reaffirm <id> --approver <name> [--version <n>]
-                            Record that a named person rechecked the approved version. Its review deadline starts again
-  knowledge narrow <id> --version <n> [--key <label key>] [--author <a>]
-                            Propose the next version without the change contexts where its reviews were refuted.
-                            A run item needs --key and excepts the values of that label its refuted runs carried
-                            Fails naming the retire command when every change context of the version was refuted
-  knowledge promote <id> --version <n> [--author <a>]
-                            Propose the next version with basis verified and the reviews whose outcome confirmed it
-                            Fails when no review confirmed it or it is verified already
-  knowledge overlaps <id>   Current items of the same kind with an intersecting scope
-  knowledge approve <id> --version <n> --approver <name>
-                            Refused when its folder may outgrow the review. Retire or replace an item, scope it to other
-                            change contexts or compact the folder. Refused when it would lift the veto of the approved
-                            version or was not built from that version. Says when the folder holds more
-                            than five items and whether a compaction is due or blocked for lack of an expected status
-  knowledge retire <id> --version <n> --approver <name>
-  knowledge import --file <jsonl>
-                            Append the records of a file not yet recorded, such as the knowledge.jsonl of a data set
-                            An invalid record or one older than the recorded history of its version lands nothing
-  knowledge compact <id> [--model <m>] [--author <a>]
-                            Draft through claude -p a smaller set of items that replaces the folder of an item
-                            and propose it. Items that cite only procedure paragraphs are left out
-  knowledge compaction <compaction id>
-                            Print the new and old items and the replay result
-  knowledge replay <compaction id> [--model <m>] [--events <ids>] [--parallel <n>]
-                            Review every event the old items came from again with the new items through claude -p
-  knowledge check <compaction id> [--model <m>]
-                            For a compaction of run items, one claude -p call lists for every old item the new items
-                            that state it and the facts they lose, and records it as the coverage check
-  knowledge approve-compaction <compaction id> --approver <name>
-                            Approve the new items and retire the old ones once the replay or the coverage check passed
-  knowledge export          Write the approved vetoes and approved.md of the record directory again after a failed export
-                            and print the line that imports approved.md from a CLAUDE.md
-  diagnose --event <id> [--examples <n>] [--knowledge none or selected or all] [--model <m>] [--session <s>] [--tag <t>]
-                            Batch review of one event through claude -p. JSON on stdout and the trace id on stderr
-  mcp                       Serve the MCP tools on stdio. --list prints the tool names without opening any data
-  eval seed --session <s> [--model <m>] [--events <ids>] [--parallel <n>] [--repeat <n>]
-                            Review every seed event so a reviewer can annotate the results
-  eval holdout --session <s> [--model <m>] [--examples <n>] [--conditions <list>] [--events <ids>] [--parallel <n>] [--repeat <n>]
-                            Review every holdout event under feedback:off, feedback:on, knowledge:on and knowledge:all
-  eval report --session <s> [--triage]
-                            Print the metrics table with condition pairs and write eval-<s>.json to the record directory
-                            --triage adds how many wrong statuses the top 5 of the queue order hold
   version                   Print the build version
 
-Data commands accept --source, --data-dir and --record-dir. Each overrides the matching NODLOOP_* variable
-analysis, diagnose, eval and mcp read the analyzers from policy.yaml in the data directory and fail without it
+Every command that reads records accepts --record-dir, which overrides NODLOOP_RECORD_DIR, then record_dir of
+~/.nodloop/config.json, then ~/.nodloop/records
 An approved version is stale 90 days after its approval or last reaffirm. Nothing is retired without a named approver
 `
 
@@ -180,8 +145,6 @@ func run(args []string, getenv func(string) string, stdin io.Reader, stdout io.W
 		return 1
 	}
 	commands := map[string]func(args []string) int{
-		"evidence": func(args []string) int { return runEvidence(args, getenv, time.Now, stdout, stderr) },
-		"analysis": func(args []string) int { return runAnalysis(args, getenv, time.Now, stdout, stderr) },
 		"trace":    func(args []string) int { return runTrace(args, getenv, time.Now, stdout, stderr) },
 		"run":      func(args []string) int { return runRun(args, getenv, time.Now, stdout, stderr) },
 		"hook":     func(args []string) int { return runHook(args, getenv, time.Now, stdin, stdout, stderr) },
@@ -189,15 +152,11 @@ func run(args []string, getenv func(string) string, stdin io.Reader, stdout io.W
 		"queue":    func(args []string) int { return runQueue(args, getenv, time.Now, stdout, stderr) },
 		"report":   func(args []string) int { return runReport(args, getenv, time.Now, stdout, stderr) },
 		"guard":    func(args []string) int { return runGuard(args, getenv, os.Executable, time.Now, stdin, stdout, stderr) },
-		"setup":    func(args []string) int { return runSetup(args, getenv, stdout, stderr) },
-		"check":    func(args []string) int { return runCheck(args, getenv, stdout, stderr) },
 		"llm":      func(args []string) int { return runLLM(args, claudeCLI(getenv), time.Now, stdout, stderr) },
 		"knowledge": func(args []string) int {
 			return runKnowledge(args, getenv, claudeCLI(getenv), time.Now, stdout, stderr)
 		},
-		"diagnose": func(args []string) int { return runDiagnose(args, getenv, claudeCLI(getenv), time.Now, stdout, stderr) },
-		"mcp":      func(args []string) int { return runMCP(args, getenv, time.Now, stdin, stdout, stderr) },
-		"eval":     func(args []string) int { return runEval(args, getenv, claudeCLI(getenv), time.Now, stdout, stderr) },
+		"mcp": func(args []string) int { return runMCP(args, getenv, time.Now, stdin, stdout, stderr) },
 		"version": func([]string) int {
 			fmt.Fprintln(stdout, buildVersion())
 			return 0
@@ -216,9 +175,6 @@ func run(args []string, getenv func(string) string, stdin io.Reader, stdout io.W
 func claudeCLI(getenv func(string) string) *llm.ClaudeCLI {
 	return llm.NewClaudeCLI(getenv(envClaudeBin), getenv(envLLMModel), "", 0)
 }
-
-// Default count of past edit and reject feedback a review takes as examples
-const defaultExamples = 3
 
 // flag stops at the first positional argument so an id before the flags is taken out first
 // 1. flags may follow the id as in `knowledge show <id> --record-dir <dir>`

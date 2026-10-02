@@ -12,8 +12,8 @@ import (
 type Open func(ctx context.Context) (*Server, error)
 
 // The tools of one server process
-// 1. every call opens the server anew so a setup run through the CLI or an edit of policy.yaml reaches the next call with no reconnect
-// 2. one lock serializes the calls because the select and record guard of a Diagnoser holds within that Diagnoser only
+// 1. every call opens the server anew so a record dir saved through the CLI reaches the next call with no reconnect
+// 2. one lock serializes the calls so two approvals of one candidate never both land
 // 3. the tool list is the same whatever open answers so no list changed notification is ever due
 type Host struct {
 	open Open
@@ -34,7 +34,6 @@ func (h *Host) ServeTransport(ctx context.Context, t sdk.Transport) error {
 	for _, tl := range tools {
 		tl.add(srv, h)
 	}
-	addPrompts(srv)
 	return srv.Run(ctx, t)
 }
 

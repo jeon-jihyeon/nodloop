@@ -1,22 +1,18 @@
 package loop
 
 import (
-	"encoding/json"
 	"slices"
 	"time"
 
-	"github.com/jeon-jihyeon/nodloop/internal/diagnose"
-	"github.com/jeon-jihyeon/nodloop/internal/evidence"
 	"github.com/jeon-jihyeon/nodloop/internal/feedback"
 )
 
-// How the conversation reviews fare with a person read from the records alone
+// How the runs fare with a person read from the records alone
 type Report struct {
 	Since time.Time `json:"since"`
 	// Weeks from Monday UTC by the time of the verdict in time order
-	Weeks     []Week    `json:"weeks"`
-	Agreement Agreement `json:"agreement"`
-	// Verdicts recorded before their review and left out of the waits
+	Weeks []Week `json:"weeks"`
+	// Verdicts recorded before their run and left out of the waits
 	InvalidWaits     int    `json:"invalid_waits"`
 	KnowledgeApplied Cohort `json:"knowledge_applied"`
 	WithoutKnowledge Cohort `json:"without_knowledge"`
@@ -27,7 +23,7 @@ type Week struct {
 	Verdicts Verdicts  `json:"verdicts"`
 	// The verdicts on random audit samples of the queue
 	Audit Verdicts `json:"audit"`
-	// Seconds from the review to its verdict
+	// Seconds from the run to its verdict
 	// A wait for the verdict and not the working time of the person
 	MedianWaitSeconds *float64 `json:"median_wait_seconds"`
 	// Top level fields an edit changed counted over the edits only
@@ -90,37 +86,13 @@ func (o *Outcomes) add(result feedback.Result) {
 	o.InconclusiveRate = share(o.Inconclusive, o.Total)
 }
 
-// The reviews that applied knowledge or none
+// The runs that applied knowledge or none
 // The wait and the edit width read like those of a week so the two cohorts compare on verdict time and edit size
 type Cohort struct {
 	Verdicts          Verdicts `json:"verdicts"`
 	Outcomes          Outcomes `json:"outcomes"`
 	MedianWaitSeconds *float64 `json:"median_wait_seconds"`
 	MedianEditWidth   *float64 `json:"median_edit_width"`
-}
-
-// The status of the first submission against the status the person settled on
-// Approve settles on the recorded status and edit on the corrected one
-type Agreement struct {
-	Samples int      `json:"samples"`
-	Matches int      `json:"matches"`
-	Rate    *float64 `json:"rate"`
-	// Counts by first status then by final status
-	Confusion map[evidence.Status]map[evidence.Status]int `json:"confusion"`
-	// Rejects and edits whose corrected review has no readable status
-	Excluded int `json:"excluded"`
-}
-
-func (a *Agreement) observe(first, final evidence.Status) {
-	if a.Confusion[first] == nil {
-		a.Confusion[first] = map[evidence.Status]int{}
-	}
-	a.Confusion[first][final]++
-	a.Samples++
-	if first == final {
-		a.Matches++
-	}
-	a.Rate = share(a.Matches, a.Samples)
 }
 
 // Nil when there is nothing to share
@@ -134,10 +106,7 @@ func share(part, total int) *float64 {
 
 // Every human verdict and outcome from since on
 func (h *History) Report(since time.Time) Report {
-	rep := Report{
-		Since: since, Weeks: []Week{},
-		Agreement: Agreement{Confusion: map[evidence.Status]map[evidence.Status]int{}},
-	}
+	rep := Report{Since: since, Weeks: []Week{}}
 	weeks := map[time.Time]*Week{}
 	byWeek, byCohort := map[time.Time]*measures{}, map[*Cohort]*measures{}
 	for _, r := range h.reviews {
@@ -153,9 +122,6 @@ func (h *History) Report(since time.Time) Report {
 			continue
 		}
 		cohort.Verdicts.add(fb.Verdict, fb.ReasonCode)
-		if !r.isRun() {
-			h.agree(&rep.Agreement, r, fb)
-		}
 		start := weekOf(fb.Time)
 		if weeks[start] == nil {
 			weeks[start], byWeek[start] = &Week{Start: start}, &measures{}
@@ -192,33 +158,6 @@ func (h *History) Report(since time.Time) Report {
 // Orders weeks by start
 func (w Week) compare(other Week) int {
 	return w.Start.Compare(other.Start)
-}
-
-// A review without a settled status counts as excluded
-func (h *History) agree(a *Agreement, r review, fb feedback.Feedback) {
-	final, ok := r.settled(fb)
-	if !ok {
-		a.Excluded++
-		return
-	}
-	a.observe(h.firstStatus(r), final)
-}
-
-// The status the person settled on with the verdict
-// A reject settles on none and an edit only when the corrected review reads with a known status
-func (r review) settled(fb feedback.Feedback) (evidence.Status, bool) {
-	switch fb.Verdict {
-	case feedback.VerdictApprove:
-		return r.Diagnosis.Status, true
-	case feedback.VerdictEdit:
-		var edited diagnose.Diagnosis
-		if json.Unmarshal(fb.Edited, &edited) != nil || !edited.Status.Valid() {
-			return "", false
-		}
-		return edited.Status, true
-	default:
-		return "", false
-	}
 }
 
 // Monday 00:00 UTC of the week that holds t

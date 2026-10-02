@@ -4,14 +4,12 @@ import (
 	"cmp"
 	"context"
 	"encoding/json"
-	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
 	"time"
 
-	"github.com/jeon-jihyeon/nodloop/internal/diagnose"
 	"github.com/jeon-jihyeon/nodloop/internal/feedback"
 	feedbackfile "github.com/jeon-jihyeon/nodloop/internal/feedback/file"
 )
@@ -30,7 +28,7 @@ func (f *feedbackFlags) bind(fs *flag.FlagSet) {
 	fs.StringVar(&f.reviewer, "reviewer", "", "reviewer such as author")
 	fs.IntVar(&f.limit, "limit", 0, "newest n records. 0 means all")
 	fs.StringVar(&f.code, "reason-code", "",
-		"add: what the corrected review got wrong with edit or reject. status, cause, citation, checks or other")
+		"add: what the output got wrong with edit or reject. status, cause, citation, checks or other")
 	fs.StringVar(&f.reason, "reason", "", "add: why the verdict was given")
 	fs.StringVar(&f.edited, "edited", "", "add: file holding the corrected output JSON")
 	fs.StringVar(&f.result, "result", "", "outcome: confirmed, refuted or inconclusive")
@@ -53,14 +51,14 @@ func runFeedback(args []string, getenv func(string) string, now func() time.Time
 	}
 	fs := flag.NewFlagSet("feedback "+args[0], flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	var data dataFlags
-	data.bind(fs)
+	var records recordFlags
+	records.bind(fs)
 	var flags feedbackFlags
 	flags.bind(fs)
 	if err := fs.Parse(args[1:]); err != nil {
 		return 1
 	}
-	a, err := data.records(getenv, now)
+	a, err := records.app(getenv, now)
 	if err != nil {
 		return fail(stderr, "feedback", err)
 	}
@@ -125,7 +123,7 @@ func (c feedbackCommand) add(
 		return err
 	}
 	fb.Audit = c.audit
-	store, err := c.checked(ctx, fb.TraceID, fb.Edited)
+	store, err := c.checked(ctx, fb.TraceID)
 	if err != nil {
 		return err
 	}
@@ -136,38 +134,10 @@ func (c feedbackCommand) add(
 	return nil
 }
 
-// The store a verdict goes to once the review or run it cites passed its checks
-// An edit of a review is checked against the current procedures that apply to the event of the context trace the review was built on
-// An edit of a run is any JSON and needs no data dir
-// A verdict reads neither the policy nor the events
-// A procedures folder that cannot be read counts as empty
-// 1. an edit citing a paragraph is refused and the read error joins the refusal to say why
-// 2. an edit without citations such as a hold still passes
-func (c feedbackCommand) checked(ctx context.Context, traceID string, edited json.RawMessage) (*feedbackfile.Store, error) {
+// The store a verdict goes to once the run it cites passed its check
+func (c feedbackCommand) checked(ctx context.Context, traceID string) (*feedbackfile.Store, error) {
 	if err := c.app.checkRuns(ctx, traceID); err != nil {
 		return nil, err
-	}
-	if len(edited) == 0 {
-		return c.app.feedback()
-	}
-	traces, err := c.app.traces()
-	if err != nil {
-		return nil, err
-	}
-	review, err := traces.Get(ctx, traceID)
-	if err != nil {
-		return nil, err
-	}
-	if !review.IsReview() {
-		return c.app.feedback()
-	}
-	built, err := traces.Get(ctx, review.Ref)
-	if err != nil {
-		return nil, err
-	}
-	procedures, readErr := c.app.procedures(ctx)
-	if err := diagnose.CheckEdit(built, procedures, edited); err != nil {
-		return nil, errors.Join(err, readErr)
 	}
 	return c.app.feedback()
 }

@@ -8,158 +8,44 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeon-jihyeon/nodloop/internal/diagnose"
-	"github.com/jeon-jihyeon/nodloop/internal/evidence"
 	"github.com/jeon-jihyeon/nodloop/internal/feedback"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	"github.com/jeon-jihyeon/nodloop/internal/loop"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
 )
 
-func TestHistoryRank(t *testing.T) {
-	stated := item("stated", 1, knowledge.StatusApproved)
-	verified := item("verified", 1, knowledge.StatusApproved)
-	verified.Basis = knowledge.BasisVerified
-	planned := item("planned", 1, knowledge.StatusApproved)
-	planned.Scope = knowledge.Scope{Scope: evidence.Scope{ChangeContexts: []evidence.Context{evidence.ContextPlannedChange}}}
-	covered := knowledge.Set{planned, stated, verified}
-	later := monday.Add(time.Hour)
-	earlier := monday.Add(-time.Hour)
-	type args struct {
-		history   []review
-		extra     trace.Traces
-		verdicts  feedback.Records
-		items     knowledge.Set
-		candidate review
+// Each signal of a run raises it in the queue by its weight
+func TestHistoryQueueReasons(t *testing.T) {
+	gitC := knowledge.Ref{ID: "git-c", Version: 1}
+	runs := trace.Traces{
+		sessionRun(t, "taught", 0, "nodloop"),
+		sessionRun(t, "r1", 1, "nodloop", gitC),
+		sessionRun(t, "r2", 2, "nodloop", gitC),
+		sessionRun(t, "r3", 3, "other"),
 	}
-	type want struct {
-		score   int
-		reasons []loop.Reason
+	verdicts := feedback.Records{
+		verdict("taught", feedback.VerdictEdit, monday.Add(30*time.Minute)),
+		verdict("r1", feedback.VerdictApprove, monday.Add(90*time.Minute)),
 	}
-	tcs := []struct {
-		name string
-		args args
-		want want
-	}{
-		{
-			"a plain review with nothing applied",
-			args{items: covered, candidate: review{id: "c"}},
-			want{2, []loop.Reason{loop.ReasonNoKnowledge, loop.ReasonFewCitations}},
-		},
-		{
-			"a forced hold without citations",
-			args{items: covered, candidate: review{id: "c", status: evidence.StatusHold, cites: []string{}, tags: []string{diagnose.TagGateHold}}},
-			want{6, []loop.Reason{loop.ReasonForcedHold, loop.ReasonNoKnowledge, loop.ReasonNoCitations}},
-		},
-		{
-			"a review sent back once",
-			args{items: covered, extra: trace.Traces{revise(t, "ctx-c", evidence.StatusHold)}, candidate: review{id: "c"}},
-			want{5, []loop.Reason{loop.ReasonRevised, loop.ReasonNoKnowledge, loop.ReasonFewCitations}},
-		},
-		{
-			"half of the earlier verdicts in the context corrected",
-			args{
-				history:   []review{{id: "h1", at: earlier}, {id: "h2", at: earlier}, {id: "h3", at: earlier, context: evidence.ContextUnknown}},
-				verdicts:  feedback.Records{verdict("h1", feedback.VerdictEdit, earlier), verdict("h2", feedback.VerdictApprove, earlier), verdict("h3", feedback.VerdictReject, earlier)},
-				items:     covered,
-				candidate: review{id: "c", at: monday},
-			},
-			want{4, []loop.Reason{loop.ReasonPastCorrections, loop.ReasonNoKnowledge, loop.ReasonFewCitations}},
-		},
-		{
-			"a verdict given after the review does not count",
-			args{
-				history:   []review{{id: "h1", at: earlier}},
-				verdicts:  feedback.Records{verdict("h1", feedback.VerdictEdit, later)},
-				items:     covered,
-				candidate: review{id: "c", at: monday},
-			},
-			want{2, []loop.Reason{loop.ReasonNoKnowledge, loop.ReasonFewCitations}},
-		},
-		{
-			"the first review of a stated item",
-			args{items: covered, candidate: review{id: "c", knowledge: []diagnose.AppliedKnowledge{applied("stated", 1)}, cites: []string{"p#1", "p#2"}}},
-			want{4, []loop.Reason{loop.ReasonNewKnowledge, loop.ReasonStatedOnly}},
-		},
-		{
-			"a later review of a verified item",
-			args{
-				history:   []review{{id: "h1", at: earlier, knowledge: []diagnose.AppliedKnowledge{applied("verified", 1)}}},
-				verdicts:  feedback.Records{verdict("h1", feedback.VerdictApprove, earlier)},
-				items:     covered,
-				candidate: review{id: "c", knowledge: []diagnose.AppliedKnowledge{applied("verified", 1)}, cites: []string{"p#1", "p#2"}},
-			},
-			want{0, []loop.Reason{}},
-		},
-		{
-			"no approved item covers the context",
-			args{items: knowledge.Set{planned}, candidate: review{id: "c", context: evidence.ContextNoKnownChange, cites: []string{"p#1", "p#2"}}},
-			want{3, []loop.Reason{loop.ReasonNoApprovedContext, loop.ReasonNoKnowledge}},
-		},
-	}
-	for _, tc := range tcs {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			all := append(traces(t, tc.args.history...), tc.args.extra...)
-			h, err := loop.New(all, tc.args.verdicts, nil, tc.args.items)
-			require.NoError(t, err)
-			got, err := h.Rank(traces(t, tc.args.candidate))
-			require.NoError(t, err)
-			require.Len(t, got, 1)
-			assert.Equal(t, tc.want.score, got[0].Score)
-			assert.Equal(t, tc.want.reasons, got[0].Reasons)
-		})
-	}
+	h := loop.New(runs, verdicts, nil, knowledge.Set{runItem("git-c", 1)})
+
+	got, err := h.Queue(loop.QueueOptions{})
+
+	require.NoError(t, err)
+	require.Len(t, got, 2)
+	assert.Equal(t, loop.QueueItem{
+		TraceID: "r2", Producer: "session", Labels: trace.Labels{"repo": {"nodloop"}}, Time: monday.Add(2 * time.Hour),
+		Score: 4, Reasons: []loop.Reason{loop.ReasonPastCorrections, loop.ReasonStatedOnly}, PlaceReviewed: 2, PlaceCorrections: 1,
+	}, got[0], "one of the two earlier verdicts in the repo corrected and the version reached an earlier run")
+	assert.Equal(t, []loop.Reason{loop.ReasonNoApprovedItem, loop.ReasonNoKnowledge}, got[1].Reasons)
 }
 
-func TestHistoryRankOrder(t *testing.T) {
-	covered := knowledge.Set{item("k", 1, knowledge.StatusApproved)}
-	broken := review{id: "broken"}.trace(t)
-	broken.Output = []byte(`{}`)
-	type want struct {
-		ids []string
-		err error
-	}
-	tcs := []struct {
-		name string
-		args trace.Traces
-		want want
-	}{
-		{
-			"score first then older first then trace id",
-			traces(t,
-				review{id: "b", at: monday},
-				review{id: "a", at: monday},
-				review{id: "old", at: monday.Add(-time.Hour)},
-				review{id: "hold", status: evidence.StatusHold, tags: []string{diagnose.TagGateHold}, at: monday.Add(time.Hour)},
-			),
-			want{ids: []string{"hold", "old", "a", "b"}},
-		},
-		{"a candidate that does not read fails", trace.Traces{broken}, want{err: diagnose.ErrMalformed}},
-	}
-	for _, tc := range tcs {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			h, err := loop.New(nil, nil, nil, covered)
-			require.NoError(t, err)
-			got, err := h.Rank(tc.args)
-			assert.ErrorIs(t, err, tc.want.err)
-			var ids []string
-			for _, item := range got {
-				ids = append(ids, item.TraceID)
-			}
-			assert.Equal(t, tc.want.ids, ids)
-		})
-	}
-}
-
-// Five plain reviews a to e and one forced hold named top
 func TestHistoryQueue(t *testing.T) {
-	var pending []review
-	for _, id := range []string{"a", "b", "c", "d", "e"} {
-		pending = append(pending, review{id: id})
+	gitC := knowledge.Ref{ID: "git-c", Version: 1}
+	runs := trace.Traces{sessionRun(t, "top", 0, "nodloop", gitC)}
+	for i, id := range []string{"a", "b", "c", "d", "e"} {
+		runs = append(runs, sessionRun(t, id, i+1, "nodloop"))
 	}
-	pending = append(pending, review{id: "top", tags: []string{diagnose.TagGateHold}, status: evidence.StatusHold})
 	type want struct {
 		ids    []string
 		audits []bool
@@ -171,26 +57,11 @@ func TestHistoryQueue(t *testing.T) {
 		want want
 	}{
 		{
-			"no limit lists every review without audit",
+			"no limit lists every run without audit",
 			loop.QueueOptions{},
 			want{ids: []string{"top", "a", "b", "c", "d", "e"}, audits: []bool{false, false, false, false, false, false}},
 		},
 		{"a limit without audit keeps the top", loop.QueueOptions{Limit: 2}, want{ids: []string{"top", "a"}, audits: []bool{false, false}}},
-		{
-			"an audit share rounds up",
-			loop.QueueOptions{Limit: 3, AuditRate: 0.2, Seed: 7},
-			want{ids: []string{"top", "a", "e"}, audits: []bool{false, false, true}},
-		},
-		{
-			"a full audit share draws every slot",
-			loop.QueueOptions{Limit: 2, AuditRate: 1, Seed: 7},
-			want{ids: []string{"c", "b"}, audits: []bool{true, true}},
-		},
-		{
-			"a limit above the reviews keeps them all",
-			loop.QueueOptions{Limit: 10, AuditRate: 0.5, Seed: 1},
-			want{ids: []string{"top", "a", "b", "c", "d", "e"}, audits: []bool{false, false, false, false, false, true}},
-		},
 		{
 			"a short order fits the priority slots",
 			loop.QueueOptions{Limit: 10, AuditRate: 0.2, Seed: 1},
@@ -203,8 +74,7 @@ func TestHistoryQueue(t *testing.T) {
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			h, err := loop.New(traces(t, pending...), nil, nil, nil)
-			require.NoError(t, err)
+			h := loop.New(runs, nil, nil, knowledge.Set{runItem("git-c", 1)})
 			got, err := h.Queue(tc.args)
 			assert.ErrorIs(t, err, tc.want.err)
 			var ids []string
@@ -219,4 +89,20 @@ func TestHistoryQueue(t *testing.T) {
 			assert.Equal(t, got, again, "the same seed draws the same samples")
 		})
 	}
+}
+
+// An audit share draws its slots at random from below the priority slots and the same seed draws the same runs
+func TestHistoryQueueAudit(t *testing.T) {
+	var runs trace.Traces
+	for i, id := range []string{"a", "b", "c", "d", "e", "f"} {
+		runs = append(runs, sessionRun(t, id, i, "nodloop"))
+	}
+	h := loop.New(runs, nil, nil, nil)
+
+	got, err := h.Queue(loop.QueueOptions{Limit: 3, AuditRate: 0.2, Seed: 7})
+
+	require.NoError(t, err)
+	require.Len(t, got, 3)
+	assert.Equal(t, []bool{false, false, true}, []bool{got[0].Audit, got[1].Audit, got[2].Audit})
+	assert.Equal(t, []string{"a", "b"}, []string{got[0].TraceID, got[1].TraceID})
 }

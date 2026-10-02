@@ -9,7 +9,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeon-jihyeon/nodloop/internal/evidence"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge/file"
 	"github.com/jeon-jihyeon/nodloop/internal/testkit"
@@ -22,7 +21,7 @@ func runLedger(t *testing.T) *knowledge.Ledger {
 	store, err := file.New(t.TempDir())
 	require.NoError(t, err)
 	now := time.Date(2026, 10, 2, 0, 0, 0, 0, time.UTC)
-	return knowledge.NewLedger(store, vetofile.NewApprovedFile(t.TempDir(), "records"), evidence.DefaultContexts(), func() time.Time {
+	return knowledge.NewLedger(store, vetofile.NewApprovedFile(t.TempDir(), "records"), func() time.Time {
 		now = now.Add(time.Minute)
 		return now
 	}, func(prefix string) string { return prefix + "new" })
@@ -36,7 +35,7 @@ func runItem(id string, run *knowledge.RunScope) knowledge.Knowledge {
 }
 
 // Only approved run items whose labels the run carries and whose exceptions it does not reach a run
-// An item of the data review never reaches a run whatever its scope
+// A record of the data review without a run scope never reaches a run
 func TestSetFor(t *testing.T) {
 	approved := func(k knowledge.Knowledge) knowledge.Knowledge {
 		k.Version, k.Status, k.Approver = 1, knowledge.StatusApproved, "ann"
@@ -78,9 +77,6 @@ func TestSetFor(t *testing.T) {
 			assert.Equal(t, tc.want, got)
 		})
 	}
-	assert.Empty(t, set.Applicable(evidence.ContextNoKnownChange, knowledge.Moved{}, nil).Matching(knowledge.Filter{Kinds: []knowledge.Kind{knowledge.KindJudgment}}),
-		"a run item reaches no data review")
-	assert.False(t, knowledge.Set{approved(runItem("repo", repo))}.Covers(evidence.ContextNoKnownChange))
 }
 
 func TestLedgerProposeRunScope(t *testing.T) {
@@ -92,24 +88,7 @@ func TestLedgerProposeRunScope(t *testing.T) {
 		{"a run scope is proposed", runItem("k1", &knowledge.RunScope{Producer: "session", Labels: trace.Labels{"repo": {"b", "a", "b"}}}), nil},
 		{"a run scope without a producer is refused", runItem("k1", &knowledge.RunScope{Labels: trace.Labels{"repo": {"a"}}}), knowledge.ErrScopeInvalid},
 		{"an empty label value is refused", runItem("k1", &knowledge.RunScope{Producer: "session", Labels: trace.Labels{"repo": {""}}}), knowledge.ErrScopeInvalid},
-		{
-			"a run scope beside a change context is refused",
-			func() knowledge.Knowledge {
-				k := runItem("k1", &knowledge.RunScope{Producer: "session"})
-				k.Scope.ChangeContexts = []evidence.Context{evidence.ContextNoKnownChange}
-				return k
-			}(),
-			knowledge.ErrScopeMixed,
-		},
-		{
-			"a run scope beside an exception is refused",
-			func() knowledge.Knowledge {
-				k := runItem("k1", &knowledge.RunScope{Producer: "session"})
-				k.Exceptions = []evidence.Context{evidence.ContextNoKnownChange}
-				return k
-			}(),
-			knowledge.ErrScopeMixed,
-		},
+		{"an item without a run scope is refused", runItem("k1", nil), knowledge.ErrScopeRequired},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
@@ -126,7 +105,7 @@ func TestLedgerProposeRunScope(t *testing.T) {
 	}
 }
 
-// Overlaps list run items of one producer and kind that one run could carry together and never an item of the data review
+// Overlaps list run items of one producer and kind that one run could carry together
 func TestLedgerRunOverlaps(t *testing.T) {
 	ctx := context.Background()
 	l := runLedger(t)
@@ -134,7 +113,7 @@ func TestLedgerRunOverlaps(t *testing.T) {
 		runItem("nodloop", &knowledge.RunScope{Producer: "session", Labels: trace.Labels{"repo": {"nodloop"}}}),
 		runItem("other-repo", &knowledge.RunScope{Producer: "session", Labels: trace.Labels{"repo": {"other"}}}),
 		runItem("any-repo", &knowledge.RunScope{Producer: "session", Labels: trace.Labels{"task": {"commit"}}}),
-		{ID: "data", Kind: knowledge.KindJudgment, Content: "lag", Evidence: knowledge.Evidence{ParagraphIDs: []string{"p#1"}}, Author: "author"},
+		runItem("ci", &knowledge.RunScope{Producer: "ci", Labels: trace.Labels{"repo": {"nodloop"}}}),
 	} {
 		_, _, err := l.Propose(ctx, k)
 		require.NoError(t, err)
@@ -255,7 +234,7 @@ func TestRunScopeRecorded(t *testing.T) {
 	}
 }
 
-func TestLedgerNarrowRun(t *testing.T) {
+func TestLedgerNarrowExcept(t *testing.T) {
 	type args struct {
 		scope  *knowledge.RunScope
 		key    string
@@ -286,22 +265,18 @@ func TestLedgerNarrowRun(t *testing.T) {
 			want{err: knowledge.ErrNarrowExhausted},
 		},
 		{"no refuted value is refused", args{&knowledge.RunScope{Producer: "session"}, "dir", nil}, want{err: knowledge.ErrNarrowInvalid}},
-		{"an item of the data review is refused", args{nil, "dir", []string{"docs"}}, want{err: knowledge.ErrNarrowInvalid}},
+		{"no refuted key is refused", args{&knowledge.RunScope{Producer: "session"}, "", []string{"docs"}}, want{err: knowledge.ErrNarrowInvalid}},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			ctx := context.Background()
 			l := runLedger(t)
-			draft := runItem("k1", tc.args.scope)
-			if tc.args.scope == nil {
-				draft.Evidence = knowledge.Evidence{ParagraphIDs: []string{"p#1"}}
-			}
-			_, _, err := l.Propose(ctx, draft)
+			_, _, err := l.Propose(ctx, runItem("k1", tc.args.scope))
 			require.NoError(t, err)
 			require.NoError(t, testkit.Err(l.Approve(ctx, "k1", 1, "ann")))
 
-			got, _, err := l.NarrowRun(ctx, "k1", 1, tc.args.key, tc.args.values, []string{"refuted-run"}, "author")
+			got, _, err := l.Narrow(ctx, "k1", 1, tc.args.key, tc.args.values, []string{"refuted-run"}, "author")
 
 			require.ErrorIs(t, err, tc.want.err)
 			if tc.want.err != nil {

@@ -1,16 +1,13 @@
-// Package compact replaces the approved items of one crowded knowledge folder so each review carries fewer items that lose nothing the old ones fixed
+// Package compact replaces the approved items of one crowded knowledge folder with fewer items that lose nothing the old ones fixed
 package compact
 
 import (
 	"cmp"
 	"context"
-	"encoding/json"
 	"fmt"
 	"slices"
-	"strings"
 	"time"
 
-	"github.com/jeon-jihyeon/nodloop/internal/evidence"
 	"github.com/jeon-jihyeon/nodloop/internal/feedback"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
@@ -19,28 +16,9 @@ import (
 // Author of a compaction drafted without a named author
 const defaultAuthor = "claude"
 
-// Where an expected status came from
-type Origin string
-
-const (
-	OriginLabel    Origin = "label"    // the data set label
-	OriginEdit     Origin = "edit"     // the status of the corrected review
-	OriginApproval Origin = "approval" // the status of the approved review
-)
-
-// The status a replay of one event must reach
-type Expectation struct {
-	EventID  string          `json:"event_id"`
-	Expected evidence.Status `json:"expected"`
-	Origin   Origin          `json:"origin"`
-	// The newest evidence trace of the event
-	TraceID string `json:"trace_id"`
-}
-
 // One correction behind an old item as the drafter reads it
 type Correction struct {
 	TraceID string           `json:"trace_id"`
-	EventID string           `json:"event_id"`
 	Verdict feedback.Verdict `json:"verdict"`
 	Reason  string           `json:"reason"`
 }
@@ -50,14 +28,9 @@ type Folder struct {
 	Anchor string
 	knowledge.Compactable
 	Corrections []Correction
-	Replay      []Expectation
-	// Evidence events without an expectation
-	Unverifiable []string
-	// A compaction of these items still waiting for its replay and approval
+	// A compaction of these items still waiting for its check and approval
 	// Empty when none
 	Pending string
-	// Whether the items are scoped to runs, which a coverage check verifies instead of a replay
-	Runs bool
 }
 
 // Verdicts of the evidence traces
@@ -72,49 +45,29 @@ type TraceStore interface {
 	List(ctx context.Context, f trace.Filter) (trace.Traces, error)
 }
 
-// The replay traces and the coverage checks
+// The coverage checks
 // Newest first
-type ReplayStore interface {
+type CheckStore interface {
 	Append(ctx context.Context, t trace.Trace) error
 	List(ctx context.Context, f trace.Filter) (trace.Traces, error)
 }
 
-// Outcomes of the evidence traces
-// Newest first
-type OutcomeStore interface {
-	List(ctx context.Context, traceID string) ([]feedback.Outcome, error)
-}
-
-// The labels that give an event its expected status first and the metrics and dims a new item may be scoped to
-type Source interface {
-	Labels(ctx context.Context) ([]evidence.Label, error)
-	Metrics(ctx context.Context) ([]string, error)
-	Dims(ctx context.Context) (map[string]map[string]struct{}, error)
-}
-
-// Drafts and proposes and replays and approves a compaction through the ledger
+// Drafts and proposes and checks and approves a compaction through the ledger
 // Nothing is kept between calls
 type Compactor struct {
-	src      Source
 	ledger   *knowledge.Ledger
 	traces   TraceStore
 	feedback FeedbackStore
-	outcomes OutcomeStore
-	replays  ReplayStore
+	checks   CheckStore
 	now      func() time.Time
 }
 
-// src may be nil on records alone, where only a folder of run items can be compacted
-func New(
-	src Source, ledger *knowledge.Ledger, traces TraceStore, verdicts FeedbackStore, outcomes OutcomeStore, replays ReplayStore,
-	now func() time.Time,
-) *Compactor {
-	return &Compactor{src: src, ledger: ledger, traces: traces, feedback: verdicts, outcomes: outcomes, replays: replays, now: now}
+func New(ledger *knowledge.Ledger, traces TraceStore, verdicts FeedbackStore, checks CheckStore, now func() time.Time) *Compactor {
+	return &Compactor{ledger: ledger, traces: traces, feedback: verdicts, checks: checks, now: now}
 }
 
-// The anchor and its folder items split by whether an event can replay them
-// Carries the corrections and expectations behind them
-// Fails with knowledge ErrNotFound or ErrParagraphOnly as the ledger would refuse the anchor
+// The anchor and the approved items one run may carry with it, with the corrections behind them
+// Fails with knowledge ErrNotFound as the ledger would refuse the anchor
 func (c *Compactor) Folder(ctx context.Context, anchor string) (Folder, error) {
 	all, err := c.ledger.All(ctx)
 	if err != nil {
@@ -124,152 +77,55 @@ func (c *Compactor) Folder(ctx context.Context, anchor string) (Folder, error) {
 	if err != nil {
 		return Folder{}, err
 	}
-	f := Folder{Anchor: anchor, Compactable: compactable, Pending: all.PendingCompaction(compactable.Items), Runs: compactable.Items[0].Run != nil}
-	reviews, err := c.evidence(ctx, f.Items)
+	corrections, err := c.corrections(ctx, compactable.Items)
 	if err != nil {
 		return Folder{}, err
 	}
-	f.Corrections = reviews.corrections()
-	if f.Runs {
-		return f, nil
-	}
-	if c.src == nil {
-		return Folder{}, fmt.Errorf("%w: %s", ErrNoData, anchor)
-	}
-	if f.Replay, f.Unverifiable, err = c.expectations(ctx, reviews); err != nil {
-		return Folder{}, err
-	}
-	return f, nil
+	return Folder{Anchor: anchor, Compactable: compactable, Corrections: corrections, Pending: all.PendingCompaction(compactable.Items)}, nil
 }
 
-// Approval needs a replay so a folder without an expected status cannot be compacted
-func (f Folder) replayable() error {
-	if !f.Runs && len(f.Replay) == 0 {
-		return fmt.Errorf("%w: %s has no label and no edit or approve verdict on the events %s",
-			ErrNothingToReplay, f.Anchor, strings.Join(f.Unverifiable, ", "))
-	}
-	return nil
-}
-
-// Whether a compaction is due and could pass
-// 1. crowding counts the items one review of a change context carries and never the union the draft is written from
-// 2. only here is it known which events have an expected status
+// Whether a compaction is due: one run carries more than FolderItems of the items
 func (f Folder) Due() bool {
-	return f.Crowded() && f.replayable() == nil
+	return f.Crowded()
 }
 
-// Proposes the draft as a compaction of the anchor's folder and returns it with the events its replay reviews
-// 1. an item that names an excluded item fails with knowledge ErrParagraphOnly
-// 2. a folder whose events all lack an expectation fails with ErrNothingToReplay because approval needs a replay
-// 3. the ledger runs the code checks and refuses with their sentinels
-func (c *Compactor) Propose(ctx context.Context, anchor string, d Draft, author string) (knowledge.Compaction, []Expectation, error) {
+// Proposes the draft as a compaction of the anchor's folder
+// The ledger runs the code checks and refuses with their sentinels
+func (c *Compactor) Propose(ctx context.Context, anchor string, d Draft, author string) (knowledge.Compaction, error) {
 	f, err := c.Folder(ctx, anchor)
 	if err != nil {
-		return knowledge.Compaction{}, nil, err
+		return knowledge.Compaction{}, err
 	}
 	return c.propose(ctx, f, d, author)
 }
 
-func (c *Compactor) propose(ctx context.Context, f Folder, d Draft, author string) (knowledge.Compaction, []Expectation, error) {
-	if err := f.replayable(); err != nil {
-		return knowledge.Compaction{}, nil, err
-	}
+func (c *Compactor) propose(ctx context.Context, f Folder, d Draft, author string) (knowledge.Compaction, error) {
 	drafts := make([]knowledge.Knowledge, 0, len(d.Items))
 	for _, item := range d.Items {
-		k, err := item.knowledge(f.Items, f.Excluded, cmp.Or(author, defaultAuthor))
-		if err != nil {
-			return knowledge.Compaction{}, nil, err
-		}
-		drafts = append(drafts, k)
+		drafts = append(drafts, item.knowledge(f.Items, cmp.Or(author, defaultAuthor)))
 	}
-	if err := c.observed(ctx, drafts); err != nil {
-		return knowledge.Compaction{}, nil, err
+	if err := c.recorded(ctx, drafts); err != nil {
+		return knowledge.Compaction{}, err
 	}
-	proposed, err := c.ledger.ProposeCompaction(ctx, f.Anchor, drafts)
-	if err != nil {
-		return knowledge.Compaction{}, nil, err
-	}
-	return proposed, f.Replay, nil
+	return c.ledger.ProposeCompaction(ctx, f.Anchor, drafts)
 }
 
-// Fails naming the draft whose scope names a metric or dim value no event carries or a label no run carries
-func (c *Compactor) observed(ctx context.Context, drafts []knowledge.Knowledge) error {
-	if slices.ContainsFunc(drafts, func(k knowledge.Knowledge) bool { return k.Run != nil }) {
-		return c.recorded(ctx, drafts)
-	}
-	metrics, err := c.src.Metrics(ctx)
-	if err != nil {
-		return err
-	}
-	dims, err := c.src.Dims(ctx)
-	if err != nil {
-		return err
-	}
-	for i, k := range drafts {
-		if err := k.Scope.Observed(metrics, dims); err != nil {
-			return fmt.Errorf("draft %d: %w", i+1, err)
-		}
-	}
-	return nil
-}
-
-// Approves the compaction on behalf of a named person once its replay or its coverage check passed
-// A replay that has not passed fails with the events that missed their expectation
+// Approves the compaction on behalf of a named person once its newest coverage check passed
 func (c *Compactor) Approve(ctx context.Context, id, approver string) (knowledge.Compaction, error) {
-	compaction, err := c.ledger.Compaction(ctx, id)
+	cov, err := c.Coverage(ctx, id)
 	if err != nil {
 		return knowledge.Compaction{}, err
 	}
-	if compaction.Items[0].Run != nil {
-		cov, err := c.Coverage(ctx, id)
-		if err != nil {
-			return knowledge.Compaction{}, err
-		}
-		return c.ledger.ApproveCompaction(ctx, id, approver, cov)
-	}
-	r, err := c.Result(ctx, id)
-	if err != nil {
-		return knowledge.Compaction{}, err
-	}
-	if !r.Passed() {
-		return knowledge.Compaction{}, fmt.Errorf("%w: %s", knowledge.ErrReplayNotPassed, replayFailures(r.Events))
-	}
-	return c.ledger.ApproveCompaction(ctx, id, approver, r)
+	return c.ledger.ApproveCompaction(ctx, id, approver, cov)
 }
 
-// Events that missed their expectation for the person who decides to replay or redraft
-type replayFailures []knowledge.ReplayEvent
-
-func (fs replayFailures) String() string {
-	var parts []string
-	for _, e := range fs {
-		switch {
-		case e.Got == "":
-			parts = append(parts, fmt.Sprintf("%s expects %s and has no replay", e.EventID, e.Expected))
-		case e.Got != e.Expected:
-			parts = append(parts, fmt.Sprintf("%s expects %s and got %s", e.EventID, e.Expected, e.Got))
-		}
-	}
-	if len(parts) == 0 {
-		return "no replay event"
-	}
-	return strings.Join(parts, ", ")
-}
-
-// One evidence trace of an old item with its latest verdict and its latest outcome
-type review struct {
-	trace   trace.Trace
-	verdict *feedback.Feedback
-	outcome *feedback.Outcome
-}
-
-// The evidence traces of the items in the order the items name them
-type reviews []review
-
-// Every feedback and outcome trace the items cite once with its latest verdict and outcome
-// One read of each store serves every trace
+// The latest verdict on every evidence trace of the items, once each in the order the items cite them
 // The first listed record of a trace is its newest
-func (c *Compactor) evidence(ctx context.Context, items knowledge.Set) (reviews, error) {
+func (c *Compactor) corrections(ctx context.Context, items knowledge.Set) ([]Correction, error) {
+	verdicts, err := c.feedback.List(ctx, feedback.Filter{})
+	if err != nil {
+		return nil, err
+	}
 	var ids []string
 	for _, k := range items {
 		for _, id := range k.Evidence.TraceIDs() {
@@ -278,138 +134,29 @@ func (c *Compactor) evidence(ctx context.Context, items knowledge.Set) (reviews,
 			}
 		}
 	}
-	traces, err := c.traces.List(ctx, trace.Filter{})
-	if err != nil {
-		return nil, err
-	}
-	verdicts, err := c.feedback.List(ctx, feedback.Filter{})
-	if err != nil {
-		return nil, err
-	}
-	outcomes, err := c.outcomes.List(ctx, "")
-	if err != nil {
-		return nil, err
-	}
-	out := make(reviews, 0, len(ids))
+	out := []Correction{}
 	for _, id := range ids {
-		i := slices.IndexFunc(traces, trace.Filter{ID: id}.Matches)
-		if i < 0 {
-			return nil, fmt.Errorf("trace %q: %w", id, trace.ErrNotFound)
-		}
-		r := review{trace: traces[i]}
 		if j := slices.IndexFunc(verdicts, feedback.Filter{TraceID: id}.Matches); j >= 0 {
-			r.verdict = &verdicts[j]
+			out = append(out, Correction{TraceID: id, Verdict: verdicts[j].Verdict, Reason: verdicts[j].Reason})
 		}
-		if j := slices.IndexFunc(outcomes, feedback.OutcomeFilter{TraceID: id}.Matches); j >= 0 {
-			r.outcome = &outcomes[j]
-		}
-		out = append(out, r)
 	}
 	return out, nil
 }
 
-func (rs reviews) corrections() []Correction {
-	out := []Correction{}
-	for _, r := range rs {
-		if r.verdict != nil {
-			out = append(out, Correction{TraceID: r.trace.ID, EventID: r.trace.Subject, Verdict: r.verdict.Verdict, Reason: r.verdict.Reason})
-		}
-	}
-	return out
-}
-
-// Event ids in first seen order
-func (rs reviews) events() []string {
-	var out []string
-	for _, r := range rs {
-		if !slices.Contains(out, r.trace.Subject) {
-			out = append(out, r.trace.Subject)
-		}
-	}
-	return out
-}
-
-// The newest evidence trace of the event
-func (rs reviews) newest(eventID string) review {
-	var out review
-	for _, r := range rs {
-		if r.trace.Subject == eventID && (out.trace.ID == "" || r.trace.Time.After(out.trace.Time)) {
-			out = r
-		}
-	}
-	return out
-}
-
-// Labels of the source in source order
-type labelSet []evidence.Label
-
-// The status the first label of the event expects
-func (ls labelSet) expected(event string) (evidence.Status, bool) {
-	for _, l := range ls {
-		if l.EventID == event {
-			return l.Expected, true
-		}
-	}
-	return "", false
-}
-
-// The expected status of every evidence event and the events without one
-// 1. the label of the event when the data set has one
-// 2. otherwise the latest verdict on the newest evidence trace: edit gives the corrected status and approve the recorded one
-// 3. otherwise none because a reject or an outcome says what was wrong and not what is right
-// An approve followed by a refuted outcome gives none because a check showed the approved cause did not hold
-func (c *Compactor) expectations(ctx context.Context, rs reviews) ([]Expectation, []string, error) {
-	all, err := c.src.Labels(ctx)
+// Every draft names labels some recorded run of its producer carries
+// A draft without a producer is left for the ledger to refuse with the scope it lacks
+func (c *Compactor) recorded(ctx context.Context, drafts []knowledge.Knowledge) error {
+	runs, err := c.traces.List(ctx, trace.Filter{Name: trace.NameRun})
 	if err != nil {
-		return nil, nil, err
+		return err
 	}
-	labels := labelSet(all)
-	expected := []Expectation{}
-	unverifiable := []string{}
-	for _, event := range rs.events() {
-		newest := rs.newest(event)
-		if status, ok := labels.expected(event); ok {
-			expected = append(expected, Expectation{EventID: event, Expected: status, Origin: OriginLabel, TraceID: newest.trace.ID})
+	for i, k := range drafts {
+		if k.Run == nil || k.Run.Producer == "" {
 			continue
 		}
-		if e, ok := newest.expectation(); ok {
-			expected = append(expected, e)
-			continue
+		if err := k.Run.Recorded(runs.Vocabulary(k.Run.Producer)); err != nil {
+			return fmt.Errorf("draft %d: %w", i+1, err)
 		}
-		unverifiable = append(unverifiable, event)
 	}
-	return expected, unverifiable, nil
-}
-
-// The status the verdict on this review asks for
-// False without a verdict that names a status
-func (r review) expectation() (Expectation, bool) {
-	if r.verdict == nil {
-		return Expectation{}, false
-	}
-	var origin Origin
-	var review json.RawMessage
-	switch r.verdict.Verdict {
-	case feedback.VerdictEdit:
-		origin, review = OriginEdit, r.verdict.Edited
-	case feedback.VerdictApprove:
-		if r.refutedSinceVerdict() {
-			return Expectation{}, false
-		}
-		origin, review = OriginApproval, r.trace.Output
-	default:
-		return Expectation{}, false
-	}
-	var status struct {
-		Status evidence.Status `json:"status"`
-	}
-	if json.Unmarshal(review, &status) != nil || !status.Status.Valid() {
-		return Expectation{}, false
-	}
-	return Expectation{EventID: r.trace.Subject, Expected: status.Status, Origin: origin, TraceID: r.trace.ID}, true
-}
-
-// Whether the latest outcome refuted the review at or after its latest verdict
-func (r review) refutedSinceVerdict() bool {
-	return r.outcome != nil && r.outcome.RefutedSince(r.verdict.Time)
+	return nil
 }

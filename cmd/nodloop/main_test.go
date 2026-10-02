@@ -75,21 +75,6 @@ func TestRun(t *testing.T) {
 			want{1, "", `^flag provided but not defined: -nope\n`},
 		},
 		{
-			"setup without a data dir fails",
-			args{[]string{"setup"}, nil},
-			want{1, "", `^nodloop setup: --data-dir is required\n\nusage:`},
-		},
-		{
-			"evidence without an action fails",
-			args{[]string{"evidence"}, nil},
-			want{1, "", `^nodloop evidence: an action is required\n\nusage:`},
-		},
-		{
-			"analysis without an action fails",
-			args{[]string{"analysis"}, nil},
-			want{1, "", `^nodloop analysis: an action is required\n\nusage:`},
-		},
-		{
 			"trace without an action fails",
 			args{[]string{"trace"}, nil},
 			want{1, "", `^nodloop trace: an action is required\n\nusage:`},
@@ -105,19 +90,19 @@ func TestRun(t *testing.T) {
 			want{1, "", `^nodloop knowledge: an action is required\n\nusage:`},
 		},
 		{
-			"diagnose without an event fails",
+			"run without an action fails",
+			args{[]string{"run"}, nil},
+			want{1, "", `^nodloop run: an action is required\n\nusage:`},
+		},
+		{
+			"removed data commands are unknown",
 			args{[]string{"diagnose"}, nil},
-			want{1, "", `^nodloop diagnose: --event is required\n\nusage:`},
+			want{1, "", `^nodloop: unknown command "diagnose"\n\nusage:`},
 		},
 		{
 			"mcp fails on an unknown flag",
 			args{[]string{"mcp", "--nope"}, nil},
 			want{1, "", `^flag provided but not defined: -nope\n`},
-		},
-		{
-			"eval without an action fails",
-			args{[]string{"eval"}, nil},
-			want{1, "", `^nodloop eval: an action is required\n\nusage:`},
 		},
 	}
 	for _, tc := range tcs {

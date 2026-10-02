@@ -2,8 +2,6 @@ package testkit_test
 
 import (
 	"context"
-	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -17,14 +15,12 @@ import (
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
 )
 
-// The demo source serves the checked in data and every record store starts empty
+// Every record store starts empty
 func TestOpen(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	st := testkit.Open(t)
 
-	ev, err := st.Source.Event(ctx, "tq-001")
-	require.NoError(t, err)
 	traces, err := st.Traces.List(ctx, trace.Filter{})
 	require.NoError(t, err)
 	verdicts, err := st.Feedback.List(ctx, feedback.Filter{})
@@ -33,22 +29,10 @@ func TestOpen(t *testing.T) {
 	require.NoError(t, err)
 	items, err := st.Ledger.All(ctx)
 	require.NoError(t, err)
-	assert.Equal(t, "tq-001", ev.ID)
 	assert.Empty(t, traces)
 	assert.Empty(t, verdicts)
 	assert.Empty(t, outcomes)
 	assert.Empty(t, items)
-}
-
-func TestDemoDir(t *testing.T) {
-	t.Parallel()
-	_, err := os.Stat(filepath.Join(testkit.DemoDir(t), "events.csv"))
-	assert.NoError(t, err)
-}
-
-func TestPolicy(t *testing.T) {
-	t.Parallel()
-	assert.Equal(t, "demo-1", testkit.Policy(t).Version)
 }
 
 // Each read returns the current time and moves the clock one step
@@ -104,15 +88,15 @@ func TestPanickingTracesAppend(t *testing.T) {
 		panics assert.PanicAssertionFunc
 		want   int
 	}{
-		{"a trace of another name is stored", trace.NameDiagnose, assert.NotPanics, 1},
-		{"a trace of the name panics", trace.NameRevise, assert.Panics, 0},
+		{"a trace of another name is stored", trace.NameRun, assert.NotPanics, 1},
+		{"a trace of the name panics", trace.NameCheck, assert.Panics, 0},
 	}
 	ctx := context.Background()
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			st := testkit.Open(t)
-			traces := testkit.PanickingTraces{Store: st.Traces, Name: trace.NameRevise}
+			traces := testkit.PanickingTraces{Store: st.Traces, Name: trace.NameCheck}
 			tr := trace.Trace{ID: "t-1", Name: tc.args, Time: st.Clock.Now()}
 			tc.panics(t, func() { _ = traces.Append(ctx, tr) })
 			stored, err := st.Traces.List(ctx, trace.Filter{})

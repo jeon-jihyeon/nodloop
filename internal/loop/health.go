@@ -7,29 +7,28 @@ import (
 	"slices"
 	"time"
 
-	"github.com/jeon-jihyeon/nodloop/internal/evidence"
 	"github.com/jeon-jihyeon/nodloop/internal/feedback"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
 )
 
-// How the conversation reviews that applied one knowledge version held up
-// An association and not the effect of the item since a review applies several items and its cause may lie elsewhere
+// How the runs that applied one knowledge version held up
+// An association and not the effect of the item since a run applies several items and its cause may lie elsewhere
 type Health struct {
 	ID      string           `json:"id"`
 	Version int              `json:"version"`
 	Status  knowledge.Status `json:"status"`
-	// Reviews whose model received the version
+	// Runs that received the version
 	Applied  int `json:"applied"`
 	Approved int `json:"approved"`
 	Edited   int `json:"edited"`
 	Rejected int `json:"rejected"`
-	// Outcomes of those reviews
+	// Outcomes of those runs
 	Confirmed    int `json:"confirmed"`
 	Refuted      int `json:"refuted"`
 	Inconclusive int `json:"inconclusive"`
-	// Outcomes the version takes over from reviews of the versions a compaction merged into it
-	// Only reviews of a change context and a moved metric it still reaches that no narrowing answered
+	// Outcomes the version takes over from runs of the versions a compaction merged into it
+	// Only runs it still reaches that no narrowing answered
 	CarriedConfirmed int `json:"carried_confirmed,omitempty"`
 	CarriedRefuted   int `json:"carried_refuted,omitempty"`
 	// An approved version with a refuted outcome and no more confirmed than refuted
@@ -119,19 +118,11 @@ type Issue struct {
 }
 
 // Broken references of the current items in id order
-// 1. evidence trace ids must name a diagnose trace with feedback or with an outcome in any mode since seed knowledge cites batch reviews
-// 2. paragraph ids must be paragraphs of the procedures
-// 3. knowledge refs must name a recorded version
-// 4. scope change contexts and exceptions must be valid and scope metrics and dim values must be observed in some event
-// 5. exceptions must leave some change context of the scope or the item never applies
-func (h *History) BrokenReferences(
-	procedures evidence.Procedures, metrics []string, dims knowledge.Dims, contexts evidence.Contexts,
-) []Issue {
-	refs := references{feedback: h.withFeedback, outcomes: h.withOutcome, paragraphs: map[string]bool{},
-		versions: map[knowledge.Ref]bool{}, metrics: metrics, dims: dims, contexts: contexts, vocabulary: h.vocabulary}
-	for _, p := range procedures.Paragraphs() {
-		refs.paragraphs[string(p.ID)] = true
-	}
+// 1. evidence trace ids must name a run with feedback or with an outcome
+// 2. knowledge refs must name a recorded version
+// 3. every label and exception of a run scope must be one a run of its producer carries
+func (h *History) BrokenReferences() []Issue {
+	refs := references{feedback: h.withFeedback, outcomes: h.withOutcome, versions: map[knowledge.Ref]bool{}, vocabulary: h.vocabulary}
 	for _, k := range h.knowledge {
 		refs.versions[knowledge.Ref{ID: k.ID, Version: k.Version}] = true
 	}
@@ -144,12 +135,8 @@ func (h *History) BrokenReferences(
 
 // What the references of an item may resolve to
 type references struct {
-	feedback, outcomes, paragraphs map[string]bool
-	versions                       map[knowledge.Ref]bool
-	metrics                        []string
-	dims                           knowledge.Dims
-	// A scope context the policy no longer declares reaches no event
-	contexts evidence.Contexts
+	feedback, outcomes map[string]bool
+	versions           map[knowledge.Ref]bool
 	// Labels the runs of each producer carry
 	vocabulary map[string]trace.Labels
 }
@@ -163,27 +150,11 @@ func (refs references) issues(k knowledge.Knowledge) []Issue {
 	for _, id := range k.Evidence.OutcomeTraceIDs {
 		found.check("outcome_trace_ids", id, refs.outcomes[id])
 	}
-	for _, id := range k.Evidence.ParagraphIDs {
-		found.check("paragraph_ids", id, refs.paragraphs[id])
-	}
 	for _, ref := range k.Evidence.Knowledge {
 		found.check("knowledge", fmt.Sprintf("%s v%d", ref.ID, ref.Version), refs.versions[ref])
 	}
 	if k.Run != nil {
 		return refs.runIssues(found, *k.Run)
-	}
-	for _, c := range k.Scope.ChangeContexts {
-		found.check("change_contexts", string(c), refs.contexts.Valid(c))
-	}
-	for _, c := range k.Exceptions {
-		found.check("exceptions", string(c), refs.contexts.Valid(c))
-	}
-	found.check("exceptions", fmt.Sprint(k.Exceptions), !k.Excluded(refs.contexts))
-	for _, m := range k.Scope.Metrics {
-		found.check("metrics", m, slices.Contains(refs.metrics, m))
-	}
-	for _, key := range slices.Sorted(maps.Keys(k.Scope.Dims)) {
-		found.check("dims", key+"="+k.Scope.Dims[key], refs.dims.Has(key, k.Scope.Dims[key]))
 	}
 	return found.list
 }
@@ -218,27 +189,11 @@ func (is *issues) check(field, ref string, resolved bool) {
 	}
 }
 
-// The declared change contexts of the conversation reviews that applied the version or passed their outcome to it and were refuted
-// Sorted once each so a narrowing proposal reads the same whatever the record order
-func (h *History) RefutedContexts(id string, version int, contexts evidence.Contexts) []evidence.Context {
-	var out []evidence.Context
-	for _, r := range h.resulted(knowledge.Ref{ID: id, Version: version}, feedback.ResultRefuted) {
-		if contexts.Valid(r.ChangeContext) && !slices.Contains(out, r.ChangeContext) {
-			out = append(out, r.ChangeContext)
-		}
-	}
-	slices.Sort(out)
-	return out
-}
-
 // The values of the key that the refuted runs which applied the version carried
 // Sorted once each so a narrowing proposal reads the same whatever the record order
 func (h *History) RefutedValues(id string, version int, key string) []string {
 	var out []string
 	for _, r := range h.resulted(knowledge.Ref{ID: id, Version: version}, feedback.ResultRefuted) {
-		if !r.isRun() {
-			continue
-		}
 		for _, v := range r.trace.Labels[key] {
 			if !slices.Contains(out, v) {
 				out = append(out, v)
@@ -249,13 +204,13 @@ func (h *History) RefutedValues(id string, version int, key string) []string {
 	return out
 }
 
-// The trace ids of the conversation reviews that applied the version or passed their outcome to it and were refuted
+// The trace ids of the runs that applied the version or passed their outcome to it and were refuted
 // Sorted so a narrowing proposal reads the same whatever the record order
 func (h *History) RefutedTraces(id string, version int) []string {
 	return h.traces(knowledge.Ref{ID: id, Version: version}, feedback.ResultRefuted)
 }
 
-// The trace ids of the conversation reviews that applied the version or passed their outcome to it and were confirmed
+// The trace ids of the runs that applied the version or passed their outcome to it and were confirmed
 // Sorted so a promotion proposal reads the same whatever the record order
 func (h *History) ConfirmedTraces(id string, version int) []string {
 	return h.traces(knowledge.Ref{ID: id, Version: version}, feedback.ResultConfirmed)
@@ -270,7 +225,7 @@ func (h *History) traces(ref knowledge.Ref, result feedback.Result) []string {
 	return out
 }
 
-// The conversation reviews that applied the version or passed their outcome to it and whose latest outcome is result
+// The runs that applied the version or passed their outcome to it and whose latest outcome is result
 func (h *History) resulted(ref knowledge.Ref, result feedback.Result) []review {
 	var out []review
 	for _, r := range h.reviews {
@@ -286,12 +241,12 @@ func (h *History) resulted(ref knowledge.Ref, result feedback.Result) []review {
 	return out
 }
 
-// The conversation reviews with an outcome that pass it to the version
-// A review that applied several merged versions counts once
+// The runs with an outcome that pass it to the version
+// A run that applied several merged versions counts once
 func (h *History) inherited(ref knowledge.Ref) []review {
 	var out []review
 	for _, r := range h.reviews {
-		if _, ok := h.outcomes[r.trace.ID]; ok && h.knowledge.Inherits(ref, r.trace.ID, r.applied(), r.ChangeContext, r.Moved) {
+		if _, ok := h.outcomes[r.trace.ID]; ok && h.knowledge.Inherits(ref, r.trace.ID, r.applied(), r.trace.Producer, r.trace.Labels) {
 			out = append(out, r)
 		}
 	}

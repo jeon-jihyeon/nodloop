@@ -1,516 +1,122 @@
 package loop_test
 
 import (
-	"slices"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeon-jihyeon/nodloop/internal/diagnose"
-	"github.com/jeon-jihyeon/nodloop/internal/evidence"
 	"github.com/jeon-jihyeon/nodloop/internal/feedback"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	"github.com/jeon-jihyeon/nodloop/internal/loop"
+	"github.com/jeon-jihyeon/nodloop/internal/trace"
 )
 
-func verified(k knowledge.Knowledge) knowledge.Knowledge {
-	k.Basis = knowledge.BasisVerified
-	return k
-}
-
 func TestHistoryHealth(t *testing.T) {
-	k1 := item("k", 1, knowledge.StatusApproved)
-	later := monday.Add(time.Hour)
-	uses := []diagnose.AppliedKnowledge{applied("k", 1), applied("k", 1)}
-	type args struct {
-		reviews  []review
-		verdicts feedback.Records
-		outcomes feedback.Outcomes
-		items    knowledge.Set
-		now      time.Time
+	gitC := knowledge.Ref{ID: "git-c", Version: 1}
+	runs := trace.Traces{
+		sessionRun(t, "r1", 1, "nodloop", gitC),
+		sessionRun(t, "r2", 2, "nodloop", gitC),
+		sessionRun(t, "r3", 3, "nodloop", gitC),
+	}
+	type want struct {
+		applied, approved, rejected, confirmed, refuted int
+		retire, promote                                 bool
 	}
 	tcs := []struct {
 		name string
-		args args
-		want loop.Health
+		args feedback.Outcomes
+		want want
 	}{
-		{
-			"an unapplied version has zero counts",
-			args{items: knowledge.Set{k1}, now: monday},
-			loop.Health{ID: "k", Version: 1, Status: knowledge.StatusApproved, LastReviewed: monday},
-		},
-		{
-			"a review counts once even when it lists the version twice",
-			args{reviews: []review{{id: "r", knowledge: uses}}, items: knowledge.Set{k1}, now: monday},
-			loop.Health{ID: "k", Version: 1, Status: knowledge.StatusApproved, Applied: 1, LastReviewed: monday},
-		},
-		{
-			"an item that never reached the model is not applied",
-			args{
-				reviews: []review{{id: "r", knowledge: []diagnose.AppliedKnowledge{{ID: "k", Version: 1}}}},
-				items:   knowledge.Set{k1}, now: monday,
-			},
-			loop.Health{ID: "k", Version: 1, Status: knowledge.StatusApproved, LastReviewed: monday},
-		},
-		{
-			"another version of the id is not counted",
-			args{reviews: []review{{id: "r", knowledge: []diagnose.AppliedKnowledge{applied("k", 2)}}}, items: knowledge.Set{k1}, now: monday},
-			loop.Health{ID: "k", Version: 1, Status: knowledge.StatusApproved, LastReviewed: monday},
-		},
-		{
-			"the latest verdict and outcome count and a refuted one flags a retire candidate",
-			args{
-				reviews: []review{{id: "r", knowledge: uses}},
-				verdicts: feedback.Records{
-					verdict("r", feedback.VerdictReject, later), verdict("r", feedback.VerdictApprove, monday),
-				},
-				outcomes: feedback.Outcomes{
-					outcome("r", feedback.ResultRefuted, later), outcome("r", feedback.ResultConfirmed, monday),
-				},
-				items: knowledge.Set{k1}, now: monday,
-			},
-			loop.Health{
-				ID: "k", Version: 1, Status: knowledge.StatusApproved, Applied: 1, Rejected: 1, Refuted: 1,
-				RetireCandidate: true, LastReviewed: monday,
-			},
-		},
-		{
-			"a tie of confirmed and refuted still flags",
-			args{
-				reviews:  []review{{id: "r1", knowledge: uses}, {id: "r2", knowledge: uses}},
-				outcomes: feedback.Outcomes{outcome("r1", feedback.ResultRefuted, monday), outcome("r2", feedback.ResultConfirmed, monday)},
-				items:    knowledge.Set{k1}, now: monday,
-			},
-			loop.Health{
-				ID: "k", Version: 1, Status: knowledge.StatusApproved, Applied: 2, Confirmed: 1, Refuted: 1,
-				RetireCandidate: true, LastReviewed: monday,
-			},
-		},
-		{
-			"more confirmed than refuted does not flag",
-			args{
-				reviews: []review{{id: "r1", knowledge: uses}, {id: "r2", knowledge: uses}, {id: "r3", knowledge: uses}},
-				outcomes: feedback.Outcomes{
-					outcome("r1", feedback.ResultRefuted, monday), outcome("r2", feedback.ResultConfirmed, monday),
-					outcome("r3", feedback.ResultConfirmed, monday),
-				},
-				items: knowledge.Set{k1}, now: monday,
-			},
-			loop.Health{ID: "k", Version: 1, Status: knowledge.StatusApproved, Applied: 3, Confirmed: 2, Refuted: 1, LastReviewed: monday},
-		},
-		{
-			"a confirmed outcome and none refuted flags a stated version for promotion",
-			args{
-				reviews:  []review{{id: "r1", knowledge: uses}, {id: "r2", knowledge: uses}},
-				outcomes: feedback.Outcomes{outcome("r1", feedback.ResultConfirmed, monday), outcome("r2", feedback.ResultInconclusive, monday)},
-				items:    knowledge.Set{k1}, now: monday,
-			},
-			loop.Health{
-				ID: "k", Version: 1, Status: knowledge.StatusApproved, Applied: 2, Confirmed: 1, Inconclusive: 1,
-				PromotionCandidate: true, LastReviewed: monday,
-			},
-		},
-		{
-			"a verified version is never a promotion candidate",
-			args{
-				reviews:  []review{{id: "r1", knowledge: uses}},
-				outcomes: feedback.Outcomes{outcome("r1", feedback.ResultConfirmed, monday)},
-				items:    knowledge.Set{verified(k1)}, now: monday,
-			},
-			loop.Health{ID: "k", Version: 1, Status: knowledge.StatusApproved, Applied: 1, Confirmed: 1, LastReviewed: monday},
-		},
-		{
-			"a candidate version is never a promotion candidate",
-			args{
-				reviews:  []review{{id: "r1", knowledge: uses}},
-				outcomes: feedback.Outcomes{outcome("r1", feedback.ResultConfirmed, monday)},
-				items:    knowledge.Set{item("k", 1, knowledge.StatusCandidate)}, now: monday,
-			},
-			loop.Health{ID: "k", Version: 1, Status: knowledge.StatusCandidate, Applied: 1, Confirmed: 1, LastReviewed: monday},
-		},
-		{
-			"a session outcome and a batch review of an eval session are left out",
-			args{
-				reviews: []review{{id: "r1", knowledge: uses}, {id: "r2", knowledge: uses, batch: true, session: "s1"}},
-				outcomes: feedback.Outcomes{{
-					TraceID: "r1", Result: feedback.ResultRefuted, Time: monday, Reviewer: feedback.ReviewerSession,
-				}},
-				items: knowledge.Set{k1}, now: monday,
-			},
-			loop.Health{ID: "k", Version: 1, Status: knowledge.StatusApproved, Applied: 1, LastReviewed: monday},
-		},
-		{
-			"an approved version past the deadline is stale",
-			args{items: knowledge.Set{k1}, now: monday.AddDate(0, 0, knowledge.ReviewDays)},
-			loop.Health{ID: "k", Version: 1, Status: knowledge.StatusApproved, LastReviewed: monday, Stale: true},
-		},
+		{"a confirmed run makes a stated version a promotion candidate", feedback.Outcomes{
+			outcome("r1", feedback.ResultConfirmed, monday.Add(5*time.Hour)),
+		}, want{applied: 3, approved: 1, rejected: 1, confirmed: 1, promote: true}},
+		{"a refuted run with no more confirmed makes it a retire candidate", feedback.Outcomes{
+			outcome("r1", feedback.ResultConfirmed, monday.Add(5*time.Hour)),
+			outcome("r2", feedback.ResultRefuted, monday.Add(5*time.Hour)),
+		}, want{applied: 3, approved: 1, rejected: 1, confirmed: 1, refuted: 1, retire: true}},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			h, err := loop.New(traces(t, tc.args.reviews...), tc.args.verdicts, tc.args.outcomes, tc.args.items)
-			require.NoError(t, err)
-			assert.Equal(t, []loop.Health{tc.want}, h.Health(tc.args.now))
+			verdicts := feedback.Records{
+				verdict("r1", feedback.VerdictApprove, monday.Add(4*time.Hour)),
+				verdict("r2", feedback.VerdictReject, monday.Add(4*time.Hour)),
+			}
+			h := loop.New(runs, verdicts, tc.args, knowledge.Set{runItem("git-c", 1)})
+
+			got := h.Health(monday)
+
+			require.Len(t, got, 1)
+			assert.Equal(t, tc.want.applied, got[0].Applied)
+			assert.Equal(t, tc.want.approved, got[0].Approved)
+			assert.Equal(t, tc.want.rejected, got[0].Rejected)
+			assert.Equal(t, tc.want.confirmed, got[0].Confirmed)
+			assert.Equal(t, tc.want.refuted, got[0].Refuted)
+			assert.Equal(t, tc.want.retire, got[0].RetireCandidate)
+			assert.Equal(t, tc.want.promote, got[0].PromotionCandidate)
 		})
 	}
 }
 
-func TestHistoryHealthOrder(t *testing.T) {
-	type row struct {
-		id      string
-		version int
+// A version a compaction made takes over the outcomes of runs that applied the versions it merged while it still reaches them
+func TestHistoryCarriedOutcomes(t *testing.T) {
+	old := knowledge.Ref{ID: "old", Version: 1}
+	merged := runItem("new", 1)
+	merged.Compaction, merged.Evidence.Knowledge = "c-1", []knowledge.Ref{old}
+	elsewhere := runItem("narrow", 1)
+	elsewhere.Compaction, elsewhere.Evidence.Knowledge = "c-2", []knowledge.Ref{old}
+	elsewhere.Run = &knowledge.RunScope{Producer: "session", Labels: trace.Labels{"repo": {"other"}}}
+	runs := trace.Traces{sessionRun(t, "r1", 1, "nodloop", old)}
+	outcomes := feedback.Outcomes{outcome("r1", feedback.ResultRefuted, monday.Add(time.Hour))}
+
+	h := loop.New(runs, nil, outcomes, knowledge.Set{merged, elsewhere, runItem("old", 1)})
+
+	rows := map[string]loop.Health{}
+	for _, row := range h.Health(monday) {
+		rows[row.ID] = row
 	}
-	tcs := []struct {
-		name string
-		args knowledge.Set
-		want []row
-	}{
-		{
-			"rows sort by id then version",
-			knowledge.Set{item("b", 1, knowledge.StatusApproved), item("a", 2, knowledge.StatusCandidate), item("a", 1, knowledge.StatusApproved)},
-			[]row{{"a", 1}, {"a", 2}, {"b", 1}},
-		},
+	assert.Equal(t, 1, rows["new"].CarriedRefuted)
+	assert.Zero(t, rows["narrow"].CarriedRefuted, "a merged version that no longer reaches the run takes nothing over")
+	assert.Equal(t, []string{"r1"}, h.RefutedTraces("new", 1))
+}
+
+func TestHistoryRefutedValues(t *testing.T) {
+	gitC := knowledge.Ref{ID: "git-c", Version: 1}
+	docs := sessionRun(t, "r1", 1, "nodloop", gitC)
+	docs.Labels["dir"] = []string{"docs"}
+	runs := trace.Traces{docs, sessionRun(t, "r2", 2, "nodloop", gitC)}
+	outcomes := feedback.Outcomes{
+		outcome("r1", feedback.ResultRefuted, monday.Add(3*time.Hour)),
+		outcome("r2", feedback.ResultConfirmed, monday.Add(3*time.Hour)),
 	}
-	for _, tc := range tcs {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			h, err := loop.New(nil, nil, nil, tc.args)
-			require.NoError(t, err)
-			var got []row
-			for _, health := range h.Health(monday) {
-				got = append(got, row{health.ID, health.Version})
-			}
-			assert.Equal(t, tc.want, got)
-		})
-	}
+
+	h := loop.New(runs, nil, outcomes, knowledge.Set{runItem("git-c", 1)})
+
+	assert.Equal(t, []string{"docs"}, h.RefutedValues("git-c", 1, "dir"))
+	assert.Empty(t, h.RefutedValues("git-c", 1, "task"))
+	assert.Equal(t, []string{"r1"}, h.RefutedTraces("git-c", 1))
+	assert.Equal(t, []string{"r2"}, h.ConfirmedTraces("git-c", 1))
 }
 
 func TestHistoryBrokenReferences(t *testing.T) {
-	procedures := evidence.Procedures{{Slug: "p", Paragraphs: []evidence.Paragraph{{ID: "p#1"}}}}
-	withFeedback := review{id: "with-feedback", batch: true}
-	withOutcome := review{id: "with-outcome"}
-	type args struct {
-		evidence   knowledge.Evidence
-		scope      knowledge.Scope
-		exceptions []evidence.Context
-		// What the policy declares now
-		// Nil reads as the default five
-		contexts evidence.Contexts
-	}
-	tcs := []struct {
-		name string
-		args args
-		want []loop.Issue
-	}{
-		{
-			"a default change context the policy no longer declares",
-			args{
-				evidence: knowledge.Evidence{ParagraphIDs: []string{"p#1"}},
-				scope:    knowledge.Scope{Scope: evidence.Scope{ChangeContexts: []evidence.Context{evidence.ContextPlannedChange}}},
-				contexts: evidence.Contexts{{Name: "deploy"}, {Name: evidence.ContextUnknown}},
-			},
-			[]loop.Issue{{ID: "k", Version: 2, Field: "change_contexts", Reference: "planned_operational_change"}},
-		},
-		{
-			"every reference resolves",
-			args{
-				evidence: knowledge.Evidence{
-					FeedbackTraceIDs: []string{"with-feedback"}, OutcomeTraceIDs: []string{"with-outcome"},
-					ParagraphIDs: []string{"p#1"}, Knowledge: []knowledge.Ref{{ID: "k", Version: 1}},
-				},
-				scope:      knowledge.Scope{Scope: evidence.Scope{ChangeContexts: []evidence.Context{evidence.ContextUnknown}, Metrics: []string{"clicks"}}},
-				exceptions: []evidence.Context{evidence.ContextPlannedChange},
-			},
-			[]loop.Issue{},
-		},
-		{
-			"a feedback trace without feedback",
-			args{evidence: knowledge.Evidence{FeedbackTraceIDs: []string{"with-outcome", "with-outcome"}}},
-			[]loop.Issue{{ID: "k", Version: 2, Field: "feedback_trace_ids", Reference: "with-outcome"}},
-		},
-		{
-			"an outcome trace without an outcome",
-			args{evidence: knowledge.Evidence{OutcomeTraceIDs: []string{"with-feedback"}}},
-			[]loop.Issue{{ID: "k", Version: 2, Field: "outcome_trace_ids", Reference: "with-feedback"}},
-		},
-		{
-			"a paragraph outside the procedures",
-			args{evidence: knowledge.Evidence{ParagraphIDs: []string{"p#9"}}},
-			[]loop.Issue{{ID: "k", Version: 2, Field: "paragraph_ids", Reference: "p#9"}},
-		},
-		{
-			"a knowledge ref never recorded",
-			args{evidence: knowledge.Evidence{ParagraphIDs: []string{"p#1"}, Knowledge: []knowledge.Ref{{ID: "gone", Version: 3}}}},
-			[]loop.Issue{{ID: "k", Version: 2, Field: "knowledge", Reference: "gone v3"}},
-		},
-		{
-			"an unknown change context and exception and an unobserved metric",
-			args{
-				evidence:   knowledge.Evidence{ParagraphIDs: []string{"p#1"}},
-				scope:      knowledge.Scope{Scope: evidence.Scope{ChangeContexts: []evidence.Context{"old"}, Metrics: []string{"views"}}},
-				exceptions: []evidence.Context{"older"},
-			},
-			[]loop.Issue{
-				{ID: "k", Version: 2, Field: "change_contexts", Reference: "old"},
-				{ID: "k", Version: 2, Field: "exceptions", Reference: "older"},
-				{ID: "k", Version: 2, Field: "metrics", Reference: "views"},
-			},
-		},
-		{
-			"a dim key and a dim value no event carries",
-			args{
-				evidence: knowledge.Evidence{ParagraphIDs: []string{"p#1"}},
-				scope:    knowledge.Scope{Dims: map[string]string{"source": "source_a", "platform": "ios"}},
-			},
-			[]loop.Issue{
-				{ID: "k", Version: 2, Field: "dims", Reference: "platform=ios"},
-				{ID: "k", Version: 2, Field: "dims", Reference: "source=source_a"},
-			},
-		},
-		{
-			"exceptions that cover every scoped change context",
-			args{
-				evidence:   knowledge.Evidence{ParagraphIDs: []string{"p#1"}},
-				scope:      knowledge.Scope{Scope: evidence.Scope{ChangeContexts: []evidence.Context{evidence.ContextNoKnownChange}}},
-				exceptions: []evidence.Context{evidence.ContextNoKnownChange},
-			},
-			[]loop.Issue{{ID: "k", Version: 2, Field: "exceptions", Reference: "[no_known_change]"}},
-		},
-	}
-	for _, tc := range tcs {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			contexts := tc.args.contexts
-			if contexts == nil {
-				contexts = evidence.DefaultContexts()
-			}
-			audited := item("k", 2, knowledge.StatusApproved)
-			audited.Evidence, audited.Scope, audited.Exceptions = tc.args.evidence, tc.args.scope, tc.args.exceptions
-			superseded := item("k", 1, knowledge.StatusSuperseded)
-			h, err := loop.New(
-				traces(t, withFeedback, withOutcome),
-				feedback.Records{verdict("with-feedback", feedback.VerdictApprove, monday)},
-				feedback.Outcomes{outcome("with-outcome", feedback.ResultConfirmed, monday)},
-				knowledge.Set{audited, superseded},
-			)
-			require.NoError(t, err)
-			assert.Equal(t, tc.want, h.BrokenReferences(procedures, []string{"clicks"}, knowledge.Dims{"source": {"source-a": {}}}, contexts))
-		})
-	}
-}
+	runs := trace.Traces{sessionRun(t, "taught", 0, "nodloop")}
+	verdicts := feedback.Records{verdict("taught", feedback.VerdictEdit, monday)}
+	ok := runItem("ok", 1)
+	moved := runItem("moved", 1)
+	moved.Run.Labels = trace.Labels{"repo": {"renamed"}}
+	moved.Run.Except = trace.Labels{"dir": {"gone"}}
+	lost := runItem("lost", 1)
+	lost.Evidence = knowledge.Evidence{FeedbackTraceIDs: []string{"missing"}, OutcomeTraceIDs: []string{"taught"}, Knowledge: []knowledge.Ref{{ID: "x", Version: 1}}}
 
-func TestHistoryRefuted(t *testing.T) {
-	uses := []diagnose.AppliedKnowledge{applied("k", 1)}
-	type args struct {
-		reviews []review
-		refuted []string
-	}
-	type want struct {
-		contexts []evidence.Context
-		traceIDs []string
-	}
-	tcs := []struct {
-		name string
-		args args
-		want want
-	}{
-		{"no refuted review gives nothing", args{reviews: []review{{id: "r1", knowledge: uses}}}, want{}},
-		{
-			"refuted reviews give their contexts once and their ids sorted",
-			args{
-				reviews: []review{
-					{id: "r3", knowledge: uses, context: evidence.ContextUnknown},
-					{id: "r2", knowledge: uses, context: evidence.ContextPlannedChange},
-					{id: "r1", knowledge: uses, context: evidence.ContextUnknown},
-					{id: "r4", context: evidence.ContextNoKnownChange},
-				},
-				refuted: []string{"r1", "r2", "r3", "r4"},
-			},
-			want{
-				contexts: []evidence.Context{evidence.ContextPlannedChange, evidence.ContextUnknown},
-				traceIDs: []string{"r1", "r2", "r3"},
-			},
-		},
-	}
-	for _, tc := range tcs {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			var outcomes feedback.Outcomes
-			for _, id := range tc.args.refuted {
-				outcomes = append(outcomes, outcome(id, feedback.ResultRefuted, monday))
-			}
-			h, err := loop.New(traces(t, tc.args.reviews...), nil, outcomes, knowledge.Set{item("k", 1, knowledge.StatusApproved)})
-			require.NoError(t, err)
-			assert.Equal(t, tc.want.contexts, h.RefutedContexts("k", 1, evidence.DefaultContexts()))
-			assert.Equal(t, tc.want.traceIDs, h.RefutedTraces("k", 1))
-		})
-	}
-}
+	h := loop.New(runs, verdicts, nil, knowledge.Set{ok, moved, lost})
 
-func TestHistoryConfirmedTraces(t *testing.T) {
-	uses := []diagnose.AppliedKnowledge{applied("k", 1)}
-	type args struct {
-		reviews  []review
-		outcomes feedback.Outcomes
-	}
-	tcs := []struct {
-		name string
-		args args
-		want []string
-	}{
-		{"no confirmed review gives nothing", args{reviews: []review{{id: "r1", knowledge: uses}}}, nil},
-		{
-			"confirmed reviews of the version give their ids sorted and the rest stay out",
-			args{
-				reviews: []review{
-					{id: "r3", knowledge: uses}, {id: "r2", knowledge: uses}, {id: "r1", knowledge: uses}, {id: "r4"},
-				},
-				outcomes: feedback.Outcomes{
-					outcome("r3", feedback.ResultConfirmed, monday), outcome("r1", feedback.ResultConfirmed, monday),
-					outcome("r2", feedback.ResultRefuted, monday), outcome("r4", feedback.ResultConfirmed, monday),
-				},
-			},
-			[]string{"r1", "r3"},
-		},
-		{
-			"a later refutation replaces a confirmation",
-			args{
-				reviews: []review{{id: "r1", knowledge: uses}},
-				outcomes: feedback.Outcomes{
-					outcome("r1", feedback.ResultRefuted, monday.Add(time.Hour)), outcome("r1", feedback.ResultConfirmed, monday),
-				},
-			},
-			nil,
-		},
-	}
-	for _, tc := range tcs {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			h, err := loop.New(traces(t, tc.args.reviews...), nil, tc.args.outcomes, knowledge.Set{item("k", 1, knowledge.StatusApproved)})
-			require.NoError(t, err)
-			assert.Equal(t, tc.want, h.ConfirmedTraces("k", 1))
-		})
-	}
-}
-
-// Outcomes of reviews that applied versions a compaction merged pass to the version it made
-func TestHistoryCarriedOutcomes(t *testing.T) {
-	quiet := knowledge.Scope{Scope: evidence.Scope{ChangeContexts: []evidence.Context{evidence.ContextNoKnownChange}}}
-	merged := func(id string, version int) knowledge.Knowledge {
-		k := item(id, version, knowledge.StatusSuperseded)
-		if id == "y" {
-			k.Status = knowledge.StatusRetired
-		}
-		return k
-	}
-	x1, y1 := merged("x", 1), merged("y", 1)
-	// x v2 compacts x v1 and y v1 into no_known_change
-	compacted := func(edit func(*knowledge.Knowledge)) knowledge.Knowledge {
-		k := item("x", 2, knowledge.StatusApproved)
-		k.Scope, k.Compaction, k.Supersedes = quiet, "c-1", 1
-		k.Evidence.Knowledge = []knowledge.Ref{{ID: "x", Version: 1}, {ID: "y", Version: 1}}
-		edit(&k)
-		return k
-	}
-	keep := func(*knowledge.Knowledge) {}
-	onX1 := []diagnose.AppliedKnowledge{applied("x", 1)}
-	onBoth := []diagnose.AppliedKnowledge{applied("x", 1), applied("y", 1)}
-	quietReview := func(id string, uses []diagnose.AppliedKnowledge) review {
-		return review{id: id, knowledge: uses, context: evidence.ContextNoKnownChange}
-	}
-	type args struct {
-		items    knowledge.Set
-		reviews  []review
-		outcomes feedback.Outcomes
-	}
-	type want struct {
-		confirmed, refuted int
-		retire, promote    bool
-		contexts           []evidence.Context
-	}
-	tcs := []struct {
-		name string
-		args args
-		want want
-	}{
-		{
-			"a refuted review of a merged version flags the compacted version and names its change context",
-			args{
-				knowledge.Set{x1, y1, compacted(keep)}, []review{quietReview("r1", onX1)},
-				feedback.Outcomes{outcome("r1", feedback.ResultRefuted, monday)},
-			},
-			want{refuted: 1, retire: true, contexts: []evidence.Context{evidence.ContextNoKnownChange}},
-		},
-		{
-			"a review that applied both merged versions counts once",
-			args{
-				knowledge.Set{x1, y1, compacted(keep)}, []review{quietReview("r1", onBoth)},
-				feedback.Outcomes{outcome("r1", feedback.ResultRefuted, monday)},
-			},
-			want{refuted: 1, retire: true, contexts: []evidence.Context{evidence.ContextNoKnownChange}},
-		},
-		{
-			"carried confirmed reviews outweigh a carried refuted one",
-			args{
-				knowledge.Set{x1, y1, compacted(keep)},
-				[]review{quietReview("r1", onX1), quietReview("r2", onX1), quietReview("r3", onBoth)},
-				feedback.Outcomes{
-					outcome("r1", feedback.ResultRefuted, monday), outcome("r2", feedback.ResultConfirmed, monday),
-					outcome("r3", feedback.ResultConfirmed, monday),
-				},
-			},
-			want{confirmed: 2, refuted: 1, contexts: []evidence.Context{evidence.ContextNoKnownChange}},
-		},
-		{
-			"a carried confirmed review alone flags the compacted version for promotion",
-			args{
-				knowledge.Set{x1, y1, compacted(keep)}, []review{quietReview("r1", onX1)},
-				feedback.Outcomes{outcome("r1", feedback.ResultConfirmed, monday)},
-			},
-			want{confirmed: 1, promote: true},
-		},
-		{
-			"a review the version cites as outcome evidence is answered and not carried",
-			args{
-				knowledge.Set{x1, y1, compacted(func(k *knowledge.Knowledge) { k.Evidence.OutcomeTraceIDs = []string{"r1"} })},
-				[]review{quietReview("r1", onX1)}, feedback.Outcomes{outcome("r1", feedback.ResultRefuted, monday)},
-			},
-			want{},
-		},
-		{
-			"a review of a change context the version no longer reaches is not carried",
-			args{
-				knowledge.Set{x1, y1, compacted(keep)},
-				[]review{{id: "r1", knowledge: onX1, context: evidence.ContextPlannedChange}},
-				feedback.Outcomes{outcome("r1", feedback.ResultRefuted, monday)},
-			},
-			want{},
-		},
-		{
-			"a version that cites another item without a compaction carries nothing",
-			args{
-				knowledge.Set{x1, y1, compacted(func(k *knowledge.Knowledge) { k.Compaction = "" })},
-				[]review{quietReview("r1", onX1)}, feedback.Outcomes{outcome("r1", feedback.ResultRefuted, monday)},
-			},
-			want{},
-		},
-	}
-	for _, tc := range tcs {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			h, err := loop.New(traces(t, tc.args.reviews...), nil, tc.args.outcomes, tc.args.items)
-			require.NoError(t, err)
-			rows := h.Health(monday)
-			i := slices.IndexFunc(rows, func(row loop.Health) bool { return row.ID == "x" && row.Version == 2 })
-			require.GreaterOrEqual(t, i, 0)
-
-			got := want{
-				rows[i].CarriedConfirmed, rows[i].CarriedRefuted, rows[i].RetireCandidate, rows[i].PromotionCandidate,
-				h.RefutedContexts("x", 2, evidence.DefaultContexts()),
-			}
-			assert.Equal(t, tc.want, got)
-		})
-	}
+	assert.ElementsMatch(t, []loop.Issue{
+		{ID: "moved", Version: 1, Field: "labels", Reference: "repo=renamed"},
+		{ID: "moved", Version: 1, Field: "except", Reference: "dir=gone"},
+		{ID: "lost", Version: 1, Field: "feedback_trace_ids", Reference: "missing"},
+		{ID: "lost", Version: 1, Field: "outcome_trace_ids", Reference: "taught"},
+		{ID: "lost", Version: 1, Field: "knowledge", Reference: "x v1"},
+	}, h.BrokenReferences())
 }

@@ -1,19 +1,14 @@
-// Package testkit opens the demo data and empty record stores for the tests of every module above the stores
+// Package testkit opens empty record stores for the tests of every module above the stores
 package testkit
 
 import (
 	"context"
-	"os"
-	"path/filepath"
-	"runtime"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeon-jihyeon/nodloop/internal/analysis"
-	evidencefile "github.com/jeon-jihyeon/nodloop/internal/evidence/file"
 	"github.com/jeon-jihyeon/nodloop/internal/feedback"
 	feedbackfile "github.com/jeon-jihyeon/nodloop/internal/feedback/file"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
@@ -77,12 +72,11 @@ func (p PanickingTraces) Append(ctx context.Context, tr trace.Trace) error {
 	return p.Store.Append(ctx, tr)
 }
 
-// The demo source and one temp record dir behind every store
+// One temp record dir behind every store
 // The ledger runs on the clock
 type Stores struct {
-	Source *evidencefile.Source
 	Traces *tracefile.Store
-	// Compaction replays in the same record dir
+	// Coverage checks of compactions in the same record dir
 	Replays  *tracefile.Store
 	Feedback *feedbackfile.Store
 	Outcomes *feedbackfile.OutcomeStore
@@ -90,17 +84,9 @@ type Stores struct {
 	Clock    *Clock
 }
 
+// Empty record stores in a temp dir and a clock the test advances
 func Open(t *testing.T) Stores {
 	t.Helper()
-	return OpenData(t, DemoDir(t))
-}
-
-// Stores over another data set whose policy declares its own change contexts
-func OpenData(t *testing.T, dataDir string) Stores {
-	t.Helper()
-	contexts := PolicyOf(t, dataDir).Contexts
-	src, err := evidencefile.New(dataDir, contexts)
-	require.NoError(t, err)
 	dir := t.TempDir()
 	traces, err := tracefile.New(dir)
 	require.NoError(t, err)
@@ -112,48 +98,11 @@ func OpenData(t *testing.T, dataDir string) Stores {
 	require.NoError(t, err)
 	items, err := knowledgefile.New(dir)
 	require.NoError(t, err)
-	// Later than every record in the demo data
 	clock := &Clock{now: time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)}
 	ledger := knowledge.NewLedger(
-		items, vetofile.NewApprovedFile(t.TempDir(), dir), contexts,
-		clock.Now, func(prefix string) string { return prefix + "generated" })
-
-	return Stores{
-		Source: src, Traces: traces, Replays: replays, Feedback: verdicts, Outcomes: outcomes, Ledger: ledger, Clock: clock,
-	}
-}
-
-// The demo data set published under examples
-// Resolved from this file so a test in any package finds it
-func DemoDir(t *testing.T) string {
-	t.Helper()
-	_, self, _, ok := runtime.Caller(0)
-	require.True(t, ok, "caller unknown")
-	return filepath.Join(filepath.Dir(self), "..", "..", "examples", "demo")
-}
-
-// A data set under testkit testdata
-// contexts declares deploy, campaign_start and tracking_change in place of the default five
-func FixtureDir(t *testing.T, name string) string {
-	t.Helper()
-	_, self, _, ok := runtime.Caller(0)
-	require.True(t, ok, "caller unknown")
-	return filepath.Join(filepath.Dir(self), "testdata", name)
-}
-
-// The policy of the demo data set
-func Policy(t *testing.T) analysis.Policy {
-	t.Helper()
-	return PolicyOf(t, DemoDir(t))
-}
-
-func PolicyOf(t *testing.T, dataDir string) analysis.Policy {
-	t.Helper()
-	b, err := os.ReadFile(filepath.Join(dataDir, "policy.yaml"))
-	require.NoError(t, err)
-	policy, err := analysis.LoadPolicy(b, nil)
-	require.NoError(t, err)
-	return policy
+		items, vetofile.NewApprovedFile(t.TempDir(), dir), clock.Now, func(prefix string) string { return prefix + "generated" },
+	)
+	return Stores{Traces: traces, Replays: replays, Feedback: verdicts, Outcomes: outcomes, Ledger: ledger, Clock: clock}
 }
 
 // Steps a second per call so two calls around a model call give a positive duration
@@ -161,7 +110,7 @@ func PolicyOf(t *testing.T, dataDir string) analysis.Policy {
 const ClockStep = time.Second
 
 // A clock that advances a fixed step on every read
-// Safe for the parallel reviews of eval
+// Safe for parallel use
 type Clock struct {
 	mu  sync.Mutex
 	now time.Time

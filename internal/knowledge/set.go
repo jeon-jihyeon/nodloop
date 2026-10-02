@@ -7,7 +7,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/jeon-jihyeon/nodloop/internal/evidence"
+	"github.com/jeon-jihyeon/nodloop/internal/trace"
 	"github.com/jeon-jihyeon/nodloop/internal/veto"
 )
 
@@ -82,90 +82,29 @@ func (s Set) Vetoes() []veto.Spec {
 	return out
 }
 
-// Approved current items whose scope matches the event and whose exceptions do not
-func (s Set) Applicable(changeContext evidence.Context, moved Moved, dims Dims) Set {
-	out := Set{}
-	for _, k := range s.Current() {
-		if k.applies(changeContext, moved, dims) {
-			out = append(out, k)
-		}
+// The approved items one run may carry together with the item
+// A judgment with a veto acts through the guard and joins no run
+func (s Set) folder(item Knowledge) Folder {
+	if item.Run == nil || item.Veto != nil {
+		return Folder{Carried: Set{}}
 	}
-	return out
-}
-
-// Whether some approved item may apply under the change context
-// Metrics and dims are left open so the answer is an upper bound of Applicable
-func (s Set) Covers(changeContext evidence.Context) bool {
-	for _, k := range s.Current() {
-		if k.mayApply(changeContext) {
-			return true
-		}
-	}
-	return false
-}
-
-// The approved items one review may carry together with the item
-// 1. measured per change context the item reaches because an event carries one and a review loads only its items
-// 2. an upper bound per event since metrics and dims are left open
-// Another version of the item never counts because approval replaces it
-func (s Set) folder(item Knowledge, contexts evidence.Contexts) Folder {
-	if item.Run != nil {
-		return s.runFolder(item)
-	}
-	f := Folder{Chars: utf8.RuneCountInString(item.Text()), Carried: Set{}}
-	for _, c := range contexts.Names() {
-		if !item.carriedIn(c) {
-			continue
-		}
-		if next := s.folderIn(item, c); f.Context == "" || next.heavier(f) {
-			f = next
-		}
-	}
-	if item.Status == StatusApproved && item.Evidence.Replayable() {
-		f.Compactable = s.compactable(item, contexts).heaviest()
+	f := s.runFolder(item)
+	if item.Status == StatusApproved {
+		f.Compactable = len(s.runCarried(item.ID, *item.Run)) + 1
 	}
 	return f
 }
 
-// The folder of the item in one change context it reaches
-func (s Set) folderIn(item Knowledge, changeContext evidence.Context) Folder {
-	carried := s.carried(item.ID, changeContext)
-	return Folder{Chars: utf8.RuneCountInString(item.Text()) + carried.runes(), Carried: carried, Context: changeContext}
-}
-
-// The folder of the approved item in the first change context whose review the set holds past a cap and bigger than before
-// 1. a review past ReviewChars grows when its chars grow and a review past ReviewItems when its items grow
-// 2. each cap is judged alone so a review with fewer items and more chars passes while its chars stay under the cap
-// 3. a review already past a cap that does not grow passes so a replacement never needs a retire first
-// Only a change context whose review carries the item can grow because every other change between the sets retires or supersedes
-func (s Set) outgrows(before Set, item Knowledge, contexts evidence.Contexts) (Folder, bool) {
-	if item.Run != nil {
-		f := s.runFolder(item)
-		was := before.runCarried("", *item.Run)
-		return f, (f.Chars > ReviewChars && f.Chars > was.runes()) || (f.Size() > ReviewItems && f.Size() > len(was))
+// The run folder of the item when the set holds it past a cap and bigger than before
+// 1. a folder past ReviewChars grows when its chars grow and one past ReviewItems when its items grow
+// 2. a folder already past a cap that does not grow passes so a replacement never needs a retire first
+func (s Set) outgrows(before Set, item Knowledge) (Folder, bool) {
+	if item.Run == nil || item.Veto != nil {
+		return Folder{}, false
 	}
-	for _, c := range contexts.Names() {
-		if !item.carriedIn(c) {
-			continue
-		}
-		f := s.folderIn(item, c)
-		was := before.carried("", c)
-		if (f.Chars > ReviewChars && f.Chars > was.runes()) || (f.Size() > ReviewItems && f.Size() > len(was)) {
-			return f, true
-		}
-	}
-	return Folder{}, false
-}
-
-// The approved items other than id that a review of the change context may load
-func (s Set) carried(id string, changeContext evidence.Context) Set {
-	out := Set{}
-	for _, other := range s.Approved() {
-		if other.ID != id && other.mayApply(changeContext) {
-			out = append(out, other)
-		}
-	}
-	return out
+	f := s.runFolder(item)
+	was := before.runCarried("", *item.Run)
+	return f, (f.Chars > ReviewChars && f.Chars > was.runes()) || (f.Size() > ReviewItems && f.Size() > len(was))
 }
 
 // Runes of the texts a review sees
@@ -177,26 +116,12 @@ func (s Set) runes() int {
 	return n
 }
 
-// Current items other than id of the same kind whose scope overlaps scope
+// Current items other than the item of the same kind that one run may carry with it
 // Listed for a person and never merged
-func (s Set) Overlaps(id string, kind Kind, scope Scope) Set {
-	out := Set{}
-	for _, other := range s.Current() {
-		if other.ID != id && other.Kind == kind && other.Run == nil && scope.overlaps(other.Scope) {
-			out = append(out, other)
-		}
-	}
-	return out
-}
-
-// Current items other than the item of the same kind and the same scope form that may reach the same event or run
 func (s Set) overlapsWith(k Knowledge) Set {
-	if k.Run == nil {
-		return s.Overlaps(k.ID, k.Kind, k.Scope)
-	}
 	out := Set{}
 	for _, other := range s.Current() {
-		if other.ID != k.ID && other.Kind == k.Kind && other.Run != nil && k.Run.overlaps(*other.Run) {
+		if other.ID != k.ID && other.Kind == k.Kind && k.sharesRun(other) {
 			out = append(out, other)
 		}
 	}
@@ -274,7 +199,7 @@ func (s Set) overlapsOf(id string) (Set, error) {
 // 1. status and approval fields of the draft are dropped so a proposal never arrives approved
 // 2. compaction fields are dropped so only a compaction proposal marks its candidates
 // 3. the base is the current version of the id so approval can tell which versions the candidate was built on
-func (s Set) propose(draft Knowledge, now time.Time, contexts evidence.Contexts) (Knowledge, error) {
+func (s Set) propose(draft Knowledge, now time.Time) (Knowledge, error) {
 	if draft.Basis == "" {
 		draft.Basis = BasisStated
 	}
@@ -291,7 +216,7 @@ func (s Set) propose(draft Knowledge, now time.Time, contexts evidence.Contexts)
 	if cur := s.current(draft.ID); cur != nil {
 		draft.Base = cur.Version
 	}
-	if err := draft.validate(contexts); err != nil {
+	if err := draft.validate(); err != nil {
 		return Knowledge{}, err
 	}
 	return draft, nil
@@ -306,7 +231,7 @@ func (s Set) propose(draft Knowledge, now time.Time, contexts evidence.Contexts)
 // Only a retire by a named person widens the scope the same way
 // 5. an approval that pushes a review past ReviewChars or ReviewItems or grows one already past them is refused
 // So a new version that replaces an item in a review already past a cap passes while that review does not grow
-func (s Set) approval(id string, version int, approver string, now time.Time, contexts evidence.Contexts) ([]Knowledge, error) {
+func (s Set) approval(id string, version int, approver string, now time.Time) ([]Knowledge, error) {
 	history, err := s.historyOf(id)
 	if err != nil {
 		return nil, err
@@ -322,40 +247,34 @@ func (s Set) approval(id string, version int, approver string, now time.Time, co
 		return nil, fmt.Errorf("%w: %s v%d was built on v%d, which compaction %s retired. Retire v%d and propose the change on the item that replaced v%d",
 			ErrCandidateOutdated, id, version, retired.Version, retired.Compaction, version, retired.Version)
 	}
-	to, superseded, err := history.approve(id, version, approver, now, contexts)
+	to, superseded, err := history.approve(id, version, approver, now)
 	if err != nil {
 		return nil, err
 	}
 	records := []Knowledge{to}
 	if superseded != nil {
-		if err := to.replaces(*superseded, contexts); err != nil {
+		if err := to.replaces(*superseded); err != nil {
 			return nil, err
 		}
 		records = append(records, *superseded)
 	}
-	if f, grew := slices.Concat(records, s).outgrows(s, to, contexts); grew {
+	if f, grew := slices.Concat(records, s).outgrows(s, to); grew {
 		return nil, fmt.Errorf("%w: %s with %s", ErrFolderFull, f.load(), f)
 	}
 	return records, nil
 }
 
-// A new version that replaces the approved one keeps its veto and reaches no event or run the old one never reached
+// A new version that replaces the approved one keeps its veto and reaches no run the old one never reached
 // Only a retire by a named person lifts a veto or widens the scope
-func (k Knowledge) replaces(old Knowledge, contexts evidence.Contexts) error {
+func (k Knowledge) replaces(old Knowledge) error {
 	if old.Veto != nil && !k.keepsVeto(*old.Veto) {
 		return fmt.Errorf("%w: %s v%d does not block what v%d blocks. Restate the veto or retire v%d first",
 			ErrVetoLifted, k.ID, k.Version, old.Version, old.Version)
 	}
-	if k.Run != nil || old.Run != nil {
-		if k.Run == nil || old.Run == nil || k.Run.widens(*old.Run) {
-			return fmt.Errorf("%w: %s v%d reaches runs that v%d never reached. "+
-				"Propose again with the scope of v%d or a narrower one, which is %s, propose the wider part under a new id, or retire v%d first",
-				ErrScopeWidened, k.ID, k.Version, old.Version, old.Version, old.reachText(), old.Version)
-		}
-	} else if _, reached, ok := (Set{old}).widened(k, contexts); ok {
-		return fmt.Errorf("%w: %s v%d reaches events of %s that v%d never reached. "+
+	if k.Run == nil || old.Run == nil || k.Run.widens(*old.Run) {
+		return fmt.Errorf("%w: %s v%d reaches runs that v%d never reached. "+
 			"Propose again with the scope of v%d or a narrower one, which is %s, propose the wider part under a new id, or retire v%d first",
-			ErrScopeWidened, k.ID, k.Version, reached, old.Version, old.Version, old.reachText(), old.Version)
+			ErrScopeWidened, k.ID, k.Version, old.Version, old.Version, old.reachText(), old.Version)
 	}
 	return nil
 }
@@ -365,7 +284,7 @@ func (k Knowledge) replaces(old Knowledge, contexts evidence.Contexts) error {
 // 2. a version older than the approved one is refused so an approval never rolls the id back
 // 3. a candidate whose bases never reach the approved version is refused because it was built without that version
 // Approving it would drop whatever the approved version added such as the facts a compaction merged
-func (s Set) approve(id string, version int, approver string, now time.Time, contexts evidence.Contexts) (Knowledge, *Knowledge, error) {
+func (s Set) approve(id string, version int, approver string, now time.Time) (Knowledge, *Knowledge, error) {
 	from, err := s.latest(id, version)
 	if err != nil {
 		return Knowledge{}, nil, err
@@ -374,7 +293,7 @@ func (s Set) approve(id string, version int, approver string, now time.Time, con
 	if err != nil {
 		return Knowledge{}, nil, err
 	}
-	if err := to.validate(contexts); err != nil {
+	if err := to.validate(); err != nil {
 		return Knowledge{}, nil, err
 	}
 	cur := s.current(id)
@@ -435,15 +354,15 @@ func (s Set) compactedBase(k Knowledge) (Knowledge, bool) {
 	return Knowledge{}, false
 }
 
-// The records of an import that the set does not hold yet in their order
-// 1. every record must be valid and the first one that is not fails with its position
+// The records of an import that the set does not hold yet
+// 1. every record is validated so a file cannot slip in an item a proposal would refuse
 // 2. a record the set already holds is left out so importing one file twice changes nothing
 // 3. a record older than the newest record of its id and version fails with ErrImportStale
 // So a file never undoes a later retire or approval
-func (s Set) importable(records []Knowledge, contexts evidence.Contexts) (Set, error) {
+func (s Set) importable(records []Knowledge) (Set, error) {
 	out := Set{}
 	for i, k := range records {
-		if err := k.validate(contexts); err != nil {
+		if err := k.validate(); err != nil {
 			return nil, fmt.Errorf("record %d: %w", i+1, err)
 		}
 		if slices.ContainsFunc(s, k.same) {
@@ -547,16 +466,15 @@ func (s Set) before(version int) []Ref {
 	return out
 }
 
-// Whether ref takes over the outcome of a review that applied the versions in applied under the change context
-// 1. the review applied a version a compaction merged into ref and never ref itself
-// 2. ref still reaches the change context of the review and its metrics admit one metric the review moved
-// Dims are left open because the review does not record them
-// 3. neither ref nor a merged version cites the review as outcome evidence
-// A narrowing cites the refuted reviews it answers so they stop counting against the version
+// Whether ref takes over the outcome of a run of the producer with the labels that applied the versions in applied
+// 1. the run applied a version a compaction merged into ref and never ref itself
+// 2. ref still reaches the run by its producer and labels
+// 3. neither ref nor a merged version cites the run as outcome evidence
+// A narrowing cites the refuted runs it answers so they stop counting against the version
 // A compaction restates the facts of the versions it merged so their open outcomes stay with the fact
-func (s Set) Inherits(ref Ref, traceID string, applied []Ref, changeContext evidence.Context, moved []string) bool {
+func (s Set) Inherits(ref Ref, traceID string, applied []Ref, producer string, labels trace.Labels) bool {
 	k, err := s.latest(ref.ID, ref.Version)
-	if err != nil || slices.Contains(applied, ref) || !k.reaches(changeContext) || !k.Scope.Matches(changeContext, moved) {
+	if err != nil || slices.Contains(applied, ref) || k.Run == nil || !k.Run.admits(producer, labels) {
 		return false
 	}
 	merged := s.merged(ref)

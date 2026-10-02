@@ -1,4 +1,4 @@
-// Package loop reads the records of the conversation and tells a person what to check next
+// Package loop reads the records of the runs and what people said about them and tells a person what to check next
 package loop
 
 import (
@@ -7,57 +7,31 @@ import (
 	"maps"
 	"slices"
 
-	"github.com/jeon-jihyeon/nodloop/internal/diagnose"
-	"github.com/jeon-jihyeon/nodloop/internal/evidence"
 	"github.com/jeon-jihyeon/nodloop/internal/feedback"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
 )
 
-// One recorded review or run as the views read it
-// A run carries no Recorded, so its change context, status and citations are empty
+// One recorded run as the views read it
 type review struct {
 	trace trace.Trace
-	diagnose.Recorded
-	// The versions a run names in its input
+	// The versions the run names in its input
 	runApplied []knowledge.Ref
 }
 
-// Whether the entry is a run of a producer and not a review
-func (r review) isRun() bool {
-	return r.trace.Name == trace.NameRun
-}
-
-// Whether both entries come from the same place
-// A review shares the change context and a run shares the producer and every label
+// Whether both runs come from the same place: the same producer and every label
 func (r review) samePlace(other review) bool {
-	if r.isRun() != other.isRun() {
-		return false
-	}
-	if !r.isRun() {
-		return r.ChangeContext == other.ChangeContext
-	}
 	return r.trace.Producer == other.trace.Producer &&
 		maps.EqualFunc(r.trace.Labels, other.trace.Labels, slices.Equal[[]string])
 }
 
-// The knowledge versions that reached the model once each
+// The knowledge versions the run applied
 func (r review) applied() []knowledge.Ref {
-	if r.isRun() {
-		return r.runApplied
-	}
-	var out []knowledge.Ref
-	for _, k := range r.Knowledge {
-		ref := knowledge.Ref{ID: k.ID, Version: k.Version}
-		if k.Chars > 0 && !slices.Contains(out, ref) {
-			out = append(out, ref)
-		}
-	}
-	return out
+	return r.runApplied
 }
 
-// Whether the review is the first to apply one of its versions
-// first names the earliest review per version
+// Whether the run is the first to apply one of its versions
+// first names the earliest run per version
 func (r review) introduces(first map[knowledge.Ref]string) bool {
 	for _, ref := range r.applied() {
 		if first[ref] == r.trace.ID {
@@ -79,21 +53,16 @@ func (r review) statedOnly(versions map[knowledge.Ref]knowledge.Knowledge) bool 
 	return len(applied) > 0
 }
 
-// The conversation as the records tell it joined once
-// 1. a conversation review is a diagnose trace without error written in the interactive mode or by a one-off batch run without a session
-// 2. every eval run names a session so its reviews stay out
-// 3. every run without error joins with the versions its input names, a run whose input does not read applied none
-// 3. the verdict and the outcome of a review are the latest ones a person gave
-// 4. the first submission of a review is the revise trace of its context
+// The runs as the records tell them joined once
+// 1. every run without error joins with the versions its input names, a run whose input does not read applied none
+// 2. the verdict and the outcome of a run are the latest ones a person gave
 type History struct {
 	// Newest first as the store lists them
 	reviews []review
-	// The status record sent back per context id
-	first map[string]evidence.Status
 	// Latest human records per trace id
 	verdicts map[string]feedback.Feedback
 	outcomes map[string]feedback.Outcome
-	// Trace ids of the diagnose traces without error that have any feedback or any outcome
+	// Trace ids of the runs without error that have any feedback or any outcome
 	withFeedback map[string]bool
 	withOutcome  map[string]bool
 	knowledge    knowledge.Set
@@ -121,7 +90,7 @@ type KnowledgeStore interface {
 func Load(
 	ctx context.Context, traces TraceStore, verdicts FeedbackStore, outcomes OutcomeStore, items KnowledgeStore,
 ) (*History, error) {
-	all, err := traces.List(ctx, trace.Filter{})
+	all, err := traces.List(ctx, trace.Filter{Name: trace.NameRun})
 	if err != nil {
 		return nil, err
 	}
@@ -137,40 +106,27 @@ func Load(
 	if err != nil {
 		return nil, err
 	}
-	return New(all, records, checks, set)
+	return New(all, records, checks, set), nil
 }
 
-// Fails with diagnose.ErrMalformed when a diagnose trace without error does not read
-func New(traces trace.Traces, verdicts feedback.Records, outcomes feedback.Outcomes, items knowledge.Set) (*History, error) {
+func New(traces trace.Traces, verdicts feedback.Records, outcomes feedback.Outcomes, items knowledge.Set) *History {
 	h := &History{
-		first: map[string]evidence.Status{}, verdicts: map[string]feedback.Feedback{}, outcomes: map[string]feedback.Outcome{},
+		verdicts: map[string]feedback.Feedback{}, outcomes: map[string]feedback.Outcome{},
 		withFeedback: map[string]bool{}, withOutcome: map[string]bool{}, knowledge: items, vocabulary: map[string]trace.Labels{},
 	}
 	recorded := map[string]bool{}
 	for _, tr := range traces {
-		switch {
-		case tr.Error != "":
-		case tr.Name == trace.NameRevise:
-			h.noteFirst(tr)
-		case tr.Name == trace.NameDiagnose:
-			rec, err := diagnose.ReadRecorded(tr)
-			if err != nil {
-				return nil, err
-			}
-			recorded[tr.ID] = true
-			if rec.Mode == diagnose.ModeInteractive || tr.SessionID == "" {
-				h.reviews = append(h.reviews, review{trace: tr, Recorded: rec})
-			}
-		case tr.Name == trace.NameRun:
-			recorded[tr.ID] = true
-			var in struct {
-				Applied []knowledge.Ref `json:"applied"`
-			}
-			_ = json.Unmarshal(tr.Input, &in)
-			h.reviews = append(h.reviews, review{trace: tr, runApplied: in.Applied})
-			if _, ok := h.vocabulary[tr.Producer]; !ok {
-				h.vocabulary[tr.Producer] = traces.Vocabulary(tr.Producer)
-			}
+		if tr.Name != trace.NameRun || tr.Error != "" {
+			continue
+		}
+		recorded[tr.ID] = true
+		var in struct {
+			Applied []knowledge.Ref `json:"applied"`
+		}
+		_ = json.Unmarshal(tr.Input, &in)
+		h.reviews = append(h.reviews, review{trace: tr, runApplied: in.Applied})
+		if _, ok := h.vocabulary[tr.Producer]; !ok {
+			h.vocabulary[tr.Producer] = traces.Vocabulary(tr.Producer)
 		}
 	}
 	for _, fb := range verdicts {
@@ -185,22 +141,11 @@ func New(traces trace.Traces, verdicts feedback.Records, outcomes feedback.Outco
 	for _, o := range outcomes.Human().Latest() {
 		h.outcomes[o.TraceID] = o
 	}
-	return h, nil
+	return h
 }
 
-// Traces come newest first so the oldest revise trace of a context is written last and wins
-// record sends a context back once so there is one in practice
-// A revise output that does not read names no status and the review counts as its own first submission
-func (h *History) noteFirst(tr trace.Trace) {
-	var diag diagnose.Diagnosis
-	if json.Unmarshal(tr.Output, &diag) != nil || tr.Ref == "" {
-		return
-	}
-	h.first[tr.Ref] = diag.Status
-}
-
-// The recorded review per trace id for the ids that name a conversation review
-func (h *History) Reviews(traceIDs []string) map[string]json.RawMessage {
+// The recorded output per trace id for the ids that name a run
+func (h *History) Outputs(traceIDs []string) map[string]json.RawMessage {
 	wanted := make(map[string]bool, len(traceIDs))
 	for _, id := range traceIDs {
 		wanted[id] = true
@@ -212,12 +157,4 @@ func (h *History) Reviews(traceIDs []string) map[string]json.RawMessage {
 		}
 	}
 	return out
-}
-
-// The status of the first submission of the review
-func (h *History) firstStatus(r review) evidence.Status {
-	if status, ok := h.first[r.trace.Ref]; ok {
-		return status
-	}
-	return r.Diagnosis.Status
 }

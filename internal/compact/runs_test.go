@@ -18,7 +18,7 @@ import (
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
 )
 
-// Two approved run items of the repo nodloop that say one thing twice, a compactor without a data source and its proposal
+// Two approved run items of the repo nodloop that say one thing twice, a compactor and its proposal
 func runFolder(t *testing.T) (testkit.Stores, *compact.Compactor, knowledge.Compaction) {
 	t.Helper()
 	ctx := context.Background()
@@ -36,13 +36,12 @@ func runFolder(t *testing.T) (testkit.Stores, *compact.Compactor, knowledge.Comp
 		require.NoError(t, err)
 		require.NoError(t, testkit.Err(s.Ledger.Approve(ctx, id, 1, "ann")))
 	}
-	c := compact.New(nil, s.Ledger, s.Traces, s.Feedback, s.Outcomes, s.Replays, s.Clock.Now)
+	c := compact.New(s.Ledger, s.Traces, s.Feedback, s.Replays, s.Clock.Now)
 	f, err := c.Folder(ctx, "a")
 	require.NoError(t, err)
-	require.True(t, f.Runs)
 	require.Len(t, f.Items, 2)
 	assert.Contains(t, f.String(), "## Coverage")
-	proposed, _, err := c.Propose(ctx, "a", compact.Draft{Items: []compact.Item{{
+	proposed, err := c.Propose(ctx, "a", compact.Draft{Items: []compact.Item{{
 		ID: "a", Kind: knowledge.KindJudgment, Content: "Use git -C <dir> and never cd into a directory before a git command",
 		From: []string{"a", "b"}, Producer: "session", Labels: map[string][]string{"repo": {"nodloop"}},
 	}}}, "")
@@ -114,6 +113,9 @@ func TestCompactRunsRefusals(t *testing.T) {
 		{"a draft without the repo label widens", []compact.Item{
 			{Kind: knowledge.KindJudgment, Content: "x", From: both, Producer: "session"},
 		}, knowledge.ErrCompactionInvalid},
+		{"a draft without a producer reaches runs of no old item", []compact.Item{
+			{Kind: knowledge.KindJudgment, Content: "x", From: both, Labels: repo},
+		}, knowledge.ErrCompactionInvalid},
 		{"two judgments for the same runs overlap", []compact.Item{
 			{ID: "a", Kind: knowledge.KindJudgment, Content: "x", From: []string{"a"}, Producer: "session", Labels: repo},
 			{ID: "b", Kind: knowledge.KindJudgment, Content: "y", From: []string{"b"}, Producer: "session", Labels: repo},
@@ -142,9 +144,9 @@ func TestCompactRunsRefusals(t *testing.T) {
 				require.NoError(t, err)
 				require.NoError(t, testkit.Err(s.Ledger.Approve(ctx, id, 1, "ann")))
 			}
-			c := compact.New(nil, s.Ledger, s.Traces, s.Feedback, s.Outcomes, s.Replays, s.Clock.Now)
+			c := compact.New(s.Ledger, s.Traces, s.Feedback, s.Replays, s.Clock.Now)
 
-			_, _, err = c.Propose(ctx, "a", compact.Draft{Items: tc.args}, "")
+			_, err = c.Propose(ctx, "a", compact.Draft{Items: tc.args}, "")
 
 			assert.ErrorIs(t, err, tc.want)
 		})

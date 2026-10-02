@@ -6,7 +6,6 @@ require go.uber.org/mock v0.6.0
 
 require (
 	github.com/stretchr/testify v1.12.1
-	github.com/yuin/goldmark v1.8.6
 	go.yaml.in/yaml/v3 v3.0.5
 	mvdan.cc/sh/v3 v3.13.1
 )

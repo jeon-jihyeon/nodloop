@@ -17,12 +17,12 @@ type Trace struct {
 	// Pipeline that produced the run
 	Name Name `json:"name"`
 	// Groups runs
-	// An eval run id or a Claude Code session id
+	// A Claude Code session id or the id of a compaction its check belongs to
 	SessionID string `json:"session_id,omitempty"`
-	// What the run was about
-	// An event id for diagnose
+	// What the run was about in a few words
 	Subject string `json:"subject,omitempty"`
-	// The context trace a select or diagnose trace belongs to
+	// A trace this one belongs to
+	// Written by the data review before 0.8.0 and read as recorded
 	Ref   string    `json:"ref,omitempty"`
 	Time  time.Time `json:"time"`
 	Model string    `json:"model,omitempty"`
@@ -48,44 +48,24 @@ type Trace struct {
 type Name string
 
 const (
-	NameContext  Name = "context"  // review context built for one event
-	NameSelect   Name = "select"   // knowledge and example candidates chosen for a context
-	NameDiagnose Name = "diagnose" // review recorded from a context
-	NameRevise   Name = "revise"   // first submission of a context sent back with its defects
-	NameRun      Name = "run"      // output any producer recorded through the core tools
-	NameCheck    Name = "check"    // coverage check of a compaction of run items
+	NameRun   Name = "run"   // output any producer recorded through the core tools
+	NameCheck Name = "check" // coverage check of a compaction
 )
 
 // Every name in a fixed order for messages
 func Names() []Name {
-	return []Name{NameContext, NameSelect, NameDiagnose, NameRevise, NameRun, NameCheck}
+	return []Name{NameRun, NameCheck}
 }
 
 func (n Name) Valid() bool {
 	return slices.Contains(Names(), n)
 }
 
-// A diagnose trace is a review of the data diagnosis
-func (t Trace) IsReview() bool {
-	return t.Name == NameDiagnose
-}
-
-// A correction of a review reads it as a review
-// 1. ErrNotReview naming the trace when it is not a diagnose trace
-// 2. ErrFailedRun naming the failure when the review failed
-// A failed review still closes its context so IsReview keeps it
-func (t Trace) CheckReview() error {
-	if !t.IsReview() {
-		return fmt.Errorf("%w: %s is a %s trace", ErrNotReview, t.ID, t.Name)
-	}
-	return t.checkSucceeded()
-}
-
-// Feedback and outcomes and knowledge cite a recorded review or a recorded run
-// 1. ErrNotRun naming the trace when it is neither
+// Feedback and outcomes and knowledge cite a recorded run
+// 1. ErrNotRun naming the trace when it is not one
 // 2. ErrFailedRun naming the failure when it failed
 func (t Trace) CheckRun() error {
-	if !t.IsReview() && t.Name != NameRun {
+	if t.Name != NameRun {
 		return fmt.Errorf("%w: %s is a %s trace", ErrNotRun, t.ID, t.Name)
 	}
 	return t.checkSucceeded()
@@ -202,21 +182,3 @@ func NewID(now time.Time) string {
 
 // Traces in the order the store lists them
 type Traces []Trace
-
-// Context traces that no diagnose trace refers to in the input order
-// Computed from the pairs so no extra store is needed
-func (ts Traces) Pending() Traces {
-	recorded := map[string]struct{}{}
-	for _, t := range ts {
-		if t.IsReview() && t.Ref != "" {
-			recorded[t.Ref] = struct{}{}
-		}
-	}
-	var out Traces
-	for _, t := range ts {
-		if _, ok := recorded[t.ID]; t.Name == NameContext && !ok {
-			out = append(out, t)
-		}
-	}
-	return out
-}

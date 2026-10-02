@@ -5,11 +5,8 @@ import "errors"
 // Returned by Get for an unknown id
 var ErrNotFound = errors.New("trace: not found")
 
-// A correction of a review reads only a diagnose trace
-var ErrNotReview = errors.New("trace: not a diagnose trace")
-
-// Feedback and outcomes and knowledge cite only a diagnose or a run trace
-var ErrNotRun = errors.New("trace: not a recorded review or run")
+// Feedback and outcomes and knowledge cite only a run trace
+var ErrNotRun = errors.New("trace: not a recorded run")
 
 // A failed run holds no output so a correction or an outcome has nothing to apply to
 var ErrFailedRun = errors.New("trace: the run failed and holds no output")

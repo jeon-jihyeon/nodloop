@@ -7,7 +7,6 @@ import (
 	"slices"
 	"time"
 
-	"github.com/jeon-jihyeon/nodloop/internal/evidence"
 	"github.com/jeon-jihyeon/nodloop/internal/veto"
 )
 
@@ -52,17 +51,14 @@ type VetoSink interface {
 type Ledger struct {
 	store  Store
 	vetoes VetoSink
-	// The change contexts of the data set
-	// Scopes may name only these and every folder is measured over them
-	contexts evidence.Contexts
-	now      func() time.Time
-	newID    func(prefix string) string
+	now    func() time.Time
+	newID  func(prefix string) string
 }
 
 func NewLedger(
-	store Store, vetoes VetoSink, contexts evidence.Contexts, now func() time.Time, newID func(prefix string) string,
+	store Store, vetoes VetoSink, now func() time.Time, newID func(prefix string) string,
 ) *Ledger {
-	return &Ledger{store: store, vetoes: vetoes, contexts: contexts, now: now, newID: newID}
+	return &Ledger{store: store, vetoes: vetoes, now: now, newID: newID}
 }
 
 // The anchor and its folder items split by whether an event can replay them
@@ -71,7 +67,7 @@ func (l *Ledger) Compactable(ctx context.Context, anchor string) (Compactable, e
 	if err != nil {
 		return Compactable{}, err
 	}
-	return all.Compactable(anchor, l.contexts)
+	return all.Compactable(anchor)
 }
 
 func (l *Ledger) All(ctx context.Context) (Set, error) {
@@ -106,7 +102,7 @@ func (l *Ledger) Folder(ctx context.Context, id string, version int) (Folder, er
 	if err != nil {
 		return Folder{}, err
 	}
-	return all.folder(k, l.contexts), nil
+	return all.folder(k), nil
 }
 
 // Latest record of one version
@@ -140,7 +136,7 @@ func (l *Ledger) Propose(ctx context.Context, draft Knowledge) (Knowledge, Set, 
 		draft.ID = l.newID(itemPrefix)
 	}
 	return l.appendCandidate(ctx, func(all Set, now time.Time) (Knowledge, error) {
-		return all.propose(draft, now, l.contexts)
+		return all.propose(draft, now)
 	})
 }
 
@@ -166,7 +162,7 @@ func (l *Ledger) appendCandidate(ctx context.Context, decide func(all Set, now t
 func (l *Ledger) Approve(ctx context.Context, id string, version int, approver string) (Knowledge, error) {
 	var to Knowledge
 	err := l.store.AppendDecided(ctx, func(all Set) ([]Knowledge, error) {
-		records, err := all.approval(id, version, approver, l.now().UTC(), l.contexts)
+		records, err := all.approval(id, version, approver, l.now().UTC())
 		if err != nil {
 			return nil, err
 		}
@@ -214,7 +210,7 @@ func (l *Ledger) Import(ctx context.Context, records []Knowledge) (Set, error) {
 	var fresh Set
 	err := l.store.AppendDecided(ctx, func(all Set) ([]Knowledge, error) {
 		var err error
-		fresh, err = all.importable(records, l.contexts)
+		fresh, err = all.importable(records)
 		return fresh, err
 	})
 	if err != nil {
@@ -261,14 +257,14 @@ func (l *Ledger) ProposeCompaction(ctx context.Context, anchor string, drafts []
 	}
 	c := Compaction{ID: l.newID(compactionPrefix)}
 	err := l.store.AppendDecided(ctx, func(all Set) ([]Knowledge, error) {
-		old, err := all.Compactable(anchor, l.contexts)
+		old, err := all.Compactable(anchor)
 		if err != nil {
 			return nil, err
 		}
 		if pending := all.PendingCompaction(old.Items); pending != "" {
 			return nil, fmt.Errorf("%w: %s", ErrCompactionPending, pending)
 		}
-		if c.Items, err = all.compact(c.ID, old.Items, drafts, l.now().UTC(), l.contexts); err != nil {
+		if c.Items, err = all.compact(c.ID, old.Items, drafts, l.now().UTC()); err != nil {
 			return nil, err
 		}
 		c.Replaced = old.Items
@@ -288,32 +284,14 @@ func (l *Ledger) Compaction(ctx context.Context, id string) (Compaction, error) 
 	return all.compaction(id)
 }
 
-// The knowledge as it would read once the compaction is approved
-// Nothing is appended
-func (l *Ledger) Preview(ctx context.Context, id string) (*Preview, error) {
-	all, err := l.All(ctx)
-	if err != nil {
-		return nil, err
-	}
-	c, err := all.compaction(id)
-	if err != nil {
-		return nil, err
-	}
-	set, err := all.preview(c, l.now().UTC(), l.contexts)
-	if err != nil {
-		return nil, err
-	}
-	return &Preview{set: set}, nil
-}
-
 // Approves the new items of a compaction and retires the old ones on behalf of a named person
-// 1. refused unless the check, a replay or a coverage, names this compaction and passed
+// 1. refused unless the coverage check names this compaction and passed
 // 2. the approved and superseded and retired records land in one write
 // 3. a second call appends only the records still missing such as those of a legacy call cut between two appends
 // 4. vetoes are exported once after the records
-func (l *Ledger) ApproveCompaction(ctx context.Context, id, approver string, check Check) (Compaction, error) {
+func (l *Ledger) ApproveCompaction(ctx context.Context, id, approver string, check Coverage) (Compaction, error) {
 	err := l.store.AppendDecided(ctx, func(all Set) ([]Knowledge, error) {
-		return all.compactionApproval(id, approver, check, l.now().UTC(), l.contexts)
+		return all.compactionApproval(id, approver, check, l.now().UTC())
 	})
 	if err != nil {
 		return Compaction{}, err

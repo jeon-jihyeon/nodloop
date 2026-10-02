@@ -1,13 +1,10 @@
 package knowledge
 
 import (
-	"context"
 	"fmt"
 	"slices"
 	"strings"
 	"time"
-
-	"github.com/jeon-jihyeon/nodloop/internal/evidence"
 )
 
 // One version of an item
@@ -23,13 +20,8 @@ func (r Ref) names(k Knowledge) bool {
 
 // The approved items a compaction of one anchor covers
 type Compactable struct {
-	// The anchor first and then its folder items that an event can replay
+	// The anchor first and then the approved items one run may carry with it
 	Items Set
-	// Folder items whose evidence cites only procedure paragraphs
-	// No event can replay them so a compaction leaves them out
-	Excluded Set
-	// The declared change contexts the crowding is measured over
-	Contexts evidence.Contexts `json:"-"`
 }
 
 // A replacement of the approved items of one folder so each review carries fewer items that never share a folder with an item of their kind
@@ -44,15 +36,8 @@ type Compaction struct {
 	Replaced Set
 }
 
-// What a compaction must pass before a person may approve it
-// A replay of the reviews for items of the data review and a coverage check for items of runs
-type Check interface {
-	// Fails naming why the check does not let the compaction through
-	verify(c Compaction) error
-}
-
 // Which new items state each old item of a compaction and what they lose
-// The check of a compaction of run items, since a run cannot be replayed
+// A run cannot be replayed so a reader of both sides checks that nothing is lost
 type Coverage struct {
 	Compaction string         `json:"compaction"`
 	Items      []CoverageItem `json:"items"`
@@ -69,10 +54,6 @@ type CoverageItem struct {
 // Passes when it is of this compaction, every old item is covered by its new items and no fact is lost
 // Fails with ErrCoverageNotPassed naming the first reason
 func (cv Coverage) Passes(c Compaction) error {
-	return cv.verify(c)
-}
-
-func (cv Coverage) verify(c Compaction) error {
 	if cv.Compaction != c.ID {
 		return fmt.Errorf("%w: the coverage is of %q and not of %s", ErrCoverageNotPassed, cv.Compaction, c.ID)
 	}
@@ -94,113 +75,19 @@ func (cv Coverage) verify(c Compaction) error {
 	return nil
 }
 
-func (r Replay) verify(c Compaction) error {
-	if r.Compaction != c.ID || !r.Passed() {
-		return fmt.Errorf("%w: %s", ErrReplayNotPassed, c.ID)
-	}
-	return nil
-}
-
-// Every event the old items came from reviewed again with the new items in their place
-type Replay struct {
-	Compaction string
-	Events     []ReplayEvent
-}
-
-// Passes when there is an event and every event reached its expected status
-// A failed or missing review has no status and fails
-func (r Replay) Passed() bool {
-	return len(r.Events) > 0 && !slices.ContainsFunc(r.Events, ReplayEvent.failed)
-}
-
-type ReplayEvent struct {
-	EventID  string          `json:"event_id"`
-	Expected evidence.Status `json:"expected"`
-	// Empty when the event was never replayed or its review failed
-	Got     evidence.Status `json:"got"`
-	TraceID string          `json:"trace_id,omitempty"`
-}
-
-func (e ReplayEvent) failed() bool {
-	return e.Got == "" || e.Got != e.Expected
-}
-
-// The approved knowledge as it reads once a compaction is approved
-// Held in memory so a replay reviews with the new items and nothing is appended
-type Preview struct {
-	set Set
-}
-
-func (p *Preview) All(_ context.Context) (Set, error) {
-	return p.set, nil
-}
-
-// Fails unless the version is approved in the preview
-func (p *Preview) Approved(_ context.Context, id string, version int) (Knowledge, error) {
-	return p.set.checkApproved(id, version)
-}
-
-// Whether an event can replay the item
-// An item whose evidence cites only procedure paragraphs has no review to replay and is never compacted
-func (e Evidence) Replayable() bool {
-	return len(e.FeedbackTraceIDs) > 0 || len(e.OutcomeTraceIDs) > 0
-}
-
-// The anchor and its folder items split by whether an event can replay them
-// 1. fails with ErrNotFound unless the anchor has an approved version
-// 2. fails with ErrParagraphOnly when the anchor cites only procedure paragraphs
-func (s Set) Compactable(anchor string, contexts evidence.Contexts) (Compactable, error) {
+// The anchor and the approved items one run may carry with it
+// Fails with ErrNotFound unless the anchor has an approved version with a run scope
+func (s Set) Compactable(anchor string) (Compactable, error) {
 	k := s.current(anchor)
-	if k == nil || k.Status != StatusApproved {
-		return Compactable{}, fmt.Errorf("%w: %s has no approved version", ErrNotFound, anchor)
+	if k == nil || k.Status != StatusApproved || k.Run == nil {
+		return Compactable{}, fmt.Errorf("%w: %s has no approved version scoped to runs", ErrNotFound, anchor)
 	}
-	if k.Run != nil {
-		return Compactable{Items: append(Set{*k}, s.runCarried(k.ID, *k.Run)...), Excluded: Set{}, Contexts: contexts}, nil
-	}
-	if !k.Evidence.Replayable() {
-		return Compactable{}, fmt.Errorf("%w: %s", ErrParagraphOnly, anchor)
-	}
-	return s.compactable(*k, contexts), nil
+	return Compactable{Items: append(Set{*k}, s.runCarried(k.ID, *k.Run)...)}, nil
 }
 
-// The approved items other than the anchor that share a folder with it across every change context it spans
-// A compaction may span change contexts so it covers their union
-func (s Set) compactable(anchor Knowledge, contexts evidence.Contexts) Compactable {
-	out := Compactable{Items: Set{anchor}, Excluded: Set{}, Contexts: contexts}
-	for _, other := range s.Approved() {
-		switch {
-		case other.ID == anchor.ID || !anchor.sharesFolder(other):
-		case other.Evidence.Replayable():
-			out.Items = append(out.Items, other)
-		default:
-			out.Excluded = append(out.Excluded, other)
-		}
-	}
-	return out
-}
-
-// The most items one review of a change context the anchor reaches carries
-// Crowding counts one review and never the union because an event carries one change context
-// No review carries a veto so vetoes never make a compaction due
-// A run folder holds only items one run may carry with the anchor so all of them count
+// Every item of a run folder may reach one run with the anchor so all of them count
 func (c Compactable) heaviest() int {
-	if c.Items[0].Run != nil {
-		return len(c.Items)
-	}
-	n := 0
-	for _, changeContext := range c.Contexts.Names() {
-		if !c.Items[0].carriedIn(changeContext) {
-			continue
-		}
-		carried := 0
-		for _, k := range c.Items {
-			if k.carriedIn(changeContext) {
-				carried++
-			}
-		}
-		n = max(n, carried)
-	}
-	return n
+	return len(c.Items)
 }
 
 // Whether one review carries more than FolderItems of the items
@@ -219,7 +106,7 @@ func (c Compactable) Crowded() bool {
 // 6. an old veto is kept by a new veto of an item that names it and keeps its tools and conditions and example
 // 7. a draft id is one old id so it becomes the next version of that id or a new id and no id repeats
 // 8. evidence is the union of the named old items and basis is verified only when every named item is
-func (s Set) compact(id string, old Set, drafts []Knowledge, now time.Time, contexts evidence.Contexts) (Set, error) {
+func (s Set) compact(id string, old Set, drafts []Knowledge, now time.Time) (Set, error) {
 	if len(old) < 2 || len(drafts) == 0 {
 		return nil, fmt.Errorf("%w: %d old items and %d drafts", ErrCompactionInvalid, len(old), len(drafts))
 	}
@@ -232,7 +119,7 @@ func (s Set) compact(id string, old Set, drafts []Knowledge, now time.Time, cont
 		if err != nil {
 			return nil, err
 		}
-		if err := named.checkWidening(draft, contexts); err != nil {
+		if err := named.checkWidening(draft); err != nil {
 			return nil, fmt.Errorf("draft %d: %w", i+1, err)
 		}
 		draft = named.draft(draft)
@@ -242,7 +129,7 @@ func (s Set) compact(id string, old Set, drafts []Knowledge, now time.Time, cont
 		if len(s.history(draft.ID)) > 0 && !slices.ContainsFunc(old, draft.hasID) {
 			return nil, fmt.Errorf("%w: draft %d takes the id %s of an item outside the compaction", ErrCompactionInvalid, i+1, draft.ID)
 		}
-		k, err := s.propose(draft, now, contexts)
+		k, err := s.propose(draft, now)
 		if err != nil {
 			return nil, fmt.Errorf("draft %d: %w", i+1, err)
 		}
@@ -324,84 +211,27 @@ func (e Evidence) union(other Evidence) Evidence {
 	return e
 }
 
-// Fails with ErrCompactionInvalid naming the first event the draft reaches and an item it names does not reach
-// The draft carries the facts of every item it names so a wider draft would carry a fact to events its item never reached
-// and a replay of the old events never shows it
-// A draft scoped to runs must reach no run that one of the items it names never reached
-func (s Set) checkWidening(d Knowledge, contexts evidence.Contexts) error {
-	if d.Run != nil || slices.ContainsFunc(s, func(k Knowledge) bool { return k.Run != nil }) {
-		for _, k := range s {
-			if d.Run == nil || k.Run == nil || d.Run.widens(*k.Run) {
-				return fmt.Errorf("%w: it carries the facts of %s to runs that %s never reached, whose scope is %s. "+
-					"Give each draft only the producer, labels and exceptions every item it names reaches, "+
-					"and repeat a general fact in each draft that needs it",
-					ErrCompactionInvalid, k.ID, k.ID, k.reachText())
-			}
-		}
-		return nil
-	}
-	k, reached, ok := s.widened(d, contexts)
-	if !ok {
-		return nil
-	}
-	return fmt.Errorf("%w: it carries the facts of %s to events of %s that %s never reached. "+
-		"Give each draft only the change contexts, exceptions, metrics and dims every item it names reaches, "+
-		"and repeat a general fact in each draft that needs it",
-		ErrCompactionInvalid, k.ID, reached, k.ID)
-}
-
-// The first item of the set that d reaches past and the events it reaches there
-// 1. the change contexts are the declared ones the scope and the exceptions of d leave
-// 2. d without metrics reaches every metric
-// 3. a dim value of d must be one every item keeps because a dim holds one value per key
-func (s Set) widened(d Knowledge, contexts evidence.Contexts) (Knowledge, Scope, bool) {
-	metrics := d.Scope.Metrics
-	if len(metrics) == 0 {
-		metrics = []string{""}
-	}
-	for _, c := range contexts.Names() {
-		if !d.reaches(c) {
-			continue
-		}
-		for _, m := range metrics {
-			k, ok := s.uncovering(c, m, d.Scope.Dims)
-			if !ok {
-				continue
-			}
-			reached := Scope{Scope: evidence.Scope{ChangeContexts: []evidence.Context{c}}, Dims: d.Scope.Dims}
-			if m != "" {
-				reached.Metrics = []string{m}
-			}
-			return k, reached, true
-		}
-	}
-	return Knowledge{}, Scope{}, false
-}
-
-// The first item that does not cover the change context and the metric that carries the dims
-func (s Set) uncovering(changeContext evidence.Context, metric string, dims map[string]string) (Knowledge, bool) {
+// Fails with ErrCompactionInvalid when the draft reaches runs that an item it names never reached
+// The draft carries the facts of every item it names so a wider draft would carry a fact where it never held
+func (s Set) checkWidening(d Knowledge) error {
 	for _, k := range s {
-		if !k.covers(changeContext, metric, dims) {
-			return k, true
+		if d.Run == nil || k.Run == nil || d.Run.widens(*k.Run) {
+			return fmt.Errorf("%w: it carries the facts of %s to runs that %s never reached, whose scope is %s. "+
+				"Give each draft only the producer, labels and exceptions every item it names reaches, "+
+				"and repeat a general fact in each draft that needs it",
+				ErrCompactionInvalid, k.ID, k.ID, k.reachText())
 		}
 	}
-	return Knowledge{}, false
+	return nil
 }
 
-// No two items of the same kind overlap in a folder unless both carry a veto
-// 1. metrics with none in common or one dim key with a different value on each keep two items apart as Overlaps does
-// Folder sizing still counts every metric and dim together because one event may move several metrics and carry several values of a key
-// 2. two vetoes never merge without lifting one so each old veto keeps its own judgment in the folder
-// 3. a judgment without a veto may not overlap another judgment of its folder
+// No two items of the same kind reach one run unless both carry a veto
+// Two vetoes never merge without lifting one so each old veto keeps its own judgment
 func (s Set) checkExclusive() error {
 	for i, a := range s {
 		for _, b := range s[i+1:] {
 			if a.Kind == b.Kind && a.sharesRun(b) && (a.Veto == nil || b.Veto == nil) {
 				return fmt.Errorf("%w: %s and %s are both %s items one run may carry and no label splits them",
-					ErrCompactionOverlap, a.ID, b.ID, a.Kind)
-			}
-			if a.Kind == b.Kind && a.sharesFolder(b) && a.Scope.overlaps(b.Scope) && (a.Veto == nil || b.Veto == nil) {
-				return fmt.Errorf("%w: %s and %s are both %s items of one folder and no metric or dim value splits them",
 					ErrCompactionOverlap, a.ID, b.ID, a.Kind)
 			}
 		}
@@ -600,7 +430,7 @@ func (s Set) proposedUnder(id string) Set {
 // 2. every other old item is retired
 // 3. a record already appended by an earlier call is not repeated so a second call completes a partial one
 // 4. an old item changed by anything but this compaction makes the compaction outdated
-func (s Set) approveCompaction(c Compaction, approver string, now time.Time, contexts evidence.Contexts) ([]Knowledge, Set, error) {
+func (s Set) approveCompaction(c Compaction, approver string, now time.Time) ([]Knowledge, Set, error) {
 	working := slices.Clone(s)
 	var records []Knowledge
 	add := func(k Knowledge) {
@@ -616,7 +446,7 @@ func (s Set) approveCompaction(c Compaction, approver string, now time.Time, con
 		if latest.Status == StatusApproved {
 			continue
 		}
-		to, superseded, err := working.approve(item.ID, item.Version, approver, now, contexts)
+		to, superseded, err := working.approve(item.ID, item.Version, approver, now)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -643,31 +473,25 @@ func (s Set) approveCompaction(c Compaction, approver string, now time.Time, con
 // The records that approve the compaction of id
 // 1. an approver is required once the compaction is found
 // 2. an approval that pushes a review past a cap or grows one already past it is refused like one of Approve
-func (s Set) compactionApproval(id, approver string, check Check, now time.Time, contexts evidence.Contexts) ([]Knowledge, error) {
+func (s Set) compactionApproval(id, approver string, check Coverage, now time.Time) ([]Knowledge, error) {
 	c, err := s.compaction(id)
 	if err != nil {
 		return nil, err
 	}
-	if err := check.verify(c); err != nil {
+	if err := check.Passes(c); err != nil {
 		return nil, err
 	}
 	if approver == "" {
 		return nil, fmt.Errorf("%w: compaction %s needs one", ErrApproverRequired, id)
 	}
-	records, after, err := s.approveCompaction(c, approver, now, contexts)
+	records, after, err := s.approveCompaction(c, approver, now)
 	if err != nil {
 		return nil, err
 	}
 	for _, k := range c.Items {
-		if f, grew := after.outgrows(s, k, contexts); grew {
+		if f, grew := after.outgrows(s, k); grew {
 			return nil, fmt.Errorf("%w: %s %s with %s", ErrFolderFull, k.ID, f.load(), f)
 		}
 	}
 	return records, nil
-}
-
-// The set with the compaction approved in memory
-func (s Set) preview(c Compaction, now time.Time, contexts evidence.Contexts) (Set, error) {
-	_, working, err := s.approveCompaction(c, "preview", now, contexts)
-	return working, err
 }

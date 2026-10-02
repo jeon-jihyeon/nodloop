@@ -1,14 +1,13 @@
 package knowledge_test
 
 import (
-	"slices"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/jeon-jihyeon/nodloop/internal/evidence"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
+	"github.com/jeon-jihyeon/nodloop/internal/trace"
 )
 
 func TestSetCurrent(t *testing.T) {
@@ -76,38 +75,6 @@ func TestSetVersions(t *testing.T) {
 	}
 }
 
-func TestSetCovers(t *testing.T) {
-	planned := knowledge.Knowledge{
-		ID: "planned", Version: 1, Status: knowledge.StatusApproved,
-		Scope: knowledge.Scope{Scope: evidence.Scope{ChangeContexts: []evidence.Context{evidence.ContextPlannedChange}}},
-	}
-	open := knowledge.Knowledge{
-		ID: "open", Version: 1, Status: knowledge.StatusApproved, Exceptions: []evidence.Context{evidence.ContextUnknown},
-	}
-	candidate := knowledge.Knowledge{ID: "candidate", Version: 1, Status: knowledge.StatusCandidate}
-	type args struct {
-		set           knowledge.Set
-		changeContext evidence.Context
-	}
-	tcs := []struct {
-		name string
-		args args
-		want bool
-	}{
-		{"a scoped item covers its context", args{knowledge.Set{planned}, evidence.ContextPlannedChange}, true},
-		{"a scoped item leaves another context", args{knowledge.Set{planned}, evidence.ContextNoKnownChange}, false},
-		{"an unscoped item covers every context", args{knowledge.Set{open}, evidence.ContextNoKnownChange}, true},
-		{"an exception leaves its context", args{knowledge.Set{open}, evidence.ContextUnknown}, false},
-		{"a candidate covers nothing", args{knowledge.Set{candidate}, evidence.ContextNoKnownChange}, false},
-	}
-	for _, tc := range tcs {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			assert.Equal(t, tc.want, tc.args.set.Covers(tc.args.changeContext))
-		})
-	}
-}
-
 func TestSetApproved(t *testing.T) {
 	a := knowledge.Knowledge{ID: "a", Version: 1, Status: knowledge.StatusApproved}
 	b := knowledge.Knowledge{ID: "b", Version: 1, Status: knowledge.StatusCandidate}
@@ -124,145 +91,6 @@ func TestSetApproved(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			assert.Equal(t, tc.want, tc.args.Approved())
-		})
-	}
-}
-
-func TestSetApplicable(t *testing.T) {
-	approved := knowledge.Knowledge{ID: "any", Version: 1, Status: knowledge.StatusApproved}
-	planned := knowledge.Knowledge{
-		ID: "ctx", Version: 1, Status: knowledge.StatusApproved,
-		Scope: knowledge.Scope{Scope: evidence.Scope{ChangeContexts: []evidence.Context{evidence.ContextPlannedChange}}},
-	}
-	metric := knowledge.Knowledge{
-		ID: "metric", Version: 1, Status: knowledge.StatusApproved,
-		Scope: knowledge.Scope{Scope: evidence.Scope{Metrics: []string{"conversion_count", "impressions"}}},
-	}
-	dim := knowledge.Knowledge{
-		ID: "dim", Version: 1, Status: knowledge.StatusApproved,
-		Scope: knowledge.Scope{Dims: map[string]string{"source": "source-b"}},
-	}
-	otherDim := knowledge.Knowledge{
-		ID: "other-dim", Version: 1, Status: knowledge.StatusApproved,
-		Scope: knowledge.Scope{Dims: map[string]string{"source": "source-z"}},
-	}
-	excepted := knowledge.Knowledge{
-		ID: "excepted", Version: 1, Status: knowledge.StatusApproved,
-		Exceptions: []evidence.Context{evidence.ContextPlannedChange},
-	}
-	candidate := knowledge.Knowledge{ID: "candidate", Version: 1, Status: knowledge.StatusCandidate}
-	clicksOnB := knowledge.Knowledge{
-		ID: "clicks-on-b", Version: 1, Status: knowledge.StatusApproved,
-		Scope: knowledge.Scope{Scope: evidence.Scope{Metrics: []string{"click_count"}}, Dims: map[string]string{"source": "source-b"}},
-	}
-	onA, onB := map[string]string{"source": "source-a"}, map[string]string{"source": "source-b"}
-	dims := knowledge.Dims{"source": {"source-a": {}, "source-b": {}, "source-d": {}}, "region": {"eu": {}}}
-	change, unknown := evidence.ContextPlannedChange, evidence.ContextUnknown
-	type ref = evidence.SeriesRef
-	// Undiluted series that also name their metrics
-	series := func(refs ...evidence.SeriesRef) knowledge.Moved {
-		m := knowledge.Moved{Series: refs}
-		for _, ref := range refs {
-			if !slices.Contains(m.Metrics, ref.Metric) {
-				m.Metrics = append(m.Metrics, ref.Metric)
-			}
-		}
-		return m
-	}
-	// Only a diluted group of the metric moved
-	diluted := knowledge.Moved{Metrics: []string{"click_count"}}
-	clicks := knowledge.Knowledge{
-		ID: "clicks", Version: 1, Status: knowledge.StatusApproved,
-		Scope: knowledge.Scope{Scope: evidence.Scope{
-			ChangeContexts: []evidence.Context{evidence.ContextNoKnownChange}, Metrics: []string{"click_count"},
-		}},
-	}
-	clicksOnD := knowledge.Knowledge{
-		ID: "clicks-on-d", Version: 1, Status: knowledge.StatusApproved,
-		Scope: knowledge.Scope{Scope: evidence.Scope{Metrics: []string{"click_count"}}, Dims: map[string]string{"source": "source-d"}},
-	}
-	clicksInEU := knowledge.Knowledge{
-		ID: "clicks-in-eu", Version: 1, Status: knowledge.StatusApproved,
-		Scope: knowledge.Scope{Scope: evidence.Scope{Metrics: []string{"click_count"}}, Dims: map[string]string{"region": "eu"}},
-	}
-	type args struct {
-		item          knowledge.Knowledge
-		changeContext evidence.Context
-		moved         knowledge.Moved
-	}
-	tcs := []struct {
-		name string
-		args args
-		want knowledge.Set
-	}{
-		{"unscoped approved item applies to any event", args{approved, unknown, knowledge.Moved{}}, knowledge.Set{approved}},
-		{"candidate never applies", args{candidate, unknown, knowledge.Moved{}}, knowledge.Set{}},
-		{
-			"moved metric matches a metric scope",
-			args{metric, unknown, series(ref{Metric: "click_count"}, ref{Metric: "impressions"})},
-			knowledge.Set{metric},
-		},
-		{
-			"metric the event carries but nobody flagged does not match",
-			args{metric, unknown, series(ref{Metric: "click_count"})},
-			knowledge.Set{},
-		},
-		{
-			"metric and dim value moved on one series match",
-			args{clicksOnB, unknown, series(ref{Metric: "click_count", Dims: onB})},
-			knowledge.Set{clicksOnB},
-		},
-		{
-			"metric that moved on another dim value does not match although the event carries the value",
-			args{clicksOnB, unknown, series(ref{Metric: "click_count", Dims: onA})},
-			knowledge.Set{},
-		},
-		{
-			"another metric that moved on the dim value does not match",
-			args{clicksOnB, unknown, series(ref{Metric: "click_count", Dims: onA}, ref{Metric: "conversion_count", Dims: onB})},
-			knowledge.Set{},
-		},
-		{
-			"series whose target leaves out the dim falls back to the values the event carries",
-			args{clicksOnB, unknown, series(ref{Metric: "click_count", Dims: map[string]string{"topic": "shopping"}})},
-			knowledge.Set{clicksOnB},
-		},
-		{
-			"dim value without a metric applies when nothing moved",
-			args{dim, unknown, knowledge.Moved{}},
-			knowledge.Set{dim},
-		},
-		{
-			"dim value without a metric applies whatever moved on another value",
-			args{dim, unknown, series(ref{Metric: "click_count", Dims: onA})},
-			knowledge.Set{dim},
-		},
-		{
-			"a metric moved only by a diluted group matches a metric scope",
-			args{clicks, evidence.ContextNoKnownChange, diluted},
-			knowledge.Set{clicks},
-		},
-		{
-			"a diluted group never admits a scope on its own dim value",
-			args{clicksOnD, unknown, diluted},
-			knowledge.Set{},
-		},
-		{
-			"a diluted movement admits no scope on a dim key of another dimension either",
-			args{clicksInEU, unknown, diluted},
-			knowledge.Set{},
-		},
-		{"context scope matches its change context", args{planned, change, knowledge.Moved{}}, knowledge.Set{planned}},
-		{"context scope skips another change context", args{planned, unknown, knowledge.Moved{}}, knowledge.Set{}},
-		{"exception skips its change context", args{excepted, change, knowledge.Moved{}}, knowledge.Set{}},
-		{"exception leaves another change context", args{excepted, unknown, knowledge.Moved{}}, knowledge.Set{excepted}},
-		{"dimension value the event carries matches", args{dim, unknown, knowledge.Moved{}}, knowledge.Set{dim}},
-		{"dimension value the event lacks does not match", args{otherDim, unknown, knowledge.Moved{}}, knowledge.Set{}},
-	}
-	for _, tc := range tcs {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			assert.Equal(t, tc.want, knowledge.Set{tc.args.item}.Applicable(tc.args.changeContext, tc.args.moved, dims))
 		})
 	}
 }
@@ -313,81 +141,6 @@ func TestSetMatching(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			assert.Equal(t, tc.want, items.Matching(tc.args))
-		})
-	}
-}
-
-func TestSetOverlaps(t *testing.T) {
-	xy := knowledge.Knowledge{
-		ID: "xy", Version: 1, Kind: knowledge.KindMeaning, Status: knowledge.StatusCandidate,
-		Scope: knowledge.Scope{Scope: evidence.Scope{ChangeContexts: []evidence.Context{"x", "y"}, Metrics: []string{"m"}}},
-	}
-	y := knowledge.Knowledge{
-		ID: "y", Version: 1, Kind: knowledge.KindMeaning, Status: knowledge.StatusCandidate,
-		Scope: knowledge.Scope{Scope: evidence.Scope{ChangeContexts: []evidence.Context{"y"}}},
-	}
-	z := knowledge.Knowledge{
-		ID: "z", Version: 1, Kind: knowledge.KindMeaning, Status: knowledge.StatusCandidate,
-		Scope: knowledge.Scope{Scope: evidence.Scope{ChangeContexts: []evidence.Context{"z"}}},
-	}
-	n := knowledge.Knowledge{
-		ID: "n", Version: 1, Kind: knowledge.KindMeaning, Status: knowledge.StatusCandidate,
-		Scope: knowledge.Scope{Scope: evidence.Scope{Metrics: []string{"n"}}},
-	}
-	judgment := knowledge.Knowledge{
-		ID: "judgment", Version: 1, Kind: knowledge.KindJudgment, Status: knowledge.StatusCandidate,
-	}
-	sourceA := knowledge.Knowledge{
-		ID: "source-a", Version: 1, Kind: knowledge.KindJudgment, Status: knowledge.StatusCandidate,
-		Scope: knowledge.Scope{Dims: map[string]string{"source": "a"}},
-	}
-	items := knowledge.Set{xy, y, z, n, judgment, sourceA}
-	type args struct {
-		id    string
-		kind  knowledge.Kind
-		scope knowledge.Scope
-	}
-	tcs := []struct {
-		name string
-		args args
-		want knowledge.Set
-	}{
-		{"shared context and an unset metric axis overlap", args{xy.ID, xy.Kind, xy.Scope}, knowledge.Set{y}},
-		{
-			"unset axes overlap every item of the same kind",
-			args{"new", knowledge.KindMeaning, knowledge.Scope{}},
-			knowledge.Set{n, xy, y, z},
-		},
-		{
-			"other kind never overlaps",
-			args{"new", knowledge.KindJudgment, knowledge.Scope{Scope: evidence.Scope{Metrics: []string{"m"}}}},
-			knowledge.Set{judgment, sourceA},
-		},
-		{
-			"same dimension value overlaps",
-			args{"new", knowledge.KindJudgment, knowledge.Scope{Dims: map[string]string{"source": "a"}}},
-			knowledge.Set{judgment, sourceA},
-		},
-		{
-			"other value of the same dimension does not overlap",
-			args{"new", knowledge.KindJudgment, knowledge.Scope{Dims: map[string]string{"source": "b"}}},
-			knowledge.Set{judgment},
-		},
-		{
-			"dimension set on one side only overlaps",
-			args{"new", knowledge.KindJudgment, knowledge.Scope{Dims: map[string]string{"app": "x"}}},
-			knowledge.Set{judgment, sourceA},
-		},
-		{
-			"disjoint contexts overlap only items without contexts",
-			args{"new", knowledge.KindMeaning, knowledge.Scope{Scope: evidence.Scope{ChangeContexts: []evidence.Context{"w"}}}},
-			knowledge.Set{n},
-		},
-	}
-	for _, tc := range tcs {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			assert.Equal(t, tc.want, items.Overlaps(tc.args.id, tc.args.kind, tc.args.scope))
 		})
 	}
 }
@@ -453,69 +206,72 @@ func TestSetLineage(t *testing.T) {
 
 // k-c v1 compacts k-a v1 and k-b v1 and k-d v1 compacts k-c v1
 // k-e v1 cites k-a v1 as evidence without a compaction
-// k-f v1 compacts k-a v1 and narrows it to one metric
+// k-f v1 compacts k-a v1 and narrows it to commit runs
 func TestSetInherits(t *testing.T) {
 	ref := func(id string, version int) knowledge.Ref { return knowledge.Ref{ID: id, Version: version} }
-	quiet := knowledge.Scope{Scope: evidence.Scope{ChangeContexts: []evidence.Context{evidence.ContextNoKnownChange}}}
+	repo := &knowledge.RunScope{Producer: "session", Labels: trace.Labels{"repo": {"nodloop"}}}
 	set := knowledge.Set{
-		{ID: "k-a", Version: 1},
-		{ID: "k-b", Version: 1},
+		{ID: "k-a", Version: 1, Run: repo},
+		{ID: "k-b", Version: 1, Run: repo},
 		{
-			ID: "k-c", Version: 1, Scope: quiet, Compaction: "c-1",
+			ID: "k-c", Version: 1, Run: repo, Compaction: "c-1",
 			Evidence: knowledge.Evidence{Knowledge: []knowledge.Ref{ref("k-a", 1), ref("k-b", 1)}, OutcomeTraceIDs: []string{"cited"}},
 		},
-		{ID: "k-d", Version: 1, Compaction: "c-2", Evidence: knowledge.Evidence{Knowledge: []knowledge.Ref{ref("k-c", 1)}}},
-		{ID: "k-e", Version: 1, Evidence: knowledge.Evidence{Knowledge: []knowledge.Ref{ref("k-a", 1)}}},
+		{ID: "k-d", Version: 1, Run: repo, Compaction: "c-2", Evidence: knowledge.Evidence{Knowledge: []knowledge.Ref{ref("k-c", 1)}}},
+		{ID: "k-e", Version: 1, Run: repo, Evidence: knowledge.Evidence{Knowledge: []knowledge.Ref{ref("k-a", 1)}}},
 		{
 			ID: "k-f", Version: 1, Compaction: "c-3", Evidence: knowledge.Evidence{Knowledge: []knowledge.Ref{ref("k-a", 1)}},
-			Scope: knowledge.Scope{Scope: evidence.Scope{Metrics: []string{"conversion_count"}}},
+			Run: &knowledge.RunScope{Producer: "session", Labels: trace.Labels{"repo": {"nodloop"}, "task": {"commit"}}},
 		},
+		{ID: "k-g", Version: 1, Compaction: "c-4", Evidence: knowledge.Evidence{Knowledge: []knowledge.Ref{ref("k-a", 1)}}},
 	}
 	type args struct {
-		ref           knowledge.Ref
-		traceID       string
-		applied       []knowledge.Ref
-		changeContext evidence.Context
-		moved         []string
+		ref      knowledge.Ref
+		traceID  string
+		applied  []knowledge.Ref
+		producer string
+		labels   trace.Labels
 	}
-	quietly := evidence.ContextNoKnownChange
+	inRepo := trace.Labels{"repo": {"nodloop"}}
 	tcs := []struct {
 		name string
 		args args
 		want bool
 	}{
-		{"a review of a merged version passes to the compaction", args{ref("k-c", 1), "r", []knowledge.Ref{ref("k-a", 1)}, quietly, nil}, true},
-		{"a review of a version merged two compactions back passes on", args{ref("k-d", 1), "r", []knowledge.Ref{ref("k-b", 1)}, quietly, nil}, true},
+		{"a run of a merged version passes to the compaction", args{ref("k-c", 1), "r", []knowledge.Ref{ref("k-a", 1)}, "session", inRepo}, true},
+		{"a run of a version merged two compactions back passes on", args{ref("k-d", 1), "r", []knowledge.Ref{ref("k-b", 1)}, "session", inRepo}, true},
 		{
-			"a review that applied the version itself is its own",
-			args{ref("k-c", 1), "r", []knowledge.Ref{ref("k-a", 1), ref("k-c", 1)}, quietly, nil},
+			"a run that applied the version itself is its own",
+			args{ref("k-c", 1), "r", []knowledge.Ref{ref("k-a", 1), ref("k-c", 1)}, "session", inRepo},
 			false,
 		},
-		{"a review the version cites is answered", args{ref("k-c", 1), "cited", []knowledge.Ref{ref("k-a", 1)}, quietly, nil}, false},
-		{"a review a merged version cites is answered", args{ref("k-d", 1), "cited", []knowledge.Ref{ref("k-a", 1)}, quietly, nil}, false},
+		{"a run the version cites is answered", args{ref("k-c", 1), "cited", []knowledge.Ref{ref("k-a", 1)}, "session", inRepo}, false},
+		{"a run a merged version cites is answered", args{ref("k-d", 1), "cited", []knowledge.Ref{ref("k-a", 1)}, "session", inRepo}, false},
 		{
-			"a review of a change context the version no longer reaches stays behind",
-			args{ref("k-c", 1), "r", []knowledge.Ref{ref("k-a", 1)}, evidence.ContextPlannedChange, nil},
+			"a run of a label value the version no longer reaches stays behind",
+			args{ref("k-c", 1), "r", []knowledge.Ref{ref("k-a", 1)}, "session", trace.Labels{"repo": {"other"}}},
 			false,
 		},
-		{"evidence without a compaction merges nothing", args{ref("k-e", 1), "r", []knowledge.Ref{ref("k-a", 1)}, quietly, nil}, false},
-		{"an unknown version inherits nothing", args{ref("k-z", 1), "r", []knowledge.Ref{ref("k-a", 1)}, quietly, nil}, false},
+		{"a run of another producer stays behind", args{ref("k-c", 1), "r", []knowledge.Ref{ref("k-a", 1)}, "ci", inRepo}, false},
+		{"evidence without a compaction merges nothing", args{ref("k-e", 1), "r", []knowledge.Ref{ref("k-a", 1)}, "session", inRepo}, false},
+		{"an unknown version inherits nothing", args{ref("k-z", 1), "r", []knowledge.Ref{ref("k-a", 1)}, "session", inRepo}, false},
+		{"a version without a run scope inherits nothing", args{ref("k-g", 1), "r", []knowledge.Ref{ref("k-a", 1)}, "session", inRepo}, false},
 		{
-			"a review that moved a metric of a version narrowed by metric passes to it",
-			args{ref("k-f", 1), "r", []knowledge.Ref{ref("k-a", 1)}, quietly, []string{"conversion_count", "cost"}},
+			"a run that carries the label a version was narrowed by passes to it",
+			args{ref("k-f", 1), "r", []knowledge.Ref{ref("k-a", 1)}, "session", trace.Labels{"repo": {"nodloop"}, "task": {"commit", "push"}}},
 			true,
 		},
 		{
-			"a review that moved no metric of a version narrowed by metric stays behind",
-			args{ref("k-f", 1), "r", []knowledge.Ref{ref("k-a", 1)}, quietly, []string{"cost"}},
+			"a run of another value of the label a version was narrowed by stays behind",
+			args{ref("k-f", 1), "r", []knowledge.Ref{ref("k-a", 1)}, "session", trace.Labels{"repo": {"nodloop"}, "task": {"docs"}}},
 			false,
 		},
-		{"a quiet review stays behind a version narrowed by metric", args{ref("k-f", 1), "r", []knowledge.Ref{ref("k-a", 1)}, quietly, nil}, false},
+		{"a run without the label a version was narrowed by stays behind", args{ref("k-f", 1), "r", []knowledge.Ref{ref("k-a", 1)}, "session", inRepo}, false},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			assert.Equal(t, tc.want, set.Inherits(tc.args.ref, tc.args.traceID, tc.args.applied, tc.args.changeContext, tc.args.moved))
+			assert.Equal(t, tc.want, set.Inherits(tc.args.ref, tc.args.traceID, tc.args.applied, tc.args.producer, tc.args.labels))
 		})
 	}
 }

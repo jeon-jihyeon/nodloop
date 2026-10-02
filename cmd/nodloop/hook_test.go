@@ -241,7 +241,7 @@ func TestRunKnowledgeLifecycle(t *testing.T) {
 
 	code, _, stderr := knowledgeRun("narrow", "git-c", "--version", "1")
 	assert.Equal(t, 1, code)
-	assert.Contains(t, stderr, "a run item needs --key")
+	assert.Contains(t, stderr, "narrow: --key")
 	code, stdout, stderr := knowledgeRun("narrow", "git-c", "--version", "1", "--key", "dir")
 	require.Equal(t, 0, code, stderr)
 	assert.Contains(t, stdout, "git-c\tv2\tcandidate\tscope runs of session. repo=nodloop. except dir=docs\n")
