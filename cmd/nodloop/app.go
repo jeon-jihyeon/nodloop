@@ -337,10 +337,15 @@ func (a app) pipeline() (pipeline, error) {
 
 // The compactor over one ledger without the policy because checking a folder never analyzes an event
 // So an approval that only asks whether a compaction is due works on a data set whose policy is broken
+// Without a data dir the source is nil and only a folder of run items compacts
 func (a app) compactor(ledger *knowledge.Ledger) (*compact.Compactor, error) {
-	src, err := a.source()
-	if err != nil {
-		return nil, err
+	var src compact.Source
+	if a.cfg.dataDir != "" {
+		s, err := a.source()
+		if err != nil {
+			return nil, err
+		}
+		src = s
 	}
 	traces, err := a.traces()
 	if err != nil {
@@ -362,11 +367,11 @@ func (a app) compactor(ledger *knowledge.Ledger) (*compact.Compactor, error) {
 	if err != nil {
 		return nil, err
 	}
-	return compact.New(src, ledger, traces, verdicts, outcomes, replays), nil
+	return compact.New(src, ledger, traces, verdicts, outcomes, replays, a.now), nil
 }
 
 func (p pipeline) compactor() *compact.Compactor {
-	return compact.New(p.src, p.ledger, p.traces, p.feedback, p.outcomes, p.replays)
+	return compact.New(p.src, p.ledger, p.traces, p.feedback, p.outcomes, p.replays, p.now)
 }
 
 // Reviews over the preview of a compaction into the replay store

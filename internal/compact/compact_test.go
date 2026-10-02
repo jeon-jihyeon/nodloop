@@ -133,7 +133,7 @@ func TestFolder(t *testing.T) {
 			s := testkit.Open(t)
 			seed(t, s)
 
-			got, err := compact.New(s.Source, s.Ledger, s.Traces, s.Feedback, s.Outcomes, s.Replays).Folder(ctx, tc.args)
+			got, err := compact.New(s.Source, s.Ledger, s.Traces, s.Feedback, s.Outcomes, s.Replays, time.Now).Folder(ctx, tc.args)
 			view := want{
 				corrections: got.Corrections, replay: got.Replay, unverifiable: got.Unverifiable,
 				line: tc.want.line, err: tc.want.err,
@@ -225,7 +225,7 @@ func TestPropose(t *testing.T) {
 			t.Parallel()
 			s := testkit.Open(t)
 			seed(t, s)
-			c := compact.New(s.Source, s.Ledger, s.Traces, s.Feedback, s.Outcomes, s.Replays)
+			c := compact.New(s.Source, s.Ledger, s.Traces, s.Feedback, s.Outcomes, s.Replays, time.Now)
 			for _, d := range tc.args.first {
 				_, _, err := c.Propose(ctx, "a", d, "")
 				require.NoError(t, err)
@@ -319,7 +319,7 @@ func TestDraft(t *testing.T) {
 			t.Parallel()
 			s := testkit.Open(t)
 			seed(t, s)
-			c := compact.New(s.Source, s.Ledger, s.Traces, s.Feedback, s.Outcomes, s.Replays)
+			c := compact.New(s.Source, s.Ledger, s.Traces, s.Feedback, s.Outcomes, s.Replays, time.Now)
 			for _, d := range tc.args.first {
 				_, _, err := c.Propose(ctx, "a", d, "")
 				require.NoError(t, err)
@@ -415,7 +415,7 @@ func TestReplay(t *testing.T) {
 			items[0].Evidence = knowledge.Evidence{FeedbackTraceIDs: []string{"t1"}}
 			items[1].Evidence = knowledge.Evidence{FeedbackTraceIDs: []string{"t2"}}
 			require.NoError(t, testkit.Err(s.Ledger.Import(ctx, items)))
-			c := compact.New(s.Source, s.Ledger, s.Traces, s.Feedback, s.Outcomes, s.Replays)
+			c := compact.New(s.Source, s.Ledger, s.Traces, s.Feedback, s.Outcomes, s.Replays, time.Now)
 			proposed, _, err := c.Propose(ctx, "a", merged, "")
 			require.NoError(t, err)
 			answers := tc.args.first
@@ -486,7 +486,7 @@ func TestResult(t *testing.T) {
 			t.Parallel()
 			s := testkit.Open(t)
 			seed(t, s)
-			c := compact.New(s.Source, s.Ledger, s.Traces, s.Feedback, s.Outcomes, s.Replays)
+			c := compact.New(s.Source, s.Ledger, s.Traces, s.Feedback, s.Outcomes, s.Replays, time.Now)
 			_, _, err := c.Propose(ctx, "a", merged, "")
 			require.NoError(t, err)
 
@@ -549,7 +549,7 @@ func TestFolderOutcomes(t *testing.T) {
 				require.NoError(t, s.Outcomes.Append(ctx, o))
 			}
 
-			got, err := compact.New(s.Source, s.Ledger, s.Traces, s.Feedback, s.Outcomes, s.Replays).Folder(ctx, "a")
+			got, err := compact.New(s.Source, s.Ledger, s.Traces, s.Feedback, s.Outcomes, s.Replays, time.Now).Folder(ctx, "a")
 			require.NoError(t, err)
 			var replay []string
 			for _, e := range got.Replay {
