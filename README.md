@@ -166,6 +166,20 @@ Five procedures, four planted traps and a scripted reviewer stood in for a plant
 
 </details>
 
+## Any output
+
+The loop is not tied to the data review. Any tool can record what it made as a run, with the labels of its situation, take a nod on it and get back the approved items for the next run with the same labels. None of it needs a data directory.
+
+```
+~/.nodloop/bin/nodloop run record --producer session --label repo=nodloop --output answer.txt
+~/.nodloop/bin/nodloop feedback add --trace <run id> --verdict edit --edited corrected.json --reason "use git -C, never cd first"
+~/.nodloop/bin/nodloop knowledge propose --producer session --label repo=nodloop --trace <run id> --kind judgment --content "Use git -C <dir> instead of cd <dir> && git"
+~/.nodloop/bin/nodloop knowledge approve <id> --version 1 --approver <your name>
+~/.nodloop/bin/nodloop knowledge for --producer session --label repo=nodloop
+```
+
+In Claude Code the MCP tools `run` and `knowledge_for` do the same, and `propose` with `from` set to a corrected run fills the producer and labels from it. A label must be one a recorded run already carries, so a misspelled label fails instead of making an item that matches nothing, and an item scoped to runs never reaches a data review.
+
 ## Guard
 
 `nodloop guard` blocks tool calls you've vetoed before they run. It's a PreToolUse hook, so the model can't talk its way past it.

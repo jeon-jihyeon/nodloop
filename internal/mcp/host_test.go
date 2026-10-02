@@ -36,6 +36,7 @@ func TestHostOpenFails(t *testing.T) {
 		"propose": {"kind": "meaning", "content": "c"}, "approve": {"id": "k", "version": 1, "approver": "jed"},
 		"compaction": {"id": "k"}, "propose_compaction": {"anchor": "k", "items": []any{}},
 		"approve_compaction": {"compaction": "c", "approver": "jed"},
+		"run":                {"producer": "session", "output": "x"}, "knowledge_for": {"producer": "session"},
 	}
 	tools := c.Tools(t)
 	require.ElementsMatch(t, mcp.Tools(), tools)
