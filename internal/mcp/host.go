@@ -19,15 +19,18 @@ type Host struct {
 	open Open
 	// Reported to the client in the MCP handshake
 	version string
-	mu      sync.Mutex
+	// Sent in the handshake, which a client shows the model before any tool call
+	// Empty sends none
+	instructions string
+	mu           sync.Mutex
 }
 
-func NewHost(open Open, version string) *Host {
-	return &Host{open: open, version: version}
+func NewHost(open Open, version, instructions string) *Host {
+	return &Host{open: open, version: version, instructions: instructions}
 }
 
 func (h *Host) ServeTransport(ctx context.Context, t sdk.Transport) error {
-	srv := sdk.NewServer(&sdk.Implementation{Name: "nodloop", Version: h.version}, nil)
+	srv := sdk.NewServer(&sdk.Implementation{Name: "nodloop", Version: h.version}, &sdk.ServerOptions{Instructions: h.instructions})
 	for _, tl := range tools {
 		tl.add(srv, h)
 	}

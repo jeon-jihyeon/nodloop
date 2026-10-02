@@ -12,6 +12,8 @@ const (
 	envRecordDir = "NODLOOP_RECORD_DIR"
 	envClaudeBin = "NODLOOP_CLAUDE_BIN"
 	envLLMModel  = "NODLOOP_LLM_MODEL"
+	// Set by the plugin launcher to the version it runs this binary for
+	envPluginVersion = "NODLOOP_PLUGIN_VERSION"
 )
 
 // The evidence implementation a data command reads

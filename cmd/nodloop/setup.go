@@ -120,7 +120,10 @@ func runSetup(args []string, getenv func(string) string, stdout, stderr io.Write
 	if h == "" {
 		return fail(stderr, "setup", fmt.Errorf("%w: HOME is not set", errHomeUnknown))
 	}
-	cmd := setupCommand{home: h, fileEnv: getenv(envFileDir), recordEnv: getenv(envRecordDir), out: stdout, log: stderr}
+	cmd := setupCommand{
+		home: h, fileEnv: getenv(envFileDir), recordEnv: getenv(envRecordDir),
+		version: pluginVersion(getenv(envPluginVersion)).mismatch(buildVersion(), executable()), out: stdout, log: stderr,
+	}
 	if *dataDir == "" {
 		return fail(stderr, "setup", fmt.Errorf("--data-dir %w", errRequired))
 	}
@@ -136,7 +139,10 @@ type setupCommand struct {
 	fileEnv string
 	// NODLOOP_RECORD_DIR that wins over the saved record dir in every later command
 	recordEnv string
-	out, log  io.Writer
+	// The sentence on a binary of another version than the plugin runs
+	// Empty when they match or outside the plugin
+	version  string
+	out, log io.Writer
 }
 
 // Prints the data and the records every later command uses so a changed or shadowed dir is never silent
@@ -150,6 +156,9 @@ func (c setupCommand) data(dataDir, recordDir string) error {
 		return err
 	}
 	fmt.Fprintf(c.out, "data %s\nrecords %s\nconfig %s\n", report.data, report.records, c.home.configPath())
+	if c.version != "" {
+		report.warnings = append(report.warnings, c.version)
+	}
 	for _, w := range report.warnings {
 		fmt.Fprintf(c.log, "nodloop setup: warning: %s\n", w)
 	}

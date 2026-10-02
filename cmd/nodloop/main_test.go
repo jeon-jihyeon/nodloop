@@ -139,3 +139,38 @@ func TestRun(t *testing.T) {
 		})
 	}
 }
+
+func TestPluginVersionMismatch(t *testing.T) {
+	type args struct {
+		want pluginVersion
+		have string
+	}
+	tcs := []struct {
+		name string
+		args args
+		want string
+	}{
+		{"outside the plugin", args{have: "0.5.15"}, ""},
+		{"the same version", args{want: "0.5.15", have: "0.5.15"}, ""},
+		{"a leading v on the binary", args{want: "0.5.15", have: "v0.5.15"}, ""},
+		{"a leading v on the plugin", args{want: "v0.5.15", have: "0.5.15"}, ""},
+		{
+			"another release",
+			args{want: "0.5.15", have: "0.5.14"},
+			"/bin/nodloop is nodloop 0.5.14 while the plugin runs version 0.5.15, so a tool or a flag the skills name may be missing or work differently. " +
+				"Restart Claude Code with network access so the plugin fetches v0.5.15, or put a build of v0.5.15 on PATH",
+		},
+		{
+			"a dev build",
+			args{want: "0.5.15", have: "dev"},
+			"/bin/nodloop is nodloop dev while the plugin runs version 0.5.15, so a tool or a flag the skills name may be missing or work differently. " +
+				"Restart Claude Code with network access so the plugin fetches v0.5.15, or put a build of v0.5.15 on PATH",
+		},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.want, tc.args.want.mismatch(tc.args.have, "/bin/nodloop"))
+		})
+	}
+}

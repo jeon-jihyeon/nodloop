@@ -107,13 +107,14 @@ func TestRunCheck(t *testing.T) {
 			before := snapshotDir(t, dir)
 			var stdout, stderr bytes.Buffer
 
-			code := runCheck(args, &stdout, &stderr)
+			code := runCheck(args, func(string) string { return "" }, &stdout, &stderr)
 
 			assert.Equal(t, tc.want.code, code)
 			assert.Empty(t, stderr.String())
 			var got dataReport
 			require.NoError(t, json.Unmarshal(stdout.Bytes(), &got), stdout.String())
 			assert.Equal(t, dir, got.DataDir)
+			assert.Equal(t, buildVersion(), got.Version)
 			assert.Equal(t, tc.want.profile, got.Profile)
 			assert.Equal(t, tc.want.policy, got.Policy)
 			assert.Equal(t, tc.want.contexts, got.Contexts.Names())
@@ -130,7 +131,7 @@ func TestRunCheck(t *testing.T) {
 func TestRunCheckDemoReport(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 
-	code := runCheck([]string{"--data-dir", testkit.DemoDir(t)}, &stdout, &stderr)
+	code := runCheck([]string{"--data-dir", testkit.DemoDir(t)}, func(string) string { return "" }, &stdout, &stderr)
 
 	require.Equal(t, 0, code, stderr.String())
 	var got dataReport
@@ -141,10 +142,44 @@ func TestRunCheckDemoReport(t *testing.T) {
 	assert.Equal(t, []string{}, got.Warnings)
 }
 
+// The plugin version the launcher passes is compared with this binary on every check, even one that fails
+func TestRunCheckPluginVersion(t *testing.T) {
+	type args struct {
+		plugin  string
+		dataDir string
+	}
+	tcs := []struct {
+		name string
+		args args
+		want int
+	}{
+		{"outside the plugin warns nothing", args{dataDir: testkit.DemoDir(t)}, 0},
+		{"the version this binary is warns nothing", args{plugin: buildVersion(), dataDir: testkit.DemoDir(t)}, 0},
+		{"another version warns once", args{plugin: "0.0.1", dataDir: testkit.DemoDir(t)}, 1},
+		{"another version warns on a failed check too", args{plugin: "0.0.1", dataDir: t.TempDir()}, 1},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var stdout, stderr bytes.Buffer
+			getenv := func(k string) string { return map[string]string{envPluginVersion: tc.args.plugin}[k] }
+
+			runCheck([]string{"--data-dir", tc.args.dataDir}, getenv, &stdout, &stderr)
+
+			var got dataReport
+			require.NoError(t, json.Unmarshal(stdout.Bytes(), &got), stdout.String())
+			assert.Len(t, got.Warnings, tc.want)
+			for _, w := range got.Warnings {
+				assert.Contains(t, w, "while the plugin runs version 0.0.1")
+			}
+		})
+	}
+}
+
 func TestRunCheckUsage(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 
-	code := runCheck(nil, &stdout, &stderr)
+	code := runCheck(nil, func(string) string { return "" }, &stdout, &stderr)
 
 	assert.Equal(t, 1, code)
 	assert.Empty(t, stdout.String())
