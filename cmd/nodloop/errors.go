@@ -10,6 +10,9 @@ var (
 	errDataDirUnset  = errors.New(envFileDir + " is not set")
 	errUnknownSource = errors.New("unknown source")
 	errNoEvents      = errors.New("no events.csv")
+	// A run label is key=value and an applied item is id:version
+	errLabelFlag     = errors.New("bad --label")
+	errAppliedFlag   = errors.New("bad --applied")
 	errPolicyMissing = errors.New("no policy.yaml")
 	// A procedure whose scope names such a metric never reaches a review
 	errScopeUnobserved  = errors.New("a procedure scope names a metric no event carries")

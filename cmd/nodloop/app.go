@@ -64,6 +64,16 @@ func (f dataFlags) app(getenv func(string) string, now func() time.Time) (app, e
 	return app{cfg: cfg, now: now}, nil
 }
 
+// The app of a command that works on the records alone
+// Its data reads fail with errDataDirUnset when no data dir is set
+func (f dataFlags) records(getenv func(string) string, now func() time.Time) (app, error) {
+	cfg, err := resolveRecordConfig(getenv, f.source, f.dataDir, f.recordDir)
+	if err != nil {
+		return app{}, err
+	}
+	return app{cfg: cfg, now: now}, nil
+}
+
 // What every data command opens from one resolved config
 // The record directory is owned by nodloop and created on first use
 type app struct {
@@ -72,6 +82,9 @@ type app struct {
 }
 
 func (a app) source() (*evidencefile.Source, error) {
+	if a.cfg.dataDir == "" {
+		return nil, fmt.Errorf("%w: run nodloop setup or set the variable", errDataDirUnset)
+	}
 	contexts, err := a.contexts()
 	if err != nil {
 		return nil, err
@@ -81,12 +94,12 @@ func (a app) source() (*evidencefile.Source, error) {
 
 // The change contexts policy.yaml declares
 // 1. only the contexts key is read so a command that never analyzes runs on a policy whose analyzers are broken
-// 2. a data dir without the file or with a file that does not parse declares the default five
+// 2. no data dir, a data dir without the file or a file that does not parse declares the default five
 // So the knowledge commands still run on records alone and every analyzing command reports the broken file
 // 3. a contexts list that parses but declares a context twice or without a name fails because it says what the person meant
 func (a app) contexts() (evidence.Contexts, error) {
 	b, err := a.policyText()
-	if errors.Is(err, errPolicyMissing) {
+	if errors.Is(err, errPolicyMissing) || errors.Is(err, errDataDirUnset) {
 		return evidence.DefaultContexts(), nil
 	}
 	if err != nil {
@@ -113,6 +126,9 @@ const policyFile = "policy.yaml"
 // The text of `policy.yaml` in the reference directory
 // The data set owns its analyzers so a directory without the file cannot be analyzed
 func (a app) policyText() ([]byte, error) {
+	if a.cfg.dataDir == "" {
+		return nil, fmt.Errorf("%w: run nodloop setup or set the variable", errDataDirUnset)
+	}
 	b, err := os.ReadFile(filepath.Join(a.cfg.dataDir, policyFile))
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, fmt.Errorf("%w: %s", errPolicyMissing, a.cfg.dataDir)
@@ -245,9 +261,9 @@ func (a app) newID(prefix string) string {
 	return fmt.Sprintf("%s%x%x", prefix, a.now().UnixMilli(), suffix)
 }
 
-// Feedback and outcomes and knowledge may cite only recorded reviews
-// The first id that names no review fails
-func (a app) checkReviews(ctx context.Context, ids ...string) error {
+// Feedback and outcomes and knowledge may cite only recorded reviews and runs
+// The first id that names neither fails
+func (a app) checkRuns(ctx context.Context, ids ...string) error {
 	traces, err := a.traces()
 	if err != nil {
 		return err
@@ -257,7 +273,7 @@ func (a app) checkReviews(ctx context.Context, ids ...string) error {
 		if err != nil {
 			return err
 		}
-		if err := t.CheckReview(); err != nil {
+		if err := t.CheckRun(); err != nil {
 			return err
 		}
 	}

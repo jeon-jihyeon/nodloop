@@ -292,7 +292,7 @@ func (c knowledgeCommand) propose(ctx context.Context, draft knowledge.Knowledge
 
 // Every cited review must be recorded and every scope metric or dim carried by some event
 func (c knowledgeCommand) check(ctx context.Context, draft knowledge.Knowledge) error {
-	if err := c.app.checkReviews(ctx, draft.Evidence.TraceIDs()...); err != nil {
+	if err := c.app.checkRuns(ctx, draft.Evidence.TraceIDs()...); err != nil {
 		return err
 	}
 	return c.observed(ctx, draft.Scope)
