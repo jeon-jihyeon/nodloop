@@ -231,6 +231,24 @@ func (h *History) RefutedContexts(id string, version int, contexts evidence.Cont
 	return out
 }
 
+// The values of the key that the refuted runs which applied the version carried
+// Sorted once each so a narrowing proposal reads the same whatever the record order
+func (h *History) RefutedValues(id string, version int, key string) []string {
+	var out []string
+	for _, r := range h.resulted(knowledge.Ref{ID: id, Version: version}, feedback.ResultRefuted) {
+		if !r.isRun() {
+			continue
+		}
+		for _, v := range r.trace.Labels[key] {
+			if !slices.Contains(out, v) {
+				out = append(out, v)
+			}
+		}
+	}
+	slices.Sort(out)
+	return out
+}
+
 // The trace ids of the conversation reviews that applied the version or passed their outcome to it and were refuted
 // Sorted so a narrowing proposal reads the same whatever the record order
 func (h *History) RefutedTraces(id string, version int) []string {
