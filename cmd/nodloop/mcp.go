@@ -93,18 +93,44 @@ type mcpOpen struct {
 }
 
 // The cause comes first and then the way out
-// 1. only a missing data dir is fixed by setup alone so any other cause asks to fix what it names first
-// 2. the next call reads the saved config so no reconnect is ever asked
+// 1. without a data dir the server works on the records alone and every data tool answers how to set one up
+// 2. any other cause asks to fix what it names first
+// 3. the next call reads the saved config so no reconnect is ever asked
 func (o mcpOpen) open(context.Context) (*mcp.Server, error) {
 	a, err := o.flags.app(o.getenv, o.now)
+	if errors.Is(err, errDataDirUnset) {
+		return o.records(fmt.Errorf("%w. Run %s setup --data-dir <dir>", err, executable()))
+	}
 	if err == nil {
 		var s *mcp.Server
 		if s, err = a.server(o.session); err == nil {
 			return s, nil
 		}
 	}
-	if errors.Is(err, errDataDirUnset) {
-		return nil, fmt.Errorf("%w. Run %s setup --data-dir <dir>", err, executable())
-	}
 	return nil, fmt.Errorf("%w. Fix what this names or run %s setup --data-dir <dir> again", err, executable())
+}
+
+// The server of runs, nods and knowledge over the record directory
+func (o mcpOpen) records(missing error) (*mcp.Server, error) {
+	a, err := o.flags.records(o.getenv, o.now)
+	if err != nil {
+		return nil, err
+	}
+	traces, err := a.traces()
+	if err != nil {
+		return nil, err
+	}
+	verdicts, err := a.feedback()
+	if err != nil {
+		return nil, err
+	}
+	outcomes, err := a.outcomes()
+	if err != nil {
+		return nil, err
+	}
+	ledger, err := a.ledger()
+	if err != nil {
+		return nil, err
+	}
+	return mcp.NewRecords(traces, verdicts, outcomes, ledger, o.now, o.session, executable(), a.cfg.recordArgs(), missing), nil
 }
