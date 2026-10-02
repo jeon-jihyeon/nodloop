@@ -13,6 +13,11 @@ type Ref struct {
 	Version int    `json:"version"`
 }
 
+// Whether the item names the version among the old items it replaces
+func (k Knowledge) Names(old Knowledge) bool {
+	return slices.Contains(k.Evidence.Knowledge, Ref{ID: old.ID, Version: old.Version})
+}
+
 // Whether the record is of this version
 func (r Ref) names(k Knowledge) bool {
 	return k.ID == r.ID && k.Version == r.Version
@@ -24,8 +29,7 @@ type Compactable struct {
 	Items Set
 }
 
-// A replacement of the approved items of one folder so each review carries fewer items that never share a folder with an item of their kind
-// Metrics with none in common or a dim value split two items of one kind here while folder sizing still counts them together
+// A replacement of the approved items of one folder so each run carries fewer items that never share a folder with an item of their kind
 // Two judgments that each carry a veto may share a folder because vetoes are never merged
 // It adds no record type and maps onto candidates and approvals and retirements that carry its id
 type Compaction struct {
@@ -85,14 +89,10 @@ func (s Set) Compactable(anchor string) (Compactable, error) {
 	return Compactable{Items: append(Set{*k}, s.runCarried(k.ID, *k.Run)...)}, nil
 }
 
+// Whether one run carries more than FolderItems of the items
 // Every item of a run folder may reach one run with the anchor so all of them count
-func (c Compactable) heaviest() int {
-	return len(c.Items)
-}
-
-// Whether one review carries more than FolderItems of the items
 func (c Compactable) Crowded() bool {
-	return c.heaviest() > FolderItems
+	return len(c.Items) > FolderItems
 }
 
 // The candidates of a compaction of old built from the drafts
@@ -100,9 +100,8 @@ func (c Compactable) Crowded() bool {
 // 1. at least two old items and one draft
 // 2. every name is the current approved version of an old item
 // 3. every old item is named
-// 4. no draft reaches an event that an old item it names does not reach
+// 4. no draft reaches a run that an old item it names does not reach
 // 5. no two drafts of one kind overlap in a folder unless both carry a veto
-// Metrics with none in common or one dim key with a different value on each keep two drafts apart
 // 6. an old veto is kept by a new veto of an item that names it and keeps its tools and conditions and example
 // 7. a draft id is one old id so it becomes the next version of that id or a new id and no id repeats
 // 8. evidence is the union of the named old items and basis is verified only when every named item is
@@ -472,7 +471,7 @@ func (s Set) approveCompaction(c Compaction, approver string, now time.Time) ([]
 
 // The records that approve the compaction of id
 // 1. an approver is required once the compaction is found
-// 2. an approval that pushes a review past a cap or grows one already past it is refused like one of Approve
+// 2. an approval that pushes a run past a cap or grows one already past it is refused like one of Approve
 func (s Set) compactionApproval(id, approver string, check Coverage, now time.Time) ([]Knowledge, error) {
 	c, err := s.compaction(id)
 	if err != nil {

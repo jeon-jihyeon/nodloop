@@ -22,7 +22,7 @@ TAG="v${version}"
 export NODLOOP_PLUGIN_VERSION="$version"
 BIN_DIR="${HOME}/.nodloop/bin/${TAG}"
 BIN="${BIN_DIR}/nodloop"
-# A stable path for the user. `~/.nodloop/bin/nodloop setup --data-dir <dir>` works after the first start
+# A stable path for the user. `~/.nodloop/bin/nodloop knowledge for --producer session` works after the first start
 # It may name a PATH binary of unknown version until a later run caches or fetches the plugin version
 STABLE="${HOME}/.nodloop/bin/nodloop"
 
@@ -72,8 +72,9 @@ fetch() {
   command -v curl >/dev/null 2>&1 || return 1
   mkdir -p "$BIN_DIR" || return 1
   tmp=$(mktemp -d "${BIN_DIR}/.fetch.XXXXXX") || return 1
-  if ! curl -fsSL "${BASE_URL}/${ARCHIVE}" -o "${tmp}/${ARCHIVE}" 2>/dev/null ||
-    ! curl -fsSL "${BASE_URL}/checksums.txt" -o "${tmp}/checksums.txt" 2>/dev/null; then
+  # Bounded so a hook never waits out its own timeout on a network that does not answer
+  if ! curl -fsSL --connect-timeout 5 --max-time 60 "${BASE_URL}/${ARCHIVE}" -o "${tmp}/${ARCHIVE}" 2>/dev/null ||
+    ! curl -fsSL --connect-timeout 5 --max-time 30 "${BASE_URL}/checksums.txt" -o "${tmp}/checksums.txt" 2>/dev/null; then
     rm -rf "$tmp"
     return 1
   fi

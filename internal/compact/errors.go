@@ -7,6 +7,8 @@ var (
 	ErrDraftInvalid = errors.New("compact: draft does not match the schema")
 	// A compaction is approved only after a coverage check
 	ErrNoCoverage = errors.New("compact: the compaction has no coverage check")
+	// Drafts that reach fewer recorded runs than the old items they replace
+	ErrReachLost = errors.New("compact: the drafts reach fewer runs than the old items")
 	// A coverage names an item outside the compaction
 	ErrCoverageInvalid = errors.New("compact: coverage does not match the compaction")
 )

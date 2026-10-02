@@ -2,7 +2,6 @@ package file_test
 
 import (
 	"context"
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -19,37 +18,6 @@ func TestContract(t *testing.T) {
 	store, err := file.New(t.TempDir())
 	require.NoError(t, err)
 	tracetest.Run(t, store)
-}
-
-func TestReplaysContract(t *testing.T) {
-	store, err := file.NewReplays(t.TempDir())
-	require.NoError(t, err)
-	tracetest.Run(t, store)
-}
-
-// A replay lands in replays.jsonl and the review store of the same directory never sees it
-func TestNewReplays(t *testing.T) {
-	dir := t.TempDir()
-	replays, err := file.NewReplays(dir)
-	require.NoError(t, err)
-	traces, err := file.New(dir)
-	require.NoError(t, err)
-	ctx := context.Background()
-	tr := trace.Trace{
-		ID: "r1", Name: trace.NameRun, SessionID: "c-1", Tags: []string{"replay"}, Input: json.RawMessage(`{}`),
-		Output: json.RawMessage(`{}`),
-	}
-	require.NoError(t, replays.Append(ctx, tr))
-
-	got, err := replays.List(ctx, trace.Filter{})
-	require.NoError(t, err)
-	reviews, err := traces.List(ctx, trace.Filter{})
-	require.NoError(t, err)
-
-	assert.Equal(t, trace.Traces{tr}, got)
-	assert.Empty(t, reviews)
-	assert.FileExists(t, filepath.Join(dir, "replays.jsonl"))
-	assert.NoFileExists(t, filepath.Join(dir, "traces.jsonl"))
 }
 
 func TestNew(t *testing.T) {

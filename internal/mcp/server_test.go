@@ -15,7 +15,7 @@ import (
 )
 
 func newServer(st testkit.Stores, session string) *mcp.Server {
-	compactor := compact.New(st.Ledger, st.Traces, st.Feedback, st.Replays, st.Clock.Now)
+	compactor := compact.New(st.Ledger, st.Traces, st.Feedback, st.Traces, st.Clock.Now)
 	return mcp.New(st.Traces, st.Feedback, st.Outcomes, st.Ledger, compactor, st.Clock.Now, session, "nodloop", "--record-dir /records")
 }
 

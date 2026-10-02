@@ -35,7 +35,7 @@ func TestWorkDirLabels(t *testing.T) {
 	}{
 		{"the root of a repository", workDir(repo), trace.Labels{"repo": {"nodloop"}, "dir": {"."}}},
 		{"a directory below it", workDir(filepath.Join(repo, "cmd", "nodloop")), trace.Labels{"repo": {"nodloop"}, "dir": {"cmd/nodloop"}}},
-		{"a worktree whose .git is a file", workDir(worktree), trace.Labels{"repo": {"nodloop-core"}, "dir": {"."}}},
+		{"a checkout whose .git is a file without a worktree path keeps its name", workDir(worktree), trace.Labels{"repo": {"nodloop-core"}, "dir": {"."}}},
 		{"outside any repository", workDir(outside), trace.Labels{"dir": {filepath.ToSlash(outside)}}},
 		{"no directory", workDir(""), nil},
 	}
@@ -94,9 +94,9 @@ func TestRunHookPrompt(t *testing.T) {
 		{"off adds nothing", args{stdin: `{"session_id":"s1","cwd":"{repo}"}`, session: "off", content: "use git -C"}, want{}},
 		{"a broken input still exits 0", args{stdin: `{`, content: "use git -C"}, want{stderr: "nodloop hook: unexpected EOF"}},
 		{
-			"items over the cap are cut and counted",
-			args{stdin: `{"session_id":"s1","cwd":"{repo}"}`, content: strings.Repeat("x", knowledge.ReviewChars-100)},
-			want{context: []string{"- 1 more items left out over the size cap\n"}},
+			"an item as large as approval allows still fits the prompt",
+			args{stdin: `{"session_id":"s1","cwd":"{repo}"}`, content: strings.Repeat("x", knowledge.RunChars-200)},
+			want{context: []string{"- [git-c v1 judgment] xxx"}},
 		},
 	}
 	for _, tc := range tcs {
@@ -250,4 +250,35 @@ func TestRunKnowledgeLifecycle(t *testing.T) {
 	code, stdout, stderr = knowledgeRun("promote", "git-c", "--version", "1")
 	require.Equal(t, 0, code, stderr)
 	assert.Contains(t, stdout, "git-c\tv3\tcandidate\tbasis verified\toutcomes ["+confirmed+"]\n")
+}
+
+// Items past the prompt cap are left out and counted, and the stop hook records only the items that fit
+func TestHookItemsFitting(t *testing.T) {
+	item := func(id string, size int) knowledge.Knowledge {
+		return knowledge.Knowledge{ID: id, Version: 1, Kind: knowledge.KindJudgment, Content: strings.Repeat("x", size)}
+	}
+	items := hookItems{item("a", 6000), item("b", 6000), item("c", 10)}
+
+	shown, _ := items.fitting()
+
+	require.Len(t, shown, 1)
+	assert.Equal(t, "a", shown[0].ID)
+	assert.Contains(t, items.context(), "- 2 more items left out over the size cap\n")
+	assert.Less(t, len([]rune(items.context())), 10_000)
+}
+
+func TestRepoName(t *testing.T) {
+	root := t.TempDir()
+	main := filepath.Join(root, "nodloop")
+	require.NoError(t, os.MkdirAll(filepath.Join(main, ".git", "worktrees", "core"), 0o755))
+	worktree := filepath.Join(root, "nodloop-core")
+	require.NoError(t, os.MkdirAll(worktree, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(worktree, ".git"), []byte("gitdir: "+filepath.Join(main, ".git", "worktrees", "core")+"\n"), 0o600))
+	submodule := filepath.Join(root, "vendor-lib")
+	require.NoError(t, os.MkdirAll(submodule, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(submodule, ".git"), []byte("gitdir: ../nodloop/.git/modules/vendor-lib\n"), 0o600))
+
+	assert.Equal(t, "nodloop", repoName(main))
+	assert.Equal(t, "nodloop", repoName(worktree), "a worktree takes the name of its main checkout")
+	assert.Equal(t, "vendor-lib", repoName(submodule), "a submodule keeps its own name")
 }

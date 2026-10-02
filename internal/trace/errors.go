@@ -16,3 +16,6 @@ var ErrProducerRequired = errors.New("trace: a run needs its producer")
 
 // A label key or value that is empty could never be matched by a scope
 var ErrLabelEmpty = errors.New("trace: empty label")
+
+// A run carries one value per label key
+var ErrLabelValues = errors.New("trace: a run label has more than one value")

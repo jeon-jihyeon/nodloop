@@ -31,11 +31,11 @@ func Run(t *testing.T, store Store) {
 	require.Empty(t, empty, "the suite needs an empty store")
 	base := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
 	seed := []trace.Trace{
-		{Name: trace.NameRun, SessionID: "eval-1", Subject: "tq-001", Tags: []string{"feedback:off"}},
-		{Name: trace.NameRun, SessionID: "eval-1", Subject: "tq-001", Tags: []string{"feedback:on"}},
-		{Name: trace.NameRun, SessionID: "eval-1", Subject: "tq-002", Ref: "context-2", Tags: []string{"feedback:on"}},
-		{Name: trace.NameCheck, SessionID: "mcp-1", Subject: "tq-003"},
-		{Name: trace.NameRun, SessionID: "mcp-1", Subject: "tq-003", Ref: "context-3"},
+		{Name: trace.NameRun, SessionID: "session-1", Subject: "task-1", Tags: []string{"feedback:off"}},
+		{Name: trace.NameRun, SessionID: "session-1", Subject: "task-1", Tags: []string{"feedback:on"}},
+		{Name: trace.NameRun, SessionID: "session-1", Subject: "task-2", Ref: "ref-2", Tags: []string{"feedback:on"}},
+		{Name: trace.NameCheck, SessionID: "session-2", Subject: "task-3"},
+		{Name: trace.NameRun, SessionID: "session-2", Subject: "task-3", Ref: "ref-3"},
 	}
 	for i := range seed {
 		seed[i].ID = trace.NewID(base.Add(time.Duration(i) * time.Second))
@@ -79,16 +79,16 @@ func Run(t *testing.T, store Store) {
 			{"empty filter lists all newest first", trace.Filter{}, trace.Traces{seed[4], seed[3], seed[2], seed[1], seed[0]}},
 			{"id keeps that trace", trace.Filter{ID: seed[0].ID}, trace.Traces{seed[0]}},
 			{"name keeps that pipeline", trace.Filter{Name: trace.NameCheck}, trace.Traces{seed[3]}},
-			{"session keeps that session", trace.Filter{SessionID: "eval-1"}, trace.Traces{seed[2], seed[1], seed[0]}},
-			{"subject keeps that subject", trace.Filter{Subject: "tq-002"}, trace.Traces{seed[2]}},
-			{"ref keeps the traces of that context", trace.Filter{Ref: "context-3"}, trace.Traces{seed[4]}},
+			{"session keeps that session", trace.Filter{SessionID: "session-1"}, trace.Traces{seed[2], seed[1], seed[0]}},
+			{"subject keeps that subject", trace.Filter{Subject: "task-2"}, trace.Traces{seed[2]}},
+			{"ref keeps the traces of that ref", trace.Filter{Ref: "ref-3"}, trace.Traces{seed[4]}},
 			{
 				"tags keep traces carrying them",
 				trace.Filter{Name: trace.NameRun, Tags: []string{"feedback:on"}},
 				trace.Traces{seed[2], seed[1]},
 			},
-			{"limit keeps the newest", trace.Filter{SessionID: "eval-1", Limit: 2}, trace.Traces{seed[2], seed[1]}},
-			{"no match lists nothing", trace.Filter{Ref: "context-9"}, nil},
+			{"limit keeps the newest", trace.Filter{SessionID: "session-1", Limit: 2}, trace.Traces{seed[2], seed[1]}},
+			{"no match lists nothing", trace.Filter{Ref: "ref-9"}, nil},
 		}
 		for _, tc := range tcs {
 			t.Run(tc.name, func(t *testing.T) {

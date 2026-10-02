@@ -11,7 +11,7 @@ var (
 	errLabelFlag   = errors.New("bad --label")
 	errAppliedFlag = errors.New("bad --applied")
 	// A proposal from a run teaches what a person corrected
-	errNotCorrected     = errors.New("a proposal from a run needs a person's edit or reject on it")
+	errNotCorrected     = errors.New("a proposal from a run needs an edit or a reject on it")
 	errConfigInvalid    = errors.New(configFile + " is not valid JSON")
 	errUnexpectedOutput = errors.New("unexpected output")
 	errWrongAnswer      = errors.New("wrong answer")

@@ -29,7 +29,7 @@ commands:
                             List feedback newest first with the reason code or a dash after the verdict
   feedback add --trace <id> --verdict <v> [--reason-code <c>] [--reason <r>] [--edited <file>] [--reviewer <r>] [--audit]
                             Append one verdict on a run. An edit carries the corrected output in full.
-                            An edit or reject may name what the output got wrong: status, cause, citation, checks or other
+                            An edit or reject may name what the output got wrong: fact, approach, scope, form or other
   feedback outcome --trace <id> --result <r> [--cause <text>] [--note <n>] [--reviewer <r>]
                             Record what a real check found: confirmed, refuted or inconclusive
   knowledge propose --kind <k> --content <text> (--producer <p> [--label <key=value>] | --from <run id>)
