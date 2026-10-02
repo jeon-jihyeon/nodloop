@@ -193,3 +193,25 @@ func TestReplyText(t *testing.T) {
 	assert.Equal(t, strings.Repeat("a", answerRunes)+"\n[cut by nodloop]", long.text())
 	assert.Equal(t, "short", reply("short").text())
 }
+
+// A run the stop hook recorded with the item and a person's approve on it show in the loop report
+func TestRunReportLoop(t *testing.T) {
+	home, records, repo := hookHome(t, "use git -C")
+	getenv := func(k string) string { return map[string]string{"HOME": home, envRecordDir: records}[k] }
+	stdin := `{"session_id":"s2","cwd":"` + repo + `","last_assistant_message":"git -C repo status"}`
+	require.Equal(t, 0, runHook([]string{"stop"}, getenv, time.Now, strings.NewReader(stdin), &bytes.Buffer{}, &bytes.Buffer{}))
+	store, err := tracefile.New(records)
+	require.NoError(t, err)
+	runs, err := store.List(context.Background(), trace.Filter{Name: trace.NameRun, SessionID: "s2"})
+	require.NoError(t, err)
+	require.Len(t, runs, 1)
+	var stderr bytes.Buffer
+	require.Equal(t, 0, runFeedback([]string{"add", "--trace", runs[0].ID, "--verdict", "approve"}, getenv, time.Now, &bytes.Buffer{}, &stderr), stderr.String())
+	var stdout bytes.Buffer
+
+	code := runReport([]string{"loop"}, getenv, time.Now, &stdout, &stderr)
+
+	require.Equal(t, 0, code, stderr.String())
+	assert.Equal(t, "git-c\tv1\tapplied 1\tfollowed 1 of 1\trepeat 0\tsettle -\n"+
+		"misapplied\tnot measured: no label says which runs an item should have reached\n", stdout.String())
+}

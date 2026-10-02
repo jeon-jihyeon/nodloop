@@ -80,7 +80,10 @@ func (c hookCommand) prompt(ctx context.Context, labels trace.Labels) error {
 	if err != nil || len(items) == 0 {
 		return err
 	}
-	return json.NewEncoder(c.out).Encode(map[string]any{"hookSpecificOutput": map[string]any{
+	// Items quote commands such as a && b so the text stays as written
+	enc := json.NewEncoder(c.out)
+	enc.SetEscapeHTML(false)
+	return enc.Encode(map[string]any{"hookSpecificOutput": map[string]any{
 		"hookEventName": "UserPromptSubmit", "additionalContext": hookItems(items).context(),
 	}})
 }
