@@ -24,6 +24,9 @@ type Folder struct {
 	// Replayable approved items the heaviest review carries with the item counting the item
 	// Zero unless the item is approved and an event can replay it because only such an anchor can be compacted
 	Compactable int
+	// The producer whose runs carry an item with a run scope
+	// Empty for an item of the data review
+	Producer string
 }
 
 // The item itself counts beside Carried
@@ -52,6 +55,9 @@ func (f Folder) heavier(other Folder) bool {
 // Both caps the folder is held to for the person who picks the way out
 func (f Folder) load() string {
 	load := fmt.Sprintf("%d of %d chars %d of %d items", f.Chars, ReviewChars, f.Size(), ReviewItems)
+	if f.Producer != "" {
+		return load + " in runs of " + f.Producer
+	}
 	if f.Context == "" {
 		return load
 	}

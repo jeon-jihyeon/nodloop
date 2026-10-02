@@ -118,3 +118,52 @@ func TestRunFeedbackOnRun(t *testing.T) {
 		})
 	}
 }
+
+// The loop of a run with no data dir: a run, a proposal scoped to its labels, an approval and the items the next run gets
+func TestRunKnowledgeForRuns(t *testing.T) {
+	at := time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
+	dir, records := t.TempDir(), t.TempDir()
+	getenv := func(k string) string { return map[string]string{"HOME": dir, envRecordDir: records}[k] }
+	now := func() time.Time { return at }
+	out := filepath.Join(dir, "out.txt")
+	require.NoError(t, os.WriteFile(out, []byte("cd repo && git status"), 0o600))
+	var id bytes.Buffer
+	require.Equal(t, 0, runRun([]string{"record", "--producer", "session", "--label", "repo=nodloop", "--output", out}, getenv, now, &id, &bytes.Buffer{}))
+	run := strings.TrimSpace(id.String())
+	knowledgeRun := func(args ...string) (int, string, string) {
+		var stdout, stderr bytes.Buffer
+		code := runKnowledge(args, getenv, nil, now, &stdout, &stderr)
+		return code, stdout.String(), stderr.String()
+	}
+	propose := []string{"propose", "--id", "git-c", "--kind", "judgment", "--content", "use git -C instead of cd", "--trace", run, "--producer", "session"}
+
+	code, _, stderr := knowledgeRun(append(propose, "--label", "repo=nodlop")...)
+	assert.Equal(t, 1, code)
+	assert.Contains(t, stderr, "no run of session carries repo=nodlop")
+	code, _, stderr = knowledgeRun("propose", "--kind", "judgment", "--content", "x", "--trace", run, "--label", "repo=nodloop")
+	assert.Equal(t, 1, code)
+	assert.Contains(t, stderr, "--label and --except need --producer")
+	code, stdout, stderr := knowledgeRun(append(propose, "--label", "repo=nodloop")...)
+	require.Equal(t, 0, code, stderr)
+	assert.Contains(t, stdout, "scope\truns of session. repo=nodloop\n")
+	assert.Contains(t, stdout, "items in runs of session")
+	code, _, stderr = knowledgeRun("approve", "git-c", "--version", "1", "--approver", "ann")
+	require.Equal(t, 0, code, stderr)
+
+	tcs := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"a run of the repo gets the item", []string{"for", "--producer", "session", "--label", "repo=nodloop"}, "git-c\tv1\tjudgment\tuse git -C instead of cd\ntotal\t1 items\t"},
+		{"a run of another repo gets nothing", []string{"for", "--producer", "session", "--label", "repo=other"}, "total\t0 items\t0 chars\n"},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			code, stdout, stderr := knowledgeRun(tc.args...)
+
+			require.Equal(t, 0, code, stderr)
+			assert.True(t, strings.HasPrefix(stdout, tc.want), stdout)
+		})
+	}
+}

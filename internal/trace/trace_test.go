@@ -311,3 +311,18 @@ func TestLabelsHas(t *testing.T) {
 	assert.False(t, labels.Has("repo", "other"))
 	assert.False(t, labels.Has("path", "nodloop"))
 }
+
+func TestTracesVocabulary(t *testing.T) {
+	ts := trace.Traces{
+		{Name: trace.NameRun, Producer: "session", Labels: trace.Labels{"repo": {"nodloop"}, "task": {"commit"}}},
+		{Name: trace.NameRun, Producer: "session", Labels: trace.Labels{"repo": {"nodloop", "other"}}},
+		{Name: trace.NameRun, Producer: "ci", Labels: trace.Labels{"repo": {"ci-only"}}},
+		{Name: trace.NameDiagnose, Producer: "session", Labels: trace.Labels{"repo": {"not-a-run"}}},
+	}
+
+	got := ts.Vocabulary("session")
+
+	assert.ElementsMatch(t, []string{"nodloop", "other"}, got["repo"])
+	assert.Equal(t, []string{"commit"}, got["task"])
+	assert.Empty(t, trace.Traces{}.Vocabulary("session"))
+}
