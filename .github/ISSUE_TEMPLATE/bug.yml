@@ -17,7 +17,8 @@ body:
         - CLI command
         - MCP tool inside Claude Code
         - guard hook
-        - eval
+        - conversation hook
+        - plugin skill
     validations:
       required: true
   - type: textarea

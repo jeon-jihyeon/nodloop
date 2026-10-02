@@ -45,7 +45,7 @@ type TraceStore interface {
 	List(ctx context.Context, f trace.Filter) (trace.Traces, error)
 }
 
-// The coverage checks
+// The coverage checks beside the runs
 // Newest first
 type CheckStore interface {
 	Append(ctx context.Context, t trace.Trace) error
@@ -104,7 +104,14 @@ func (c *Compactor) propose(ctx context.Context, f Folder, d Draft, author strin
 	for _, item := range d.Items {
 		drafts = append(drafts, item.knowledge(f.Items, cmp.Or(author, defaultAuthor)))
 	}
-	if err := c.recorded(ctx, drafts); err != nil {
+	runs, err := c.traces.List(ctx, trace.Filter{Name: trace.NameRun})
+	if err != nil {
+		return knowledge.Compaction{}, err
+	}
+	if err := recordedLabels(runs, drafts); err != nil {
+		return knowledge.Compaction{}, err
+	}
+	if err := keptReach(runs, f.Items, drafts); err != nil {
 		return knowledge.Compaction{}, err
 	}
 	return c.ledger.ProposeCompaction(ctx, f.Anchor, drafts)
@@ -145,17 +152,31 @@ func (c *Compactor) corrections(ctx context.Context, items knowledge.Set) ([]Cor
 
 // Every draft names labels some recorded run of its producer carries
 // A draft without a producer is left for the ledger to refuse with the scope it lacks
-func (c *Compactor) recorded(ctx context.Context, drafts []knowledge.Knowledge) error {
-	runs, err := c.traces.List(ctx, trace.Filter{Name: trace.NameRun})
-	if err != nil {
-		return err
-	}
+func recordedLabels(runs trace.Traces, drafts []knowledge.Knowledge) error {
 	for i, k := range drafts {
 		if k.Run == nil || k.Run.Producer == "" {
 			continue
 		}
 		if err := k.Run.Recorded(runs.Vocabulary(k.Run.Producer)); err != nil {
 			return fmt.Errorf("draft %d: %w", i+1, err)
+		}
+	}
+	return nil
+}
+
+// Every recorded run an old item reached is reached by a draft that names it
+// The ledger refuses a draft that reaches further, this refuses drafts that together reach less
+// so an old fact never silently stops reaching a place it held for
+func keptReach(runs trace.Traces, old knowledge.Set, drafts []knowledge.Knowledge) error {
+	for _, k := range old {
+		for _, run := range runs {
+			if !k.Run.Admits(run.Producer, run.Labels) || slices.ContainsFunc(drafts, func(d knowledge.Knowledge) bool {
+				return d.Names(k) && d.Run.Admits(run.Producer, run.Labels)
+			}) {
+				continue
+			}
+			return fmt.Errorf("%w: no draft that names %s reaches the recorded run %s with %v, which %s reached",
+				ErrReachLost, k.ID, run.ID, map[string][]string(run.Labels), k.ID)
 		}
 	}
 	return nil

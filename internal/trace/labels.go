@@ -5,8 +5,8 @@ import (
 	"slices"
 )
 
-// Situation of a run as keys each holding one or more values
-// A knowledge scope matches it by key and value
+// Situation of a run as keys each holding values
+// A run holds one value per key and a knowledge scope may list several, any of which matches
 type Labels map[string][]string
 
 // The same labels with each value list sorted and deduplicated
@@ -31,6 +31,21 @@ func (l Labels) Normalized() (Labels, error) {
 		sorted := slices.Clone(values)
 		slices.Sort(sorted)
 		out[key] = slices.Compact(sorted)
+	}
+	return out, nil
+}
+
+// The labels of one run: normalized and one value per key
+// Two values under one key would let two items split by that key both reach the run while they never overlap
+func (l Labels) runLabels() (Labels, error) {
+	out, err := l.Normalized()
+	if err != nil {
+		return nil, err
+	}
+	for key, values := range out {
+		if len(values) > 1 {
+			return nil, fmt.Errorf("%w: %s has %d values and a run has one per key", ErrLabelValues, key, len(values))
+		}
 	}
 	return out, nil
 }

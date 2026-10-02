@@ -292,8 +292,8 @@ func (in proposeInput) draft() knowledge.Knowledge {
 }
 
 // What the person sees around an approval
-// 1. the review text and the items the item joins and whether both still fit
-// 2. whether the folder holds enough items that a compaction is due and could pass its replay
+// 1. the run text and the items the item joins and whether both still fit
+// 2. whether the folder holds enough items that a compaction is due
 // A candidate never makes a compaction due because only an approved item anchors one
 type folderAnswer struct {
 	Chars      int      `json:"chars"`
@@ -312,7 +312,7 @@ func newFolderAnswer(f knowledge.Folder, compactionDue bool) folderAnswer {
 		items = append(items, k.ID)
 	}
 	return folderAnswer{
-		Chars: f.Chars, Budget: knowledge.ReviewChars, ItemBudget: knowledge.ReviewItems, Full: f.Full(), Items: items,
+		Chars: f.Chars, Budget: knowledge.RunChars, ItemBudget: knowledge.RunItems, Full: f.Full(), Items: items,
 		Producer: f.Producer, CompactionDue: compactionDue,
 	}
 }

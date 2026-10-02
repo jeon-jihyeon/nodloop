@@ -36,7 +36,7 @@ On first run the plugin downloads its binary. From then on it records every answ
 > approve it, approver <your name>
 ```
 
-The nod records an edit on that answer's run, proposes one sentence of what it taught scoped to this repository, and approves it only when you name yourself. Before every later prompt in this repository a hook adds the approved items as context, so the next answer follows the correction without being told again. `~/.nodloop/bin/nodloop knowledge for --producer session --label repo=<repo>` lists what a prompt there receives.
+The nod records an edit on that answer's run, proposes one sentence of what it taught scoped to this repository, and approves it only when you name yourself. Before every later prompt in this repository a hook adds the approved items as context, so the next answer follows the correction without being told again. `~/.nodloop/bin/nodloop knowledge for --producer session --label repo=<repo> --label dir=<dir>` lists what a prompt in that directory receives.
 
 > [!TIP]
 > Set `NODLOOP_SESSION=off` where Claude Code starts to keep the plugin without recording conversations. Answers are stored on your machine under `~/.nodloop/records` with keys, tokens and passwords redacted.
@@ -129,7 +129,7 @@ macOS and Linux, or Windows through WSL. It runs as a Claude Code plugin. For Co
 
 ## Limits
 
-The session labels are the repository and the directory, compared as exact strings. An item scoped to a repository reaches every prompt there, whatever the task. Whether an item reached a run it should not have is not measured yet. Versions before 0.6.0 reviewed incident data from an events file. That data review leaves this repository for a plugin of its own, and its knowledge records still load but reach no run.
+The session labels are the repository and the directory, compared as exact strings. An item scoped to a repository reaches every prompt there, whatever the task. Whether an item reached a run it should not have is not measured yet. Versions before 0.6.0 reviewed incident data from an events file. That data review leaves this repository for a plugin of its own, and its knowledge records still list but reach no prompt until you retire them.
 
 ## License
 

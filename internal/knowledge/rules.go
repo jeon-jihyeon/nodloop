@@ -15,6 +15,7 @@ var ruleSections = []struct {
 // The approved items as Claude Code rules in id order
 // 1. one line per item with its content on one line and its scope and exceptions and approver
 // 2. a judgment with a veto says the guard enforces it
+// 3. a record of the data review written before 0.6.0 is left out because it reaches no run
 // Empty for a set without an approved item
 func (s Set) Rules() string {
 	var b strings.Builder
@@ -22,7 +23,7 @@ func (s Set) Rules() string {
 	for _, section := range ruleSections {
 		var lines []string
 		for _, k := range approved {
-			if k.Kind == section.kind {
+			if k.Kind == section.kind && k.Run != nil {
 				lines = append(lines, k.rule())
 			}
 		}

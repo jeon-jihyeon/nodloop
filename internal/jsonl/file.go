@@ -11,7 +11,7 @@ import (
 	"slices"
 )
 
-// Records hold review text and verdicts of one user
+// Records hold AI output and verdicts of one user
 // Nobody else on the machine reads them
 const perms = 0o600
 

@@ -7,18 +7,17 @@ import (
 )
 
 // The approved knowledge one run may carry together with one item
-// 1. full when its text passes ReviewChars or its items pass ReviewItems and a run would be cut
+// 1. full when its text passes RunChars or its items pass RunItems and a run would be cut
 // 2. crowded when one run would carry more than FolderItems items a compaction anchored at the item covers
 type Folder struct {
 	// Runes of the item text and the texts of Carried
 	Chars int
-	// The other approved items a review of Context carries with the item
+	// The other approved items a run carries with the item
 	Carried Set
-	// Replayable approved items the heaviest review carries with the item counting the item
-	// Zero unless the item is approved and an event can replay it because only such an anchor can be compacted
+	// Approved items one run carries with the item counting the item
+	// Zero unless the item is approved because only an approved anchor can be compacted
 	Compactable int
-	// The producer whose runs carry an item with a run scope
-	// Empty for an item of the data review
+	// The producer whose runs carry the item
 	Producer string
 }
 
@@ -28,12 +27,12 @@ func (f Folder) Size() int {
 }
 
 func (f Folder) Full() bool {
-	return f.Chars > ReviewChars || f.Size() > ReviewItems
+	return f.Chars > RunChars || f.Size() > RunItems
 }
 
 // Both caps the folder is held to for the person who picks the way out
 func (f Folder) load() string {
-	load := fmt.Sprintf("%d of %d chars %d of %d items", f.Chars, ReviewChars, f.Size(), ReviewItems)
+	load := fmt.Sprintf("%d of %d chars %d of %d items", f.Chars, RunChars, f.Size(), RunItems)
 	if f.Producer == "" {
 		return load
 	}

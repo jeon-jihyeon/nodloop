@@ -43,7 +43,7 @@ type VetoSink interface {
 // 3. the clock is read here in UTC and every record of one call carries that time
 // 4. approve and retire and import and reaffirm end by exporting the approved vetoes and rules
 // A refused approve or retire exports them too so its retry repairs an export a killed call left behind
-// 5. approve refuses an approval that pushes a review past ReviewChars or ReviewItems or grows one already past them
+// 5. approve refuses an approval that pushes a run past RunChars or RunItems or grows one already past them
 // and import never checks it
 // 6. every write decides under the store lock on the records as they are then
 // So two writers at once never both pass a check that only one of them may pass and neither refuses the other
@@ -61,7 +61,7 @@ func NewLedger(
 	return &Ledger{store: store, vetoes: vetoes, now: now, newID: newID}
 }
 
-// The anchor and its folder items split by whether an event can replay them
+// The anchor and the approved items one run may carry with it
 func (l *Ledger) Compactable(ctx context.Context, anchor string) (Compactable, error) {
 	all, err := l.All(ctx)
 	if err != nil {
@@ -245,7 +245,7 @@ func (l *Ledger) exported(ctx context.Context, changed Knowledge) error {
 }
 
 // Appends one candidate per draft under a new compaction id
-// 1. the old items are the anchor and its folder items that an event can replay
+// 1. the old items are the anchor and its folder items
 // 2. each draft names the old versions it replaces in its evidence knowledge refs
 // 3. a draft without an id gets a generated one
 func (l *Ledger) ProposeCompaction(ctx context.Context, anchor string, drafts []Knowledge) (Compaction, error) {

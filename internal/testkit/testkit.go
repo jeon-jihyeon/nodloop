@@ -75,9 +75,7 @@ func (p PanickingTraces) Append(ctx context.Context, tr trace.Trace) error {
 // One temp record dir behind every store
 // The ledger runs on the clock
 type Stores struct {
-	Traces *tracefile.Store
-	// Coverage checks of compactions in the same record dir
-	Replays  *tracefile.Store
+	Traces   *tracefile.Store
 	Feedback *feedbackfile.Store
 	Outcomes *feedbackfile.OutcomeStore
 	Ledger   *knowledge.Ledger
@@ -90,8 +88,6 @@ func Open(t *testing.T) Stores {
 	dir := t.TempDir()
 	traces, err := tracefile.New(dir)
 	require.NoError(t, err)
-	replays, err := tracefile.NewReplays(dir)
-	require.NoError(t, err)
 	verdicts, err := feedbackfile.New(dir)
 	require.NoError(t, err)
 	outcomes, err := feedbackfile.NewOutcomeStore(dir)
@@ -102,7 +98,7 @@ func Open(t *testing.T) Stores {
 	ledger := knowledge.NewLedger(
 		items, vetofile.NewApprovedFile(t.TempDir(), dir), clock.Now, func(prefix string) string { return prefix + "generated" },
 	)
-	return Stores{Traces: traces, Replays: replays, Feedback: verdicts, Outcomes: outcomes, Ledger: ledger, Clock: clock}
+	return Stores{Traces: traces, Feedback: verdicts, Outcomes: outcomes, Ledger: ledger, Clock: clock}
 }
 
 // Steps a second per call so two calls around a model call give a positive duration
