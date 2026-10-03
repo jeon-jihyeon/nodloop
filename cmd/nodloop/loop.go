@@ -230,7 +230,8 @@ func runReportLoop(args []string, getenv func(string) string, now func() time.Ti
 	return 0
 }
 
-// One line per approved run item: applied, followed of judged, repeat and settle, then a line that misapplied is not measured
+// One line per approved run item: applied, followed of judged and repeat by people then by a session, and settle
+// A last line says misapplied is not measured
 func (c loopCommand) runs(ctx context.Context) error {
 	traces, err := c.app.traces()
 	if err != nil {
@@ -261,8 +262,9 @@ func (c loopCommand) runs(ctx context.Context) error {
 		if row.Settle > 0 {
 			settle = max(row.Settle.Round(time.Second), time.Second).String()
 		}
-		fmt.Fprintf(c.out, "%s\tv%d\tapplied %d\tfollowed %d of %d\trepeat %d\tsettle %s\n",
-			row.ID, row.Version, row.Applied, row.Followed, row.Judged, row.Repeat, settle)
+		fmt.Fprintf(c.out, "%s\tv%d\tapplied %d\tfollowed %d of %d\trepeat %d\tinferred followed %d of %d\tinferred repeat %d\tsettle %s\n",
+			row.ID, row.Version, row.Applied, row.Followed, row.Judged, row.Repeat,
+			row.InferredFollowed, row.InferredJudged, row.InferredRepeat, settle)
 	}
 	fmt.Fprintln(c.out, "misapplied\tnot measured: no label says which runs an item should have reached")
 	return nil

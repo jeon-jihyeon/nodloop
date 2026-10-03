@@ -23,6 +23,11 @@ func TestRunsReport(t *testing.T) {
 	verdict := func(id string, v feedback.Verdict, code feedback.ReasonCode, after time.Duration) feedback.Feedback {
 		return feedback.Feedback{TraceID: id, Verdict: v, ReasonCode: code, Time: at.Add(after), Reviewer: feedback.ReviewerAuthor}
 	}
+	inferred := func(id string, v feedback.Verdict, code feedback.ReasonCode, after time.Duration) feedback.Feedback {
+		fb := verdict(id, v, code, after)
+		fb.Reviewer = feedback.ReviewerSession
+		return fb
+	}
 	item := func() knowledge.Set {
 		return knowledge.Set{{
 			ID: "git-c", Version: 1, Kind: knowledge.KindJudgment, Content: "use git -C", Status: knowledge.StatusApproved,
@@ -57,13 +62,24 @@ func TestRunsReport(t *testing.T) {
 			[]loop.RunItem{{ID: "git-c", Version: 1, Applied: 4, Judged: 3, Followed: 1, Repeat: 1, Settle: 2 * time.Hour}},
 		},
 		{
-			"a later approve replaces a correction and a session verdict is no person's word",
+			"a later approve replaces a correction and a session verdict counts apart",
 			args{feedback.Records{
 				verdict("a1", feedback.VerdictReject, feedback.ReasonOther, 3*time.Hour),
 				verdict("a1", feedback.VerdictApprove, "", 4*time.Hour),
-				{TraceID: "a2", Verdict: feedback.VerdictApprove, Time: at, Reviewer: feedback.ReviewerSession},
+				inferred("a2", feedback.VerdictApprove, "", 3*time.Hour),
 			}, item()},
-			[]loop.RunItem{{ID: "git-c", Version: 1, Applied: 4, Judged: 1, Followed: 1}},
+			[]loop.RunItem{{ID: "git-c", Version: 1, Applied: 4, Judged: 1, Followed: 1, InferredJudged: 1, InferredFollowed: 1}},
+		},
+		{
+			"a person's verdict wins over a newer inferred one and an inferred correction teaches the code and the settle",
+			args{feedback.Records{
+				inferred("taught", feedback.VerdictReject, feedback.ReasonForm, time.Hour),
+				verdict("a1", feedback.VerdictApprove, "", 3*time.Hour),
+				inferred("a1", feedback.VerdictReject, feedback.ReasonForm, 4*time.Hour),
+				inferred("a2", feedback.VerdictReject, feedback.ReasonForm, 3*time.Hour),
+				inferred("a3", feedback.VerdictReject, feedback.ReasonFact, 3*time.Hour),
+			}, item()},
+			[]loop.RunItem{{ID: "git-c", Version: 1, Applied: 4, Judged: 1, Followed: 1, InferredJudged: 2, InferredRepeat: 1, Settle: time.Hour}},
 		},
 	}
 	for _, tc := range tcs {

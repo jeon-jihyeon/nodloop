@@ -186,7 +186,7 @@ type feedbackInput struct {
 	Reason     string              `json:"reason,omitempty" jsonschema:"why, in the user's words. For a reject what the output got wrong or missed"`
 	// Any JSON value or text so the schema leaves it open
 	EditedOutput any    `json:"edited_output,omitempty" jsonschema:"the corrected output in full when the verdict is edit, a JSON value or text"`
-	Reviewer     string `json:"reviewer,omitempty" jsonschema:"Defaults to author. The name of the person when someone other than the author reviews"`
+	Reviewer     string `json:"reviewer,omitempty" jsonschema:"Defaults to author. The name of the person when someone other than the author reviews, or session for a verdict the conversation inferred from the user's words"`
 }
 
 func (s *Server) feedback(ctx context.Context, _ *sdk.CallToolRequest, in feedbackInput) (*sdk.CallToolResult, any, error) {

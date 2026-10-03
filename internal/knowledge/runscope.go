@@ -150,6 +150,19 @@ func (s Set) For(producer string, labels trace.Labels) Set {
 	return out
 }
 
+// The candidates a person has yet to approve that would reach a run of the producer with the labels
+// 1. a candidate beside the approved version of its id counts because it waits all the same
+// 2. a candidate of a compaction is left out because only its coverage check leads to approval
+func (s Set) Waiting(producer string, labels trace.Labels) Set {
+	out := Set{}
+	for _, k := range s.Versions() {
+		if k.Status == StatusCandidate && k.Compaction == "" && k.Run != nil && k.Run.Admits(producer, labels) {
+			out = append(out, k)
+		}
+	}
+	return out
+}
+
 // The approved run items a run may carry together with the item
 // Every approved item of the producer whose scope overlaps the item may reach the same run
 func (s Set) runFolder(item Knowledge) Folder {

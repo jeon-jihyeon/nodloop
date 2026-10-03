@@ -22,17 +22,21 @@ type RunItem struct {
 	Followed int `json:"followed"`
 	// Applied runs corrected again for the reason that taught the item
 	Repeat int `json:"repeat"`
+	// The same three counts over the runs only a session judged, so a number always says whose verdict it is
+	InferredJudged   int `json:"inferred_judged"`
+	InferredFollowed int `json:"inferred_followed"`
+	InferredRepeat   int `json:"inferred_repeat"`
 	// From the first correction the item cites to its approval
 	// Zero when it cites none
 	Settle time.Duration `json:"settle"`
 }
 
-// Runs and the verdicts of people on them
+// Runs and the verdicts on them
 type Runs struct {
 	applied map[knowledge.Ref][]string
-	// Latest verdict of a person per trace
+	// Latest verdict of a person per trace, or the latest one a session inferred when no person gave one
 	verdicts map[string]feedback.Feedback
-	// First correction of a person per trace
+	// First correction per trace by anyone
 	firstCorrection map[string]time.Time
 }
 
@@ -53,11 +57,14 @@ func NewRuns(traces trace.Traces, verdicts feedback.Records) Runs {
 			r.applied[ref] = append(r.applied[ref], tr.ID)
 		}
 	}
-	human := verdicts.Human()
-	for _, fb := range human.Latest() {
+	for _, fb := range verdicts.Latest() {
 		r.verdicts[fb.TraceID] = fb
 	}
-	for _, fb := range human {
+	// A person's verdict wins over one a session inferred whatever their order
+	for _, fb := range verdicts.Human().Latest() {
+		r.verdicts[fb.TraceID] = fb
+	}
+	for _, fb := range verdicts {
 		if first, ok := r.firstCorrection[fb.TraceID]; fb.Corrects() && (!ok || fb.Time.Before(first)) {
 			r.firstCorrection[fb.TraceID] = fb.Time
 		}
@@ -78,16 +85,8 @@ func (r Runs) Report(items knowledge.Set) []RunItem {
 		codes, taught := r.taught(k.Evidence.FeedbackTraceIDs)
 		for _, id := range r.applied[knowledge.Ref{ID: k.ID, Version: k.Version}] {
 			row.Applied++
-			fb, ok := r.verdicts[id]
-			if !ok {
-				continue
-			}
-			row.Judged++
-			if fb.Verdict == feedback.VerdictApprove {
-				row.Followed++
-			}
-			if fb.Corrects() && (len(codes) == 0 || slices.Contains(codes, fb.ReasonCode)) {
-				row.Repeat++
+			if fb, ok := r.verdicts[id]; ok {
+				row.count(fb, codes)
 			}
 		}
 		if !taught.IsZero() {
@@ -96,6 +95,22 @@ func (r Runs) Report(items knowledge.Set) []RunItem {
 		out = append(out, row)
 	}
 	return out
+}
+
+// One judged run in the counts of a person or of a session
+// A correction repeats when it gives a code of codes, or any code when codes is empty
+func (row *RunItem) count(fb feedback.Feedback, codes []feedback.ReasonCode) {
+	judged, followed, repeat := &row.Judged, &row.Followed, &row.Repeat
+	if fb.Implicit() {
+		judged, followed, repeat = &row.InferredJudged, &row.InferredFollowed, &row.InferredRepeat
+	}
+	*judged++
+	if fb.Verdict == feedback.VerdictApprove {
+		*followed++
+	}
+	if fb.Corrects() && (len(codes) == 0 || slices.Contains(codes, fb.ReasonCode)) {
+		*repeat++
+	}
 }
 
 // The reason codes the corrections of the traces gave and the time of the earliest one

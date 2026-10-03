@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"slices"
+	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -177,6 +178,8 @@ func (f knowledgeFlags) runRecords(ctx context.Context, action, id string, a app
 		return cmd.overlaps(ctx, id)
 	case "for":
 		return cmd.forRun(ctx, f.producer, trace.Labels(f.labels))
+	case "waiting":
+		return cmd.waiting(ctx, f.producer, trace.Labels(f.labels))
 	case "approve":
 		if err := cmd.transition(ctx, "approve", ledger.Approve, id, f.version, f.approver); err != nil {
 			return err
@@ -335,6 +338,22 @@ func (c knowledgeCommand) forRun(ctx context.Context, producer string, labels tr
 		fmt.Fprintf(c.out, "%s\tv%d\t%s\t%s\n", k.ID, k.Version, k.Kind, k.Content)
 	}
 	fmt.Fprintf(c.out, "total\t%d items\t%d chars\n", len(items), chars)
+	return nil
+}
+
+// The candidates that would reach a run of the producer with these labels, with the runs whose verdicts taught them
+func (c knowledgeCommand) waiting(ctx context.Context, producer string, labels trace.Labels) error {
+	if producer == "" {
+		return fmt.Errorf("waiting: --producer %w", errRequired)
+	}
+	all, err := c.ledger.All(ctx)
+	if err != nil {
+		return err
+	}
+	for _, k := range all.Waiting(producer, labels) {
+		fmt.Fprintf(c.out, "%s\tv%d\t%s\t%s\tscope %s\tfrom %s\n",
+			k.ID, k.Version, k.Kind, k.Content, k.Run, strings.Join(k.Evidence.FeedbackTraceIDs, " "))
+	}
 	return nil
 }
 
