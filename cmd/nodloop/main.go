@@ -23,8 +23,11 @@ commands:
                             Record one output of any producer as a run and print its id for feedback.
                             Output that is not JSON is kept as text
   hook prompt | hook stop   The Claude Code conversation hooks the plugin registers. prompt adds the approved items of
-                            producer session for the repo and dir of cwd as context. stop records the answer as a run.
-                            Both always exit 0 and do nothing when NODLOOP_SESSION is off
+                            producer session for the repo and dir of cwd as context, then names the previous run of the
+                            session so the conversation records the user's verdict on it, or on the first prompt counts
+                            the drafts waiting for approval. stop records the answer as a run and in the background drafts
+                            the lesson of the previous run when the conversation recorded a correction of it.
+                            Both always exit 0 and do nothing when NODLOOP_SESSION is off. manual leaves out the note
   feedback list [--trace <id>] [--verdict <v>] [--reviewer <r>] [--limit <n>]
                             List feedback newest first with the reason code or a dash after the verdict
   feedback add --trace <id> --verdict <v> [--reason-code <c>] [--reason <r>] [--edited <file>] [--reviewer <r>] [--audit]
@@ -44,6 +47,9 @@ commands:
                             the items the run reaches, and propose an add or an update. A duplicate or a conflict names the item
   knowledge for --producer <p> [--label <key=value>]
                             The approved items a run of the producer with these labels applies, and their size
+  knowledge waiting --producer <p> [--label <key=value>]
+                            The candidates a run of the producer with these labels would receive once approved, with the
+                            runs whose verdicts taught them
   knowledge list [--status <s>] [--kind <k>] [--stale]
                             Current version per id with a stale column. --status lists every version of that status
   knowledge show <id>       Every record of one id
@@ -148,9 +154,11 @@ func run(args []string, getenv func(string) string, stdin io.Reader, stdout io.W
 		return 1
 	}
 	commands := map[string]func(args []string) int{
-		"trace":    func(args []string) int { return runTrace(args, getenv, time.Now, stdout, stderr) },
-		"run":      func(args []string) int { return runRun(args, getenv, time.Now, stdout, stderr) },
-		"hook":     func(args []string) int { return runHook(args, getenv, time.Now, stdin, stdout, stderr) },
+		"trace": func(args []string) int { return runTrace(args, getenv, time.Now, stdout, stderr) },
+		"run":   func(args []string) int { return runRun(args, getenv, time.Now, stdout, stderr) },
+		"hook": func(args []string) int {
+			return runHook(args, getenv, detached(homeDir(getenv("HOME")).hookLog()), time.Now, stdin, stdout, stderr)
+		},
 		"feedback": func(args []string) int { return runFeedback(args, getenv, time.Now, stdout, stderr) },
 		"queue":    func(args []string) int { return runQueue(args, getenv, time.Now, stdout, stderr) },
 		"report":   func(args []string) int { return runReport(args, getenv, time.Now, stdout, stderr) },

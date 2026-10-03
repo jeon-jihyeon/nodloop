@@ -32,6 +32,11 @@ func (h homeDir) stableBinary() string {
 	return filepath.Join(h.dir(), "bin", "nodloop")
 }
 
+// What the processes the hooks start print, appended so a failed extraction stays readable
+func (h homeDir) hookLog() string {
+	return filepath.Join(h.dir(), "hook.log")
+}
+
 // Claude Code `settings.json` that holds the guard hook
 func (h homeDir) settingsPath() string {
 	return filepath.Join(string(h), ".claude", "settings.json")
