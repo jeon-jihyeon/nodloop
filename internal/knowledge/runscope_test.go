@@ -79,6 +79,46 @@ func TestSetFor(t *testing.T) {
 	}
 }
 
+func TestSetWaiting(t *testing.T) {
+	repo := &knowledge.RunScope{Producer: "session", Labels: trace.Labels{"repo": {"nodloop"}}}
+	other := &knowledge.RunScope{Producer: "session", Labels: trace.Labels{"repo": {"other"}}}
+	record := func(id string, version int, status knowledge.Status, run *knowledge.RunScope) knowledge.Knowledge {
+		k := runItem(id, run)
+		k.Version, k.Status = version, status
+		if status != knowledge.StatusCandidate {
+			k.Approver = "ann"
+		}
+		return k
+	}
+	compacted := record("compacted", 1, knowledge.StatusCandidate, repo)
+	compacted.Compaction = "c1"
+	// Newest first as the store lists them
+	set := knowledge.Set{
+		record("retired", 1, knowledge.StatusRetired, repo), record("retired", 1, knowledge.StatusCandidate, repo),
+		record("next", 2, knowledge.StatusCandidate, repo), record("next", 1, knowledge.StatusApproved, repo),
+		record("new", 1, knowledge.StatusCandidate, repo), record("elsewhere", 1, knowledge.StatusCandidate, other), compacted,
+	}
+	tcs := []struct {
+		name   string
+		labels trace.Labels
+		want   []string
+	}{
+		{"the repo waits for a new id and the next version of an approved one", trace.Labels{"repo": {"nodloop"}}, []string{"next", "new"}},
+		{"another repo waits for its own", trace.Labels{"repo": {"other"}}, []string{"elsewhere"}},
+		{"a place no candidate reaches waits for nothing", trace.Labels{"repo": {"x"}}, nil},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var got []string
+			for _, k := range set.Waiting("session", tc.labels) {
+				got = append(got, k.ID)
+			}
+			assert.Equal(t, tc.want, got)
+		})
+	}
+}
+
 func TestLedgerProposeRunScope(t *testing.T) {
 	tcs := []struct {
 		name string
