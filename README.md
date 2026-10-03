@@ -29,7 +29,7 @@ You correct an AI answer, the session ends, and next week in the same repository
 /plugin install nodloop@nodloop
 ```
 
-On first run the plugin downloads its binary. From then on it records every answer of the conversation as a run labeled with the repository and directory you work in. Work as usual, and when an answer was wrong, say so:
+On first run the plugin downloads its binary. From then on it records every answer of the conversation as a run labeled with the repository and directory you work in. Work as usual. When you tell Claude an answer was wrong or right, the conversation records that as a verdict on the answer's run, and after the turn the plugin drafts the lesson of a correction in the background. The first prompt of a later session in that repository says how many drafts wait, and `/nodloop:nod` with nothing after it walks you through them. To record a correction at once, nod on it:
 
 ```
 > /nodloop:nod you ran cd before git again. Use git -C <dir> instead
@@ -39,7 +39,7 @@ On first run the plugin downloads its binary. From then on it records every answ
 The nod records an edit on that answer's run, drafts one sentence of what it taught, has it checked against the items this repository already has, and approves it only when you name yourself. Before every later prompt in this repository a hook adds the approved items as context, so the next answer follows the correction without being told again. `~/.nodloop/bin/nodloop knowledge for --producer session --label repo=<repo> --label dir=<dir>` lists what a prompt in that directory receives.
 
 > [!TIP]
-> Set `NODLOOP_SESSION=off` where Claude Code starts to keep the plugin without recording conversations. Answers are stored on your machine under `~/.nodloop/records` with keys, tokens and passwords redacted.
+> Set `NODLOOP_SESSION=off` where Claude Code starts to keep the plugin without recording conversations, or `manual` to record answers and leave every verdict to an explicit nod. Answers are stored on your machine under `~/.nodloop/records` with keys, tokens and passwords redacted.
 
 ## Why nodloop
 
@@ -73,7 +73,7 @@ When one run would carry more than five items, `approve` says a compaction is du
 
 When you record what a real check found with `outcome`, `nodloop knowledge health` shows the items whose runs were refuted as retire candidates and the stated items whose runs were confirmed as promotion candidates. `knowledge narrow <id> --version <n> --key dir` proposes a version that stops reaching the directories where it was refuted, and `knowledge promote` proposes one with basis verified. An approved version is stale 90 days after its approval or last reaffirm.
 
-`nodloop report loop` shows per approved item how many runs received it, how many of those you approved, how many you corrected again for the reason that taught it, and how long the correction took to become an item. `nodloop queue` lists the runs that wait for a verdict, with a random audit share.
+`nodloop report loop` shows per approved item how many runs received it, how many of those you approved, how many you corrected again for the reason that taught it, and how long the correction took to become an item. Verdicts you gave and verdicts the conversation inferred from your words are counted apart, and yours wins where a run has both. `nodloop queue` lists the runs that wait for a verdict, with a random audit share.
 
 </details>
 
@@ -122,6 +122,7 @@ A correction can become a veto too. Propose it as a judgment with a veto, and on
 | Approved vetoes | `~/.claude/nodloop/vetoes.approved.<hash>.yaml` |
 | Approved items as rules a CLAUDE.md may import | `approved.md` in the record directory, which `nodloop knowledge export` prints the import line for |
 | Guard decisions | `~/.nodloop/guard.jsonl` |
+| Output of the drafts the stop hook starts | `~/.nodloop/hook.log` |
 
 Every record file is append only JSON lines. A status change of an item is a new record, so the history of every version stays.
 
@@ -131,7 +132,7 @@ macOS and Linux, or Windows through WSL. It runs as a Claude Code plugin. For Co
 
 ## Limits
 
-The session labels are the repository and the directory, compared as exact strings. An item scoped to a repository reaches every prompt there, whatever the task. Whether an item reached a run it should not have is not measured yet. Versions before 0.6.0 reviewed incident data from an events file. That data review left this repository for a plugin of its own, and its knowledge records still list but reach no prompt until you retire them.
+The session labels are the repository and the directory, compared as exact strings. An item scoped to a repository reaches every prompt there, whatever the task. Whether an item reached a run it should not have is not measured yet. A verdict the conversation inferred can misread your words, so it only drafts a candidate and never approves one. Versions before 0.6.0 reviewed incident data from an events file. That data review left this repository for a plugin of its own, and its knowledge records still list but reach no prompt until you retire them.
 
 ## License
 
