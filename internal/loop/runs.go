@@ -55,6 +55,9 @@ type Runs struct {
 	versions map[string]string
 	times    map[string]time.Time
 	applied  map[knowledge.Ref][]string
+	// What each run received and what a holdout kept from it
+	received map[string][]knowledge.Ref
+	withheld map[string][]knowledge.Ref
 	// Latest verdict of a person per trace, or the latest one a session inferred when no person gave one
 	verdicts map[string]feedback.Feedback
 	// First correction per trace by anyone
@@ -65,6 +68,7 @@ type Runs struct {
 func NewRuns(traces trace.Traces, verdicts feedback.Records) Runs {
 	r := Runs{
 		ids: map[string]bool{}, versions: map[string]string{}, times: map[string]time.Time{}, applied: map[knowledge.Ref][]string{},
+		received: map[string][]knowledge.Ref{}, withheld: map[string][]knowledge.Ref{},
 		verdicts: map[string]feedback.Feedback{}, firstCorrection: map[string]time.Time{},
 	}
 	for _, tr := range traces {
@@ -72,8 +76,9 @@ func NewRuns(traces trace.Traces, verdicts feedback.Records) Runs {
 			continue
 		}
 		var in struct {
-			Applied []knowledge.Ref `json:"applied"`
-			Plugin  string          `json:"plugin"`
+			Applied  []knowledge.Ref `json:"applied"`
+			Plugin   string          `json:"plugin"`
+			Withheld []knowledge.Ref `json:"withheld"`
 		}
 		if json.Unmarshal(tr.Input, &in) != nil {
 			continue
@@ -81,6 +86,7 @@ func NewRuns(traces trace.Traces, verdicts feedback.Records) Runs {
 		r.ids[tr.ID] = true
 		r.versions[tr.ID] = in.Plugin
 		r.times[tr.ID] = tr.Time
+		r.received[tr.ID], r.withheld[tr.ID] = in.Applied, in.Withheld
 		for _, ref := range in.Applied {
 			r.applied[ref] = append(r.applied[ref], tr.ID)
 		}

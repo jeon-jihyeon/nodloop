@@ -19,6 +19,8 @@ type userConfig struct {
 	RecordDir string `json:"record_dir,omitempty"`
 	// The name a person gave to approve under, saved so a review asks for it once
 	Approver string `json:"approver,omitempty"`
+	// The share of conversation turns whose prompt receives no item so report effect has a comparison
+	Holdout float64 `json:"holdout,omitempty"`
 	// Endpoints a decision point may ask by name
 	Classifiers classify.Endpoints `json:"classifiers,omitempty"`
 	// The setup of each decision point a user set up
@@ -69,11 +71,6 @@ func (h homeDir) readConfig() (userConfig, error) {
 		return userConfig{}, fmt.Errorf("%w: %s: %w", errConfigInvalid, h.configPath(), err)
 	}
 	return c, nil
-}
-
-// Writes the approver into config.json and keeps the value of every other key
-func (h homeDir) saveApprover(name string) error {
-	return h.save("approver", name)
 }
 
 // Writes one key of config.json and keeps the value of every other key

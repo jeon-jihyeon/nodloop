@@ -88,7 +88,7 @@ func TestConfigRecordArgs(t *testing.T) {
 	assert.Equal(t, "--record-dir '/my records'", config{recordDir: "/my records"}.recordArgs())
 }
 
-func TestRunConfigApprover(t *testing.T) {
+func TestRunConfig(t *testing.T) {
 	type args struct {
 		// config.json before the call
 		// None when empty
@@ -122,6 +122,11 @@ func TestRunConfigApprover(t *testing.T) {
 		{"a broken config is not printed", args{"{broken", []string{"approver"}, false}, want{1, "", "is not valid JSON", "{broken"}},
 		{"another key is refused", args{"", []string{"record_dir", "/r"}, false}, want{1, "", "unknown action", ""}},
 		{"no home is refused", args{"", []string{"approver", "ann"}, true}, want{1, "", "home directory unknown", ""}},
+		{"a holdout share is saved", args{"", []string{"holdout", "0.1"}, false}, want{0, "0.1\n", "", "{\n  \"holdout\": 0.1\n}\n"}},
+		{"a saved holdout is printed", args{`{"holdout":0.2}`, []string{"holdout"}, false}, want{0, "0.2\n", "", `{"holdout":0.2}`}},
+		{"no holdout prints 0", args{"", []string{"holdout"}, false}, want{0, "0\n", "", ""}},
+		{"a holdout of 1 is refused", args{"", []string{"holdout", "1"}, false}, want{1, "", "invalid holdout", ""}},
+		{"a holdout that is no number is refused", args{"", []string{"holdout", "some"}, false}, want{1, "", "invalid holdout", ""}},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {

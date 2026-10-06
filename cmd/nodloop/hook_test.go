@@ -566,3 +566,61 @@ func TestRunKnowledgeWaiting(t *testing.T) {
 		})
 	}
 }
+
+func TestHoldoutWithholds(t *testing.T) {
+	tcs := []struct {
+		name    string
+		share   holdout
+		session string
+		want    bool
+	}{
+		{"no share withholds nothing", 0, "s1", false},
+		{"a turn without a session is never drawn", 0.999, "", false},
+		{"a share near 1 withholds the turn", 0.999, "s1", true},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.want, tc.share.withholds(tc.session, 0))
+		})
+	}
+}
+
+// A share draws about that share of turns and the same turn always draws the same
+func TestHoldoutShare(t *testing.T) {
+	drawn := 0
+	for turn := range 1000 {
+		if holdout(0.2).withholds("s1", turn) {
+			drawn++
+		}
+		assert.Equal(t, holdout(0.2).withholds("s1", turn), holdout(0.2).withholds("s1", turn))
+	}
+	assert.InDelta(t, 200, drawn, 50)
+}
+
+// A turn the holdout draws gets no item in its prompt and its run records them as withheld
+func TestRunHookHoldout(t *testing.T) {
+	require.True(t, holdout(0.999).withholds("s1", 0))
+	home, records, repo := hookHome(t, "use git -C")
+	require.Equal(t, 0, runConfig([]string{"holdout", "0.999"}, func(k string) string { return map[string]string{"HOME": home}[k] }, &bytes.Buffer{}, &bytes.Buffer{}))
+	getenv := func(k string) string { return map[string]string{"HOME": home, envRecordDir: records}[k] }
+	stdin := `{"session_id":"s1","cwd":"` + repo + `","last_assistant_message":"done"}`
+	var prompt bytes.Buffer
+
+	require.Equal(t, 0, runHook([]string{"prompt"}, getenv, nil, time.Now, strings.NewReader(stdin), &prompt, &bytes.Buffer{}))
+	require.Equal(t, 0, runHook([]string{"stop"}, getenv, nil, time.Now, strings.NewReader(stdin), &bytes.Buffer{}, &bytes.Buffer{}))
+
+	assert.NotContains(t, prompt.String(), "use git -C")
+	store, err := tracefile.New(records)
+	require.NoError(t, err)
+	runs, err := store.List(context.Background(), trace.Filter{Name: trace.NameRun, SessionID: "s1"})
+	require.NoError(t, err)
+	require.Len(t, runs, 1)
+	var in struct {
+		Applied  []knowledge.Ref `json:"applied"`
+		Withheld []knowledge.Ref `json:"withheld"`
+	}
+	require.NoError(t, json.Unmarshal(runs[0].Input, &in))
+	assert.Empty(t, in.Applied)
+	assert.Equal(t, []knowledge.Ref{{ID: "git-c", Version: 1}}, in.Withheld)
+}
