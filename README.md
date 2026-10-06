@@ -77,6 +77,8 @@ When you record what a real check found with `outcome`, `nodloop knowledge healt
 
 To see whether approved items help, set `nodloop config holdout 0.1`. One turn in ten then gets no item in its prompt and its run records what it would have received, and `nodloop report effect` compares how often those turns were corrected against the turns that got the items. `nodloop report extract` shows how drafting ended per plugin version, with the drafts refused and the critic questions they failed, and `nodloop report critic` shows how often the critic agreed with what you later decided on the same run. `knowledge health` marks approved items no run applied for 30 days as idle, and items whose runs were corrected again for the same reason as contested, with the items to compact them with.
 
+The second check is a claude call by default. A classifier served over HTTP in the Jev wire format can answer its questions instead: `nodloop classifier add <name> --url <url>` names the endpoint and `nodloop classifier use critic --members <name>,claude --mode cascade --threshold 0.8` asks it first and claude only when it is unsure. The point `reaction` lets a classifier judge whether your message corrects the previous answer before the conversation does, and records only a sure reject. Every answer is recorded as a `classify` trace with the time each member took, and `nodloop classifier probe <name>` shows what an endpoint answers.
+
 </details>
 
 ## Any producer
@@ -168,12 +170,13 @@ A correction can become a veto too. Propose it as a judgment with a veto, and on
 | Approved items as rules a CLAUDE.md may import | `approved.md` in the record directory, which `nodloop knowledge export` prints the import line for |
 | Guard decisions | `~/.nodloop/guard.jsonl` |
 | Output of the drafts the stop hook starts | `~/.nodloop/hook.log` |
+| Records of each tenant of `nodloop server serve` | `tenants/<tenant>` in the record directory, or the PostgreSQL database of `--postgres` |
 
 Every record file is append only JSON lines. A status change of an item is a new record, so the history of every version stays.
 
 ## Supported
 
-macOS and Linux, or Windows through WSL. It runs as a Claude Code plugin. For Codex, Cursor or another MCP client, install it with `go install github.com/jeon-jihyeon/nodloop/cmd/nodloop@latest` and serve it with `nodloop mcp`. Such a client has no hooks from this plugin, so a producer there calls `run` and `knowledge_for` itself.
+macOS and Linux, or Windows through WSL. It runs as a Claude Code plugin. For Codex, Cursor or another MCP client, install it with `go install github.com/jeon-jihyeon/nodloop/cmd/nodloop@latest` and serve it with `nodloop mcp`. Such a client has no hooks from this plugin, so a producer there calls `run` and `knowledge_for` itself. The Python SDK needs Python 3.10 or newer and the TypeScript SDK is tested on Node 24.
 
 ## Limits
 

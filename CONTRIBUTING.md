@@ -4,7 +4,7 @@ Issues and pull requests are welcome. Open an issue first for anything larger th
 
 ## Setup
 
-Go 1.25 or newer, and the `claude` CLI on PATH for the commands that call a model.
+Go 1.25 or newer, and the `claude` CLI on PATH for the commands that call a model. The SDKs under `sdk/` need [uv](https://docs.astral.sh/uv/) for Python and Node 24 with npm for TypeScript.
 
 ```
 git clone https://github.com/jeon-jihyeon/nodloop
@@ -27,6 +27,19 @@ go test ./... -cover
 golangci-lint run ./...
 ```
 
+The SDK jobs run from their directories:
+
+```
+cd sdk/python && uvx ruff check . && uvx ruff format --check . && uv run --locked pytest -q
+cd sdk/typescript && npm ci && npm run typecheck && npm test
+```
+
+The PostgreSQL store suites run when `NODLOOP_TEST_POSTGRES` holds a database URL and are skipped otherwise. CI runs them against a postgres 17 service:
+
+```
+NODLOOP_TEST_POSTGRES=postgres://postgres:nodloop@localhost:5432/nodloop?sslmode=disable go test ./internal/pg/...
+```
+
 Tests that talk to a model are opt in:
 
 ```
@@ -39,11 +52,13 @@ Use haiku while iterating with `--model haiku` on the commands that call a model
 
 | Layer | Packages | Rule |
 |---|---|---|
-| Domain | `feedback`, `trace`, `llm`, `veto`, `settings`, `jsonl`, `atomicfile` | No imports from the layers above |
+| Domain | `feedback`, `trace`, `llm`, `classify`, `veto`, `settings`, `jsonl`, `atomicfile` | No imports from the layers above |
 | Core | `knowledge` | The ledger of items, their scopes and their history. Never a file store |
 | Application | `compact`, `extract`, `loop` | Build on the core. They never import each other and only `mcp` and `cmd/nodloop` import them |
-| Infra | the `file` subpackages | Implements the stores and the veto and settings files. Application code never imports one outside its tests |
+| Infra | the `file` subpackages and `pg` | Implements the stores in files or PostgreSQL and the veto and settings files. Application code never imports one outside its tests |
 | Controllers | `cmd/nodloop`, `mcp`, `guard` | `cmd/nodloop` is the composition root and the only reader of the process environment |
+| Library | `nodloop` at the module root | A second composition root that other Go code imports |
+| SDKs | `sdk/python`, `sdk/typescript` | Clients of the MCP tools over a local `nodloop mcp` or a server. They never reach the records directly |
 | Test harness | `testkit` | File stores in a temp directory and a fake clock |
 
 depguard enforces the direction. If a change needs an import that the linter rejects, the change is in the wrong package.
