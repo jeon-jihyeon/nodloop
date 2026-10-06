@@ -1,0 +1,227 @@
+package main
+
+import (
+	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"crypto/subtle"
+	"encoding/hex"
+	"errors"
+	"flag"
+	"fmt"
+	"io"
+	"net/http"
+	"path/filepath"
+	"regexp"
+	"slices"
+	"strings"
+	"sync"
+	"time"
+
+	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"github.com/jeon-jihyeon/nodloop/internal/mcp"
+)
+
+// One key a service calls the server with
+// Only the SHA-256 of the key is saved so config.json never holds a key
+type serverKey struct {
+	// The person or service the key names
+	// Approvals through the key are recorded under it
+	Name   string   `json:"name"`
+	Tenant string   `json:"tenant"`
+	Role   mcp.Role `json:"role"`
+	SHA256 string   `json:"sha256"`
+}
+
+// What the server section of config.json holds
+type serverConfig struct {
+	Keys []serverKey `json:"keys,omitempty"`
+}
+
+// A tenant names a directory under the record directory so it is one path element
+var tenantName = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,62}$`)
+
+// The key whose hash matches the token compared in constant time
+func (c serverConfig) match(token string) (serverKey, bool) {
+	sum := sha256.Sum256([]byte(token))
+	got := hex.EncodeToString(sum[:])
+	for _, k := range c.Keys {
+		if subtle.ConstantTimeCompare([]byte(k.SHA256), []byte(got)) == 1 {
+			return k, true
+		}
+	}
+	return serverKey{}, false
+}
+
+// server key add, list and remove manage the keys and serve runs the tools over HTTP
+func runServer(args []string, getenv func(string) string, now func() time.Time, stdout, stderr io.Writer) int {
+	if len(args) == 0 {
+		return fail(stderr, "server", errNoAction)
+	}
+	h := homeDir(getenv("HOME"))
+	if h == "" {
+		return fail(stderr, "server", errHomeUnknown)
+	}
+	if args[0] == "serve" {
+		return runServe(args[1:], getenv, now, stderr)
+	}
+	if args[0] != "key" || len(args) < 2 {
+		return fail(stderr, "server", fmt.Errorf("%w %q", errUnknownAction, strings.Join(args, " ")))
+	}
+	fs := flag.NewFlagSet("server key "+args[1], flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	tenant := fs.String("tenant", "", "add: the tenant whose records the key reads and writes")
+	role := fs.String("role", "", "add: producer, reviewer or approver")
+	name, err := parseID(fs, args[2:])
+	if err != nil {
+		return 1
+	}
+	uc, err := h.readConfig()
+	if err != nil {
+		return fail(stderr, "server", err)
+	}
+	cmd := serverCommand{home: h, keys: uc.Server, out: stdout}
+	switch args[1] {
+	case "add":
+		err = cmd.add(serverKey{Name: name, Tenant: *tenant, Role: mcp.Role(*role)})
+	case "list":
+		cmd.list()
+	case "remove":
+		err = cmd.remove(name)
+	default:
+		err = fmt.Errorf("%w %q", errUnknownAction, args[1])
+	}
+	if err != nil {
+		return fail(stderr, "server", err)
+	}
+	return 0
+}
+
+type serverCommand struct {
+	home homeDir
+	keys serverConfig
+	out  io.Writer
+}
+
+// Prints the new key once and saves its hash
+func (c serverCommand) add(k serverKey) error {
+	switch {
+	case k.Name == "":
+		return fmt.Errorf("add: a key name %w", errRequired)
+	case slices.ContainsFunc(c.keys.Keys, func(o serverKey) bool { return o.Name == k.Name }):
+		return fmt.Errorf("%w: %s", errKeyExists, k.Name)
+	case !tenantName.MatchString(k.Tenant):
+		return fmt.Errorf("%w: %q. Use lower case letters, digits, - and _", errTenantInvalid, k.Tenant)
+	case !k.Role.Valid():
+		return fmt.Errorf("%w: %q. Use one of %v", errRoleInvalid, k.Role, mcp.Roles())
+	}
+	var secret [32]byte
+	// crypto rand Read never returns an error
+	_, _ = rand.Read(secret[:])
+	key := "nl_" + hex.EncodeToString(secret[:])
+	sum := sha256.Sum256([]byte(key))
+	k.SHA256 = hex.EncodeToString(sum[:])
+	keys := c.keys
+	keys.Keys = append(slices.Clone(keys.Keys), k)
+	if err := c.home.save("server", keys); err != nil {
+		return err
+	}
+	fmt.Fprintln(c.out, key)
+	return nil
+}
+
+func (c serverCommand) list() {
+	for _, k := range c.keys.Keys {
+		fmt.Fprintf(c.out, "%s\t%s\t%s\n", k.Name, k.Tenant, k.Role)
+	}
+}
+
+func (c serverCommand) remove(name string) error {
+	keys := c.keys
+	keys.Keys = slices.DeleteFunc(slices.Clone(keys.Keys), func(k serverKey) bool { return k.Name == name })
+	if len(keys.Keys) == len(c.keys.Keys) {
+		return fmt.Errorf("%w: %s", errKeyUnknown, name)
+	}
+	return c.home.save("server", keys)
+}
+
+// Serves the MCP tools over streamable HTTP until the process ends
+func runServe(args []string, getenv func(string) string, now func() time.Time, stderr io.Writer) int {
+	fs := flag.NewFlagSet("server serve", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	var records recordFlags
+	records.bind(fs)
+	addr := fs.String("addr", "127.0.0.1:8787", "the address to listen on")
+	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	a, err := records.app(getenv, now)
+	if err != nil {
+		return fail(stderr, "server", err)
+	}
+	uc, err := a.cfg.home.readConfig()
+	if err != nil {
+		return fail(stderr, "server", err)
+	}
+	if len(uc.Server.Keys) == 0 {
+		return fail(stderr, "server", fmt.Errorf("%w. Add one with nodloop server key add", errNoKeys))
+	}
+	fmt.Fprintf(stderr, "nodloop server: %d keys, records under %s, listening on http://%s/mcp\n", len(uc.Server.Keys), a.cfg.recordDir, *addr)
+	srv := &http.Server{Addr: *addr, Handler: newServeHandler(a.cfg.recordDir, uc.Server, now), ReadHeaderTimeout: 10 * time.Second}
+	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		return fail(stderr, "server", err)
+	}
+	return 0
+}
+
+// Authenticates every request and hands it to the MCP server of its key
+// 1. stateless so every request carries its own key and no session outlives it
+// 2. a tenant reads and writes the records under tenants of the record directory and never those of another tenant
+// 3. one host per key so its calls are serialized like a stdio server while keys of one tenant share the file locks of its records
+type serveHandler struct {
+	base   string
+	config serverConfig
+	now    func() time.Time
+	mu     sync.Mutex
+	hosts  map[string]*sdk.Server
+	mcp    http.Handler
+}
+
+type keyContext struct{}
+
+func newServeHandler(base string, config serverConfig, now func() time.Time) *serveHandler {
+	h := &serveHandler{base: base, config: config, now: now, hosts: map[string]*sdk.Server{}}
+	h.mcp = sdk.NewStreamableHTTPHandler(h.server, &sdk.StreamableHTTPOptions{Stateless: true})
+	return h
+}
+
+func (h *serveHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	token, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+	key, known := h.config.match(token)
+	if !ok || !known {
+		w.Header().Set("WWW-Authenticate", `Bearer realm="nodloop"`)
+		http.Error(w, "a nodloop server key is required", http.StatusUnauthorized)
+		return
+	}
+	h.mcp.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), keyContext{}, key)))
+}
+
+// The MCP server of the key the request was authenticated with
+func (h *serveHandler) server(r *http.Request) *sdk.Server {
+	key, _ := r.Context().Value(keyContext{}).(serverKey)
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if srv, ok := h.hosts[key.Name]; ok {
+		return srv
+	}
+	// No home so the config of the server user is not read for a tenant and no veto file is written under it
+	noHome := func(string) string { return "" }
+	open := mcpOpen{
+		flags:  recordFlags{recordDir: filepath.Join(h.base, "tenants", key.Tenant)},
+		getenv: noHome, now: h.now, session: mcp.NewSession(h.now()), person: key.Name,
+	}.open
+	srv := mcp.NewHost(open, buildVersion(), "").Server(key.Role.Tools())
+	h.hosts[key.Name] = srv
+	return srv
+}

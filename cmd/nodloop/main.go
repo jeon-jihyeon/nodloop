@@ -138,6 +138,15 @@ commands:
   classifier remove <name>  Remove an endpoint no point uses
   classifier list           Endpoints and the setup of every point
   classifier probe <name>   Ask the endpoint one question and print its answer and time
+  server key add <name> --tenant <t> --role producer|reviewer|approver
+                            Print a new key for nodloop server serve once and save only its SHA-256 in config.json.
+                            A producer records runs and verdicts, a reviewer also drafts and proposes knowledge and an
+                            approver also approves under the key name
+  server key list           Names, tenants and roles of the keys
+  server key remove <name>  Remove a key
+  server serve [--addr <host:port>]
+                            Serve the MCP tools over streamable HTTP at /mcp for the keys, each tenant on its own records
+                            under tenants of the record directory. 127.0.0.1:8787 by default
   version                   Print the build version
 
 Every command that reads records accepts --record-dir, which overrides NODLOOP_RECORD_DIR, then record_dir of
@@ -205,6 +214,7 @@ func run(args []string, getenv func(string) string, stdin io.Reader, stdout io.W
 		"mcp":        func(args []string) int { return runMCP(args, getenv, time.Now, stdin, stdout, stderr) },
 		"config":     func(args []string) int { return runConfig(args, getenv, stdout, stderr) },
 		"classifier": func(args []string) int { return runClassifier(args, getenv, time.Now, stdout, stderr) },
+		"server":     func(args []string) int { return runServer(args, getenv, time.Now, stdout, stderr) },
 		"version": func([]string) int {
 			fmt.Fprintln(stdout, buildVersion())
 			return 0

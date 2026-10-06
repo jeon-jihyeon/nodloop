@@ -89,6 +89,8 @@ type mcpOpen struct {
 	now    func() time.Time
 	// Made once at start so a change of record dir between calls keeps one session
 	session string
+	// The person of a server key and empty over stdio
+	person string
 }
 
 // The server over the record directory of that moment
@@ -118,5 +120,5 @@ func (o mcpOpen) open(context.Context) (*mcp.Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	return mcp.New(traces, verdicts, outcomes, ledger, compactor, extract.New(ledger, traces, verdicts, o.now), o.now, o.session, executable(), a.cfg.recordArgs()), nil
+	return mcp.New(traces, verdicts, outcomes, ledger, compactor, extract.New(ledger, traces, verdicts, o.now), o.now, o.session, executable(), a.cfg.recordArgs(), o.person), nil
 }

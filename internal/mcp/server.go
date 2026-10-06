@@ -65,17 +65,30 @@ type Server struct {
 	// Flags that name the record directory of this server
 	// A command in an answer ends with them so a shell without the server's flags or env reads the same records
 	recordArgs string
+	// The person a server key names and empty over stdio
+	// Approvals are recorded under this name whatever the call says and verdicts without a reviewer take it
+	person string
 }
 
 func New(
 	traces TraceStore, verdicts FeedbackStore, outcomes OutcomeStore, ledger *knowledge.Ledger, compactor *compact.Compactor,
-	extractor *extract.Extractor, now func() time.Time, session, exe, recordArgs string,
+	extractor *extract.Extractor, now func() time.Time, session, exe, recordArgs, person string,
 ) *Server {
 	return &Server{
 		traces: traces, verdicts: verdicts, outcomes: outcomes, ledger: ledger, compactor: compactor, extractor: extractor,
 		now: now, session: session,
-		exe: exe, recordArgs: recordArgs,
+		exe: exe, recordArgs: recordArgs, person: person,
 	}
+}
+
+// The name an approval is recorded under: the person of the server key and else the name the call gives
+func (s *Server) approver(given string) string {
+	return cmp.Or(s.person, given)
+}
+
+// The reviewer of a verdict: the name the call gives and else the person of the server key
+func (s *Server) reviewer(given string) string {
+	return cmp.Or(given, s.person)
 }
 
 // The session of one server process
@@ -202,7 +215,7 @@ func (s *Server) feedback(ctx context.Context, _ *sdk.CallToolRequest, in feedba
 			return nil, nil, err
 		}
 	}
-	fb, err := feedback.New(in.TraceID, in.Verdict, in.ReasonCode, in.Reason, edited, in.Reviewer, s.now())
+	fb, err := feedback.New(in.TraceID, in.Verdict, in.ReasonCode, in.Reason, edited, s.reviewer(in.Reviewer), s.now())
 	if err != nil {
 		return nil, nil, err
 	}
@@ -225,7 +238,7 @@ func (s *Server) outcome(ctx context.Context, _ *sdk.CallToolRequest, in outcome
 	if _, err := s.checkRun(ctx, in.TraceID); err != nil {
 		return nil, nil, err
 	}
-	o, err := feedback.NewOutcome(in.TraceID, in.Result, in.ConfirmedCause, in.Note, in.Reviewer, s.now())
+	o, err := feedback.NewOutcome(in.TraceID, in.Result, in.ConfirmedCause, in.Note, s.reviewer(in.Reviewer), s.now())
 	if err != nil {
 		return nil, nil, err
 	}
@@ -350,7 +363,7 @@ type approveInput struct {
 }
 
 func (s *Server) approve(ctx context.Context, _ *sdk.CallToolRequest, in approveInput) (*sdk.CallToolResult, any, error) {
-	k, err := s.ledger.Approve(ctx, in.ID, in.Version, in.Approver)
+	k, err := s.ledger.Approve(ctx, in.ID, in.Version, s.approver(in.Approver))
 	if err != nil && !errors.Is(err, knowledge.ErrExport) {
 		return nil, nil, err
 	}
@@ -445,7 +458,7 @@ type approveCompactionInput struct {
 func (s *Server) approveCompaction(
 	ctx context.Context, _ *sdk.CallToolRequest, in approveCompactionInput,
 ) (*sdk.CallToolResult, any, error) {
-	c, err := s.compactor.Approve(ctx, in.Compaction, in.Approver)
+	c, err := s.compactor.Approve(ctx, in.Compaction, s.approver(in.Approver))
 	if err != nil && !errors.Is(err, knowledge.ErrExport) {
 		return nil, nil, err
 	}
@@ -453,7 +466,7 @@ func (s *Server) approveCompaction(
 	for _, k := range slices.Concat(c.Items, c.Replaced) {
 		statuses = append(statuses, fmt.Sprintf("%s v%d %s", k.ID, k.Version, k.Status))
 	}
-	answer := map[string]any{"compaction": c.ID, "approver": in.Approver, "records": statuses}
+	answer := map[string]any{"compaction": c.ID, "approver": s.approver(in.Approver), "records": statuses}
 	// The records are appended and a second approval appends nothing so the export failure rides on the answer
 	if err != nil {
 		answer["export_error"] = err.Error()

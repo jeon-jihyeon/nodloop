@@ -1,4 +1,5 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn, type ChildProcess } from "node:child_process";
+import { createServer } from "node:net";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -36,4 +37,33 @@ export async function seed(c: Client): Promise<void> {
 // The ids of the runs that wait for a verdict
 export async function runs(c: Client): Promise<string[]> {
   return (await c.call("queue", { limit: 50 })).items.map((i: { trace_id: string }) => i.trace_id);
+}
+
+// A free port the kernel picked
+async function freePort(): Promise<number> {
+  return new Promise((done) => {
+    const srv = createServer().listen(0, "127.0.0.1", () => {
+      const port = (srv.address() as { port: number }).port;
+      srv.close(() => done(port));
+    });
+  });
+}
+
+// A nodloop server with an approver key of tenant acme
+export async function server(): Promise<{ url: string; key: string; proc: ChildProcess }> {
+  const home = mkdtempSync(join(tmpdir(), "nodloop-home-"));
+  const env = { ...process.env, HOME: home };
+  const key = execFileSync(binary(), ["server", "key", "add", "ann", "--tenant", "acme", "--role", "approver"], { env }).toString().trim();
+  const port = await freePort();
+  const records = join(mkdtempSync(join(tmpdir(), "nodloop-rec-")), "records");
+  const proc = spawn(binary(), ["server", "serve", "--addr", `127.0.0.1:${port}`, "--record-dir", records], { env, stdio: "ignore" });
+  for (let i = 0; i < 100; i++) {
+    try {
+      await fetch(`http://127.0.0.1:${port}/mcp`);
+      break;
+    } catch {
+      await new Promise((r) => setTimeout(r, 50));
+    }
+  }
+  return { url: `http://127.0.0.1:${port}/mcp`, key, proc };
 }

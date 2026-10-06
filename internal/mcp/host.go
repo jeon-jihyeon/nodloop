@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"slices"
 	"sync"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -30,11 +31,19 @@ func NewHost(open Open, version, instructions string) *Host {
 }
 
 func (h *Host) ServeTransport(ctx context.Context, t sdk.Transport) error {
+	return h.Server(Tools()).Run(ctx, t)
+}
+
+// The MCP server with the named tools of the host
+// A server key of a role names fewer tools so a call outside the role is no tool at all
+func (h *Host) Server(names []string) *sdk.Server {
 	srv := sdk.NewServer(&sdk.Implementation{Name: "nodloop", Version: h.version}, &sdk.ServerOptions{Instructions: h.instructions})
 	for _, tl := range tools {
-		tl.add(srv, h)
+		if slices.Contains(names, tl.name) {
+			tl.add(srv, h)
+		}
 	}
-	return srv.Run(ctx, t)
+	return srv
 }
 
 // Runs one tool call on the server open answers under the call lock

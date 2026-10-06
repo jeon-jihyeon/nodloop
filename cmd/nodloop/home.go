@@ -26,6 +26,8 @@ type userConfig struct {
 	// The setup of each decision point a user set up
 	// A point left out asks claude alone
 	Decisions classify.Decisions `json:"decisions,omitempty"`
+	// The keys nodloop server serve accepts
+	Server serverConfig `json:"server,omitzero"`
 }
 
 // nodloop keeps the config and the default records under `.nodloop` there
