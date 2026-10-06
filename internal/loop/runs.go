@@ -185,8 +185,9 @@ func (r Runs) taught(traceIDs []string) ([]feedback.ReasonCode, time.Time) {
 
 // The plugin version a run was recorded under and unknown when it names none
 func (r Runs) version(runID string) string {
-	return cmp.Or(r.versions[runID], unknownVersion)
+	return cmp.Or(r.versions[runID], unknown)
 }
 
-// The version of runs recorded before 0.7 or outside the conversation hooks
-const unknownVersion = "unknown"
+// A version or path the records do not name
+// Runs before 0.7 and runs recorded outside the conversation hooks carry no version
+const unknown = "unknown"
