@@ -31,8 +31,24 @@ type RunItem struct {
 	Settle time.Duration `json:"settle"`
 }
 
+// How far the runs went through the loop so the stage where it stalls reads at a glance
+type Totals struct {
+	Runs int `json:"runs"`
+	// Runs with a verdict of a person
+	Judged int `json:"judged"`
+	// Runs with only a verdict a session inferred
+	Inferred int `json:"inferred"`
+	// Judged or inferred runs whose verdict corrects
+	Corrected int `json:"corrected"`
+	// Candidates waiting for approval outside a compaction
+	Waiting int `json:"waiting"`
+	// Approved run items
+	Approved int `json:"approved"`
+}
+
 // Runs and the verdicts on them
 type Runs struct {
+	ids     map[string]bool
 	applied map[knowledge.Ref][]string
 	// Latest verdict of a person per trace, or the latest one a session inferred when no person gave one
 	verdicts map[string]feedback.Feedback
@@ -42,7 +58,10 @@ type Runs struct {
 
 // Failed runs and runs whose input does not read are left out because they applied nothing a person could judge
 func NewRuns(traces trace.Traces, verdicts feedback.Records) Runs {
-	r := Runs{applied: map[knowledge.Ref][]string{}, verdicts: map[string]feedback.Feedback{}, firstCorrection: map[string]time.Time{}}
+	r := Runs{
+		ids: map[string]bool{}, applied: map[knowledge.Ref][]string{},
+		verdicts: map[string]feedback.Feedback{}, firstCorrection: map[string]time.Time{},
+	}
 	for _, tr := range traces {
 		if tr.Name != trace.NameRun || tr.Error != "" {
 			continue
@@ -53,6 +72,7 @@ func NewRuns(traces trace.Traces, verdicts feedback.Records) Runs {
 		if json.Unmarshal(tr.Input, &in) != nil {
 			continue
 		}
+		r.ids[tr.ID] = true
 		for _, ref := range in.Applied {
 			r.applied[ref] = append(r.applied[ref], tr.ID)
 		}
@@ -70,6 +90,35 @@ func NewRuns(traces trace.Traces, verdicts feedback.Records) Runs {
 		}
 	}
 	return r
+}
+
+// The runs, their verdicts and the run items of the set
+func (r Runs) Totals(items knowledge.Set) Totals {
+	t := Totals{Runs: len(r.ids)}
+	for id, fb := range r.verdicts {
+		switch {
+		case !r.ids[id]:
+			continue
+		case fb.Implicit():
+			t.Inferred++
+		default:
+			t.Judged++
+		}
+		if fb.Corrects() {
+			t.Corrected++
+		}
+	}
+	for _, k := range items.Versions() {
+		if k.Status == knowledge.StatusCandidate && k.Compaction == "" && k.Run != nil {
+			t.Waiting++
+		}
+	}
+	for _, k := range items.Approved() {
+		if k.Run != nil {
+			t.Approved++
+		}
+	}
+	return t
 }
 
 // One row per approved run item in the order of the set

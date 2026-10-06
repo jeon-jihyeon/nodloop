@@ -67,6 +67,17 @@ func (s Set) Approved() Set {
 	return out
 }
 
+// The records written at t or later
+func (s Set) Since(t time.Time) Set {
+	out := Set{}
+	for _, k := range s {
+		if !k.Time.Before(t) {
+			out = append(out, k)
+		}
+	}
+	return out
+}
+
 // The vetoes of the approved items in id order
 // The source names the version and the approver so a reader of the veto file can trace a block back
 func (s Set) Vetoes() []veto.Spec {

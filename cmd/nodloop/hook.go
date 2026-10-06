@@ -23,6 +23,8 @@ const (
 	// off turns the conversation hooks off so the plugin records no conversation
 	// manual records runs and items and leaves reactions to an explicit nod
 	envSession = "NODLOOP_SESSION"
+	// The directory Claude Code started in, which stays put when a Bash call runs cd
+	envProjectDir = "CLAUDE_PROJECT_DIR"
 	// Runes of an answer a run keeps
 	answerRunes = 20000
 	// Claude Code moves hook context past 10000 characters into a file and shows a preview only
@@ -54,12 +56,13 @@ func runHook(args []string, getenv func(string) string, start starter, now func(
 		return 0
 	}
 	cmd := hookCommand{app: a, start: start, out: stdout, manual: getenv(envSession) == "manual"}
+	labels := workDir(in.Cwd).within(workDir(getenv(envProjectDir))).labels()
 	ctx := context.Background()
 	switch args[0] {
 	case "prompt":
-		err = cmd.prompt(ctx, in.SessionID, workDir(in.Cwd).labels())
+		err = cmd.prompt(ctx, in.SessionID, labels)
 	case "stop":
-		err = cmd.stop(ctx, in.SessionID, workDir(in.Cwd).labels(), reply(in.LastAssistantMessage))
+		err = cmd.stop(ctx, in.SessionID, labels, reply(in.LastAssistantMessage))
 	default:
 		err = fmt.Errorf("%w %q", errUnknownAction, args[0])
 	}
@@ -103,33 +106,39 @@ func (c hookCommand) prompt(ctx context.Context, sessionID string, labels trace.
 	}}), noteErr)
 }
 
-// The previous run of the session, or on its first prompt the candidates waiting in the place
+// The previous run of the session and the candidates waiting in the place
+// 1. the first prompt counts every candidate waiting
+// 2. a later prompt counts the candidates drafted since the previous answer so each is asked about once in the session that corrected it
 func (c hookCommand) note(ctx context.Context, sessionID string, labels trace.Labels, all knowledge.Set) (sessionNote, error) {
 	if c.manual || sessionID == "" {
 		return sessionNote{}, nil
 	}
 	run, err := c.previous(ctx, sessionID)
-	if err != nil || run != "" {
-		return sessionNote{run: run}, err
+	if err != nil {
+		return sessionNote{}, err
 	}
-	return sessionNote{waiting: len(all.Waiting(sessionProducer, labels))}, nil
+	waiting := all.Waiting(sessionProducer, labels)
+	if run.ID != "" {
+		waiting = waiting.Since(run.Time)
+	}
+	return sessionNote{run: run.ID, waiting: len(waiting)}, nil
 }
 
-// The newest run of the session, empty when it has none
+// The newest run of the session, the zero run when it has none
 // An empty id would match the runs of every session so it has none
-func (c hookCommand) previous(ctx context.Context, sessionID string) (string, error) {
+func (c hookCommand) previous(ctx context.Context, sessionID string) (trace.Trace, error) {
 	if sessionID == "" {
-		return "", nil
+		return trace.Trace{}, nil
 	}
 	store, err := c.app.traces()
 	if err != nil {
-		return "", err
+		return trace.Trace{}, err
 	}
 	runs, err := store.List(ctx, trace.Filter{Name: trace.NameRun, SessionID: sessionID, Limit: 1})
 	if err != nil || len(runs) == 0 {
-		return "", err
+		return trace.Trace{}, err
 	}
-	return runs[0].ID, nil
+	return runs[0], nil
 }
 
 // The answer as a run of the conversation with the items its prompt received, then the lesson of the previous run
@@ -168,7 +177,7 @@ func (c hookCommand) stop(ctx context.Context, sessionID string, labels trace.La
 	if err := store.Append(ctx, tr); err != nil {
 		return err
 	}
-	return c.extract(ctx, previous)
+	return c.extract(ctx, previous.ID)
 }
 
 // The extraction of the run started when its latest verdict is a correction the conversation inferred
@@ -253,7 +262,7 @@ func (items hookItems) fitting() (knowledge.Set, []string) {
 type sessionNote struct {
 	// The previous run of the session, empty on its first prompt
 	run string
-	// Candidates waiting for approval in the place, counted on the first prompt only
+	// Candidates waiting for approval in the place
 	waiting int
 }
 
@@ -263,17 +272,20 @@ const reactionNote = "nodloop: your previous answer in this conversation is run 
 	"verdict reject with what was wrong in the user's words and a reason code, or approve. " +
 	"Skip it for a new request, a follow up, a change of topic, or when the user calls /nodloop:nod.\n"
 
+// The review starts without /nodloop:nod and only the user's answer approves or retires a draft
 const waitingNote = "nodloop: lessons drafted from earlier corrections in this place wait for approval: %d. " +
-	"Mention once at the end of your answer that /nodloop:nod reviews them.\n"
+	"After your answer, review them without waiting for /nodloop:nod: invoke the nodloop:nod skill and follow its section " +
+	"Review the waiting drafts, which asks the user about each draft.\n"
 
 func (n sessionNote) text() string {
-	switch {
-	case n.run != "":
-		return fmt.Sprintf(reactionNote, n.run, n.run)
-	case n.waiting > 0:
-		return fmt.Sprintf(waitingNote, n.waiting)
+	var b strings.Builder
+	if n.run != "" {
+		fmt.Fprintf(&b, reactionNote, n.run, n.run)
 	}
-	return ""
+	if n.waiting > 0 {
+		fmt.Fprintf(&b, waitingNote, n.waiting)
+	}
+	return b.String()
 }
 
 // The last answer of a turn
@@ -290,6 +302,19 @@ func (r reply) text() string {
 
 // The working directory of a conversation
 type workDir string
+
+// The working directory when it lies inside the project, otherwise the project
+// A cd into a scratchpad or a clone elsewhere would label the run with a place the next session never works in
+func (w workDir) within(project workDir) workDir {
+	if project == "" {
+		return w
+	}
+	rel, err := filepath.Rel(string(project), string(w))
+	if w == "" || err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return project
+	}
+	return w
+}
 
 // repo names the repository and dir is the path below the root of the checkout
 // 1. a worktree has a .git file whose gitdir sits under the .git of the main checkout, so it takes the name of the main checkout
