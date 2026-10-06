@@ -32,9 +32,10 @@ type (
 )
 
 const (
-	VerdictApprove = feedback.VerdictApprove // the output was right
-	VerdictEdit    = feedback.VerdictEdit    // the output with the corrected output in full
-	VerdictReject  = feedback.VerdictReject  // the output was wrong and the reason says what
+	VerdictApprove  = feedback.VerdictApprove  // the output was right
+	VerdictEdit     = feedback.VerdictEdit     // the output with the corrected output in full
+	VerdictReject   = feedback.VerdictReject   // the output was wrong and the reason says what
+	VerdictWithdraw = feedback.VerdictWithdraw // takes back the verdict before it so the run has none
 
 	ReasonFact     = feedback.ReasonFact     // something it stated was wrong
 	ReasonApproach = feedback.ReasonApproach // the way it worked was wrong

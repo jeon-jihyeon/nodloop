@@ -22,6 +22,8 @@ func TestSkillTools(t *testing.T) {
 		tools []string
 		// Commands the skill must run through Bash
 		commands []string
+		// Phrases the skill must hold
+		phrases []string
 	}
 	tcs := []struct {
 		name string
@@ -43,6 +45,7 @@ func TestSkillTools(t *testing.T) {
 				tools: []string{"feedback", "propose", "extraction", "propose_extraction", "approve", "run", "compaction", "propose_compaction", "check_compaction", "approve_compaction"},
 				commands: []string{"nodloop trace list --name run", "nodloop trace show", "nodloop knowledge for --producer session",
 					"nodloop knowledge waiting --producer session", "nodloop feedback list --trace", "nodloop knowledge retire"},
+				phrases: []string{"not a correction", "verdict `withdraw`", "the first line of the answer they corrected", "session mode `deferred`"},
 			},
 		},
 	}
@@ -65,6 +68,9 @@ func TestSkillTools(t *testing.T) {
 			}
 			for _, command := range tc.want.commands {
 				assert.Contains(t, text, "`~/.nodloop/bin/"+command)
+			}
+			for _, phrase := range tc.want.phrases {
+				assert.Contains(t, text, phrase)
 			}
 			assert.Empty(t, removed.FindAllString(text, -1))
 		})

@@ -39,6 +39,7 @@ func TestVerdictValid(t *testing.T) {
 		{"approve is valid", feedback.VerdictApprove, true},
 		{"edit is valid", feedback.VerdictEdit, true},
 		{"reject is valid", feedback.VerdictReject, true},
+		{"withdraw is valid", feedback.VerdictWithdraw, true},
 		{"unknown verdict is invalid", "maybe", false},
 		{"empty verdict is invalid", "", false},
 	}
@@ -132,6 +133,21 @@ func TestNew(t *testing.T) {
 			args{traceID: "t1", verdict: feedback.VerdictApprove, code: feedback.ReasonForm},
 			want{err: feedback.ErrReasonCodeUnexpected},
 		},
+		{
+			"a withdraw keeps its reason",
+			args{traceID: "t1", verdict: feedback.VerdictWithdraw, reviewer: "jed"},
+			want{feedback: feedback.Feedback{TraceID: "t1", Time: utc, Verdict: feedback.VerdictWithdraw, Reason: "why", Reviewer: "jed"}},
+		},
+		{
+			"a withdraw with a reason code fails",
+			args{traceID: "t1", verdict: feedback.VerdictWithdraw, code: feedback.ReasonScope},
+			want{err: feedback.ErrReasonCodeUnexpected},
+		},
+		{
+			"a withdraw with an edited output fails",
+			args{traceID: "t1", verdict: feedback.VerdictWithdraw, edited: hold},
+			want{err: feedback.ErrEditedUnexpected},
+		},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
@@ -152,6 +168,7 @@ func TestFeedbackCorrects(t *testing.T) {
 		{"approve does not correct", feedback.VerdictApprove, false},
 		{"edit corrects", feedback.VerdictEdit, true},
 		{"reject corrects", feedback.VerdictReject, true},
+		{"withdraw does not correct", feedback.VerdictWithdraw, false},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
@@ -217,6 +234,7 @@ func TestRecordsLatest(t *testing.T) {
 	rejected := feedback.Feedback{TraceID: "t1", Time: base, Verdict: feedback.VerdictReject}
 	other := feedback.Feedback{TraceID: "t2", Time: base, Verdict: feedback.VerdictReject}
 	sameTime := feedback.Feedback{TraceID: "t2", Time: base, Verdict: feedback.VerdictApprove}
+	withdrawn := feedback.Feedback{TraceID: "t1", Time: base.Add(time.Minute), Verdict: feedback.VerdictWithdraw}
 	tcs := []struct {
 		name string
 		args feedback.Records
@@ -234,6 +252,8 @@ func TestRecordsLatest(t *testing.T) {
 			feedback.Records{approved, other},
 		},
 		{"tie in time keeps the record listed first", feedback.Records{other, sameTime}, feedback.Records{other}},
+		{"a withdrawn trace has no verdict", feedback.Records{withdrawn, other, rejected}, feedback.Records{other}},
+		{"a verdict after the withdraw counts again", feedback.Records{rejected, withdrawn, approved}, feedback.Records{approved}},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
@@ -262,6 +282,16 @@ func TestRecordsHuman(t *testing.T) {
 			feedback.Records{session, edited}, feedback.Records{edited},
 		},
 		{"only session records give nothing", feedback.Records{session}, nil},
+		{
+			"a session withdraw never hides a record of a person",
+			feedback.Records{{TraceID: "t1", Time: base.Add(time.Hour), Verdict: feedback.VerdictWithdraw, Reviewer: feedback.ReviewerSession}, edited},
+			feedback.Records{edited},
+		},
+		{
+			"a person's withdraw leaves no verdict of a person",
+			feedback.Records{{TraceID: "t1", Time: base.Add(time.Hour), Verdict: feedback.VerdictWithdraw, Reviewer: "jed"}, edited},
+			feedback.Records{},
+		},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {

@@ -25,16 +25,19 @@ commands:
   hook prompt | hook stop   The Claude Code conversation hooks the plugin registers. prompt adds the approved items of
                             producer session for the repo and dir of the place as context. The place is cwd while it lies
                             inside CLAUDE_PROJECT_DIR and that directory otherwise. It then names the previous run of the
-                            session so the conversation records the user's verdict on it and drafts a correction in the same
-                            turn, and counts the candidates waiting for approval: all of them on the first prompt and those
-                            made since the previous answer later. stop records the answer as a run and in the background
-                            drafts the lesson of the previous run when the conversation recorded a correction no record cites.
-                            Both always exit 0 and do nothing when NODLOOP_SESSION is off. manual leaves out the note
+                            session so the conversation records the user's verdict on it, and counts the candidates waiting
+                            for approval. stop records the answer as a run and in the background drafts the lesson of the
+                            previous run when the conversation recorded a correction no record cites. Both always exit 0.
+                            The session mode is NODLOOP_SESSION, then config session_mode, then deferred: deferred records
+                            verdicts silently and asks about every waiting draft once per session after the first answer,
+                            immediate drafts a correction and asks about it in the same turn, manual leaves out the note and
+                            off records nothing
   feedback list [--trace <id>] [--verdict <v>] [--reviewer <r>] [--limit <n>]
                             List feedback newest first with the reason code or a dash after the verdict
   feedback add --trace <id> --verdict <v> [--reason-code <c>] [--reason <r>] [--edited <file>] [--reviewer <r>] [--audit]
                             Append one verdict on a run. An edit carries the corrected output in full.
-                            An edit or reject may name what the output got wrong: fact, approach, scope, form or other
+                            An edit or reject may name what the output got wrong: fact, approach, scope, form or other.
+                            withdraw takes back the verdict before it so the run has none, as when a session inferred one wrongly
   feedback outcome --trace <id> --result <r> [--cause <text>] [--note <n>] [--reviewer <r>]
                             Record what a real check found: confirmed, refuted or inconclusive
   knowledge propose --kind <k> --content <text> (--producer <p> [--label <key=value>] | --from <run id>)
@@ -125,6 +128,9 @@ commands:
   config approver [<name>]  Print the name saved in ~/.nodloop/config.json to approve under, or save one
   config holdout [<share>]  Print or save the share of conversation turns whose prompt gets no item so report effect
                             can compare. 0 by default
+  config session_mode [<mode>]
+                            Print or save how a conversation records the verdicts it infers: deferred, immediate, manual
+                            or off. deferred by default and NODLOOP_SESSION overrides it
   classifier add <name> --url <u> [--model <m>] [--key-env <ENV>]
                             Add an endpoint of the Jev wire format, such as laya-serve at
                             http://localhost:8000/v1/systemone. The key is read from the env at call time and never saved
