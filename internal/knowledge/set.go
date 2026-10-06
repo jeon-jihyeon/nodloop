@@ -98,6 +98,20 @@ func (s Set) Vetoes() []veto.Spec {
 	return out
 }
 
+// The vetoes of the approved items ready to match a tool call
+func (s Set) Guard() (veto.Vetoes, error) {
+	specs := s.Vetoes()
+	out := make(veto.Vetoes, 0, len(specs))
+	for _, spec := range specs {
+		v, err := spec.Veto()
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	return out, nil
+}
+
 // The approved items one run may carry together with the item
 // A judgment with a veto acts through the guard and joins no run
 func (s Set) folder(item Knowledge) Folder {

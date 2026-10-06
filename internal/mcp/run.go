@@ -1,11 +1,8 @@
 package mcp
 
 import (
-	"cmp"
 	"context"
 	"encoding/json"
-	"fmt"
-	"slices"
 	"unicode/utf8"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -112,27 +109,26 @@ func (s *Server) knowledgeFor(ctx context.Context, _ *sdk.CallToolRequest, in kn
 // 2. labels given beside from replace the labels of the run
 // 3. every label must be one a recorded run of the producer carries
 func (s *Server) proposeRun(ctx context.Context, in proposeInput, draft knowledge.Knowledge, from *trace.Trace) (*sdk.CallToolResult, any, error) {
-	run := knowledge.RunScope{Producer: in.Producer, Labels: in.Labels, Except: in.Except}
+	draft.Run = &knowledge.RunScope{Producer: in.Producer, Labels: in.Labels, Except: in.Except}
+	draft.NewLabels = in.NewLabels
 	if from != nil {
-		if err := s.corrected(ctx, from.ID); err != nil {
+		verdicts, err := s.verdicts.List(ctx, feedback.Filter{TraceID: from.ID})
+		if err != nil {
 			return nil, nil, err
 		}
-		run.Producer = cmp.Or(run.Producer, from.Producer)
-		if len(run.Labels) == 0 {
-			run.Labels = from.Labels
-		}
-		if !slices.Contains(draft.Evidence.FeedbackTraceIDs, from.ID) {
-			draft.Evidence.FeedbackTraceIDs = append(draft.Evidence.FeedbackTraceIDs, from.ID)
+		if draft, err = draft.From(*from, verdicts); err != nil {
+			return nil, nil, err
 		}
 	}
-	runs, err := s.traces.List(ctx, trace.Filter{Name: trace.NameRun})
-	if err != nil {
-		return nil, nil, err
+	if !in.NewLabels {
+		runs, err := s.traces.List(ctx, trace.Filter{Name: trace.NameRun})
+		if err != nil {
+			return nil, nil, err
+		}
+		if err := draft.Run.Recorded(runs.Vocabulary(draft.Run.Producer)); err != nil {
+			return nil, nil, err
+		}
 	}
-	if err := run.Recorded(runs.Vocabulary(run.Producer)); err != nil {
-		return nil, nil, err
-	}
-	draft.Run = &run
 	k, overlaps, err := s.ledger.Propose(ctx, draft)
 	if err != nil {
 		return nil, nil, err
@@ -147,16 +143,24 @@ func (s *Server) proposeRun(ctx context.Context, in proposeInput, draft knowledg
 	}, nil
 }
 
-// The latest verdict on the trace is an edit or a reject
-// A session verdict counts because the user picked it from the transcript before it was recorded
-func (s *Server) corrected(ctx context.Context, traceID string) error {
-	verdicts, err := s.verdicts.List(ctx, feedback.Filter{TraceID: traceID})
+type checkCallInput struct {
+	Tool  string         `json:"tool" jsonschema:"the tool the agent is about to call such as Bash"`
+	Input map[string]any `json:"input" jsonschema:"the arguments of the call. A shell command goes under command"`
+}
+
+// The veto of approved knowledge that matches the call, blocks winning over asks
+func (s *Server) checkCall(ctx context.Context, _ *sdk.CallToolRequest, in checkCallInput) (*sdk.CallToolResult, any, error) {
+	all, err := s.ledger.All(ctx)
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
-	latest := feedback.Records(verdicts).Latest()
-	if len(latest) == 0 || !latest[0].Corrects() {
-		return fmt.Errorf("%w: %s", ErrRunNotCorrected, traceID)
+	vetoes, err := all.Guard()
+	if err != nil {
+		return nil, nil, err
 	}
-	return nil
+	matched := vetoes.Match(in.Tool, in.Input)
+	if matched == nil {
+		return nil, map[string]any{"action": "allow"}, nil
+	}
+	return nil, map[string]any{"action": matched.Action(), "veto": matched.ID(), "reason": matched.Reason()}, nil
 }

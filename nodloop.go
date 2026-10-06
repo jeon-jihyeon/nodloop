@@ -1,0 +1,84 @@
+// Package nodloop records the runs of any AI producer and the verdicts people give on them and hands the knowledge they approve to the next run in the same place
+package nodloop
+
+import (
+	"crypto/rand"
+	"fmt"
+	"os"
+	"time"
+
+	feedbackfile "github.com/jeon-jihyeon/nodloop/internal/feedback/file"
+	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
+	knowledgefile "github.com/jeon-jihyeon/nodloop/internal/knowledge/file"
+	tracefile "github.com/jeon-jihyeon/nodloop/internal/trace/file"
+	"github.com/jeon-jihyeon/nodloop/internal/veto"
+	vetofile "github.com/jeon-jihyeon/nodloop/internal/veto/file"
+)
+
+// The record directory a producer writes to and reads its knowledge from
+// Every method reads the files again so several processes may share one directory
+type Client struct {
+	traces   *tracefile.Store
+	verdicts *feedbackfile.Store
+	ledger   *knowledge.Ledger
+	now      func() time.Time
+}
+
+// How Open builds a client
+type Option func(*options)
+
+type options struct {
+	now      func() time.Time
+	vetoHome string
+}
+
+// The clock every record takes its time from
+func WithClock(now func() time.Time) Option {
+	return func(o *options) { o.now = now }
+}
+
+// Writes the vetoes of approved knowledge under the home Claude Code reads its guard vetoes from
+// Without it an approval keeps its vetoes in the records alone and CheckCall still reads them
+func WithVetoHome(home string) Option {
+	return func(o *options) { o.vetoHome = home }
+}
+
+// The client of the records in dir, created on first use
+func Open(dir string, opts ...Option) (*Client, error) {
+	o := options{now: time.Now}
+	for _, opt := range opts {
+		opt(&o)
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return nil, fmt.Errorf("record dir: %w", err)
+	}
+	traces, err := tracefile.New(dir)
+	if err != nil {
+		return nil, err
+	}
+	verdicts, err := feedbackfile.New(dir)
+	if err != nil {
+		return nil, err
+	}
+	store, err := knowledgefile.New(dir)
+	if err != nil {
+		return nil, err
+	}
+	var sink knowledge.VetoSink = noVetoFile{}
+	if o.vetoHome != "" {
+		sink = vetofile.NewApprovedFile(o.vetoHome, dir)
+	}
+	newID := func(prefix string) string {
+		var suffix [2]byte
+		// crypto rand Read never returns an error
+		_, _ = rand.Read(suffix[:])
+		return fmt.Sprintf("%s%x%x", prefix, o.now().UnixMilli(), suffix)
+	}
+	return &Client{traces: traces, verdicts: verdicts, ledger: knowledge.NewLedger(store, sink, o.now, newID), now: o.now}, nil
+}
+
+// The veto sink of a client without a veto home
+// CheckCall reads the vetoes from the records so nothing needs a file
+type noVetoFile struct{}
+
+func (noVetoFile) Replace(func() ([]veto.Spec, error)) error { return nil }

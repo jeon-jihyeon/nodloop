@@ -34,6 +34,7 @@ var (
 	ErrScopeInvalid         = errors.New("knowledge: scope can match no run")
 	ErrScopeRequired        = errors.New("knowledge: an item is scoped to the runs of a producer")
 	ErrScopeUnobserved      = errors.New("knowledge: scope names a label no recorded run carries")
+	ErrNotCorrected         = errors.New("knowledge: a proposal from a run needs an edit or a reject on it")
 	ErrCandidateOutdated    = errors.New("knowledge: candidate was not built from the approved version it would replace")
 	ErrVetoLifted           = errors.New("knowledge: new version would lift the veto of the approved version")
 	ErrScopeWidened         = errors.New("knowledge: new version would reach runs the approved version never reached")
