@@ -16,6 +16,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/jeon-jihyeon/nodloop/internal/classify"
 	"github.com/jeon-jihyeon/nodloop/internal/feedback"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
@@ -64,11 +65,16 @@ func runHook(args []string, getenv func(string) string, start starter, now func(
 		app: a, start: start, out: stdout, manual: getenv(envSession) == "manual",
 		plugin: cmp.Or(getenv(envPluginVersion), buildVersion()), holdout: a.cfg.holdout,
 	}
+	if args[0] == "prompt" {
+		if cmd.reaction, err = a.plan(classify.PointReaction, conversation{}, getenv, reactionTimeout); err != nil {
+			fmt.Fprintln(stderr, "nodloop hook:", err)
+		}
+	}
 	labels := workDir(in.Cwd).within(workDir(getenv(envProjectDir))).labels()
 	ctx := context.Background()
 	switch args[0] {
 	case "prompt":
-		err = cmd.prompt(ctx, in.SessionID, labels)
+		err = cmd.prompt(ctx, in.SessionID, in.Prompt, labels)
 	case "stop":
 		err = cmd.stop(ctx, in.SessionID, labels, reply(in.LastAssistantMessage))
 	default:
@@ -82,8 +88,10 @@ func runHook(args []string, getenv func(string) string, start starter, now func(
 
 // The fields of the Claude Code hook input the two hooks read
 type hookInput struct {
-	SessionID            string `json:"session_id"`
-	Cwd                  string `json:"cwd"`
+	SessionID string `json:"session_id"`
+	Cwd       string `json:"cwd"`
+	// Read only for the reaction point and never stored except as the reason of a reject it records
+	Prompt               string `json:"prompt"`
 	LastAssistantMessage string `json:"last_assistant_message"`
 }
 
@@ -95,12 +103,14 @@ type hookCommand struct {
 	// The version the launcher ran this binary for and else the build version
 	plugin  string
 	holdout holdout
+	// The reaction point the user set up and nil when the conversation judges alone
+	reaction *classify.Plan
 }
 
 // The approved items of this place and the session note added to the prompt as context, or nothing when neither has a line
 // 1. a failed read of the runs still adds the items
 // 2. a turn the holdout draws gets the note and no item
-func (c hookCommand) prompt(ctx context.Context, sessionID string, labels trace.Labels) error {
+func (c hookCommand) prompt(ctx context.Context, sessionID, message string, labels trace.Labels) error {
 	all, err := c.all(ctx)
 	if err != nil {
 		return err
@@ -110,7 +120,11 @@ func (c hookCommand) prompt(ctx context.Context, sessionID string, labels trace.
 	if c.holdout.withholds(sessionID, len(runs)) {
 		items = nil
 	}
-	text := items.context(c.note(sessionID, labels, all, runs))
+	recorded, reactErr := c.react(ctx, turn{run: runs.Newest(), message: message})
+	note := c.note(sessionID, labels, all, runs)
+	note.recorded = recorded
+	text := items.context(note)
+	runsErr = errors.Join(runsErr, reactErr)
 	if text == "" {
 		return runsErr
 	}
@@ -288,6 +302,8 @@ type sessionNote struct {
 	run string
 	// Candidates waiting for approval in the place
 	waiting int
+	// The verdict the reaction point recorded on the previous run and empty when the conversation judges it
+	recorded feedback.Verdict
 }
 
 // The reaction a conversation records is an inferred verdict, so only words that judge the previous answer count
@@ -303,9 +319,17 @@ const waitingNote = "nodloop: knowledge candidates for this place wait for appro
 	"After your answer, review them without waiting for /nodloop:nod: invoke the nodloop:nod skill and follow its section " +
 	"Review the waiting drafts, which asks the user about each draft.\n"
 
+// The reaction point already recorded a reject so the conversation only drafts the correction
+const recordedNote = "nodloop: the user's message was recorded as a reject of your previous answer, run %s. " +
+	"Do what the user asked, then invoke the nodloop:nod skill and follow its section Draft the correction of this turn.\n"
+
 func (n sessionNote) text() string {
 	var b strings.Builder
-	if n.run != "" {
+	switch {
+	case n.run == "", n.recorded == feedback.VerdictApprove:
+	case n.recorded == feedback.VerdictReject:
+		fmt.Fprintf(&b, recordedNote, n.run)
+	default:
 		fmt.Fprintf(&b, reactionNote, n.run, n.run)
 	}
 	if n.waiting > 0 {

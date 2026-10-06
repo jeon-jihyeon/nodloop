@@ -120,14 +120,24 @@ const classifierTimeout = 30 * time.Second
 // 1. claude alone with no classify trace while the user set up nothing for the critic point
 // 2. otherwise the plan of the setup with claude as the built in member and every answer recorded
 func (a app) critic(claude extract.ClaudeCritic, getenv func(string) string) (extract.Classifier, error) {
-	setup, ok := a.cfg.decisions[classify.PointCritic]
+	plan, err := a.plan(classify.PointCritic, claude, getenv, classifierTimeout)
+	if err != nil || plan == nil {
+		return claude, err
+	}
+	return plan, nil
+}
+
+// The plan of the classifiers the user set up for the point and nil when none is set up
+// builtin is the member the setup names claude
+func (a app) plan(point classify.Point, builtin classify.Classifier, getenv func(string) string, timeout time.Duration) (*classify.Plan, error) {
+	setup, ok := a.cfg.decisions[point]
 	if !ok {
-		return claude, nil
+		return nil, nil
 	}
 	if err := setup.Check(); err != nil {
-		return nil, fmt.Errorf("%w: decisions.%s in %s", err, classify.PointCritic, configFile)
+		return nil, fmt.Errorf("%w: decisions.%s in %s", err, point, configFile)
 	}
-	members, err := a.cfg.classifiers.Members(setup, claude, getenv, classifierTimeout)
+	members, err := a.cfg.classifiers.Members(setup, builtin, getenv, timeout)
 	if err != nil {
 		return nil, err
 	}
@@ -135,7 +145,7 @@ func (a app) critic(claude extract.ClaudeCritic, getenv func(string) string) (ex
 	if err != nil {
 		return nil, err
 	}
-	return classify.NewPlan(classify.PointCritic, setup, members, traces, a.now), nil
+	return classify.NewPlan(point, setup, members, traces, a.now), nil
 }
 
 // The prefix and the clock milliseconds in hex and two random bytes so two ids in one millisecond differ
