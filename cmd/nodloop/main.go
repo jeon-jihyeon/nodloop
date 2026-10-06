@@ -93,6 +93,8 @@ commands:
                             over verdicts a session inferred, and the time from that correction to the approval
   report extract            Per plugin version of the corrected run and per drafting path: extractions by how they
                             ended, refused drafts by what refused them, and the critic questions answered false
+  report critic             Per critic: drafts judged and how often a pass or a refusal matched what a person later
+                            decided on candidates of the same run, with the runs nobody decided yet
   trace list [--name <n>] [--session <id>] [--subject <s>] [--limit <n>]
                             List traces newest first
   trace show <id>           Print one trace as JSON

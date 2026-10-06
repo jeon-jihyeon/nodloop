@@ -181,3 +181,35 @@ func TestRunsDrafts(t *testing.T) {
 		{Version: "unknown", Path: "unknown", Drafted: 1, Waiting: 1},
 	}, got)
 }
+
+func TestRunsCritics(t *testing.T) {
+	extracted := func(id, ref, path, output string) trace.Trace {
+		return trace.Trace{ID: id, Name: trace.NameExtract, Subject: path, Ref: ref, Output: json.RawMessage(output)}
+	}
+	critique := `"critique":{"states":true,"holds":true,"fits":true}`
+	traces := trace.Traces{
+		extracted("x1", "approved", "model", `{"attempts":[{`+critique+`,"refusal":"critic"},{`+critique+`}]}`),
+		extracted("x2", "dropped", "model", `{"attempts":[{`+critique+`}]}`),
+		extracted("x3", "open", "conversation", `{"attempts":[{`+critique+`}]}`),
+		extracted("x4", "approved", "conversation", `{"attempts":[{"refusal":"code"}]}`),
+		{ID: "c1", Name: trace.NameClassify, Subject: "critic", Ref: "dropped", Output: json.RawMessage(
+			`{"members":[{"name":"laya","answers":{"holds":{"yes":0.2},"states":{"yes":0.9}}},{"name":"claude","error":"timeout"}]}`)},
+	}
+	cites := func(id string, status knowledge.Status, run string) knowledge.Knowledge {
+		return knowledge.Knowledge{ID: id, Version: 1, Status: status, Evidence: knowledge.Evidence{FeedbackTraceIDs: []string{run}}}
+	}
+	// Newest first as the store lists them
+	items := knowledge.Set{
+		cites("a", knowledge.StatusRetired, "approved"), cites("a", knowledge.StatusApproved, "approved"),
+		cites("b", knowledge.StatusRetired, "dropped"), cites("c", knowledge.StatusCandidate, "open"),
+		cites("a", knowledge.StatusCandidate, "approved"), cites("b", knowledge.StatusCandidate, "dropped"),
+	}
+
+	got := loop.NewRuns(nil, nil).Critics(items, traces)
+
+	assert.Equal(t, []loop.CriticRow{
+		{Critic: "classifier laya", Judged: 1, Agree: 1},
+		{Critic: "extract conversation", Judged: 1, Open: 1},
+		{Critic: "extract model", Judged: 3, Agree: 1, FalsePass: 1, FalseRefuse: 1},
+	}, got)
+}
