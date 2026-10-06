@@ -14,7 +14,7 @@ import (
 type Trace struct {
 	// Time sortable id built by NewID
 	ID string `json:"id"`
-	// run, check or classify
+	// run, check, classify or extract
 	Name Name `json:"name"`
 	// Groups runs
 	// A Claude Code session id or the id of a compaction its check belongs to
@@ -22,7 +22,7 @@ type Trace struct {
 	// What the run was about in a few words
 	Subject string `json:"subject,omitempty"`
 	// A trace this one belongs to
-	// Written by the data review before 0.6.0 and read as recorded
+	// A classify or extract trace names the run it judged
 	Ref   string    `json:"ref,omitempty"`
 	Time  time.Time `json:"time"`
 	Model string    `json:"model,omitempty"`
@@ -30,7 +30,7 @@ type Trace struct {
 	// Not the rendered prompt
 	Input json.RawMessage `json:"input"`
 	// Structured result
-	// Empty when Error is set
+	// A run that failed leaves it empty and a classify or extract trace keeps what was tried beside the error
 	Output     json.RawMessage `json:"output,omitempty"`
 	Error      string          `json:"error,omitempty"`
 	Usage      Usage           `json:"usage"`
@@ -51,11 +51,12 @@ const (
 	NameRun      Name = "run"      // output any producer recorded through the core tools
 	NameCheck    Name = "check"    // coverage check of a compaction
 	NameClassify Name = "classify" // answers of the classifiers a decision point asked
+	NameExtract  Name = "extract"  // one extraction of a lesson from a corrected run with its drafts and conclusion
 )
 
 // Every name in a fixed order for messages
 func Names() []Name {
-	return []Name{NameRun, NameCheck, NameClassify}
+	return []Name{NameRun, NameCheck, NameClassify, NameExtract}
 }
 
 func (n Name) Valid() bool {

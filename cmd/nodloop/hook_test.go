@@ -280,7 +280,7 @@ func TestRunHookStop(t *testing.T) {
 			t.Parallel()
 			home, records, repo := hookHome(t, "use git -C")
 			getenv := func(k string) string {
-				return map[string]string{"HOME": home, envRecordDir: records, envSession: tc.session}[k]
+				return map[string]string{"HOME": home, envRecordDir: records, envSession: tc.session, envPluginVersion: "0.7.0"}[k]
 			}
 			stdin := strings.ReplaceAll(tc.args, "{repo}", repo)
 			var stdout bytes.Buffer
@@ -298,7 +298,7 @@ func TestRunHookStop(t *testing.T) {
 				return
 			}
 			assert.Equal(t, trace.Labels{"repo": {"nodloop"}, "dir": {"."}}, runs[0].Labels)
-			assert.JSONEq(t, `{"applied":[{"id":"git-c","version":1}]}`, string(runs[0].Input))
+			assert.JSONEq(t, `{"applied":[{"id":"git-c","version":1}],"plugin":"0.7.0"}`, string(runs[0].Input))
 			assert.JSONEq(t, tc.want.output, string(runs[0].Output))
 		})
 	}

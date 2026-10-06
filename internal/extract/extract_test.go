@@ -47,7 +47,7 @@ func corrected(t *testing.T) (testkit.Stores, *extract.Extractor, string) {
 	})
 	require.NoError(t, err)
 	require.NoError(t, testkit.Err(s.Ledger.Approve(ctx, "git-c", 1, "ann")))
-	return s, extract.New(s.Ledger, s.Traces, s.Feedback), run.ID
+	return s, extract.New(s.Ledger, s.Traces, s.Feedback, s.Clock.Now), run.ID
 }
 
 func TestExtractorPropose(t *testing.T) {
@@ -155,22 +155,34 @@ func TestExtractorExtract(t *testing.T) {
 	twoSentences := `{"relation":"add","kind":"judgment","content":"Use git -C. Never cd first"}`
 	refused := `{"states":true,"holds":false,"fits":true,"why":"only this run"}`
 	passed := `{"states":true,"holds":true,"fits":true,"why":"ok"}`
+	type want struct {
+		err error
+		// The extract trace the extraction recorded
+		conclusion extract.Conclusion
+		refusals   []extract.Refusal
+	}
 	tcs := []struct {
 		name    string
 		answers []string
-		want    error
+		want    want
 	}{
-		{"a draft the critic passes is proposed", []string{good, passed}, nil},
-		{"a draft code refuses is sent back once", []string{twoSentences, good, passed}, nil},
-		{"a draft the critic refuses is sent back once", []string{good, refused, good, passed}, nil},
-		{"a second critic refusal is returned", []string{good, refused, good, refused}, extract.ErrCriticRefused},
-		{"a second code refusal is returned", []string{twoSentences, twoSentences}, extract.ErrNotLesson},
+		{"a draft the critic passes is proposed", []string{good, passed}, want{nil, extract.ConclusionProposed, []extract.Refusal{""}}},
+		{"a draft code refuses is sent back once", []string{twoSentences, good, passed},
+			want{nil, extract.ConclusionProposed, []extract.Refusal{extract.RefusalCode, ""}}},
+		{"a draft the critic refuses is sent back once", []string{good, refused, good, passed},
+			want{nil, extract.ConclusionProposed, []extract.Refusal{extract.RefusalCritic, ""}}},
+		{"a second critic refusal is returned", []string{good, refused, good, refused},
+			want{extract.ErrCriticRefused, extract.ConclusionRefused, []extract.Refusal{extract.RefusalCritic, extract.RefusalCritic}}},
+		{"a second code refusal is returned", []string{twoSentences, twoSentences},
+			want{extract.ErrNotLesson, extract.ConclusionRefused, []extract.Refusal{extract.RefusalCode, extract.RefusalCode}}},
+		{"a draft that does not decode fails", []string{`not json`},
+			want{extract.ErrDraftInvalid, extract.ConclusionFailed, []extract.Refusal{extract.RefusalModel}}},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			ctx := context.Background()
-			_, e, runID := corrected(t)
+			s, e, runID := corrected(t)
 			client := llmmock.NewMockClient(gomock.NewController(t))
 			calls := 0
 			client.EXPECT().Complete(gomock.Any(), gomock.Any()).Times(len(tc.answers)).DoAndReturn(
@@ -188,13 +200,76 @@ func TestExtractorExtract(t *testing.T) {
 
 			got, err := e.Extract(ctx, extract.NewClaudeDrafter(client, ""), extract.NewClaudeCritic(client, ""), runID, "")
 
-			require.ErrorIs(t, err, tc.want)
-			if tc.want != nil {
-				return
-			}
-			require.NotNil(t, got.Candidate)
-			assert.Equal(t, extract.RelationAdd, got.Relation)
-			assert.Equal(t, trace.Labels{"repo": {"nodloop"}}, got.Candidate.Run.Labels)
+			require.ErrorIs(t, err, tc.want.err)
+			rec := recorded(t, s, extract.PathModel, runID)
+			assert.Equal(t, tc.want.conclusion, rec.Conclusion)
+			assert.Equal(t, tc.want.refusals, refusalsOf(rec))
+			assert.Equal(t, tc.want.err == nil, got.Candidate != nil)
+		})
+	}
+}
+
+// The one extract trace of the run with its path checked
+func recorded(t *testing.T, s testkit.Stores, path extract.Path, runID string) extract.Record {
+	t.Helper()
+	traces, err := s.Traces.List(context.Background(), trace.Filter{Name: trace.NameExtract})
+	require.NoError(t, err)
+	require.Len(t, traces, 1)
+	assert.Equal(t, string(path), traces[0].Subject)
+	assert.Equal(t, runID, traces[0].Ref)
+	var rec extract.Record
+	require.NoError(t, json.Unmarshal(traces[0].Output, &rec))
+	return rec
+}
+
+func refusalsOf(rec extract.Record) []extract.Refusal {
+	out := make([]extract.Refusal, 0, len(rec.Attempts))
+	for _, a := range rec.Attempts {
+		out = append(out, a.Refusal)
+	}
+	return out
+}
+
+// Every conversation proposal is recorded with how it ended and the critic questions answered false
+func TestExtractorProposeRecord(t *testing.T) {
+	lesson := "Run git with -C <dir> instead of changing into the directory first"
+	type want struct {
+		conclusion extract.Conclusion
+		refusal    extract.Refusal
+		questions  []string
+	}
+	tcs := []struct {
+		name     string
+		draft    extract.Draft
+		critique extract.Critique
+		want     want
+	}{
+		{"an add is proposed", extract.Draft{Relation: extract.RelationAdd, Kind: knowledge.KindJudgment, Content: lesson, Keys: []string{"repo"}},
+			pass, want{extract.ConclusionProposed, "", nil}},
+		{"a duplicate is recorded as one", extract.Draft{Relation: extract.RelationDuplicate, RelatesTo: "git-c", Kind: knowledge.KindJudgment, Content: lesson},
+			pass, want{extract.ConclusionDuplicate, "", nil}},
+		{"a conflict is recorded as one", extract.Draft{Relation: extract.RelationConflict, RelatesTo: "git-c", Kind: knowledge.KindJudgment, Content: lesson},
+			pass, want{extract.ConclusionConflict, "", nil}},
+		{"a code refusal names the code", extract.Draft{Relation: extract.RelationAdd, Kind: knowledge.KindJudgment, Content: "Use git -C. Never cd first"},
+			pass, want{extract.ConclusionRefused, extract.RefusalCode, nil}},
+		{"a critic refusal names the questions", extract.Draft{Relation: extract.RelationAdd, Kind: knowledge.KindJudgment, Content: lesson},
+			extract.Critique{States: false, Holds: false, Fits: true, Why: "adds a fix"}, want{extract.ConclusionRefused, extract.RefusalCritic, []string{"holds", "states"}}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ctx := context.Background()
+			s, e, runID := corrected(t)
+			r, err := e.Reaction(ctx, runID)
+			require.NoError(t, err)
+
+			_, _ = e.Propose(ctx, r, tc.draft, tc.critique, "")
+
+			rec := recorded(t, s, extract.PathConversation, runID)
+			require.Len(t, rec.Attempts, 1)
+			assert.Equal(t, tc.want.conclusion, rec.Conclusion)
+			assert.Equal(t, tc.want.refusal, rec.Attempts[0].Refusal)
+			assert.Equal(t, tc.want.questions, rec.Attempts[0].Questions)
 		})
 	}
 }
