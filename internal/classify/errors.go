@@ -17,6 +17,6 @@ var (
 	ErrStatus = errors.New("classify: endpoint answered an error status")
 	// A body that does not decode as the Jev answers
 	ErrResponseInvalid = errors.New("classify: endpoint answer is not valid")
-	// A question left without an answer or a choice outside its options
+	// A question left without an answer
 	ErrAnswerMissing = errors.New("classify: question not answered")
 )
