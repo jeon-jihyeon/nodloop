@@ -14,11 +14,12 @@ import (
 type Point string
 
 const (
-	PointCritic Point = "critic" // the second reader of a drafted lesson
+	PointCritic   Point = "critic"   // the second reader of a drafted lesson
+	PointReaction Point = "reaction" // whether the user's message corrects or approves the previous answer
 )
 
 func Points() []Point {
-	return []Point{PointCritic}
+	return []Point{PointCritic, PointReaction}
 }
 
 func (p Point) Valid() bool {

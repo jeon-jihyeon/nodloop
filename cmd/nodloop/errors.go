@@ -28,6 +28,7 @@ var (
 var (
 	errUnknownAction    = errors.New("unknown action")
 	errHoldoutInvalid   = errors.New("invalid holdout")
+	errDeferred         = errors.New("deferred to the conversation")
 	errRequired         = errors.New("is required")
 	errUnknownTraceName = errors.New("unknown trace name")
 	errNoAction         = fmt.Errorf("an action %w", errRequired)

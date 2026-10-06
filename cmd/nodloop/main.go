@@ -126,8 +126,10 @@ commands:
                             http://localhost:8000/v1/systemone. The key is read from the env at call time and never saved
   classifier use <point> --members <a,b> [--mode single|cascade|parallel] [--threshold <t>] [--combine all|any]
                             Set which classifiers answer a decision point and how. claude is the built in member.
-                            The only point is critic, the second reader of a drafted lesson. Every answer is recorded
-                            as a classify trace
+                            Points: critic, the second reader of a drafted lesson, where claude is the claude critic, and
+                            reaction, which judges whether the user's message corrects or approves the previous answer
+                            before the conversation does, where claude defers to the conversation. Every answer is
+                            recorded as a classify trace
   classifier reset <point>  The point asks claude alone again
   classifier remove <name>  Remove an endpoint no point uses
   classifier list           Endpoints and the setup of every point
