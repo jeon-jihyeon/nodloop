@@ -44,7 +44,8 @@ type turn struct {
 	message string
 }
 
-// The previous answer cut at reactionAnswerRunes and the user's message
+// The user's message and the previous answer cut at reactionAnswerRunes
+// The message comes first since an encoder endpoint truncates a long state from its end
 func (t turn) state() string {
 	var answer string
 	if json.Unmarshal(t.run.Output, &answer) != nil {
@@ -53,7 +54,7 @@ func (t turn) state() string {
 	if utf8.RuneCountInString(answer) > reactionAnswerRunes {
 		answer = string([]rune(answer)[:reactionAnswerRunes]) + "\n[cut]"
 	}
-	return "## Previous answer\n\n" + answer + "\n\n## User message\n\n" + t.message
+	return "## User message\n\n" + t.message + "\n\n## Previous answer\n\n" + answer
 }
 
 // The verdict the answers make and empty when they are unsure or say both

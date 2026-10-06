@@ -21,6 +21,10 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/nodloop"]
 
+[tool.uv]
+# Only releases a week old resolve so a compromised release has time to be pulled
+exclude-newer = "7 days"
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
