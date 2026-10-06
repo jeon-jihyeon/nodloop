@@ -14,7 +14,7 @@ import (
 type Trace struct {
 	// Time sortable id built by NewID
 	ID string `json:"id"`
-	// run or check
+	// run, check or classify
 	Name Name `json:"name"`
 	// Groups runs
 	// A Claude Code session id or the id of a compaction its check belongs to
@@ -48,13 +48,14 @@ type Trace struct {
 type Name string
 
 const (
-	NameRun   Name = "run"   // output any producer recorded through the core tools
-	NameCheck Name = "check" // coverage check of a compaction
+	NameRun      Name = "run"      // output any producer recorded through the core tools
+	NameCheck    Name = "check"    // coverage check of a compaction
+	NameClassify Name = "classify" // answers of the classifiers a decision point asked
 )
 
 // Every name in a fixed order for messages
 func Names() []Name {
-	return []Name{NameRun, NameCheck}
+	return []Name{NameRun, NameCheck, NameClassify}
 }
 
 func (n Name) Valid() bool {

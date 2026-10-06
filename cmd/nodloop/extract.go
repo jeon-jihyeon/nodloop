@@ -10,7 +10,7 @@ import (
 )
 
 // Drafts the lesson of a corrected run through the model, has a second call criticize it and proposes an add or an update
-func (f knowledgeFlags) runExtract(ctx context.Context, a app, client llm.Client, stdout io.Writer) error {
+func (f knowledgeFlags) runExtract(ctx context.Context, a app, client llm.Client, getenv func(string) string, stdout io.Writer) error {
 	if f.from == "" {
 		return fmt.Errorf("extract: --from %w", errRequired)
 	}
@@ -26,7 +26,11 @@ func (f knowledgeFlags) runExtract(ctx context.Context, a app, client llm.Client
 	if err != nil {
 		return err
 	}
-	res, err := extract.New(ledger, traces, verdicts).Extract(ctx, client, f.from, f.model, f.author)
+	critic, err := a.critic(extract.NewClaudeCritic(client, f.model), getenv)
+	if err != nil {
+		return err
+	}
+	res, err := extract.New(ledger, traces, verdicts).Extract(ctx, client, critic, f.from, f.model, f.author)
 	if err != nil {
 		return err
 	}

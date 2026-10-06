@@ -3,13 +3,17 @@ package extract_test
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 
+	"github.com/jeon-jihyeon/nodloop/internal/classify"
 	"github.com/jeon-jihyeon/nodloop/internal/extract"
 	"github.com/jeon-jihyeon/nodloop/internal/feedback"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
@@ -182,7 +186,7 @@ func TestExtractorExtract(t *testing.T) {
 					return llm.Response{Output: json.RawMessage(tc.answers[calls-1])}, nil
 				})
 
-			got, err := e.Extract(ctx, client, runID, "", "")
+			got, err := e.Extract(ctx, client, extract.NewClaudeCritic(client, ""), runID, "", "")
 
 			require.ErrorIs(t, err, tc.want)
 			if tc.want != nil {
@@ -193,4 +197,29 @@ func TestExtractorExtract(t *testing.T) {
 			assert.Equal(t, trace.Labels{"repo": {"nodloop"}}, got.Candidate.Run.Labels)
 		})
 	}
+}
+
+// A classifier critic refuses on a yes under one half and the refusal names its probabilities
+func TestExtractorExtractClassifierCritic(t *testing.T) {
+	good := `{"relation":"add","kind":"judgment","content":"Run git with -C <dir> instead of changing into it","keys":["repo"]}`
+	var state string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			State string `json:"state"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		state = req.State
+		_, _ = w.Write([]byte(`{"answers":{"states":{"noul":0.9},"holds":{"noul":0.2},"fits":{"noul":0.8}}}`))
+	}))
+	t.Cleanup(srv.Close)
+	_, e, runID := corrected(t)
+	client := llmmock.NewMockClient(gomock.NewController(t))
+	client.EXPECT().Complete(gomock.Any(), gomock.Any()).Times(2).Return(llm.Response{Output: json.RawMessage(good)}, nil)
+	critic := classify.NewHTTP(classify.Endpoint{URL: srv.URL}, "", time.Second)
+
+	_, err := e.Extract(context.Background(), client, critic, runID, "", "")
+
+	require.ErrorIs(t, err, extract.ErrCriticRefused)
+	assert.Contains(t, err.Error(), "holds false: fits 0.80, holds 0.20, states 0.90")
+	assert.Contains(t, state, "## Draft lesson")
 }
