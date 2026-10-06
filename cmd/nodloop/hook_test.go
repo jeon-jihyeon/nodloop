@@ -314,6 +314,8 @@ func TestRunHookStopExtract(t *testing.T) {
 		stops int
 		// The start fails
 		fails bool
+		// The conversation drafted the lesson of the reject in its turn
+		drafted bool
 	}
 	type want struct {
 		extracts bool
@@ -329,6 +331,7 @@ func TestRunHookStopExtract(t *testing.T) {
 		{"a person's verdict is left to the nod skill", args{reviewer: "ann", stops: 1}, want{}},
 		{"an answer without a verdict extracts nothing", args{stops: 1}, want{}},
 		{"manual extracts nothing", args{reviewer: "session", session: "manual", stops: 1}, want{}},
+		{"a correction the turn already drafted is not extracted again", args{reviewer: "session", stops: 1, drafted: true}, want{}},
 		{"a failed start still records the answer", args{reviewer: "session", stops: 1, fails: true}, want{extracts: true, stderr: "nodloop hook: no process"}},
 	}
 	for _, tc := range tcs {
@@ -362,6 +365,13 @@ func TestRunHookStopExtract(t *testing.T) {
 				var stderr bytes.Buffer
 				require.Equal(t, 0, runFeedback([]string{"add", "--trace", first[0].ID, "--verdict", "reject", "--reason-code", "form",
 					"--reason", "the message was too long", "--reviewer", tc.args.reviewer}, getenv, time.Now, &bytes.Buffer{}, &stderr), stderr.String())
+			}
+			if tc.args.drafted {
+				var stderr bytes.Buffer
+				require.Equal(t, 0, runKnowledge([]string{
+					"propose", "--id", "short-msg", "--kind", "judgment", "--content", "keep commit messages to one line",
+					"--trace", first[0].ID, "--producer", sessionProducer, "--label", "repo=nodloop",
+				}, getenv, nil, time.Now, &bytes.Buffer{}, &stderr), stderr.String())
 			}
 			var stderr string
 			for i := range tc.args.stops {
