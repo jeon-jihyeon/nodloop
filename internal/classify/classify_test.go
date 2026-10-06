@@ -194,6 +194,37 @@ func TestPlanClassify(t *testing.T) {
 	}
 }
 
+// Parallel members are asked at once
+// Each endpoint answers only after both requests arrived so a plan that asks one after the other times out
+func TestPlanClassifyParallelAtOnce(t *testing.T) {
+	arrived := make(chan struct{}, 2)
+	both := make(chan struct{})
+	go func() {
+		<-arrived
+		<-arrived
+		close(both)
+	}()
+	members := make([]classify.Member, 0, 2)
+	for _, name := range []string{"a", "b"} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			arrived <- struct{}{}
+			<-both
+			_, _ = w.Write([]byte(`{"answers":{"holds":{"noul":0.9},"states":{"noul":0.9}}}`))
+		}))
+		t.Cleanup(srv.Close)
+		members = append(members, classify.Member{Name: name, Classifier: classify.NewHTTP(classify.Endpoint{URL: srv.URL}, "", time.Second)})
+	}
+	traces, err := tracefile.New(t.TempDir())
+	require.NoError(t, err)
+	setup := classify.Setup{Mode: classify.ModeParallel, Members: []string{"a", "b"}, Combine: classify.CombineAll}
+
+	got, err := classify.NewPlan(classify.PointCritic, setup, members, traces, func() time.Time { return fixed }).
+		Classify(context.Background(), classify.Request{State: "the draft", Questions: questions})
+
+	require.NoError(t, err)
+	assert.Equal(t, classify.Answers{"holds": {Yes: 0.9}, "states": {Yes: 0.9}}, got)
+}
+
 func TestNewSetup(t *testing.T) {
 	type args struct {
 		members   []string

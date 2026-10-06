@@ -186,7 +186,7 @@ func TestExtractorExtract(t *testing.T) {
 					return llm.Response{Output: json.RawMessage(tc.answers[calls-1])}, nil
 				})
 
-			got, err := e.Extract(ctx, client, extract.NewClaudeCritic(client, ""), runID, "", "")
+			got, err := e.Extract(ctx, extract.NewClaudeDrafter(client, ""), extract.NewClaudeCritic(client, ""), runID, "")
 
 			require.ErrorIs(t, err, tc.want)
 			if tc.want != nil {
@@ -217,7 +217,7 @@ func TestExtractorExtractClassifierCritic(t *testing.T) {
 	client.EXPECT().Complete(gomock.Any(), gomock.Any()).Times(2).Return(llm.Response{Output: json.RawMessage(good)}, nil)
 	critic := classify.NewHTTP(classify.Endpoint{URL: srv.URL}, "", time.Second)
 
-	_, err := e.Extract(context.Background(), client, critic, runID, "", "")
+	_, err := e.Extract(context.Background(), extract.NewClaudeDrafter(client, ""), critic, runID, "")
 
 	require.ErrorIs(t, err, extract.ErrCriticRefused)
 	assert.Contains(t, err.Error(), "holds false: fits 0.80, holds 0.20, states 0.90")
