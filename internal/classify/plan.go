@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
@@ -84,16 +86,18 @@ func (p *Plan) cascade(ctx context.Context, req Request) (Answers, asks, error) 
 	return nil, all, nil
 }
 
-// Every member answers and the answers combine per question
-// A failing member fails the plan because a combine of fewer members would not be the one the user set up
+// Every member answers at once and the answers combine per question
+// 1. each member writes its own slot so the record keeps the order of the setup
+// 2. a failing member fails the plan because a combine of fewer members would not be the one the user set up
 func (p *Plan) parallel(ctx context.Context, req Request) (Answers, asks, error) {
-	var all asks
-	var errs []error
-	for _, m := range p.members {
-		_, one, err := p.ask(ctx, req, m)
-		all = append(all, one...)
-		errs = append(errs, err)
+	slots := make([]asks, len(p.members))
+	errs := make([]error, len(p.members))
+	var wg sync.WaitGroup
+	for i, m := range p.members {
+		wg.Go(func() { _, slots[i], errs[i] = p.ask(ctx, req, m) })
 	}
+	wg.Wait()
+	all := slices.Concat(slots...)
 	if err := errors.Join(errs...); err != nil {
 		return nil, all, err
 	}

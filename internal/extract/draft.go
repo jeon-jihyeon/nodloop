@@ -1,6 +1,7 @@
 package extract
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"slices"
@@ -8,6 +9,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
+	"github.com/jeon-jihyeon/nodloop/internal/llm"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
 )
 
@@ -53,6 +55,21 @@ const maxRunes = 300
 // Runes of an output line a lesson may not copy
 // Shorter lines such as a command name are what a lesson names
 const quoteRunes = 80
+
+// The draft call of an extraction
+type ClaudeDrafter struct {
+	client llm.Client
+	model  string
+}
+
+func NewClaudeDrafter(client llm.Client, model string) ClaudeDrafter {
+	return ClaudeDrafter{client: client, model: model}
+}
+
+// The draft the model writes for the prompt under Rules
+func (c ClaudeDrafter) Draft(ctx context.Context, prompt string) (Draft, error) {
+	return complete[Draft](ctx, c.client, llm.Request{System: Rules, Prompt: prompt, Schema: json.RawMessage(Schema), Model: c.model})
+}
 
 // The lesson as the drafter writes it
 type Draft struct {

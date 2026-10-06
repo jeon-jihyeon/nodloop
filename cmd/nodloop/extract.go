@@ -30,7 +30,7 @@ func (f knowledgeFlags) runExtract(ctx context.Context, a app, client llm.Client
 	if err != nil {
 		return err
 	}
-	res, err := extract.New(ledger, traces, verdicts).Extract(ctx, client, critic, f.from, f.model, f.author)
+	res, err := extract.New(ledger, traces, verdicts).Extract(ctx, extract.NewClaudeDrafter(client, f.model), critic, f.from, f.author)
 	if err != nil {
 		return err
 	}

@@ -96,20 +96,19 @@ func (e *Extractor) Reaction(ctx context.Context, runID string) (Reaction, error
 // 2. a refusal of either is sent back once with its text and the second refusal is returned
 // 3. ledger refusals such as a widened scope are returned at once
 // 4. the critic is ClaudeCritic or the plan of classifiers the user set up for the critic point
-func (e *Extractor) Extract(ctx context.Context, client llm.Client, critic Classifier, runID, model, author string) (Result, error) {
+func (e *Extractor) Extract(ctx context.Context, drafter ClaudeDrafter, critic Classifier, runID, author string) (Result, error) {
 	r, err := e.Reaction(ctx, runID)
 	if err != nil {
 		return Result{}, err
 	}
 	prompt := r.String()
-	d, err := complete[Draft](ctx, client, llm.Request{System: Rules, Prompt: prompt, Schema: json.RawMessage(Schema), Model: model})
+	d, err := drafter.Draft(ctx, prompt)
 	if err != nil {
 		return Result{}, err
 	}
 	c, err := r.criticize(ctx, critic, d)
 	if fixable.has(err) {
-		redraft := llm.Request{System: Rules, Prompt: d.redraftPrompt(prompt, err), Schema: json.RawMessage(Schema), Model: model}
-		if d, err = complete[Draft](ctx, client, redraft); err != nil {
+		if d, err = drafter.Draft(ctx, d.redraftPrompt(prompt, err)); err != nil {
 			return Result{}, err
 		}
 		c, err = r.criticize(ctx, critic, d)
