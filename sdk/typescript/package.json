@@ -1,0 +1,43 @@
+{
+  "name": "nodloop",
+  "version": "0.6.6",
+  "description": "Record AI runs and the verdicts people give on them, and hand the knowledge they approve to the next run in the same place",
+  "license": "MIT",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": "./dist/index.js",
+    "./claude-agent": "./dist/claude-agent.js",
+    "./openai-agents": "./dist/openai-agents.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "test": "node --test test/*.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0"
+  },
+  "peerDependencies": {
+    "@anthropic-ai/claude-agent-sdk": ">=0.1",
+    "@openai/agents": ">=0.1"
+  },
+  "peerDependenciesMeta": {
+    "@anthropic-ai/claude-agent-sdk": {
+      "optional": true
+    },
+    "@openai/agents": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@anthropic-ai/claude-agent-sdk": ">=0.1.0",
+    "@openai/agents": ">=0.3.0",
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.0"
+  }
+}

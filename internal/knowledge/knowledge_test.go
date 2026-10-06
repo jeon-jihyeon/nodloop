@@ -109,9 +109,9 @@ func TestKnowledgeValidate(t *testing.T) {
 		{"veto without a tool fails", noTool, knowledge.ErrVetoInvalid},
 		{"veto that lets its example through fails", missedExample, knowledge.ErrVetoExample},
 		{"veto on an mcp tool is valid", toolVeto("mcp__srv__do"), nil},
-		{"veto on a lower case tool fails", toolVeto("bash"), veto.ErrToolUnknown},
-		{"veto on a permission rule fails", toolVeto("Bash(sed -i:*)"), veto.ErrToolUnknown},
-		{"veto with one unknown tool in its list fails", toolVeto("Edit|write"), knowledge.ErrVetoInvalid},
+		{"veto on the lower case tool of another agent passes", toolVeto("bash"), nil},
+		{"veto on a permission rule fails", toolVeto("Bash(sed -i:*)"), veto.ErrToolMalformed},
+		{"veto with one malformed tool in its list fails", toolVeto("Edit|Write(x)"), knowledge.ErrVetoInvalid},
 		{
 			"run scope with labels and exceptions is valid",
 			scoped(&knowledge.RunScope{Producer: "session", Labels: trace.Labels{"repo": {"nodloop"}}, Except: trace.Labels{"task": {"docs"}}}),

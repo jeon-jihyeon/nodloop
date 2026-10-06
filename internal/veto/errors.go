@@ -7,6 +7,7 @@ var (
 	ErrEntryInvalid  = errors.New("invalid entry")
 	ErrKeyUnknown    = errors.New("unknown key")
 	ErrToolUnknown   = errors.New("not an exact Claude Code tool_name such as Bash or mcp__server__tool")
+	ErrToolMalformed = errors.New("not a tool name any agent calls such as Bash or search_docs")
 	ErrIDMissing     = errors.New("missing id")
 	ErrIDDuplicate   = errors.New("duplicate id")
 	ErrToolMissing   = errors.New("missing tool")

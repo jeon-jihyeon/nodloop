@@ -161,8 +161,8 @@ func (v Veto) check(id, reason string) error {
 	if err != nil {
 		return fmt.Errorf("%w: %w", ErrVetoInvalid, err)
 	}
-	if unknown := compiled.UnknownTools(); len(unknown) > 0 {
-		return fmt.Errorf("%w: %w: %q", ErrVetoInvalid, veto.ErrToolUnknown, unknown)
+	if malformed := compiled.MalformedTools(); len(malformed) > 0 {
+		return fmt.Errorf("%w: %w: %q", ErrVetoInvalid, veto.ErrToolMalformed, malformed)
 	}
 	if !compiled.Blocks(v.Example) {
 		return ErrVetoExample
