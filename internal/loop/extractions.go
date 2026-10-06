@@ -27,8 +27,9 @@ type ExtractRow struct {
 // The output of an extract trace as the report reads it
 type extractRecord struct {
 	Attempts []struct {
-		Refusal   string   `json:"refusal"`
-		Questions []string `json:"questions"`
+		Critique  json.RawMessage `json:"critique"`
+		Refusal   string          `json:"refusal"`
+		Questions []string        `json:"questions"`
 	} `json:"attempts"`
 	Conclusion string `json:"conclusion"`
 	Candidate  *struct {
