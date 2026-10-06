@@ -124,4 +124,6 @@ type runInput struct {
 	// The plugin version a conversation hook ran under so a report can compare releases
 	// Empty for a run recorded through run record
 	Plugin string `json:"plugin,omitempty"`
+	// The items a holdout kept from the prompt of the turn while applied stays empty
+	Withheld []knowledge.Ref `json:"withheld,omitempty"`
 }

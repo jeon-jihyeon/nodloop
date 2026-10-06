@@ -27,6 +27,7 @@ var (
 // The sentinel comes first or last so the printed message reads as one phrase
 var (
 	errUnknownAction    = errors.New("unknown action")
+	errHoldoutInvalid   = errors.New("invalid holdout")
 	errRequired         = errors.New("is required")
 	errUnknownTraceName = errors.New("unknown trace name")
 	errNoAction         = fmt.Errorf("an action %w", errRequired)
