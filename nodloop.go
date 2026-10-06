@@ -28,8 +28,9 @@ type Client struct {
 type Option func(*options)
 
 type options struct {
-	now      func() time.Time
-	vetoHome string
+	now          func() time.Time
+	vetoHome     string
+	vetoProducer string
 }
 
 // The clock every record takes its time from
@@ -37,10 +38,10 @@ func WithClock(now func() time.Time) Option {
 	return func(o *options) { o.now = now }
 }
 
-// Writes the vetoes of approved knowledge under the home Claude Code reads its guard vetoes from
+// Writes the vetoes the producer approved under the home Claude Code reads its guard vetoes from
 // Without it an approval keeps its vetoes in the records alone and CheckCall still reads them
-func WithVetoHome(home string) Option {
-	return func(o *options) { o.vetoHome = home }
+func WithVetoHome(home, producer string) Option {
+	return func(o *options) { o.vetoHome, o.vetoProducer = home, producer }
 }
 
 // The client of the records in dir, created on first use
@@ -66,7 +67,7 @@ func Open(dir string, opts ...Option) (*Client, error) {
 	}
 	var sink knowledge.VetoSink = noVetoFile{}
 	if o.vetoHome != "" {
-		sink = vetofile.NewApprovedFile(o.vetoHome, dir)
+		sink = vetofile.NewApprovedFile(o.vetoHome, dir).Of(o.vetoProducer)
 	}
 	newID := func(prefix string) string {
 		var suffix [2]byte

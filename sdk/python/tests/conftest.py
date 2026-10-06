@@ -17,6 +17,15 @@ def binary(tmp_path_factory: pytest.TempPathFactory) -> str:
     return str(out)
 
 
+@pytest.fixture(autouse=True)
+def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A home of the test so an approval never writes a veto file under the real one"""
+    path = tmp_path / "home"
+    path.mkdir(exist_ok=True)
+    monkeypatch.setenv("HOME", str(path))
+    return path
+
+
 @pytest.fixture
 def records(tmp_path: Path) -> str:
     return str(tmp_path / "records")
@@ -25,9 +34,7 @@ def records(tmp_path: Path) -> str:
 @pytest.fixture
 def server(binary: str, tmp_path: Path):
     """A nodloop server on a free port with an approver key of tenant acme, yielding its url and key"""
-    home = tmp_path / "home"
-    home.mkdir()
-    env = {**os.environ, "HOME": str(home)}
+    env = dict(os.environ)
     add = [binary, "server", "key", "add", "ann", "--tenant", "acme", "--role", "approver"]
     key = subprocess.run(add, env=env, check=True, capture_output=True, text=True).stdout.strip()
     with socket.socket() as s:

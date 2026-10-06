@@ -145,8 +145,9 @@ func (s *Server) proposeRun(ctx context.Context, in proposeInput, draft knowledg
 }
 
 type checkCallInput struct {
-	Tool  string         `json:"tool" jsonschema:"the tool the agent is about to call such as Bash"`
-	Input map[string]any `json:"input" jsonschema:"the arguments of the call. A shell command goes under command"`
+	Producer string         `json:"producer,omitempty" jsonschema:"the producer about to make the call. Only the vetoes approved for it apply and every veto when empty"`
+	Tool     string         `json:"tool" jsonschema:"the tool the agent is about to call such as Bash"`
+	Input    map[string]any `json:"input" jsonschema:"the arguments of the call. A shell command goes under command"`
 }
 
 // The veto of approved knowledge that matches the call, blocks winning over asks
@@ -155,7 +156,7 @@ func (s *Server) checkCall(ctx context.Context, _ *sdk.CallToolRequest, in check
 	if err != nil {
 		return nil, nil, err
 	}
-	vetoes, err := all.Guard()
+	vetoes, err := all.Guard(in.Producer)
 	if err != nil {
 		return nil, nil, err
 	}

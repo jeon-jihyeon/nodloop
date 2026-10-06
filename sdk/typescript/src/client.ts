@@ -134,8 +134,9 @@ export class Client {
     return this.call("approve", { id, version, approver });
   }
 
-  // Whether an approved veto blocks or asks about a tool call before the agent runs it
-  async checkCall(tool: string, input: Record<string, unknown>): Promise<Decision> {
-    return this.call("check_call", { tool, input });
+  // Whether a veto approved for the producer blocks or asks about a tool call before the agent runs it
+  // An empty producer checks against the vetoes of every producer
+  async checkCall(tool: string, input: Record<string, unknown>, producer = ""): Promise<Decision> {
+    return this.call("check_call", { tool, input, producer });
   }
 }

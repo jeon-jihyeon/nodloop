@@ -366,3 +366,26 @@ func TestApprovedFileWithoutHome(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, entries)
 }
+
+// A file of one producer holds only the vetoes that producer approved
+func TestApprovedFileOf(t *testing.T) {
+	home := t.TempDir()
+	specs := []veto.Spec{
+		{ID: "mine", Tool: "Bash", When: []veto.When{{Field: "command", Match: "rm"}}, Reason: "no rm", Producer: "session"},
+		{ID: "theirs", Tool: "bash", When: []veto.When{{Field: "command", Match: "rm"}}, Reason: "no rm", Producer: "support-bot"},
+	}
+	f := file.NewApprovedFile(home, "/records").Of("session")
+
+	require.NoError(t, f.Replace(func() ([]veto.Spec, error) { return specs, nil }))
+
+	sources, err := file.Discover(t.TempDir(), home)
+	require.NoError(t, err)
+	var ids []string
+	for _, v := range sources.Vetoes() {
+		ids = append(ids, v.ID())
+	}
+	assert.Equal(t, []string{"mine"}, ids)
+	written, err := os.ReadFile(f.Path())
+	require.NoError(t, err)
+	assert.NotContains(t, string(written), "support-bot", "the producer stays out of the file")
+}

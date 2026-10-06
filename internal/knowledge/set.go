@@ -93,16 +93,23 @@ func (s Set) Vetoes() []veto.Spec {
 		}
 		spec := k.Veto.spec(k.ID, k.Content)
 		spec.Source = fmt.Sprintf("nodloop knowledge %s v%d approved by %s", k.ID, k.Version, k.Approver)
+		if k.Run != nil {
+			spec.Producer = k.Run.Producer
+		}
 		out = append(out, spec)
 	}
 	return out
 }
 
-// The vetoes of the approved items ready to match a tool call
-func (s Set) Guard() (veto.Vetoes, error) {
+// The vetoes of the approved items of the producer ready to match a tool call
+// An empty producer takes the vetoes of every producer
+func (s Set) Guard(producer string) (veto.Vetoes, error) {
 	specs := s.Vetoes()
 	out := make(veto.Vetoes, 0, len(specs))
 	for _, spec := range specs {
+		if producer != "" && spec.Producer != producer {
+			continue
+		}
 		v, err := spec.Veto()
 		if err != nil {
 			return nil, err

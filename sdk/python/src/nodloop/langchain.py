@@ -52,7 +52,7 @@ class NodloopMiddleware(AgentMiddleware):
 
     async def awrap_tool_call(self, request: Any, handler: Callable[[Any], Any]) -> Any:
         call = request.tool_call
-        decision = await self.client.check_call(call["name"], call.get("args") or {})
+        decision = await self.client.check_call(call["name"], call.get("args") or {}, self.producer)
         if decision.allowed:
             return await handler(request)
         return ToolMessage(
