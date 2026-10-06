@@ -53,7 +53,7 @@ class NodloopHooks:
         return {}
 
     async def pre_tool_use(self, input_data: dict[str, Any], tool_use_id: str | None, context: Any) -> dict[str, Any]:
-        decision = await self.client.check_call(input_data["tool_name"], input_data.get("tool_input") or {})
+        decision = await self.client.check_call(input_data["tool_name"], input_data.get("tool_input") or {}, self.producer)
         if decision.allowed:
             return {}
         return {

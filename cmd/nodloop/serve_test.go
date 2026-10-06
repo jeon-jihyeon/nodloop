@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -18,6 +19,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeon-jihyeon/nodloop/internal/mcp"
+	"github.com/jeon-jihyeon/nodloop/internal/pg"
 )
 
 // Adds the bearer key to every request of the client
@@ -69,12 +71,49 @@ func tools(t *testing.T, s *sdk.ClientSession) []string {
 	return names
 }
 
+// The stores a server keeps tenants in: files always and PostgreSQL with NODLOOP_TEST_POSTGRES
+// Each test of Postgres takes tenants of its own so earlier runs never show
+func backends(t *testing.T) map[string]func(t *testing.T) tenantStores {
+	t.Helper()
+	out := map[string]func(t *testing.T) tenantStores{
+		"files": func(t *testing.T) tenantStores { return fileTenants{base: t.TempDir()} },
+	}
+	if dsn := os.Getenv("NODLOOP_TEST_POSTGRES"); dsn != "" {
+		out["postgres"] = func(t *testing.T) tenantStores {
+			db, err := pg.Open(context.Background(), dsn)
+			require.NoError(t, err)
+			t.Cleanup(db.Close)
+			return prefixed{pgTenants{db: db}, fmt.Sprintf("t%d-", time.Now().UnixNano())}
+		}
+	}
+	return out
+}
+
+// Tenants under a prefix so a shared database starts empty for each test
+type prefixed struct {
+	tenantStores
+	prefix string
+}
+
+func (p prefixed) open(key serverKey, now func() time.Time, session string) mcp.Open {
+	key.Tenant = p.prefix + key.Tenant
+	return p.tenantStores.open(key, now, session)
+}
+
 // Each key sees the tools of its role, writes the records of its tenant and approves under its own name
 func TestServeHandler(t *testing.T) {
+	for name, stores := range backends(t) {
+		t.Run(name, func(t *testing.T) {
+			serveScenario(t, stores(t))
+		})
+	}
+}
+
+func serveScenario(t *testing.T, stores tenantStores) {
 	config := serverConfig{Keys: []serverKey{
 		hashed("bot", "acme", mcp.RoleProducer), hashed("ann", "acme", mcp.RoleApprover), hashed("globex-bot", "globex", mcp.RoleProducer),
 	}}
-	srv := httptest.NewServer(newServeHandler(t.TempDir(), config, time.Now))
+	srv := httptest.NewServer(newServeHandler(stores, config, time.Now))
 	t.Cleanup(srv.Close)
 	bot, ann, globex := dial(t, srv.URL, "bot"), dial(t, srv.URL, "ann"), dial(t, srv.URL, "globex-bot")
 	labels := map[string]any{"task": []any{"refund"}}
@@ -95,7 +134,7 @@ func TestServeHandler(t *testing.T) {
 
 // A request without a known key is refused before any tool runs
 func TestServeHandlerUnauthorized(t *testing.T) {
-	srv := httptest.NewServer(newServeHandler(t.TempDir(), serverConfig{Keys: []serverKey{hashed("bot", "acme", mcp.RoleProducer)}}, time.Now))
+	srv := httptest.NewServer(newServeHandler(fileTenants{base: t.TempDir()}, serverConfig{Keys: []serverKey{hashed("bot", "acme", mcp.RoleProducer)}}, time.Now))
 	t.Cleanup(srv.Close)
 	tcs := []struct {
 		name   string

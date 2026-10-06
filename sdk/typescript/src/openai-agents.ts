@@ -49,12 +49,12 @@ export class NodloopHooks {
   }
 }
 
-// A tool input guardrail for tool({ inputGuardrails: [...] })
-export function vetoGuardrail(client: Client) {
+// A tool input guardrail for tool({ inputGuardrails: [...] }) checking the vetoes approved for the producer
+export function vetoGuardrail(client: Client, producer = "") {
   return defineToolInputGuardrail({
     name: "nodloop_veto",
     run: async ({ toolCall }) => {
-      const decision = await client.checkCall(toolCall.name, JSON.parse(toolCall.arguments || "{}"));
+      const decision = await client.checkCall(toolCall.name, JSON.parse(toolCall.arguments || "{}"), producer);
       if (decision.action === "allow") return ToolGuardrailFunctionOutputFactory.allow();
       return ToolGuardrailFunctionOutputFactory.rejectContent(`nodloop veto ${decision.veto} stopped this call: ${decision.reason}`);
     },

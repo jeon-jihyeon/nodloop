@@ -32,7 +32,7 @@ test("openai agents instructions carry the items and the guardrail rejects a vet
   try {
     await seed(c);
     const hooks = new OpenAIHooks(c, "bot", acme);
-    const guard = vetoGuardrail(c);
+    const guard = vetoGuardrail(c, "bot");
 
     const instructions = await hooks.instructions("You help with refunds")();
     const run = await hooks.record("The window is 30 days");

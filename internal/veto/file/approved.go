@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"go.yaml.in/yaml/v3"
@@ -37,6 +38,24 @@ type ApprovedFile struct {
 	// Empty without a home
 	path      string
 	recordDir string
+	// The producer whose approved vetoes the file holds and every producer when empty
+	producer string
+}
+
+// The same file holding only the approved vetoes of the producer
+// Claude Code reads the file for its own tool calls so the vetoes another producer approved stay out of it
+func (f *ApprovedFile) Of(producer string) *ApprovedFile {
+	out := *f
+	out.producer = producer
+	return &out
+}
+
+// The specs of the producer of the file
+func (f *ApprovedFile) mine(specs []veto.Spec) []veto.Spec {
+	if f.producer == "" {
+		return specs
+	}
+	return slices.DeleteFunc(slices.Clone(specs), func(s veto.Spec) bool { return s.Producer != f.producer })
 }
 
 // Two spellings of one record directory such as a symlinked path name one file and one lock
@@ -74,7 +93,7 @@ func (f *ApprovedFile) Replace(read func() ([]veto.Spec, error)) (err error) {
 		if err != nil {
 			return err
 		}
-		if len(specs) == 0 {
+		if len(f.mine(specs)) == 0 {
 			return nil
 		}
 	}
@@ -93,7 +112,7 @@ func (f *ApprovedFile) Replace(read func() ([]veto.Spec, error)) (err error) {
 	if err != nil {
 		return err
 	}
-	if err := f.write(specs); err != nil {
+	if err := f.write(f.mine(specs)); err != nil {
 		return err
 	}
 	return f.removeSpellings()

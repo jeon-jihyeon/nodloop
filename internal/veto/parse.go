@@ -30,6 +30,9 @@ type Spec struct {
 	Source string `yaml:"source,omitempty"`
 	// nil means true
 	Enabled *bool `yaml:"enabled,omitempty"`
+	// The producer whose calls an approved veto guards
+	// Never written to a file since a file applies to the Claude Code calls it is read for
+	Producer string `yaml:"-"`
 }
 
 // One condition of a spec on a `tool_input` field

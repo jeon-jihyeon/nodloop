@@ -197,7 +197,10 @@ class Client:
         """Approves a candidate on behalf of the named person"""
         return await self.call("approve", {"id": item_id, "version": version, "approver": approver})
 
-    async def check_call(self, tool: str, arguments: dict[str, Any]) -> Decision:
-        """Whether an approved veto blocks or asks about a tool call before the agent runs it"""
-        answer = await self.call("check_call", {"tool": tool, "input": arguments})
+    async def check_call(self, tool: str, arguments: dict[str, Any], producer: str = "") -> Decision:
+        """Whether a veto approved for the producer blocks or asks about a tool call before the agent runs it
+
+        An empty producer checks against the vetoes of every producer
+        """
+        answer = await self.call("check_call", {"tool": tool, "input": arguments, "producer": producer})
         return Decision(answer["action"], answer.get("veto", ""), answer.get("reason", ""))

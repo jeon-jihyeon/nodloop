@@ -70,7 +70,7 @@ async def test_openai_agents_hooks(binary: str, records: str) -> None:
     async with Client(records, binary) as c:
         await seed(c)
         hooks = OpenAIHooks(c, "bot", ACME)
-        guard = veto_guardrail(c)
+        guard = veto_guardrail(c, "bot")
 
         instructions = await hooks.instructions("You help with refunds")(None, None)
         await hooks.on_agent_end(None, None, "The window is 30 days")

@@ -6,13 +6,18 @@ import { join, resolve } from "node:path";
 import { Client } from "../src/client.ts";
 
 const root = resolve(import.meta.dirname, "..", "..", "..");
+
+// A home of the test process so an approval never writes a veto file under the real one
+// The build keeps the real home since go finds its caches there
+const realHome = process.env.HOME;
+process.env.HOME = mkdtempSync(join(tmpdir(), "nodloop-home-"));
 let built: string | undefined;
 
 // The nodloop of this checkout built once per test process
 export function binary(): string {
   if (!built) {
     built = join(mkdtempSync(join(tmpdir(), "nodloop-bin-")), "nodloop");
-    execFileSync("go", ["build", "-o", built, "./cmd/nodloop"], { cwd: root });
+    execFileSync("go", ["build", "-o", built, "./cmd/nodloop"], { cwd: root, env: { ...process.env, HOME: realHome } });
   }
   return built;
 }
@@ -51,8 +56,8 @@ async function freePort(): Promise<number> {
 
 // A nodloop server with an approver key of tenant acme
 export async function server(): Promise<{ url: string; key: string; proc: ChildProcess }> {
-  const home = mkdtempSync(join(tmpdir(), "nodloop-home-"));
-  const env = { ...process.env, HOME: home };
+  // A home of its own so its keys never meet those of another server
+  const env = { ...process.env, HOME: mkdtempSync(join(tmpdir(), "nodloop-home-")) };
   const key = execFileSync(binary(), ["server", "key", "add", "ann", "--tenant", "acme", "--role", "approver"], { env }).toString().trim();
   const port = await freePort();
   const records = join(mkdtempSync(join(tmpdir(), "nodloop-rec-")), "records");

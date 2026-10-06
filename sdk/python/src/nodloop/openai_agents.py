@@ -47,13 +47,13 @@ class NodloopHooks(RunHooks):
         self.run = await self.client.record(self.producer, text, self.labels, self.applied)
 
 
-def veto_guardrail(client: Client) -> Any:
-    """A tool input guardrail for function_tool(tool_input_guardrails=[...])"""
+def veto_guardrail(client: Client, producer: str = "") -> Any:
+    """A tool input guardrail for function_tool(tool_input_guardrails=[...]) checking the vetoes approved for the producer"""
 
     @tool_input_guardrail
     async def nodloop_veto(data: Any) -> ToolGuardrailFunctionOutput:
         arguments = json.loads(data.context.tool_arguments or "{}")
-        decision = await client.check_call(data.context.tool_name, arguments)
+        decision = await client.check_call(data.context.tool_name, arguments, producer)
         if decision.allowed:
             return ToolGuardrailFunctionOutput.allow()
         return ToolGuardrailFunctionOutput.reject_content(f"nodloop veto {decision.veto} stopped this call: {decision.reason}")

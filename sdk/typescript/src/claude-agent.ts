@@ -47,7 +47,7 @@ export class NodloopHooks {
 
   preToolUse: HookCallback = async (input) => {
     const call = input as { tool_name: string; tool_input?: Record<string, unknown> };
-    const decision = await this.client.checkCall(call.tool_name, call.tool_input ?? {});
+    const decision = await this.client.checkCall(call.tool_name, call.tool_input ?? {}, this.producer);
     if (decision.action === "allow") return {};
     return {
       hookSpecificOutput: {
