@@ -177,12 +177,16 @@ func (c hookCommand) stop(ctx context.Context, sessionID string, labels trace.La
 	if err := store.Append(ctx, tr); err != nil {
 		return err
 	}
+	if all.Cites(previous.ID) {
+		return nil
+	}
 	return c.extract(ctx, previous.ID)
 }
 
 // The extraction of the run started when its latest verdict is a correction the conversation inferred
 // 1. a person's verdict is left to the nod skill, which drafts in the conversation with that person
 // 2. it runs as `knowledge extract` in a process of its own because Claude Code may end an async hook when it exits
+// 3. it is the fallback for a turn that recorded the correction without drafting its lesson
 func (c hookCommand) extract(ctx context.Context, runID string) error {
 	if c.manual || runID == "" {
 		return nil
@@ -267,10 +271,12 @@ type sessionNote struct {
 }
 
 // The reaction a conversation records is an inferred verdict, so only words that judge the previous answer count
+// A correction is drafted in the same turn so the user is asked while the correction is fresh
 const reactionNote = "nodloop: your previous answer in this conversation is run %s. " +
 	"If the user's message says that answer was wrong or right, first call the nodloop feedback tool on trace %s with reviewer session: " +
 	"verdict reject with what was wrong in the user's words and a reason code, or approve. " +
-	"Skip it for a new request, a follow up, a change of topic, or when the user calls /nodloop:nod.\n"
+	"After a reject, do what the user asked, then invoke the nodloop:nod skill and follow its section Draft the correction of this turn. " +
+	"Skip all of it for a new request, a follow up, a change of topic, or when the user calls /nodloop:nod.\n"
 
 // The review starts without /nodloop:nod and only the user's answer approves or retires a draft
 const waitingNote = "nodloop: lessons drafted from earlier corrections in this place wait for approval: %d. " +

@@ -21,6 +21,15 @@ When the user calls `/nodloop:nod` with nothing to say about an answer, or when 
 6. When the correction forbids a tool call that its input alone decides, such as a shell command pattern or a file path, propose it as a judgment with `veto`: the tool, the conditions on `tool_input` fields and an example input the veto must block. For Bash match the field `commands`, one line per simple command the guard derives from the command, so a pattern anchored with `(?m)^` reads command starts. Show the user the veto that `propose` returns before they approve it. Once approved it blocks the call through the guard hook, which `~/.nodloop/bin/nodloop guard install` registers
 7. When `approve` answers `compaction_due` true, one run would carry more than five items of this place. Offer a compaction only when the user wants it: call `compaction` with the item id, write new items by the rules it returns so nothing is said twice and nothing is lost, call `propose_compaction`, then call `check_compaction` with each old item read against the new ones, and call `approve_compaction` only when the check passed and the user agrees, under the name of step 5
 
+## Draft the correction of this turn
+
+The prompt hook asks for this after the conversation recorded a reject with reviewer `session`, so the user decides on the lesson in the same turn as the correction.
+
+1. Call `extraction` with `from` set to the trace id of the reject without asking. Draft and answer the critic questions as in step 4 of the steps, then call `propose_extraction`
+2. When it answers a candidate, end the answer with one AskUserQuestion: quote the user's words that made the correction, show the content and the scope, and offer approve, retire and leave it waiting. Use the name of step 5 of the steps
+3. Call `approve` or run `knowledge retire` as in step 4 of the section Review the waiting drafts
+4. When it is refused twice, a duplicate or a conflict, say so in one line. A refused one is drafted again in the background after the turn and asked about on the next prompt
+
 ## Review the waiting drafts
 
 The conversation records a verdict with reviewer `session` when the user says an answer was wrong or right, and after that turn the plugin drafts the lesson of a correction in the background. The drafts wait as candidates until a person approves them. The prompt hook names them in the session that corrected the answer and on the first prompt of a later session, so the review starts without `/nodloop:nod`.
