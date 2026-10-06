@@ -230,7 +230,7 @@ func runReportLoop(args []string, getenv func(string) string, now func() time.Ti
 	return 0
 }
 
-// One line per approved run item: applied, followed of judged and repeat by people then by a session, and settle
+// A first line of totals, then one line per approved run item: applied, followed of judged and repeat by people then by a session, and settle
 // A last line says misapplied is not measured
 func (c loopCommand) runs(ctx context.Context) error {
 	traces, err := c.app.traces()
@@ -257,7 +257,11 @@ func (c loopCommand) runs(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	for _, row := range loop.NewRuns(runs, records).Report(items) {
+	report := loop.NewRuns(runs, records)
+	t := report.Totals(items)
+	fmt.Fprintf(c.out, "loop\truns %d\tjudged %d\tinferred %d\tcorrected %d\twaiting %d\tapproved %d\n",
+		t.Runs, t.Judged, t.Inferred, t.Corrected, t.Waiting, t.Approved)
+	for _, row := range report.Report(items) {
 		settle := "-"
 		if row.Settle > 0 {
 			settle = max(row.Settle.Round(time.Second), time.Second).String()

@@ -29,7 +29,7 @@ You correct an AI answer, the session ends, and next week in the same repository
 /plugin install nodloop@nodloop
 ```
 
-On first run the plugin downloads its binary. From then on it records every answer of the conversation as a run labeled with the repository and directory you work in. Work as usual. When you tell Claude an answer was wrong or right, the conversation records that as a verdict on the answer's run, and after the turn the plugin drafts the lesson of a correction in the background. The first prompt of a later session in that repository says how many drafts wait, and `/nodloop:nod` with nothing after it walks you through them. To record a correction at once, nod on it:
+On first run the plugin downloads its binary. From then on it records every answer of the conversation as a run labeled with the repository and directory you work in. Work as usual. When you tell Claude an answer was wrong or right, the conversation records that as a verdict on the answer's run, and after the turn the plugin drafts the lesson of a correction in the background. On your next prompt Claude shows each new draft and asks whether to approve it, and the first prompt of a later session in that repository asks about the drafts still waiting. `/nodloop:nod` with nothing after it walks you through them at any time. The name you approve under is asked once and saved, and `~/.nodloop/bin/nodloop config approver <name>` changes it. To record a correction at once, nod on it:
 
 ```
 > /nodloop:nod you ran cd before git again. Use git -C <dir> instead
@@ -60,7 +60,7 @@ answer → run with labels → your nod → proposed item → approved by name
    ← ← ← the next prompt in the same place receives it ← ← ←
 ```
 
-A run is one output of a producer with the labels of its situation. The built in producer is the Claude Code session, whose labels are `repo`, the directory holding `.git` above where you work, and `dir`, the path below it. A nod is approve, edit with the corrected output, or reject with what was wrong. An item is a `meaning`, how to read something in this place, or a `judgment`, what to do or not do, and its scope names a producer, labels a run must carry and labels it must not. A label must be one a recorded run already carries, so a misspelled label fails instead of making an item that matches nothing.
+A run is one output of a producer with the labels of its situation. The built in producer is the Claude Code session, whose labels are `repo`, the directory holding `.git` above where you work, and `dir`, the path below it. Where you work is the directory Claude Code started in, or the working directory while it lies inside it, so a `cd` into a scratchpad or a clone elsewhere never labels a run. A nod is approve, edit with the corrected output, or reject with what was wrong. An item is a `meaning`, how to read something in this place, or a `judgment`, what to do or not do, and its scope names a producer, labels a run must carry and labels it must not. A label must be one a recorded run already carries, so a misspelled label fails instead of making an item that matches nothing.
 
 <details>
 <summary>How items are approved, kept within budget and kept fresh</summary>
@@ -73,7 +73,7 @@ When one run would carry more than five items, `approve` says a compaction is du
 
 When you record what a real check found with `outcome`, `nodloop knowledge health` shows the items whose runs were refuted as retire candidates and the stated items whose runs were confirmed as promotion candidates. `knowledge narrow <id> --version <n> --key dir` proposes a version that stops reaching the directories where it was refuted, and `knowledge promote` proposes one with basis verified. An approved version is stale 90 days after its approval or last reaffirm.
 
-`nodloop report loop` shows per approved item how many runs received it, how many of those you approved, how many you corrected again for the reason that taught it, and how long the correction took to become an item. Verdicts you gave and verdicts the conversation inferred from your words are counted apart, and yours wins where a run has both. `nodloop queue` lists the runs that wait for a verdict, with a random audit share.
+`nodloop report loop` starts with one line of how many runs were recorded, judged by you, judged by the conversation, corrected, drafted and approved, so the stage where the loop stalls shows at once. Then it shows per approved item how many runs received it, how many of those you approved, how many you corrected again for the reason that taught it, and how long the correction took to become an item. Verdicts you gave and verdicts the conversation inferred from your words are counted apart, and yours wins where a run has both. `nodloop queue` lists the runs that wait for a verdict, with a random audit share.
 
 </details>
 

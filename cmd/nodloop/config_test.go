@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"testing"
@@ -85,4 +86,57 @@ func TestConfigRecordArgs(t *testing.T) {
 	assert.Equal(t, "", config{}.recordArgs())
 	assert.Equal(t, "--record-dir /records", config{recordDir: "/records"}.recordArgs())
 	assert.Equal(t, "--record-dir '/my records'", config{recordDir: "/my records"}.recordArgs())
+}
+
+func TestRunConfigApprover(t *testing.T) {
+	type args struct {
+		// config.json before the call, none when empty
+		saved string
+		args  []string
+	}
+	type want struct {
+		code   int
+		stdout string
+		stderr string
+		// config.json after the call, unchanged when empty
+		saved string
+	}
+	tcs := []struct {
+		name string
+		args args
+		want want
+	}{
+		{"nothing saved prints nothing", args{"", []string{"approver"}}, want{0, "", "", ""}},
+		{"a saved name is printed", args{`{"approver":"ann"}`, []string{"approver"}}, want{0, "ann\n", "", ""}},
+		{
+			"a name is saved beside the other keys",
+			args{`{"file_dir":"/old","record_dir":"/r"}`, []string{"approver", "Ann", "Lee"}},
+			want{0, "Ann Lee\n", "", "{\n  \"approver\": \"Ann Lee\",\n  \"file_dir\": \"/old\",\n  \"record_dir\": \"/r\"\n}\n"},
+		},
+		{"a name is saved without a config", args{"", []string{"approver", "ann"}}, want{0, "ann\n", "", "{\n  \"approver\": \"ann\"\n}\n"}},
+		{"a broken config is refused", args{"{broken", []string{"approver", "ann"}}, want{1, "", "is not valid JSON", ""}},
+		{"another key is refused", args{"", []string{"record_dir", "/r"}}, want{1, "", "unknown action", ""}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			home := homeDir(t.TempDir())
+			if tc.args.saved != "" {
+				require.NoError(t, os.MkdirAll(home.dir(), 0o755))
+				require.NoError(t, os.WriteFile(home.configPath(), []byte(tc.args.saved), 0o600))
+			}
+			var stdout, stderr bytes.Buffer
+
+			code := runConfig(tc.args.args, func(k string) string { return map[string]string{"HOME": string(home)}[k] }, &stdout, &stderr)
+
+			assert.Equal(t, tc.want.code, code)
+			assert.Equal(t, tc.want.stdout, stdout.String())
+			assert.Contains(t, stderr.String(), tc.want.stderr)
+			if tc.want.saved != "" {
+				got, err := os.ReadFile(home.configPath())
+				require.NoError(t, err)
+				assert.Equal(t, tc.want.saved, string(got))
+			}
+		})
+	}
 }

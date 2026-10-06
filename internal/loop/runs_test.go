@@ -89,3 +89,33 @@ func TestRunsReport(t *testing.T) {
 		})
 	}
 }
+
+func TestRunsTotals(t *testing.T) {
+	run := func(id string) trace.Trace {
+		return trace.Trace{ID: id, Name: trace.NameRun, Producer: "session", Input: json.RawMessage(`{}`)}
+	}
+	traces := trace.Traces{run("r1"), run("r2"), run("r3"), run("r4"), {ID: "failed", Name: trace.NameRun, Error: "cancelled", Input: json.RawMessage(`{}`)}}
+	verdict := func(id string, v feedback.Verdict, reviewer string) feedback.Feedback {
+		return feedback.Feedback{TraceID: id, Verdict: v, ReasonCode: feedback.ReasonOther, Reviewer: reviewer}
+	}
+	scope := &knowledge.RunScope{Producer: "session"}
+	item := func(id string, status knowledge.Status, compaction string) knowledge.Knowledge {
+		return knowledge.Knowledge{ID: id, Version: 1, Kind: knowledge.KindJudgment, Content: id, Status: status, Run: scope, Compaction: compaction}
+	}
+	verdicts := feedback.Records{
+		verdict("r1", feedback.VerdictApprove, feedback.ReviewerAuthor),
+		verdict("r2", feedback.VerdictReject, feedback.ReviewerSession),
+		verdict("r2", feedback.VerdictEdit, feedback.ReviewerAuthor),
+		verdict("r3", feedback.VerdictReject, feedback.ReviewerSession),
+		verdict("failed", feedback.VerdictReject, feedback.ReviewerAuthor),
+	}
+	items := knowledge.Set{
+		item("approved", knowledge.StatusApproved, ""), item("draft", knowledge.StatusCandidate, ""),
+		item("compacted", knowledge.StatusCandidate, "c1"),
+		{ID: "data", Version: 1, Kind: knowledge.KindMeaning, Content: "lag", Status: knowledge.StatusApproved},
+	}
+
+	got := loop.NewRuns(traces, verdicts).Totals(items)
+
+	assert.Equal(t, loop.Totals{Runs: 4, Judged: 2, Inferred: 1, Corrected: 2, Waiting: 1, Approved: 1}, got)
+}

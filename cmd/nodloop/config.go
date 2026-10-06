@@ -3,7 +3,9 @@ package main
 import (
 	"cmp"
 	"fmt"
+	"io"
 	"path/filepath"
+	"strings"
 )
 
 const (
@@ -65,4 +67,30 @@ func recordDirOf(flag, env, configured, fallback string) (string, error) {
 		return filepath.Clean(dir), nil
 	}
 	return "", nil
+}
+
+// config approver prints the saved name and config approver <name> saves one
+func runConfig(args []string, getenv func(string) string, stdout, stderr io.Writer) int {
+	if len(args) == 0 || args[0] != "approver" {
+		return fail(stderr, "config", fmt.Errorf("%w %q", errUnknownAction, strings.Join(args, " ")))
+	}
+	h := homeDir(getenv("HOME"))
+	if h == "" {
+		return fail(stderr, "config", errHomeUnknown)
+	}
+	if name := strings.TrimSpace(strings.Join(args[1:], " ")); name != "" {
+		if err := h.saveApprover(name); err != nil {
+			return fail(stderr, "config", err)
+		}
+		fmt.Fprintln(stdout, name)
+		return 0
+	}
+	uc, err := h.readConfig()
+	if err != nil {
+		return fail(stderr, "config", err)
+	}
+	if uc.Approver != "" {
+		fmt.Fprintln(stdout, uc.Approver)
+	}
+	return 0
 }

@@ -103,6 +103,7 @@ commands:
   guard uninstall           Remove the hook registered by guard install
   mcp                       Serve the MCP tools on stdio. --list prints the tool names
   llm probe [--model <m>]   Send a minimal structured-output request through claude -p and print cost
+  config approver [<name>]  Print the name saved in ~/.nodloop/config.json to approve under, or save one
   version                   Print the build version
 
 Every command that reads records accepts --record-dir, which overrides NODLOOP_RECORD_DIR, then record_dir of
@@ -167,7 +168,8 @@ func run(args []string, getenv func(string) string, stdin io.Reader, stdout io.W
 		"knowledge": func(args []string) int {
 			return runKnowledge(args, getenv, claudeCLI(getenv), time.Now, stdout, stderr)
 		},
-		"mcp": func(args []string) int { return runMCP(args, getenv, time.Now, stdin, stdout, stderr) },
+		"mcp":    func(args []string) int { return runMCP(args, getenv, time.Now, stdin, stdout, stderr) },
+		"config": func(args []string) int { return runConfig(args, getenv, stdout, stderr) },
 		"version": func([]string) int {
 			fmt.Fprintln(stdout, buildVersion())
 			return 0

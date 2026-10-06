@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/jeon-jihyeon/nodloop/internal/atomicfile"
 )
 
 const configFile = "config.json"
@@ -14,6 +16,8 @@ const configFile = "config.json"
 // A file_dir an older setup saved is read and ignored so its config still loads
 type userConfig struct {
 	RecordDir string `json:"record_dir,omitempty"`
+	// The name a person gave to approve under, saved so a review asks for it once
+	Approver string `json:"approver,omitempty"`
 }
 
 // nodloop keeps the config and the default records under `.nodloop` there
@@ -59,4 +63,30 @@ func (h homeDir) readConfig() (userConfig, error) {
 		return userConfig{}, fmt.Errorf("%w: %s: %w", errConfigInvalid, h.configPath(), err)
 	}
 	return c, nil
+}
+
+// Writes the approver into config.json and keeps every other key as written
+func (h homeDir) saveApprover(name string) error {
+	doc := map[string]json.RawMessage{}
+	b, err := os.ReadFile(h.configPath())
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+	case err != nil:
+		return err
+	default:
+		if err := json.Unmarshal(b, &doc); err != nil {
+			return fmt.Errorf("%w: %s: %w", errConfigInvalid, h.configPath(), err)
+		}
+	}
+	if doc["approver"], err = json.Marshal(name); err != nil {
+		return err
+	}
+	out, err := json.MarshalIndent(doc, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(h.dir(), 0o700); err != nil {
+		return err
+	}
+	return atomicfile.Replace(h.configPath(), append(out, '\n'))
 }

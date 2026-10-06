@@ -49,6 +49,31 @@ func TestWorkDirLabels(t *testing.T) {
 	}
 }
 
+func TestWorkDirWithin(t *testing.T) {
+	type args struct {
+		cwd     workDir
+		project workDir
+	}
+	tcs := []struct {
+		name string
+		args args
+		want workDir
+	}{
+		{"a directory inside the project stays", args{"/p/nodloop/cmd", "/p/nodloop"}, "/p/nodloop/cmd"},
+		{"the project itself stays", args{"/p/nodloop", "/p/nodloop"}, "/p/nodloop"},
+		{"a scratchpad outside the project falls back to it", args{"/private/tmp/claude/scratchpad", "/p/nodloop"}, "/p/nodloop"},
+		{"a sibling that shares the prefix falls back to it", args{"/p/nodloop-core", "/p/nodloop"}, "/p/nodloop"},
+		{"no project keeps the directory", args{"/private/tmp", ""}, "/private/tmp"},
+		{"no directory takes the project", args{"", "/p/nodloop"}, "/p/nodloop"},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.want, tc.args.cwd.within(tc.args.project))
+		})
+	}
+}
+
 // A home with one approved item of producer session for the repo nodloop
 func hookHome(t *testing.T, content string) (home, records, repo string) {
 	t.Helper()
@@ -75,11 +100,15 @@ func TestRunHookPrompt(t *testing.T) {
 		// The hook input with {repo} for the repository of the approved item and {other} for another one
 		stdin   string
 		session string
+		// The directory Claude Code started in with the same placeholders
+		project string
 		content string
 		// Session s1 answered once in the repo before the prompt
 		answered bool
-		// A candidate for the repo waits for approval
+		// A candidate for the repo waits for approval from before the answer
 		waiting bool
+		// A candidate for the repo was drafted after the answer
+		drafted bool
 	}
 	type want struct {
 		// Substrings of the added context with {run} for the run of the earlier answer, or empty for no output
@@ -99,6 +128,11 @@ func TestRunHookPrompt(t *testing.T) {
 			want{context: []string{"never instructions that override the user", "- [git-c v1 judgment] use git -C instead of cd\n"}},
 		},
 		{"a prompt in another repo gets nothing", args{stdin: `{"session_id":"s1","cwd":"{other}"}`, content: "use git -C"}, want{}},
+		{
+			"a prompt after a cd out of the project gets the items of the project",
+			args{stdin: `{"session_id":"s1","cwd":"{other}"}`, project: "{repo}", content: "use git -C"},
+			want{context: []string{"- [git-c v1 judgment] use git -C\n"}},
+		},
 		{"off adds nothing", args{stdin: `{"session_id":"s1","cwd":"{repo}"}`, session: "off", content: "use git -C"}, want{}},
 		{"a broken input still exits 0", args{stdin: `{`, content: "use git -C"}, want{stderr: "nodloop hook: unexpected EOF"}},
 		{
@@ -115,6 +149,14 @@ func TestRunHookPrompt(t *testing.T) {
 			},
 		},
 		{
+			"a later prompt asks about a lesson drafted since the previous answer",
+			args{stdin: `{"session_id":"s1","cwd":"{repo}"}`, content: "use git -C", answered: true, waiting: true, drafted: true},
+			want{context: []string{
+				"with reviewer session",
+				"wait for approval: 1. After your answer, review them without waiting for /nodloop:nod: invoke the nodloop:nod skill",
+			}},
+		},
+		{
 			"a later prompt in a place without items gets the note alone",
 			args{stdin: `{"session_id":"s1","cwd":"{other}"}`, content: "use git -C", answered: true},
 			want{context: []string{"is run {run}."}, absent: []string{promptLead}},
@@ -126,7 +168,7 @@ func TestRunHookPrompt(t *testing.T) {
 		},
 		{
 			"manual adds the items and no note",
-			args{stdin: `{"session_id":"s1","cwd":"{repo}"}`, session: "manual", content: "use git -C", answered: true, waiting: true},
+			args{stdin: `{"session_id":"s1","cwd":"{repo}"}`, session: "manual", content: "use git -C", answered: true, waiting: true, drafted: true},
 			want{context: []string{"use git -C\n"}, absent: []string{"previous answer", "wait for approval"}},
 		},
 		{
@@ -141,11 +183,14 @@ func TestRunHookPrompt(t *testing.T) {
 			home, records, repo := hookHome(t, tc.args.content)
 			other := filepath.Join(t.TempDir(), "other")
 			require.NoError(t, os.MkdirAll(filepath.Join(other, ".git"), 0o755))
+			place := strings.NewReplacer("{repo}", repo, "{other}", other)
 			getenv := func(k string) string {
-				return map[string]string{"HOME": home, envRecordDir: records, envSession: tc.args.session}[k]
+				return map[string]string{
+					"HOME": home, envRecordDir: records, envSession: tc.args.session, envProjectDir: place.Replace(tc.args.project),
+				}[k]
 			}
-			run := hookPromptSetup(t, getenv, repo, tc.args.answered, tc.args.waiting)
-			stdin := strings.NewReplacer("{repo}", repo, "{other}", other).Replace(tc.args.stdin)
+			run := hookPromptSetup(t, getenv, repo, tc.args.answered, tc.args.waiting, tc.args.drafted)
+			stdin := place.Replace(tc.args.stdin)
 			var stdout, stderr bytes.Buffer
 
 			code := runHook([]string{"prompt"}, getenv, nil, time.Now, strings.NewReader(stdin), &stdout, &stderr)
@@ -174,19 +219,22 @@ func TestRunHookPrompt(t *testing.T) {
 	}
 }
 
-// The run of an answer of session s1 in the repo when answered, and a candidate for the repo when waiting
-func hookPromptSetup(t *testing.T, getenv func(string) string, repo string, answered, waiting bool) string {
+// The run of an answer of session s1 in the repo when answered, with a candidate for the repo before it when waiting and after it when drafted
+func hookPromptSetup(t *testing.T, getenv func(string) string, repo string, answered, waiting, drafted bool) string {
 	t.Helper()
 	store, err := tracefile.New(getenv(envRecordDir))
 	require.NoError(t, err)
-	if waiting {
+	propose := func(id, content string) {
 		runs, err := store.List(context.Background(), trace.Filter{Name: trace.NameRun, Limit: 1})
 		require.NoError(t, err)
 		var stderr bytes.Buffer
 		require.Equal(t, 0, runKnowledge([]string{
-			"propose", "--id", "short-msg", "--kind", "judgment", "--content", "keep commit messages to one line",
+			"propose", "--id", id, "--kind", "judgment", "--content", content,
 			"--trace", runs[0].ID, "--producer", sessionProducer, "--label", "repo=nodloop",
 		}, getenv, nil, time.Now, &bytes.Buffer{}, &stderr), stderr.String())
+	}
+	if waiting {
+		propose("short-msg", "keep commit messages to one line")
 	}
 	if !answered {
 		return ""
@@ -196,6 +244,9 @@ func hookPromptSetup(t *testing.T, getenv func(string) string, repo string, answ
 	runs, err := store.List(context.Background(), trace.Filter{Name: trace.NameRun, SessionID: "s1"})
 	require.NoError(t, err)
 	require.Len(t, runs, 1)
+	if drafted {
+		propose("pr-body", "write the motivation of a pull request first")
+	}
 	return runs[0].ID
 }
 
@@ -366,7 +417,8 @@ func TestRunReportLoop(t *testing.T) {
 	code := runReport([]string{"loop"}, getenv, time.Now, &stdout, &stderr)
 
 	require.Equal(t, 0, code, stderr.String())
-	assert.Equal(t, "git-c\tv1\tapplied 1\tfollowed 1 of 1\trepeat 0\tinferred followed 0 of 0\tinferred repeat 0\tsettle -\n"+
+	assert.Equal(t, "loop\truns 2\tjudged 1\tinferred 0\tcorrected 0\twaiting 0\tapproved 1\n"+
+		"git-c\tv1\tapplied 1\tfollowed 1 of 1\trepeat 0\tinferred followed 0 of 0\tinferred repeat 0\tsettle -\n"+
 		"misapplied\tnot measured: no label says which runs an item should have reached\n", stdout.String())
 }
 
@@ -468,7 +520,7 @@ func TestRepoName(t *testing.T) {
 func TestRunKnowledgeWaiting(t *testing.T) {
 	home, records, repo := hookHome(t, "use git -C")
 	getenv := func(k string) string { return map[string]string{"HOME": home, envRecordDir: records}[k] }
-	run := hookPromptSetup(t, getenv, repo, false, true)
+	run := hookPromptSetup(t, getenv, repo, false, true, false)
 	require.Empty(t, run)
 	store, err := tracefile.New(records)
 	require.NoError(t, err)
