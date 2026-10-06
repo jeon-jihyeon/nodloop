@@ -10,7 +10,8 @@ import (
 )
 
 // Question instructions by name
-// Every question asks for the probability of yes, the noul type of the Jev wire format
+// Every question asks for the probability of yes
+// That is the noul type of the Jev wire format
 type Questions map[string]string
 
 // Names in a fixed order for messages and records
@@ -40,7 +41,7 @@ func (a Answer) True() bool {
 
 // Probability of the answer given
 // Computed from Yes so cascade compares one scale whatever an endpoint reports
-func (a Answer) Confidence() float64 {
+func (a Answer) confidence() float64 {
 	return max(a.Yes, 1-a.Yes)
 }
 
@@ -48,7 +49,7 @@ func (a Answer) Confidence() float64 {
 type Answers map[string]Answer
 
 // Every question has an answer and every probability lies between 0 and 1
-func (as Answers) Check(qs Questions) error {
+func (as Answers) check(qs Questions) error {
 	for _, name := range qs.names() {
 		a, ok := as[name]
 		if !ok {
@@ -62,9 +63,9 @@ func (as Answers) Check(qs Questions) error {
 }
 
 // Every answer reaches the threshold
-func (as Answers) Confident(threshold float64) bool {
+func (as Answers) confident(threshold float64) bool {
 	for _, a := range as {
-		if a.Confidence() < threshold {
+		if a.confidence() < threshold {
 			return false
 		}
 	}

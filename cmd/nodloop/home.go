@@ -13,7 +13,7 @@ import (
 
 const configFile = "config.json"
 
-// Read when no flag or env names the record directory
+// What `~/.nodloop/config.json` holds
 // A file_dir an older setup saved is read and ignored so its config still loads
 type userConfig struct {
 	RecordDir string `json:"record_dir,omitempty"`
@@ -71,12 +71,13 @@ func (h homeDir) readConfig() (userConfig, error) {
 	return c, nil
 }
 
-// Writes the approver into config.json and keeps every other key as written
+// Writes the approver into config.json and keeps the value of every other key
 func (h homeDir) saveApprover(name string) error {
 	return h.save("approver", name)
 }
 
-// Writes one key of config.json and keeps every other key as written
+// Writes one key of config.json and keeps the value of every other key
+// The file is written again indented with its keys sorted
 func (h homeDir) save(key string, value any) error {
 	doc := map[string]json.RawMessage{}
 	b, err := os.ReadFile(h.configPath())

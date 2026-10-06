@@ -111,8 +111,9 @@ func (a app) compactor(ledger *knowledge.Ledger) (*compact.Compactor, error) {
 	return compact.New(ledger, traces, verdicts, traces, a.now), nil
 }
 
-// Seconds an endpoint may take for one request
+// Time an endpoint may take for one request
 // The critic runs in the detached extraction so a slow CPU model only delays a draft
+// A probe in the foreground waits as long so it shows what the critic would see
 const classifierTimeout = 30 * time.Second
 
 // The critic of an extraction
