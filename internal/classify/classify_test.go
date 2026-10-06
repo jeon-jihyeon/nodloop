@@ -194,6 +194,38 @@ func TestPlanClassify(t *testing.T) {
 	}
 }
 
+// The trace keeps how long each member took and the whole request
+// The clock moves a second each time it is read
+func TestPlanClassifyTimes(t *testing.T) {
+	ctx := context.Background()
+	traces, err := tracefile.New(t.TempDir())
+	require.NoError(t, err)
+	unsure := endpoint{yes: map[string]float64{"holds": 0.6, "states": 0.1}}
+	setup := classify.Setup{Mode: classify.ModeCascade, Members: []string{"a", "b"}, Threshold: 0.8}
+	at := fixed
+	tick := func() time.Time {
+		at = at.Add(time.Second)
+		return at
+	}
+
+	_, err = classify.NewPlan(classify.PointCritic, setup, []classify.Member{unsure.member(t, "a"), unsure.member(t, "b")}, traces, tick).
+		Classify(ctx, classify.Request{State: "the draft", Questions: questions})
+
+	require.NoError(t, err)
+	recorded, err := traces.List(ctx, trace.Filter{Name: trace.NameClassify})
+	require.NoError(t, err)
+	require.Len(t, recorded, 1)
+	var out struct {
+		Members []struct {
+			MS int64 `json:"ms"`
+		} `json:"members"`
+	}
+	require.NoError(t, json.Unmarshal(recorded[0].Output, &out))
+	assert.Equal(t, int64(5000), recorded[0].DurationMS)
+	require.Len(t, out.Members, 2)
+	assert.Equal(t, []int64{1000, 1000}, []int64{out.Members[0].MS, out.Members[1].MS})
+}
+
 // Parallel members are asked at once
 // Each endpoint answers only after both requests arrived so a plan that asks one after the other times out
 func TestPlanClassifyParallelAtOnce(t *testing.T) {

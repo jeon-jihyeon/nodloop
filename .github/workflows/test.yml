@@ -8,6 +8,21 @@ on:
 jobs:
   go:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: nodloop
+          POSTGRES_DB: nodloop
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      NODLOOP_TEST_POSTGRES: postgres://postgres:nodloop@localhost:5432/nodloop?sslmode=disable
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -19,3 +34,36 @@ jobs:
         with:
           version: v2.12
       - run: go test ./... -cover
+      - run: go test -race ./internal/pg/... ./internal/classify/... ./cmd/nodloop/...
+
+  python:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdk/python
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: astral-sh/setup-uv@v10.2.0
+      - run: uvx ruff check .
+      - run: uvx ruff format --check .
+      - run: uv run --locked pytest -q
+
+  typescript:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdk/typescript
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test

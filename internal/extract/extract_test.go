@@ -74,6 +74,12 @@ func TestExtractorPropose(t *testing.T) {
 		{"an update proposes the next version with the scope of the item", extract.Draft{
 			Relation: extract.RelationUpdate, RelatesTo: "git-c", Kind: knowledge.KindJudgment, Content: lesson, Keys: []string{"dir"},
 		}, pass, want{candidate: "git-c", version: 2, labels: trace.Labels{"repo": {"nodloop"}}, related: "git-c"}},
+		{"an update may sharpen the item with one number", extract.Draft{
+			Relation: extract.RelationUpdate, RelatesTo: "git-c", Kind: knowledge.KindJudgment, Content: lesson + " and cd at most 1 level",
+		}, pass, want{candidate: "git-c", version: 2, labels: trace.Labels{"repo": {"nodloop"}}, related: "git-c"}},
+		{"an update that adds a case to the item is refused", extract.Draft{
+			Relation: extract.RelationUpdate, RelatesTo: "git-c", Kind: knowledge.KindJudgment, Content: lesson + " and status -0.34 maps to 2",
+		}, pass, want{err: extract.ErrCaseList}},
 		{"a duplicate proposes nothing and names the item", extract.Draft{
 			Relation: extract.RelationDuplicate, RelatesTo: "git-c", Kind: knowledge.KindJudgment, Content: lesson,
 		}, pass, want{related: "git-c"}},
@@ -296,5 +302,5 @@ func TestExtractorExtractClassifierCritic(t *testing.T) {
 
 	require.ErrorIs(t, err, extract.ErrCriticRefused)
 	assert.Contains(t, err.Error(), "holds false: fits 0.80, holds 0.20, states 0.90")
-	assert.Contains(t, state, "## Draft lesson")
+	assert.True(t, strings.HasPrefix(state, "## Draft lesson\n\n{\"relation\":\"add\""), "a truncating endpoint still reads the draft")
 }
