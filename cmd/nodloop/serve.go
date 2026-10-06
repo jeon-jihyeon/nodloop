@@ -20,7 +20,12 @@ import (
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/jeon-jihyeon/nodloop/internal/compact"
+	"github.com/jeon-jihyeon/nodloop/internal/extract"
+	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	"github.com/jeon-jihyeon/nodloop/internal/mcp"
+	"github.com/jeon-jihyeon/nodloop/internal/pg"
+	vetofile "github.com/jeon-jihyeon/nodloop/internal/veto/file"
 )
 
 // One key a service calls the server with
@@ -153,6 +158,7 @@ func runServe(args []string, getenv func(string) string, now func() time.Time, s
 	var records recordFlags
 	records.bind(fs)
 	addr := fs.String("addr", "127.0.0.1:8787", "the address to listen on")
+	dsn := fs.String("postgres", getenv(envPostgres), "a PostgreSQL URL to keep the records of every tenant in. "+envPostgres+" when empty")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -167,8 +173,18 @@ func runServe(args []string, getenv func(string) string, now func() time.Time, s
 	if len(uc.Server.Keys) == 0 {
 		return fail(stderr, "server", fmt.Errorf("%w. Add one with nodloop server key add", errNoKeys))
 	}
-	fmt.Fprintf(stderr, "nodloop server: %d keys, records under %s, listening on http://%s/mcp\n", len(uc.Server.Keys), a.cfg.recordDir, *addr)
-	srv := &http.Server{Addr: *addr, Handler: newServeHandler(a.cfg.recordDir, uc.Server, now), ReadHeaderTimeout: 10 * time.Second}
+	stores := tenantStores(fileTenants{base: a.cfg.recordDir})
+	where := "records under " + a.cfg.recordDir
+	if *dsn != "" {
+		db, err := pg.Open(context.Background(), *dsn)
+		if err != nil {
+			return fail(stderr, "server", err)
+		}
+		defer db.Close()
+		stores, where = pgTenants{db: db}, "records in PostgreSQL"
+	}
+	fmt.Fprintf(stderr, "nodloop server: %d keys, %s, listening on http://%s/mcp\n", len(uc.Server.Keys), where, *addr)
+	srv := &http.Server{Addr: *addr, Handler: newServeHandler(stores, uc.Server, now), ReadHeaderTimeout: 10 * time.Second}
 	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return fail(stderr, "server", err)
 	}
@@ -180,7 +196,7 @@ func runServe(args []string, getenv func(string) string, now func() time.Time, s
 // 2. a tenant reads and writes the records under tenants of the record directory and never those of another tenant
 // 3. one host per key so its calls are serialized like a stdio server while keys of one tenant share the file locks of its records
 type serveHandler struct {
-	base   string
+	stores tenantStores
 	config serverConfig
 	now    func() time.Time
 	mu     sync.Mutex
@@ -190,8 +206,8 @@ type serveHandler struct {
 
 type keyContext struct{}
 
-func newServeHandler(base string, config serverConfig, now func() time.Time) *serveHandler {
-	h := &serveHandler{base: base, config: config, now: now, hosts: map[string]*sdk.Server{}}
+func newServeHandler(stores tenantStores, config serverConfig, now func() time.Time) *serveHandler {
+	h := &serveHandler{stores: stores, config: config, now: now, hosts: map[string]*sdk.Server{}}
 	h.mcp = sdk.NewStreamableHTTPHandler(h.server, &sdk.StreamableHTTPOptions{Stateless: true})
 	return h
 }
@@ -215,13 +231,42 @@ func (h *serveHandler) server(r *http.Request) *sdk.Server {
 	if srv, ok := h.hosts[key.Name]; ok {
 		return srv
 	}
-	// No home so the config of the server user is not read for a tenant and no veto file is written under it
-	noHome := func(string) string { return "" }
-	open := mcpOpen{
-		flags:  recordFlags{recordDir: filepath.Join(h.base, "tenants", key.Tenant)},
-		getenv: noHome, now: h.now, session: mcp.NewSession(h.now()), person: key.Name,
-	}.open
-	srv := mcp.NewHost(open, buildVersion(), "").Server(key.Role.Tools())
+	srv := mcp.NewHost(h.stores.open(key, h.now, mcp.NewSession(h.now())), buildVersion(), "").Server(key.Role.Tools())
 	h.hosts[key.Name] = srv
 	return srv
+}
+
+// Where the server keeps the records of a tenant
+type tenantStores interface {
+	open(key serverKey, now func() time.Time, session string) mcp.Open
+}
+
+// The record directory of each tenant under tenants of the base directory
+type fileTenants struct {
+	base string
+}
+
+// No home so the config of the server user is not read for a tenant and no veto file is written under it
+func (f fileTenants) open(key serverKey, now func() time.Time, session string) mcp.Open {
+	return mcpOpen{
+		flags:  recordFlags{recordDir: filepath.Join(f.base, "tenants", key.Tenant)},
+		getenv: func(string) string { return "" }, now: now, session: session, person: key.Name,
+	}.open
+}
+
+// The rows of each tenant in one database
+type pgTenants struct {
+	db *pg.DB
+}
+
+// The stores of the tenant of the key
+// No veto file is written since the tool calls of a server's producers are checked through check_call
+func (p pgTenants) open(key serverKey, now func() time.Time, session string) mcp.Open {
+	return func(context.Context) (*mcp.Server, error) {
+		traces, verdicts := p.db.Traces(key.Tenant), p.db.Feedback(key.Tenant)
+		ledger := knowledge.NewLedger(p.db.Knowledge(key.Tenant), vetofile.NewApprovedFile("", ""), now, app{now: now}.newID)
+		compactor := compact.New(ledger, traces, verdicts, traces, now)
+		extractor := extract.New(ledger, traces, verdicts, now)
+		return mcp.New(traces, verdicts, p.db.Outcomes(key.Tenant), ledger, compactor, extractor, now, session, executable(), "", key.Name), nil
+	}
 }

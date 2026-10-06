@@ -17,6 +17,8 @@ const (
 	envLLMModel  = "NODLOOP_LLM_MODEL"
 	// Set by the plugin launcher to the version it runs this binary for
 	envPluginVersion = "NODLOOP_PLUGIN_VERSION"
+	// A PostgreSQL URL nodloop server serve keeps the records of every tenant in
+	envPostgres = "NODLOOP_POSTGRES"
 )
 
 // What every command reads and writes

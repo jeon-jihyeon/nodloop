@@ -95,8 +95,9 @@ func (a app) ledger() (*knowledge.Ledger, error) {
 }
 
 // Approved vetoes of the record directory under home
+// Only those of the conversation producer since the guard hook checks the tool calls of Claude Code
 func (a app) vetoFile(dir string) *vetofile.ApprovedFile {
-	return vetofile.NewApprovedFile(string(a.cfg.home), dir)
+	return vetofile.NewApprovedFile(string(a.cfg.home), dir).Of(sessionProducer)
 }
 
 func (a app) compactor(ledger *knowledge.Ledger) (*compact.Compactor, error) {

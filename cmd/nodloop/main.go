@@ -144,9 +144,10 @@ commands:
                             approver also approves under the key name
   server key list           Names, tenants and roles of the keys
   server key remove <name>  Remove a key
-  server serve [--addr <host:port>]
+  server serve [--addr <host:port>] [--postgres <url>]
                             Serve the MCP tools over streamable HTTP at /mcp for the keys, each tenant on its own records
-                            under tenants of the record directory. 127.0.0.1:8787 by default
+                            under tenants of the record directory, or in one PostgreSQL database with --postgres or
+                            NODLOOP_POSTGRES. 127.0.0.1:8787 by default
   version                   Print the build version
 
 Every command that reads records accepts --record-dir, which overrides NODLOOP_RECORD_DIR, then record_dir of

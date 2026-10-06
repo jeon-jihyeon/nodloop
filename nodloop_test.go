@@ -119,22 +119,29 @@ func TestClientCheckCall(t *testing.T) {
 	require.NoError(t, err)
 	_, err = c.Approve(ctx, proposed.ID, proposed.Version, "ann")
 	require.NoError(t, err)
+	type args struct {
+		producer string
+		tool     string
+		input    map[string]any
+	}
+	rmData := map[string]any{"command": "cd / && rm -rf /data"}
+	blocked := nodloop.Decision{Action: nodloop.ActionBlock, Veto: "no-rm-data", Reason: "Never delete under /data"}
 	tcs := []struct {
-		name  string
-		tool  string
-		input map[string]any
-		want  nodloop.Decision
+		name string
+		args args
+		want nodloop.Decision
 	}{
-		{"the forbidden call is blocked", "Bash", map[string]any{"command": "cd / && rm -rf /data"},
-			nodloop.Decision{Action: nodloop.ActionBlock, Veto: "no-rm-data", Reason: "Never delete under /data"}},
-		{"another call is allowed", "Bash", map[string]any{"command": "ls /data"}, nodloop.Decision{Action: nodloop.ActionAllow}},
-		{"another tool is allowed", "Read", map[string]any{"file_path": "/data/x"}, nodloop.Decision{Action: nodloop.ActionAllow}},
+		{"the forbidden call is blocked", args{"ops-bot", "Bash", rmData}, blocked},
+		{"another call is allowed", args{"ops-bot", "Bash", map[string]any{"command": "ls /data"}}, nodloop.Decision{Action: nodloop.ActionAllow}},
+		{"another tool is allowed", args{"ops-bot", "Read", map[string]any{"file_path": "/data/x"}}, nodloop.Decision{Action: nodloop.ActionAllow}},
+		{"another producer is not bound by the veto", args{"docs-bot", "Bash", rmData}, nodloop.Decision{Action: nodloop.ActionAllow}},
+		{"no producer checks every veto", args{"", "Bash", rmData}, blocked},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			got, err := c.CheckCall(ctx, tc.tool, tc.input)
+			got, err := c.CheckCall(ctx, tc.args.producer, tc.args.tool, tc.args.input)
 
 			require.NoError(t, err)
 			assert.Equal(t, tc.want, got)
