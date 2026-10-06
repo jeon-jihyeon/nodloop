@@ -1,6 +1,6 @@
 ---
 name: nod
-description: Record the user's verdict on an earlier Claude Code answer as nodloop feedback and turn a correction into approved knowledge that the next prompt in the same repository receives. Also reviews the lessons the plugin drafted from corrections the conversation recorded. Use when the user calls /nodloop:nod, says an earlier answer in this conversation was right or wrong and asks to remember it, asks to review the waiting drafts, or when the nodloop prompt context says lessons wait for approval.
+description: Record the user's verdict on an earlier Claude Code answer as nodloop feedback and turn a correction into approved knowledge that the next prompt in the same repository receives. Also reviews the lessons the plugin drafted from corrections the conversation recorded. Use when the user calls /nodloop:nod, says an earlier answer in this conversation was right or wrong and asks to remember it, asks to review the waiting drafts, or when the nodloop prompt context says knowledge candidates wait for approval.
 ---
 
 # Nod on an answer
@@ -9,7 +9,7 @@ The plugin records every answer of this conversation as a run of producer `sessi
 
 Every question below goes through AskUserQuestion, because the user can always pick Other and type an answer. Run nodloop through `~/.nodloop/bin/nodloop`, the link the plugin keeps to the binary its server runs. When that link is missing, run `${CLAUDE_PLUGIN_ROOT}/bin/nodloop version` once to create it.
 
-When the user calls `/nodloop:nod` with nothing to say about an answer, or when the nodloop prompt context says lessons wait for approval, review the drafts that wait in this place as in the section Review the waiting drafts. Otherwise follow the steps.
+When the user calls `/nodloop:nod` with nothing to say about an answer, or when the nodloop prompt context says knowledge candidates wait for approval, review the drafts that wait in this place as in the section Review the waiting drafts. Otherwise follow the steps.
 
 ## Steps
 
@@ -23,16 +23,16 @@ When the user calls `/nodloop:nod` with nothing to say about an answer, or when 
 
 ## Draft the correction of this turn
 
-The prompt hook asks for this after the conversation recorded a reject with reviewer `session`, so the user decides on the lesson in the same turn as the correction.
+The prompt hook asks for this after the conversation recorded a reject or an edit with reviewer `session`, so the user decides on the lesson in the same turn as the correction.
 
-1. Call `extraction` with `from` set to the trace id of the reject without asking. Draft and answer the critic questions as in step 4 of the steps, then call `propose_extraction`
+1. Call `extraction` with `from` set to the trace id of the corrected run without asking. Draft and answer the critic questions as in step 4 of the steps, then call `propose_extraction`
 2. When it answers a candidate, end the answer with one AskUserQuestion: quote the user's words that made the correction, show the content and the scope, and offer approve, retire and leave it waiting. Use the name of step 5 of the steps
 3. Call `approve` or run `knowledge retire` as in step 4 of the section Review the waiting drafts
 4. When it is refused twice, a duplicate or a conflict, say so in one line. A refused one is drafted again in the background after the turn and asked about on the next prompt
 
 ## Review the waiting drafts
 
-The conversation records a verdict with reviewer `session` when the user says an answer was wrong or right, and after that turn the plugin drafts the lesson of a correction in the background. The drafts wait as candidates until a person approves them. The prompt hook names them in the session that corrected the answer and on the first prompt of a later session, so the review starts without `/nodloop:nod`.
+The conversation records a verdict with reviewer `session` when the user says an answer was wrong or right and drafts a correction in the same turn. A correction left undrafted is drafted after the turn in the background. Drafts wait as candidates until a person approves them. The prompt hook names those made since the previous answer and on the first prompt of a later session every one waiting, so the review starts without `/nodloop:nod`.
 
 1. Run `~/.nodloop/bin/nodloop knowledge waiting --producer session --label repo=<repo> --label dir=<dir>` through Bash without asking, with the labels as the hook sets them. Each line is a candidate with its kind, content, scope and the runs it came from. When there is none, say so and stop
 2. For each candidate run `~/.nodloop/bin/nodloop feedback list --trace <run>` for the run it came from and show the content, the scope and the reason the user gave there

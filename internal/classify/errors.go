@@ -9,13 +9,13 @@ var (
 	ErrSetupInvalid = errors.New("classify: invalid setup")
 	// A member that is neither claude nor an added endpoint
 	ErrClassifierUnknown = errors.New("classify: unknown classifier")
-	// An endpoint without an absolute http URL or one named claude
+	// An endpoint without an absolute http or https URL or without a name or named claude
 	ErrEndpointInvalid = errors.New("classify: invalid endpoint")
 	// An endpoint still named by the setup of a point
 	ErrClassifierInUse = errors.New("classify: classifier in use")
 	// A non 2xx answer of an endpoint
 	ErrStatus = errors.New("classify: endpoint answered an error status")
-	// A body that does not decode as the Jev answers
+	// A body that does not decode as the Jev answers or a probability outside 0 to 1
 	ErrResponseInvalid = errors.New("classify: endpoint answer is not valid")
 	// A question left without an answer
 	ErrAnswerMissing = errors.New("classify: question not answered")

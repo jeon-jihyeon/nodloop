@@ -87,7 +87,7 @@ func (h *HTTP) Classify(ctx context.Context, req Request) (Answers, error) {
 			answers[name] = Answer{Yes: *a.Noul}
 		}
 	}
-	if err := answers.Check(req.Questions); err != nil {
+	if err := answers.check(req.Questions); err != nil {
 		return nil, err
 	}
 	return answers, nil

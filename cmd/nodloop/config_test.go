@@ -90,7 +90,8 @@ func TestConfigRecordArgs(t *testing.T) {
 
 func TestRunConfigApprover(t *testing.T) {
 	type args struct {
-		// config.json before the call, none when empty
+		// config.json before the call
+		// None when empty
 		saved string
 		args  []string
 		// HOME is unset

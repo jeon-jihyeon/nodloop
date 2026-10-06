@@ -59,7 +59,7 @@ func (c Combine) Valid() bool {
 }
 
 // The member every point has without an endpoint
-const Claude = "claude"
+const claude = "claude"
 
 // Threshold of a cascade that names none
 const defaultThreshold = 0.8
@@ -179,7 +179,7 @@ type Endpoint struct {
 	KeyEnv string `json:"key_env,omitempty"`
 }
 
-func (e Endpoint) Check() error {
+func (e Endpoint) check() error {
 	u, err := url.Parse(e.URL)
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 		return fmt.Errorf("%w: %q is not an absolute http or https URL", ErrEndpointInvalid, e.URL)
@@ -205,10 +205,10 @@ func (es Endpoints) With(name string, e Endpoint) (Endpoints, error) {
 	switch name {
 	case "":
 		return nil, fmt.Errorf("%w: a name is required", ErrEndpointInvalid)
-	case Claude:
+	case claude:
 		return nil, fmt.Errorf("%w: the name %q is reserved", ErrEndpointInvalid, name)
 	}
-	if err := e.Check(); err != nil {
+	if err := e.check(); err != nil {
 		return nil, err
 	}
 	out := maps.Clone(es)
@@ -222,7 +222,7 @@ func (es Endpoints) With(name string, e Endpoint) (Endpoints, error) {
 // Every member of the setup is claude or an endpoint
 func (es Endpoints) Check(s Setup) error {
 	for _, name := range s.Members {
-		if _, ok := es[name]; !ok && name != Claude {
+		if _, ok := es[name]; !ok && name != claude {
 			return fmt.Errorf("%w: %s. Add it with nodloop classifier add", ErrClassifierUnknown, name)
 		}
 	}
@@ -237,7 +237,7 @@ func (es Endpoints) Members(s Setup, builtin Classifier, getenv func(string) str
 	}
 	members := make([]Member, 0, len(s.Members))
 	for _, name := range s.Members {
-		if name == Claude {
+		if name == claude {
 			members = append(members, Member{Name: name, Classifier: builtin})
 			continue
 		}

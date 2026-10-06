@@ -132,7 +132,7 @@ func (r Reaction) criticize(ctx context.Context, critic Classifier, d Draft) (Cr
 	if err := r.check(d); err != nil {
 		return Critique{}, err
 	}
-	answers, err := critic.Classify(ctx, classify.Request{Ref: r.Run.ID, State: r.critiquePrompt(d), Questions: CriticQuestions})
+	answers, err := critic.Classify(ctx, classify.Request{Ref: r.Run.ID, State: r.critiquePrompt(d), Questions: criticQuestions})
 	if err != nil {
 		return Critique{}, err
 	}
