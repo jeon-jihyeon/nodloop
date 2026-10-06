@@ -56,7 +56,9 @@ commands:
   knowledge list [--status <s>] [--kind <k>] [--stale]
                             Current version per id with a stale column. --status lists every version of that status
   knowledge show <id>       Every record of one id
-  knowledge health          Verdict and outcome counts per knowledge version, retire candidates and review deadlines
+  knowledge health          Verdict and outcome counts per knowledge version, retire candidates and review deadlines,
+                            idle versions no run applied for 30 days and contested ones corrected again for their reason
+                            with the items to compact them with
   knowledge audit           References of current items that no longer resolve
   knowledge reaffirm <id> --approver <name> [--version <n>]
                             Record that a named person rechecked the approved version. Its review deadline starts again
@@ -88,7 +90,10 @@ commands:
   report online [--since <RFC3339>]
                             Weekly verdict rates, waits and edit widths, and the runs with and without knowledge compared
   report loop               A totals line of runs, verdicts by a person and by a session, corrections, candidates waiting
-                            and approved items. Then per approved item: runs that applied it, how many a person approved of
+                            and approved items. A scope line per plugin version: current items, those whose scope admits
+                            one session at most and approved ones never applied. A drafts line per plugin version and
+                            drafting path: drafted, approved, dropped, waiting and the median time to a decision. Then per
+                            approved item: runs that applied it, how many a person approved of
                             those judged, how many were corrected again for the reason that taught it, the same two counts
                             over verdicts a session inferred, and the time from that correction to the approval
   report extract            Per plugin version of the corrected run and per drafting path: extractions by how they

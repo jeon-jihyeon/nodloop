@@ -203,7 +203,7 @@ func (s Set) current(id string) *Knowledge {
 }
 
 // Overlaps of the current record of id
-func (s Set) overlapsOf(id string) (Set, error) {
+func (s Set) OverlapsOf(id string) (Set, error) {
 	k := s.current(id)
 	if k == nil {
 		return nil, fmt.Errorf("%w: %s", ErrNotFound, id)

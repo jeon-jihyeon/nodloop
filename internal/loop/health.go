@@ -41,7 +41,18 @@ type Health struct {
 	PromotionCandidate bool      `json:"promotion_candidate"`
 	LastReviewed       time.Time `json:"last_reviewed,omitzero"`
 	Stale              bool      `json:"stale"`
+	// An approved version no run applied in the IdleDays after its approval or last reaffirm
+	Idle bool `json:"idle"`
+	// An approved version whose runs were corrected again for a reason it was taught by
+	// Verdicts the conversation inferred count with a person's
+	Contested bool `json:"contested"`
+	// The approved items one run may carry with a contested version
+	// Candidates to compact with it so the group says each fact once
+	CompactWith []string `json:"compact_with,omitempty"`
 }
+
+// Days an approved version may go unapplied before it reads as idle
+const IdleDays = 30
 
 // One row per recorded id and version sorted by id then version
 func (h *History) Health(now time.Time) []Health {
@@ -51,6 +62,9 @@ func (h *History) Health(now time.Time) []Health {
 		ref := knowledge.Ref{ID: k.ID, Version: k.Version}
 		rows[ref] = &Health{ID: k.ID, Version: k.Version, Status: k.Status, LastReviewed: k.LastReviewed(), Stale: k.Stale(now)}
 		stated[ref] = k.Basis == knowledge.BasisStated
+		if k.Status == knowledge.StatusApproved {
+			h.lifetime(rows[ref], k, now)
+		}
 	}
 	for _, r := range h.entries {
 		for _, ref := range r.applied() {
@@ -71,6 +85,25 @@ func (h *History) Health(now time.Time) []Health {
 	}
 	slices.SortFunc(out, Health.compare)
 	return out
+}
+
+// The idle and contested signals of an approved version and the items to compact a contested one with
+func (h *History) lifetime(row *Health, k knowledge.Knowledge, now time.Time) {
+	reviewed := k.LastReviewed()
+	row.Idle = now.Sub(reviewed) >= IdleDays*24*time.Hour && h.runs.lastApplied(knowledge.Ref{ID: k.ID, Version: k.Version}).Before(reviewed)
+	row.Contested = h.runs.repeats(k) > 0
+	if !row.Contested {
+		return
+	}
+	carried, err := h.knowledge.OverlapsOf(k.ID)
+	if err != nil {
+		return
+	}
+	for _, other := range carried {
+		if other.Status == knowledge.StatusApproved {
+			row.CompactWith = append(row.CompactWith, other.ID)
+		}
+	}
 }
 
 // Orders rows by id then version

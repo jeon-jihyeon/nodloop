@@ -213,3 +213,29 @@ func TestRunsCritics(t *testing.T) {
 		{Critic: "extract model", Judged: 3, Agree: 1, FalsePass: 1, FalseRefuse: 1},
 	}, got)
 }
+
+func TestRunsScopes(t *testing.T) {
+	run := func(id, session, repo, dir, plugin string, applied ...knowledge.Ref) trace.Trace {
+		in, _ := json.Marshal(map[string]any{"applied": applied, "plugin": plugin})
+		return trace.Trace{ID: id, Name: trace.NameRun, Producer: "session", SessionID: session, Input: in,
+			Labels: trace.Labels{"repo": {repo}, "dir": {dir}}}
+	}
+	traces := trace.Traces{
+		run("r1", "s1", "nodloop", ".", "0.7.0", knowledge.Ref{ID: "repo-wide", Version: 1}),
+		run("r2", "s2", "nodloop", ".", "0.7.0"),
+		run("r3", "s2", "nodloop", "/tmp/scratchpad", "0.7.0"),
+	}
+	item := func(id string, status knowledge.Status, labels trace.Labels) knowledge.Knowledge {
+		return knowledge.Knowledge{ID: id, Version: 1, Kind: knowledge.KindJudgment, Content: id, Status: status,
+			Run: &knowledge.RunScope{Producer: "session", Labels: labels}, Evidence: knowledge.Evidence{FeedbackTraceIDs: []string{"r2"}}}
+	}
+	items := knowledge.Set{
+		item("repo-wide", knowledge.StatusApproved, trace.Labels{"repo": {"nodloop"}}),
+		item("scratch", knowledge.StatusCandidate, trace.Labels{"dir": {"/tmp/scratchpad"}}),
+		item("unused", knowledge.StatusApproved, trace.Labels{"repo": {"nodloop"}, "dir": {"."}}),
+	}
+
+	got := loop.NewRuns(traces, nil).Scopes(items, traces)
+
+	assert.Equal(t, []loop.ScopeRow{{Version: "0.7.0", Items: 3, SingleSession: 1, NeverApplied: 1}}, got)
+}

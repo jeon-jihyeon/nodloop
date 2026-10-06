@@ -88,7 +88,7 @@ func (l *Ledger) Overlaps(ctx context.Context, id string) (Set, error) {
 	if err != nil {
 		return nil, err
 	}
-	return all.overlapsOf(id)
+	return all.OverlapsOf(id)
 }
 
 // The folder one version of id would join once approved
