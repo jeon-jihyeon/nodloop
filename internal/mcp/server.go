@@ -165,6 +165,8 @@ var tools = []tool{
 	newTool("knowledge_health", "Read how the runs that applied each knowledge version held up: verdicts, outcomes, retire and promotion candidates, "+
 		"versions past their review deadline and references that no longer resolve. "+
 		"Reads only. Retire, narrow and reaffirm stay with a named person", (*Server).knowledgeHealth),
+	newTool("check_call", "Check a tool call against the vetoes of approved knowledge before an agent runs it. "+
+		"Answers allow, block or ask with the veto and its reason. Pass the arguments of the call as input and a shell command under command", (*Server).checkCall),
 	newTool("reaffirm", "Record that a named person rechecked an approved knowledge version, which restarts its review deadline. "+
 		"Only call it when the user explicitly reaffirms and names themselves", (*Server).reaffirm),
 }
@@ -244,6 +246,8 @@ type proposeInput struct {
 	From     string              `json:"from,omitempty" jsonschema:"the trace id of a run the user corrected with edit or reject. Code fills producer, labels and evidence and the content is yours"`
 	Author   string              `json:"author,omitempty" jsonschema:"who proposed. claude by default because the conversation proposes"`
 	Veto     *vetoInput          `json:"veto,omitempty" jsonschema:"a tool call this judgment forbids. Approval makes it a guard veto that blocks the call. Only for kind judgment"`
+	// Lets a service name a tenant or another label value before its first run
+	NewLabels bool `json:"new_labels,omitempty" jsonschema:"true to allow label values no recorded run carries yet such as a new tenant"`
 }
 
 type vetoInput struct {

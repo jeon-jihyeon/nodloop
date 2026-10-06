@@ -636,3 +636,46 @@ func TestGuardCommandCheck(t *testing.T) {
 		})
 	}
 }
+
+// guard call answers an agent outside Claude Code with the vetoes the hook would apply
+func TestRunGuardCall(t *testing.T) {
+	valid, err := os.ReadFile("testdata/valid.yaml")
+	require.NoError(t, err)
+	home, project := t.TempDir(), t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(home, ".claude", "nodloop"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(home, ".claude", "nodloop", "vetoes.yaml"), valid, 0o600))
+	getenv := func(k string) string { return map[string]string{"HOME": home}[k] }
+	type want struct {
+		code   int
+		stdout string
+		// The start of the first stderr line
+		stderr string
+	}
+	tcs := []struct {
+		name string
+		args []string
+		want want
+	}{
+		{"a forbidden call is blocked with its reason", []string{"call", "--tool", "Bash", "--input", `{"command":"sed -i '' s/a/b/ f.txt"}`, "--dir", project},
+			want{0, `{"action":"block","reason":"sed -i and perl -i are forbidden. Use the Edit tool to modify files","veto":"no-sed-inplace"}` + "\n", ""}},
+		{"another call is allowed", []string{"call", "--tool", "Bash", "--input", `{"command":"ls"}`, "--dir", project},
+			want{0, `{"action":"allow"}` + "\n", ""}},
+		{"no tool is refused", []string{"call", "--dir", project},
+			want{1, "", "nodloop guard call: call: --tool is required"}},
+		{"an input that is no object is refused", []string{"call", "--tool", "Bash", "--input", `[1]`, "--dir", project},
+			want{1, "", "nodloop guard call: call input is not a JSON object"}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var stdout, stderr bytes.Buffer
+
+			code := runGuard(tc.args, getenv, os.Executable, time.Now, strings.NewReader(""), &stdout, &stderr)
+
+			assert.Equal(t, tc.want.code, code)
+			assert.Equal(t, tc.want.stdout, stdout.String())
+			line, _, _ := strings.Cut(stderr.String(), "\n")
+			assert.True(t, strings.HasPrefix(line, tc.want.stderr), stderr.String())
+		})
+	}
+}

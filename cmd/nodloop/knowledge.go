@@ -32,11 +32,12 @@ type knowledgeFlags struct {
 	feedbackIDs, outcomeIDs                                           listFlag
 	labels, except                                                    labelFlag
 	vetoTool, vetoField, vetoMatch, vetoUnless, vetoExample           string
-	stale                                                             bool
+	stale, newLabels                                                  bool
 }
 
 func (f *knowledgeFlags) bind(fs *flag.FlagSet) {
 	fs.BoolVar(&f.stale, "stale", false, "list: only the approved versions past their review deadline")
+	fs.BoolVar(&f.newLabels, "new-labels", false, "propose: allow label values no recorded run carries yet such as a new tenant")
 	fs.StringVar(&f.id, "id", "", "knowledge id. propose generates one when empty")
 	fs.IntVar(&f.version, "version", 0, "version for approve and retire")
 	fs.StringVar(&f.kind, "kind", "", "meaning or judgment")
@@ -81,14 +82,15 @@ func (f knowledgeFlags) draft() (knowledge.Knowledge, error) {
 		return knowledge.Knowledge{}, fmt.Errorf("propose: --evidence-outcome %w with --basis verified", errRequired)
 	}
 	return knowledge.Knowledge{
-		Run:      &knowledge.RunScope{Producer: f.producer, Labels: trace.Labels(f.labels), Except: trace.Labels(f.except)},
-		ID:       f.id,
-		Kind:     knowledge.Kind(f.kind),
-		Content:  f.content,
-		Evidence: knowledge.Evidence{FeedbackTraceIDs: feedbackIDs, OutcomeTraceIDs: f.outcomeIDs},
-		Basis:    knowledge.Basis(f.basis),
-		Author:   f.author,
-		Veto:     v,
+		Run:       &knowledge.RunScope{Producer: f.producer, Labels: trace.Labels(f.labels), Except: trace.Labels(f.except)},
+		ID:        f.id,
+		Kind:      knowledge.Kind(f.kind),
+		Content:   f.content,
+		Evidence:  knowledge.Evidence{FeedbackTraceIDs: feedbackIDs, OutcomeTraceIDs: f.outcomeIDs},
+		Basis:     knowledge.Basis(f.basis),
+		Author:    f.author,
+		Veto:      v,
+		NewLabels: f.newLabels,
 	}, nil
 }
 
@@ -258,7 +260,6 @@ func (f knowledgeFlags) runPropose(ctx context.Context, a app, stdout io.Writer)
 }
 
 // The draft with the producer and labels of a run a person corrected and the run as evidence
-// The producer and labels the flags gave win over those of the run
 func (c knowledgeCommand) fromRun(ctx context.Context, id string, draft knowledge.Knowledge) (knowledge.Knowledge, error) {
 	traces, err := c.app.traces()
 	if err != nil {
@@ -266,9 +267,6 @@ func (c knowledgeCommand) fromRun(ctx context.Context, id string, draft knowledg
 	}
 	tr, err := traces.Get(ctx, id)
 	if err != nil {
-		return knowledge.Knowledge{}, err
-	}
-	if err := tr.CheckRun(); err != nil {
 		return knowledge.Knowledge{}, err
 	}
 	store, err := c.app.feedback()
@@ -279,19 +277,7 @@ func (c knowledgeCommand) fromRun(ctx context.Context, id string, draft knowledg
 	if err != nil {
 		return knowledge.Knowledge{}, err
 	}
-	if latest := feedback.Records(verdicts).Latest(); len(latest) == 0 || !latest[0].Corrects() {
-		return knowledge.Knowledge{}, fmt.Errorf("%w: %s", errNotCorrected, id)
-	}
-	if draft.Run.Producer == "" {
-		draft.Run.Producer = tr.Producer
-	}
-	if len(draft.Run.Labels) == 0 {
-		draft.Run.Labels = tr.Labels
-	}
-	if !slices.Contains(draft.Evidence.FeedbackTraceIDs, id) {
-		draft.Evidence.FeedbackTraceIDs = append(draft.Evidence.FeedbackTraceIDs, id)
-	}
-	return draft, nil
+	return draft.From(tr, verdicts)
 }
 
 func (c knowledgeCommand) propose(ctx context.Context, draft knowledge.Knowledge) error {
@@ -301,10 +287,13 @@ func (c knowledgeCommand) propose(ctx context.Context, draft knowledge.Knowledge
 	return c.add(ctx, draft)
 }
 
-// Every cited run must be recorded and every label carried by some run of the producer
+// Every cited run must be recorded and every label carried by some run of the producer unless the draft allows new labels
 func (c knowledgeCommand) check(ctx context.Context, draft knowledge.Knowledge) error {
 	if err := c.app.checkRuns(ctx, draft.Evidence.TraceIDs()...); err != nil {
 		return err
+	}
+	if draft.NewLabels {
+		return nil
 	}
 	return c.recorded(ctx, *draft.Run)
 }

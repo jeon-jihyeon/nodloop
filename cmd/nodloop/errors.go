@@ -11,7 +11,6 @@ var (
 	errLabelFlag   = errors.New("bad --label")
 	errAppliedFlag = errors.New("bad --applied")
 	// A proposal from a run teaches what a person corrected
-	errNotCorrected     = errors.New("a proposal from a run needs an edit or a reject on it")
 	errConfigInvalid    = errors.New(configFile + " is not valid JSON")
 	errUnexpectedOutput = errors.New("unexpected output")
 	errWrongAnswer      = errors.New("wrong answer")
@@ -29,6 +28,7 @@ var (
 	errUnknownAction    = errors.New("unknown action")
 	errHoldoutInvalid   = errors.New("invalid holdout")
 	errDeferred         = errors.New("deferred to the conversation")
+	errCallInput        = errors.New("call input is not a JSON object")
 	errRequired         = errors.New("is required")
 	errUnknownTraceName = errors.New("unknown trace name")
 	errNoAction         = fmt.Errorf("an action %w", errRequired)
