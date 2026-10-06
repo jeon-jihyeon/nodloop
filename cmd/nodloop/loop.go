@@ -320,7 +320,7 @@ func counts(m map[string]int) string {
 	return strings.Join(parts, ", ")
 }
 
-// A first line of totals and one drafts line per plugin version and drafting path
+// A first line of totals, then one scope line per plugin version and one drafts line per plugin version and drafting path
 // One line per approved run item after them: applied, followed of judged and repeat by people then by a session, and settle
 // A last line says misapplied is not measured
 func (c loopCommand) runs(ctx context.Context) error {
@@ -332,6 +332,9 @@ func (c loopCommand) runs(ctx context.Context) error {
 	t := report.Totals(items)
 	fmt.Fprintf(c.out, "loop\truns %d\tjudged %d\tinferred %d\tcorrected %d\twaiting %d\tapproved %d\n",
 		t.Runs, t.Judged, t.Inferred, t.Corrected, t.Waiting, t.Approved)
+	for _, sc := range report.Scopes(items, ev.traces) {
+		fmt.Fprintf(c.out, "scope\t%s\titems %d\tsingle session %d\tnever applied %d\n", sc.Version, sc.Items, sc.SingleSession, sc.NeverApplied)
+	}
 	for _, d := range report.Drafts(items, ev.traces) {
 		fmt.Fprintf(c.out, "drafts\t%s\t%s\tdrafted %d\tapproved %d\tdropped %d\twaiting %d\tdecide %s\n",
 			d.Version, d.Path, d.Drafted, d.Approved, d.Dropped, d.Waiting, seconds(d.Decide))

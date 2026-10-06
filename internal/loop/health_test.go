@@ -120,3 +120,49 @@ func TestHistoryBrokenReferences(t *testing.T) {
 		{ID: "lost", Version: 1, Field: "knowledge", Reference: "x v1"},
 	}, h.BrokenReferences())
 }
+
+// An approved item no run applied for IdleDays is idle and one corrected again for its reason is contested
+// A contested item lists the approved items one run carries with it
+func TestHistoryLifetime(t *testing.T) {
+	gitC := knowledge.Ref{ID: "git-c", Version: 1}
+	later := monday.Add(loop.IdleDays * 24 * time.Hour)
+	type args struct {
+		// Runs that applied git-c and the inferred verdicts on them
+		runs     trace.Traces
+		verdicts feedback.Records
+		now      time.Time
+	}
+	type want struct {
+		idle, contested bool
+		compactWith     []string
+	}
+	inferred := func(id string, v feedback.Verdict, code feedback.ReasonCode) feedback.Feedback {
+		return feedback.Feedback{TraceID: id, Verdict: v, ReasonCode: code, Time: monday.Add(5 * time.Hour), Reviewer: feedback.ReviewerSession}
+	}
+	tcs := []struct {
+		name string
+		args args
+		want want
+	}{
+		{"an item applied after approval is neither", args{trace.Traces{sessionRun(t, "r1", 1, "nodloop", gitC)}, nil, later}, want{}},
+		{"an item no run applied since approval is idle once IdleDays passed", args{nil, nil, later}, want{idle: true}},
+		{"an item no run applied is not idle before IdleDays", args{nil, nil, monday.Add(time.Hour)}, want{}},
+		{"an inferred correction of a run that applied it makes it contested",
+			args{trace.Traces{sessionRun(t, "r1", 1, "nodloop", gitC)}, feedback.Records{inferred("r1", feedback.VerdictReject, feedback.ReasonForm)}, later},
+			want{contested: true, compactWith: []string{"pr-body"}}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			h := loop.New(tc.args.runs, tc.args.verdicts, nil, knowledge.Set{runItem("git-c", 1), runItem("pr-body", 1)})
+
+			got := h.Health(tc.args.now)
+
+			require.Len(t, got, 2)
+			assert.Equal(t, "git-c", got[0].ID)
+			assert.Equal(t, tc.want.idle, got[0].Idle)
+			assert.Equal(t, tc.want.contested, got[0].Contested)
+			assert.Equal(t, tc.want.compactWith, got[0].CompactWith)
+		})
+	}
+}

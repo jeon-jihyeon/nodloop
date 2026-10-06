@@ -68,6 +68,8 @@ type History struct {
 	knowledge    knowledge.Set
 	// The labels the runs of each producer carry
 	vocabulary map[string]trace.Labels
+	// The runs with every verdict so a lifetime signal sees what the conversation inferred too
+	runs Runs
 }
 
 type TraceStore interface {
@@ -113,6 +115,7 @@ func New(traces trace.Traces, verdicts feedback.Records, outcomes feedback.Outco
 	h := &History{
 		verdicts: map[string]feedback.Feedback{}, outcomes: map[string]feedback.Outcome{},
 		withFeedback: map[string]bool{}, withOutcome: map[string]bool{}, knowledge: items, vocabulary: map[string]trace.Labels{},
+		runs: NewRuns(traces, verdicts),
 	}
 	recorded := map[string]bool{}
 	for _, tr := range traces {

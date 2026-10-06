@@ -437,6 +437,7 @@ func TestRunReportLoop(t *testing.T) {
 
 	require.Equal(t, 0, code, stderr.String())
 	assert.Equal(t, "loop\truns 2\tjudged 1\tinferred 0\tcorrected 0\twaiting 0\tapproved 1\n"+
+		"scope\tunknown\titems 1\tsingle session 0\tnever applied 0\n"+
 		"git-c\tv1\tapplied 1\tfollowed 1 of 1\trepeat 0\tinferred followed 0 of 0\tinferred repeat 0\tsettle -\n"+
 		"misapplied\tnot measured: no label says which runs an item should have reached\n", stdout.String())
 }
