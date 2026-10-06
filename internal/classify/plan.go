@@ -41,10 +41,13 @@ type asked struct {
 	Name    string  `json:"name"`
 	Answers Answers `json:"answers,omitempty"`
 	Error   string  `json:"error,omitempty"`
+	// Milliseconds the member took so a cascade shows what each step cost
+	MS int64 `json:"ms,omitempty"`
 }
 
 // Answers the request through the members and records every member asked in one classify trace
 func (p *Plan) Classify(ctx context.Context, req Request) (Answers, error) {
+	start := p.now()
 	var answers Answers
 	var err error
 	var all asks
@@ -56,19 +59,21 @@ func (p *Plan) Classify(ctx context.Context, req Request) (Answers, error) {
 	default:
 		answers, all, err = p.ask(ctx, req, p.members[0])
 	}
-	return answers, errors.Join(err, p.record(ctx, req, all, answers, err))
+	return answers, errors.Join(err, p.record(ctx, req, all, answers, err, start))
 }
 
 // One member and its answers checked against the questions
 func (p *Plan) ask(ctx context.Context, req Request, m Member) (Answers, asks, error) {
+	start := p.now()
 	answers, err := m.Classifier.Classify(ctx, req)
+	ms := p.now().Sub(start).Milliseconds()
 	if err == nil {
 		err = answers.check(req.Questions)
 	}
 	if err != nil {
-		return nil, asks{{Name: m.Name, Error: err.Error()}}, fmt.Errorf("%s: %w", m.Name, err)
+		return nil, asks{{Name: m.Name, Error: err.Error(), MS: ms}}, fmt.Errorf("%s: %w", m.Name, err)
 	}
-	return answers, asks{{Name: m.Name, Answers: answers}}, nil
+	return answers, asks{{Name: m.Name, Answers: answers, MS: ms}}, nil
 }
 
 // The first member that answers every question at the threshold
@@ -107,7 +112,7 @@ func (p *Plan) parallel(ctx context.Context, req Request) (Answers, asks, error)
 
 // The trace of one request
 // The state is kept because it holds the draft the members judged and no other record keeps a refused draft
-func (p *Plan) record(ctx context.Context, req Request, all asks, answers Answers, failed error) error {
+func (p *Plan) record(ctx context.Context, req Request, all asks, answers Answers, failed error, start time.Time) error {
 	input, err := json.Marshal(struct {
 		State     string    `json:"state"`
 		Questions Questions `json:"questions"`
@@ -126,7 +131,7 @@ func (p *Plan) record(ctx context.Context, req Request, all asks, answers Answer
 	now := p.now()
 	tr := trace.Trace{
 		ID: trace.NewID(now), Name: trace.NameClassify, Subject: string(p.point), Ref: req.Ref, Time: now,
-		Input: input, Output: output,
+		Input: input, Output: output, DurationMS: now.Sub(start).Milliseconds(),
 	}
 	if failed != nil {
 		tr.Error = failed.Error()

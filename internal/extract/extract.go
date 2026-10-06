@@ -140,7 +140,7 @@ func (e *Extractor) extract(ctx context.Context, r Reaction, drafter ClaudeDraft
 // Refusals the drafter can fix by writing another draft
 type refusals []error
 
-var fixable = refusals{ErrRelationInvalid, ErrNotLesson, ErrKeyUnknown, ErrCriticRefused}
+var fixable = refusals{ErrRelationInvalid, ErrNotLesson, ErrCaseList, ErrKeyUnknown, ErrCriticRefused}
 
 func (rs refusals) has(err error) bool {
 	return slices.ContainsFunc(rs, func(r error) bool { return errors.Is(err, r) })
@@ -245,12 +245,13 @@ func (r Reaction) candidate(d Draft, related *knowledge.Knowledge, author string
 // The code checks of a draft
 // 1. the relation is valid and an add names no item while every other relation names an item the run reaches
 // 2. the content is a one sentence lesson that copies no long line of the output or the edit
-// 3. every key is one the run carries
+// 3. an update adds no case to the item it updates
+// 4. every key is one the run carries
 func (r Reaction) check(d Draft) error {
 	if !d.Relation.Valid() {
 		return fmt.Errorf("%w: %q", ErrRelationInvalid, d.Relation)
 	}
-	_, reached := r.Reached.Find(d.RelatesTo)
+	item, reached := r.Reached.Find(d.RelatesTo)
 	switch {
 	case d.Relation == RelationAdd && d.RelatesTo != "":
 		return fmt.Errorf("%w: add names %s", ErrRelationInvalid, d.RelatesTo)
@@ -259,6 +260,11 @@ func (r Reaction) check(d Draft) error {
 	}
 	if err := d.checkLesson(text(r.Run.Output), text(r.Verdict.Edited)); err != nil {
 		return err
+	}
+	if d.Relation == RelationUpdate {
+		if err := d.checkUpdate(item.Content); err != nil {
+			return err
+		}
 	}
 	for _, key := range d.Keys {
 		if _, ok := r.Run.Labels[key]; !ok {
@@ -301,8 +307,9 @@ func (r Reaction) String() string {
 	return b.String()
 }
 
-// The reaction and the draft as the critic reads them
+// The draft and the reaction as the critic reads them
+// The draft comes first since an encoder endpoint truncates a long state from its end
 func (r Reaction) critiquePrompt(d Draft) string {
 	draft, _ := json.Marshal(d)
-	return fmt.Sprintf("%s\n## Draft lesson\n\n%s\n", r, draft)
+	return fmt.Sprintf("## Draft lesson\n\n%s\n\n%s", draft, r)
 }

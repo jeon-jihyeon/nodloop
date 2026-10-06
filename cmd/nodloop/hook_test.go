@@ -665,7 +665,13 @@ func TestRunHookReaction(t *testing.T) {
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			states := make(chan string, 1)
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var req struct {
+					State string `json:"state"`
+				}
+				_ = json.NewDecoder(r.Body).Decode(&req)
+				states <- req.State
 				if tc.args.answer == "" {
 					http.Error(w, "down", http.StatusServiceUnavailable)
 					return
@@ -686,6 +692,7 @@ func TestRunHookReaction(t *testing.T) {
 			code := runHook([]string{"prompt"}, getenv, nil, time.Now, strings.NewReader(stdin), &stdout, &stderr)
 
 			assert.Equal(t, 0, code)
+			assert.True(t, strings.HasPrefix(<-states, "## User message\n\n"+message), "a truncating endpoint still reads the message")
 			var got struct {
 				Out struct {
 					Context string `json:"additionalContext"`
