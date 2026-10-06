@@ -1,0 +1,83 @@
+name: sdk-release
+
+# Publishes the SDKs of a release tag to PyPI and npm through trusted publishing, so no token is stored
+# The SDK fetches the binary of its own version, so it waits for the release archives first
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "release tag to publish, such as v0.6.6"
+        required: true
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  TAG: ${{ inputs.tag || github.ref_name }}
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdk/python
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+      - name: Wait for the release archives
+        run: |
+          for i in $(seq 60); do
+            gh release view "$TAG" --json assets --jq '.assets | length' | grep -qv '^0$' && exit 0
+            sleep 20
+          done
+          exit 1
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+      - uses: astral-sh/setup-uv@v10.2.0
+      - name: Check the version
+        run: test "v$(uv version --short)" = "$TAG"
+      - run: uv build
+      - run: uv publish --check-url https://pypi.org/simple/
+
+  typescript:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdk/typescript
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+      - name: Wait for the release archives
+        run: |
+          for i in $(seq 60); do
+            gh release view "$TAG" --json assets --jq '.assets | length' | grep -qv '^0$' && exit 0
+            sleep 20
+          done
+          exit 1
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - name: Check the version
+        run: test "v$(node -p 'require("./package.json").version')" = "$TAG"
+      - name: Skip a version npm already has
+        id: published
+        run: |
+          if npm view "nodloop@${TAG#v}" version >/dev/null 2>&1; then echo skip=true >> "$GITHUB_OUTPUT"; fi
+      - if: steps.published.outputs.skip != 'true'
+        run: npm ci
+      - if: steps.published.outputs.skip != 'true'
+        run: npm run build
+      - if: steps.published.outputs.skip != 'true'
+        run: npm publish --access public

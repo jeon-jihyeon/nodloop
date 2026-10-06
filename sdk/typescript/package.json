@@ -3,6 +3,12 @@
   "version": "0.6.6",
   "description": "Record AI runs and the verdicts people give on them, and hand the knowledge they approve to the next run in the same place",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jeon-jihyeon/nodloop.git",
+    "directory": "sdk/typescript"
+  },
+  "homepage": "https://github.com/jeon-jihyeon/nodloop#readme",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
