@@ -3,10 +3,13 @@ package main
 import (
 	"cmp"
 	"context"
+	"crypto/sha256"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -57,7 +60,10 @@ func runHook(args []string, getenv func(string) string, start starter, now func(
 		fmt.Fprintln(stderr, "nodloop hook:", err)
 		return 0
 	}
-	cmd := hookCommand{app: a, start: start, out: stdout, manual: getenv(envSession) == "manual", plugin: cmp.Or(getenv(envPluginVersion), buildVersion())}
+	cmd := hookCommand{
+		app: a, start: start, out: stdout, manual: getenv(envSession) == "manual",
+		plugin: cmp.Or(getenv(envPluginVersion), buildVersion()), holdout: a.cfg.holdout,
+	}
 	labels := workDir(in.Cwd).within(workDir(getenv(envProjectDir))).labels()
 	ctx := context.Background()
 	switch args[0] {
@@ -87,63 +93,62 @@ type hookCommand struct {
 	out    io.Writer
 	manual bool
 	// The version the launcher ran this binary for and else the build version
-	plugin string
+	plugin  string
+	holdout holdout
 }
 
 // The approved items of this place and the session note added to the prompt as context, or nothing when neither has a line
-// A failed read of the runs still adds the items
+// 1. a failed read of the runs still adds the items
+// 2. a turn the holdout draws gets the note and no item
 func (c hookCommand) prompt(ctx context.Context, sessionID string, labels trace.Labels) error {
 	all, err := c.all(ctx)
 	if err != nil {
 		return err
 	}
-	note, noteErr := c.note(ctx, sessionID, labels, all)
-	text := hookItems(all.For(sessionProducer, labels)).context(note)
+	runs, runsErr := c.sessionRuns(ctx, sessionID)
+	items := hookItems(all.For(sessionProducer, labels))
+	if c.holdout.withholds(sessionID, len(runs)) {
+		items = nil
+	}
+	text := items.context(c.note(sessionID, labels, all, runs))
 	if text == "" {
-		return noteErr
+		return runsErr
 	}
 	// Items quote commands such as a && b so the text stays as written
 	enc := json.NewEncoder(c.out)
 	enc.SetEscapeHTML(false)
 	return errors.Join(enc.Encode(map[string]any{"hookSpecificOutput": map[string]any{
 		"hookEventName": "UserPromptSubmit", "additionalContext": text,
-	}}), noteErr)
+	}}), runsErr)
 }
 
 // The previous run of the session and the candidates waiting in the place
 // 1. the first prompt counts every candidate waiting
 // 2. a later prompt counts the candidates drafted since the previous answer so each is asked about once in the session that corrected it
-func (c hookCommand) note(ctx context.Context, sessionID string, labels trace.Labels, all knowledge.Set) (sessionNote, error) {
+// 3. manual mode and a prompt without a session id get no note
+func (c hookCommand) note(sessionID string, labels trace.Labels, all knowledge.Set, runs trace.Traces) sessionNote {
 	if c.manual || sessionID == "" {
-		return sessionNote{}, nil
+		return sessionNote{}
 	}
-	run, err := c.previous(ctx, sessionID)
-	if err != nil {
-		return sessionNote{}, err
-	}
+	run := runs.Newest()
 	waiting := all.Waiting(sessionProducer, labels)
 	if run.ID != "" {
 		waiting = waiting.Since(run.Time)
 	}
-	return sessionNote{run: run.ID, waiting: len(waiting)}, nil
+	return sessionNote{run: run.ID, waiting: len(waiting)}
 }
 
-// The newest run of the session
-// The zero run when it has none
+// The runs of the session newest first
 // An empty id would match the runs of every session so it has none
-func (c hookCommand) previous(ctx context.Context, sessionID string) (trace.Trace, error) {
+func (c hookCommand) sessionRuns(ctx context.Context, sessionID string) (trace.Traces, error) {
 	if sessionID == "" {
-		return trace.Trace{}, nil
+		return nil, nil
 	}
 	store, err := c.app.traces()
 	if err != nil {
-		return trace.Trace{}, err
+		return nil, err
 	}
-	runs, err := store.List(ctx, trace.Filter{Name: trace.NameRun, SessionID: sessionID, Limit: 1})
-	if err != nil || len(runs) == 0 {
-		return trace.Trace{}, err
-	}
-	return runs[0], nil
+	return store.List(ctx, trace.Filter{Name: trace.NameRun, SessionID: sessionID})
 }
 
 // The answer as a run of the conversation with the items its prompt received, then the lesson of the previous run
@@ -155,20 +160,25 @@ func (c hookCommand) stop(ctx context.Context, sessionID string, labels trace.La
 	if strings.TrimSpace(string(answer)) == "" {
 		return nil
 	}
-	previous, err := c.previous(ctx, sessionID)
+	runs, err := c.sessionRuns(ctx, sessionID)
 	if err != nil {
 		return err
 	}
+	previous := runs.Newest()
 	all, err := c.all(ctx)
 	if err != nil {
 		return err
 	}
 	shown, _ := hookItems(all.For(sessionProducer, labels)).fitting()
-	applied := make([]knowledge.Ref, 0, len(shown))
+	refs := make([]knowledge.Ref, 0, len(shown))
 	for _, k := range shown {
-		applied = append(applied, knowledge.Ref{ID: k.ID, Version: k.Version})
+		refs = append(refs, knowledge.Ref{ID: k.ID, Version: k.Version})
 	}
-	input, err := json.Marshal(runInput{Applied: applied, Plugin: c.plugin})
+	in := runInput{Applied: refs, Plugin: c.plugin}
+	if c.holdout.withholds(sessionID, len(runs)) {
+		in.Applied, in.Withheld = []knowledge.Ref{}, refs
+	}
+	input, err := json.Marshal(in)
 	if err != nil {
 		return err
 	}
@@ -366,4 +376,19 @@ func repoName(root string) string {
 		return filepath.Base(main)
 	}
 	return filepath.Base(root)
+}
+
+// The share of turns whose prompt receives no item so report effect can compare turns with and without them
+type holdout float64
+
+// Whether the turn withholds every item
+// 1. the draw hashes the session and the count of its runs so the prompt hook and the stop hook of one turn agree
+// SHA-256 because the high bits of FNV barely move between turn numbers
+// 2. a turn without a session id is never drawn
+func (h holdout) withholds(sessionID string, turn int) bool {
+	if h <= 0 || sessionID == "" {
+		return false
+	}
+	sum := sha256.Sum256(fmt.Appendf(nil, "%s:%d", sessionID, turn))
+	return float64(binary.BigEndian.Uint64(sum[:8]))/math.MaxUint64 < float64(h)
 }

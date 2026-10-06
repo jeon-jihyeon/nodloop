@@ -96,6 +96,8 @@ commands:
                             approved item: runs that applied it, how many a person approved of
                             those judged, how many were corrected again for the reason that taught it, the same two counts
                             over verdicts a session inferred, and the time from that correction to the approval
+  report effect             Runs that applied items against runs whose turn the holdout of config holdout drew:
+                            runs, judged, corrected and corrected again for a reason an item was taught by
   report extract            Per plugin version of the corrected run and per drafting path: extractions by how they
                             ended, refused drafts by what refused them, and the critic questions answered false
   report critic             Per critic: drafts judged and how often a pass or a refusal matched what a person later
@@ -117,6 +119,8 @@ commands:
   mcp                       Serve the MCP tools on stdio. --list prints the tool names
   llm probe [--model <m>]   Send a minimal structured-output request through claude -p and print cost
   config approver [<name>]  Print the name saved in ~/.nodloop/config.json to approve under, or save one
+  config holdout [<share>]  Print or save the share of conversation turns whose prompt gets no item so report effect
+                            can compare. 0 by default
   classifier add <name> --url <u> [--model <m>] [--key-env <ENV>]
                             Add an endpoint of the Jev wire format, such as laya-serve at
                             http://localhost:8000/v1/systemone. The key is read from the env at call time and never saved

@@ -184,3 +184,11 @@ func NewID(now time.Time) string {
 
 // Traces in the order the store lists them
 type Traces []Trace
+
+// The first trace as a store lists them newest first and the zero trace when there is none
+func (ts Traces) Newest() Trace {
+	if len(ts) == 0 {
+		return Trace{}
+	}
+	return ts[0]
+}

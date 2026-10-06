@@ -219,6 +219,7 @@ var recordReports = map[string]func(c loopCommand, ctx context.Context) error{
 	"loop":    loopCommand.runs,
 	"extract": loopCommand.extractions,
 	"critic":  loopCommand.critics,
+	"effect":  loopCommand.effect,
 }
 
 func runRecordReport(args []string, show func(loopCommand, context.Context) error, getenv func(string) string, now func() time.Time, stdout, stderr io.Writer) int {
@@ -304,6 +305,19 @@ func (c loopCommand) critics(ctx context.Context) error {
 	for _, row := range ev.runs.Critics(ev.items, ev.traces) {
 		fmt.Fprintf(c.out, "critic\t%s\tjudged %d\tagree %d\tfalse pass %d\tfalse refuse %d\topen %d\n",
 			row.Critic, row.Judged, row.Agree, row.FalsePass, row.FalseRefuse, row.Open)
+	}
+	return nil
+}
+
+// One line per arm: runs that applied items and runs a holdout kept them from, judged, corrected and corrected for an item's reason
+func (c loopCommand) effect(ctx context.Context) error {
+	ev, err := c.evidence(ctx)
+	if err != nil {
+		return err
+	}
+	for _, row := range ev.runs.Effect(ev.items) {
+		fmt.Fprintf(c.out, "effect\t%s\truns %d\tjudged %d\tcorrected %d\tsame reason %d\n",
+			row.Arm, row.Runs, row.Judged, row.Corrected, row.SameReason)
 	}
 	return nil
 }

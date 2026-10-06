@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/jeon-jihyeon/nodloop/internal/classify"
@@ -24,6 +25,7 @@ type config struct {
 	home        homeDir
 	classifiers classify.Endpoints
 	decisions   classify.Decisions
+	holdout     holdout
 }
 
 // The record directory as the flag, then NODLOOP_RECORD_DIR, then config.json, then the default under home
@@ -42,7 +44,7 @@ func resolveConfig(getenv func(string) string, recordDir string) (config, error)
 	if err != nil {
 		return config{}, err
 	}
-	return config{recordDir: records, home: h, classifiers: uc.Classifiers, decisions: uc.Decisions}, nil
+	return config{recordDir: records, home: h, classifiers: uc.Classifiers, decisions: uc.Decisions, holdout: holdout(uc.Holdout)}, nil
 }
 
 // The record flag a command pasted into another shell needs to read these records
@@ -73,28 +75,74 @@ func recordDirOf(flag, env, configured, fallback string) (string, error) {
 	return "", nil
 }
 
-// config approver prints the saved name and config approver <name> saves one
+// config approver and config holdout print the saved value and save the value given after them
 func runConfig(args []string, getenv func(string) string, stdout, stderr io.Writer) int {
-	if len(args) == 0 || args[0] != "approver" {
-		return fail(stderr, "config", fmt.Errorf("%w %q", errUnknownAction, strings.Join(args, " ")))
+	if len(args) == 0 {
+		return fail(stderr, "config", errNoAction)
 	}
 	h := homeDir(getenv("HOME"))
 	if h == "" {
 		return fail(stderr, "config", errHomeUnknown)
 	}
-	if name := strings.TrimSpace(strings.Join(args[1:], " ")); name != "" {
-		if err := h.saveApprover(name); err != nil {
-			return fail(stderr, "config", err)
-		}
-		fmt.Fprintln(stdout, name)
-		return 0
+	cmd := configCommand{home: h, out: stdout}
+	value := strings.TrimSpace(strings.Join(args[1:], " "))
+	var err error
+	switch args[0] {
+	case "approver":
+		err = cmd.approver(value)
+	case "holdout":
+		err = cmd.holdout(value)
+	default:
+		err = fmt.Errorf("%w %q", errUnknownAction, args[0])
 	}
-	uc, err := h.readConfig()
 	if err != nil {
 		return fail(stderr, "config", err)
 	}
-	if uc.Approver != "" {
-		fmt.Fprintln(stdout, uc.Approver)
-	}
 	return 0
+}
+
+type configCommand struct {
+	home homeDir
+	out  io.Writer
+}
+
+// Prints the saved name or saves the one given
+func (c configCommand) approver(name string) error {
+	if name != "" {
+		if err := c.home.save("approver", name); err != nil {
+			return err
+		}
+		fmt.Fprintln(c.out, name)
+		return nil
+	}
+	uc, err := c.home.readConfig()
+	if err != nil {
+		return err
+	}
+	if uc.Approver != "" {
+		fmt.Fprintln(c.out, uc.Approver)
+	}
+	return nil
+}
+
+// Prints the saved share or saves the one given
+// A share of 1 or more would withhold every item so it is refused
+func (c configCommand) holdout(value string) error {
+	if value == "" {
+		uc, err := c.home.readConfig()
+		if err != nil {
+			return err
+		}
+		fmt.Fprintln(c.out, strconv.FormatFloat(uc.Holdout, 'g', -1, 64))
+		return nil
+	}
+	share, err := strconv.ParseFloat(value, 64)
+	if err != nil || share < 0 || share >= 1 {
+		return fmt.Errorf("%w: %q. Give a share from 0 up to but not including 1, such as 0.1", errHoldoutInvalid, value)
+	}
+	if err := c.home.save("holdout", share); err != nil {
+		return err
+	}
+	fmt.Fprintln(c.out, strconv.FormatFloat(share, 'g', -1, 64))
+	return nil
 }

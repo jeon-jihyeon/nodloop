@@ -239,3 +239,36 @@ func TestRunsScopes(t *testing.T) {
 
 	assert.Equal(t, []loop.ScopeRow{{Version: "0.7.0", Items: 3, SingleSession: 1, NeverApplied: 1}}, got)
 }
+
+func TestRunsEffect(t *testing.T) {
+	gitC := knowledge.Ref{ID: "git-c", Version: 1}
+	run := func(id string, applied, withheld []knowledge.Ref) trace.Trace {
+		in, _ := json.Marshal(map[string]any{"applied": applied, "withheld": withheld})
+		return trace.Trace{ID: id, Name: trace.NameRun, Producer: "session", Input: in}
+	}
+	none := []knowledge.Ref{}
+	traces := trace.Traces{
+		run("taught", none, nil),
+		run("a1", []knowledge.Ref{gitC}, nil), run("a2", []knowledge.Ref{gitC}, nil), run("a3", []knowledge.Ref{gitC}, nil),
+		run("w1", none, []knowledge.Ref{gitC}), run("w2", none, []knowledge.Ref{gitC}),
+		run("bare", none, nil),
+	}
+	reject := func(id string, code feedback.ReasonCode) feedback.Feedback {
+		return feedback.Feedback{TraceID: id, Verdict: feedback.VerdictReject, ReasonCode: code, Reviewer: feedback.ReviewerSession}
+	}
+	verdicts := feedback.Records{
+		reject("taught", feedback.ReasonForm),
+		{TraceID: "a1", Verdict: feedback.VerdictApprove, Reviewer: feedback.ReviewerSession},
+		reject("a2", feedback.ReasonFact),
+		reject("w1", feedback.ReasonForm), reject("w2", feedback.ReasonForm),
+		reject("bare", feedback.ReasonForm),
+	}
+	items := knowledge.Set{{ID: "git-c", Version: 1, Status: knowledge.StatusApproved, Evidence: knowledge.Evidence{FeedbackTraceIDs: []string{"taught"}}}}
+
+	got := loop.NewRuns(traces, verdicts).Effect(items)
+
+	assert.Equal(t, []loop.EffectRow{
+		{Arm: "applied", Runs: 3, Judged: 2, Corrected: 1, SameReason: 0},
+		{Arm: "withheld", Runs: 2, Judged: 2, Corrected: 2, SameReason: 2},
+	}, got)
+}
