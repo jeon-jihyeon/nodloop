@@ -164,7 +164,7 @@ func TestRunHookPrompt(t *testing.T) {
 		{
 			"the first prompt counts the lessons waiting in the place",
 			args{stdin: `{"session_id":"s1","cwd":"{repo}"}`, content: "use git -C", waiting: true},
-			want{context: []string{"nodloop: lessons drafted from earlier corrections in this place wait for approval: 1."}},
+			want{context: []string{"nodloop: knowledge candidates for this place wait for approval: 1."}},
 		},
 		{
 			"manual adds the items and no note",
@@ -307,9 +307,12 @@ func TestRunHookStop(t *testing.T) {
 // The stop hook starts the extraction of the previous run only when the conversation inferred a correction of it
 func TestRunHookStopExtract(t *testing.T) {
 	type args struct {
-		// The reviewer of a reject on the first answer, none when empty
+		// The reviewer of a reject on the first answer
+		// None when empty
 		reviewer string
-		session  string
+		// The verdict of a person recorded on the first answer before that reject
+		person  string
+		session string
 		// Answers after the first one
 		stops int
 		// The start fails
@@ -329,6 +332,7 @@ func TestRunHookStopExtract(t *testing.T) {
 		{"an inferred correction of the previous answer is extracted", args{reviewer: "session", stops: 1}, want{extracts: true}},
 		{"a later answer does not extract it again", args{reviewer: "session", stops: 2}, want{extracts: true}},
 		{"a person's verdict is left to the nod skill", args{reviewer: "ann", stops: 1}, want{}},
+		{"a person's approve wins over a later inferred reject", args{reviewer: "session", person: "approve", stops: 1}, want{}},
 		{"an answer without a verdict extracts nothing", args{stops: 1}, want{}},
 		{"manual extracts nothing", args{reviewer: "session", session: "manual", stops: 1}, want{}},
 		{"a correction the turn already drafted is not extracted again", args{reviewer: "session", stops: 1, drafted: true}, want{}},
@@ -361,6 +365,11 @@ func TestRunHookStopExtract(t *testing.T) {
 			first, err := store.List(context.Background(), trace.Filter{Name: trace.NameRun, SessionID: "s1"})
 			require.NoError(t, err)
 			require.Len(t, first, 1)
+			if tc.args.person != "" {
+				var stderr bytes.Buffer
+				require.Equal(t, 0, runFeedback([]string{"add", "--trace", first[0].ID, "--verdict", tc.args.person, "--reviewer", "ann"},
+					getenv, time.Now, &bytes.Buffer{}, &stderr), stderr.String())
+			}
 			if tc.args.reviewer != "" {
 				var stderr bytes.Buffer
 				require.Equal(t, 0, runFeedback([]string{"add", "--trace", first[0].ID, "--verdict", "reject", "--reason-code", "form",

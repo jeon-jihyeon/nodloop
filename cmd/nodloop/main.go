@@ -23,10 +23,12 @@ commands:
                             Record one output of any producer as a run and print its id for feedback.
                             Output that is not JSON is kept as text
   hook prompt | hook stop   The Claude Code conversation hooks the plugin registers. prompt adds the approved items of
-                            producer session for the repo and dir of cwd as context, then names the previous run of the
-                            session so the conversation records the user's verdict on it, or on the first prompt counts
-                            the drafts waiting for approval. stop records the answer as a run and in the background drafts
-                            the lesson of the previous run when the conversation recorded a correction of it.
+                            producer session for the repo and dir of the place as context. The place is cwd while it lies
+                            inside CLAUDE_PROJECT_DIR and that directory otherwise. It then names the previous run of the
+                            session so the conversation records the user's verdict on it and drafts a correction in the same
+                            turn, and counts the candidates waiting for approval: all of them on the first prompt and those
+                            made since the previous answer later. stop records the answer as a run and in the background
+                            drafts the lesson of the previous run when the conversation recorded a correction no record cites.
                             Both always exit 0 and do nothing when NODLOOP_SESSION is off. manual leaves out the note
   feedback list [--trace <id>] [--verdict <v>] [--reviewer <r>] [--limit <n>]
                             List feedback newest first with the reason code or a dash after the verdict
@@ -43,8 +45,9 @@ commands:
                             a recorded run carries. --from fills producer, labels and evidence from a run a person
                             corrected. A judgment with a veto becomes a guard veto once approved
   knowledge extract --from <run id> [--model <m>] [--author <a>]
-                            Draft through claude -p what a correction of the run taught, check it with a second call against
-                            the items the run reaches, and propose an add or an update. A duplicate or a conflict names the item
+                            Draft through claude -p what a correction of the run taught, check it against the items the run
+                            reaches with the critic, a second claude call or the classifiers set up for the critic point, and
+                            propose an add or an update. A duplicate or a conflict names the item
   knowledge for --producer <p> [--label <key=value>]
                             The approved items a run of the producer with these labels applies, and their size
   knowledge waiting --producer <p> [--label <key=value>]
@@ -84,9 +87,10 @@ commands:
                             Runs without a verdict in the order to check them, with a random audit share
   report online [--since <RFC3339>]
                             Weekly verdict rates, waits and edit widths, and the runs with and without knowledge compared
-  report loop               Per approved item: runs that applied it, how many a person approved of those judged,
-                            how many were corrected again for the reason that taught it, and the time from that
-                            correction to the approval
+  report loop               A totals line of runs, verdicts by a person and by a session, corrections, candidates waiting
+                            and approved items. Then per approved item: runs that applied it, how many a person approved of
+                            those judged, how many were corrected again for the reason that taught it, the same two counts
+                            over verdicts a session inferred, and the time from that correction to the approval
   trace list [--name <n>] [--session <id>] [--subject <s>] [--limit <n>]
                             List traces newest first
   trace show <id>           Print one trace as JSON

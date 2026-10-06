@@ -9,7 +9,8 @@ import (
 	"github.com/jeon-jihyeon/nodloop/internal/llm"
 )
 
-// Drafts the lesson of a corrected run through the model, has a second call criticize it and proposes an add or an update
+// Drafts the lesson of a corrected run through the model and proposes an add or an update
+// The critic is the claude critic or the classifiers the user set up for the critic point
 func (f knowledgeFlags) runExtract(ctx context.Context, a app, client llm.Client, getenv func(string) string, stdout io.Writer) error {
 	if f.from == "" {
 		return fmt.Errorf("extract: --from %w", errRequired)

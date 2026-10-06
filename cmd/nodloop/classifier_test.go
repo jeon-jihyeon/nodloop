@@ -59,7 +59,8 @@ func TestRunClassifier(t *testing.T) {
 			want{0, "classifier\tlaya\t" + layaURL + "\npoint\tcritic\tparallel\tlaya,claude\tcombine any\n", ""}},
 		{"reset leaves claude alone", args{[][]string{add, {"use", "critic", "--members", "laya"}}, []string{"reset", "critic"}},
 			want{0, "point\tcritic\tclaude (default)\n", ""}},
-		{"a removed endpoint leaves the list", args{[][]string{add}, []string{"remove", "laya"}}, want{0, "", ""}},
+		{"a removed endpoint leaves the list", args{[][]string{add, {"remove", "laya"}}, []string{"list"}},
+			want{0, "point\tcritic\tclaude (default)\n", ""}},
 		{"claude is reserved", args{nil, []string{"add", "claude", "--url", layaURL}},
 			want{1, "", "nodloop classifier: classify: invalid endpoint: the name \"claude\" is reserved"}},
 		{"use without members is refused", args{nil, []string{"use", "critic"}},
@@ -100,7 +101,7 @@ func TestRunClassifier(t *testing.T) {
 	}
 }
 
-// The other keys of config.json stay as written
+// The values of the other keys of config.json are kept
 func TestRunClassifierKeepsConfig(t *testing.T) {
 	home := homeDir(t.TempDir())
 	require.NoError(t, os.MkdirAll(home.dir(), 0o700))
@@ -136,7 +137,8 @@ func TestRunClassifierProbe(t *testing.T) {
 	assert.Equal(t, "Bearer secret", auth)
 }
 
-// extract asks the critic setup and records its answers, and asks claude alone with no record when nothing is set up
+// extract asks the critic setup and records its answers
+// It asks claude alone with no record when nothing is set up
 func TestRunKnowledgeExtractClassifier(t *testing.T) {
 	at := time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC)
 	draft := `{"relation":"add","kind":"judgment","content":"Run git with -C <dir> instead of changing into the directory","keys":["repo"]}`

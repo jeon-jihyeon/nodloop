@@ -40,7 +40,7 @@ type Totals struct {
 	Inferred int `json:"inferred"`
 	// Judged or inferred runs whose verdict corrects
 	Corrected int `json:"corrected"`
-	// Candidates waiting for approval outside a compaction
+	// Run candidates waiting for approval outside a compaction
 	Waiting int `json:"waiting"`
 	// Approved run items
 	Approved int `json:"approved"`
@@ -92,7 +92,7 @@ func NewRuns(traces trace.Traces, verdicts feedback.Records) Runs {
 	return r
 }
 
-// The runs, their verdicts and the run items of the set
+// The runs and their verdicts and the run items of the set
 func (r Runs) Totals(items knowledge.Set) Totals {
 	t := Totals{Runs: len(r.ids)}
 	for id, fb := range r.verdicts {

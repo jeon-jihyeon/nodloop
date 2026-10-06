@@ -125,7 +125,8 @@ func (c hookCommand) note(ctx context.Context, sessionID string, labels trace.La
 	return sessionNote{run: run.ID, waiting: len(waiting)}, nil
 }
 
-// The newest run of the session, the zero run when it has none
+// The newest run of the session
+// The zero run when it has none
 // An empty id would match the runs of every session so it has none
 func (c hookCommand) previous(ctx context.Context, sessionID string) (trace.Trace, error) {
 	if sessionID == "" {
@@ -145,7 +146,8 @@ func (c hookCommand) previous(ctx context.Context, sessionID string) (trace.Trac
 // The answer as a run of the conversation with the items its prompt received, then the lesson of the previous run
 // 1. an empty answer such as an interrupted turn records nothing
 // 2. the previous run is the one the prompt hook named this turn, so each run is looked at for a lesson once
-// 3. a correction the conversation already drafted in this turn is not drafted again in the background
+// 3. a correction a knowledge record already cites is not drafted again in the background
+// The conversation usually drafted it in the same turn
 func (c hookCommand) stop(ctx context.Context, sessionID string, labels trace.Labels, answer reply) error {
 	if strings.TrimSpace(string(answer)) == "" {
 		return nil
@@ -185,8 +187,8 @@ func (c hookCommand) stop(ctx context.Context, sessionID string, labels trace.La
 	return c.extract(ctx, previous.ID)
 }
 
-// The extraction of the run started when its latest verdict is a correction the conversation inferred
-// 1. a person's verdict is left to the nod skill, which drafts in the conversation with that person
+// The extraction of the run started when the conversation alone judged it and its latest verdict corrects it
+// 1. a run with a verdict of a person is left to the nod skill even after a later inferred one because the person's verdict wins
 // 2. it runs as `knowledge extract` in a process of its own because Claude Code may end an async hook when it exits
 func (c hookCommand) extract(ctx context.Context, runID string) error {
 	if c.manual || runID == "" {
@@ -200,8 +202,12 @@ func (c hookCommand) extract(ctx context.Context, runID string) error {
 	if err != nil {
 		return err
 	}
-	latest := feedback.Records(list).Latest()
-	if len(latest) == 0 || !latest[0].Implicit() || !latest[0].Corrects() {
+	records := feedback.Records(list)
+	if len(records.Human()) > 0 {
+		return nil
+	}
+	latest := records.Latest()
+	if len(latest) == 0 || !latest[0].Corrects() {
 		return nil
 	}
 	return c.start([]string{"knowledge", "extract", "--from", runID})
@@ -276,11 +282,11 @@ type sessionNote struct {
 const reactionNote = "nodloop: your previous answer in this conversation is run %s. " +
 	"If the user's message says that answer was wrong or right, first call the nodloop feedback tool on trace %s with reviewer session: " +
 	"verdict reject with what was wrong in the user's words and a reason code, or approve. " +
-	"After a reject, do what the user asked, then invoke the nodloop:nod skill and follow its section Draft the correction of this turn. " +
+	"After a reject or an edit, do what the user asked, then invoke the nodloop:nod skill and follow its section Draft the correction of this turn. " +
 	"Skip all of it for a new request, a follow up, a change of topic, or when the user calls /nodloop:nod.\n"
 
 // The review starts without /nodloop:nod and only the user's answer approves or retires a draft
-const waitingNote = "nodloop: lessons drafted from earlier corrections in this place wait for approval: %d. " +
+const waitingNote = "nodloop: knowledge candidates for this place wait for approval: %d. " +
 	"After your answer, review them without waiting for /nodloop:nod: invoke the nodloop:nod skill and follow its section " +
 	"Review the waiting drafts, which asks the user about each draft.\n"
 

@@ -63,7 +63,7 @@ func (p *Plan) Classify(ctx context.Context, req Request) (Answers, error) {
 func (p *Plan) ask(ctx context.Context, req Request, m Member) (Answers, asks, error) {
 	answers, err := m.Classifier.Classify(ctx, req)
 	if err == nil {
-		err = answers.Check(req.Questions)
+		err = answers.check(req.Questions)
 	}
 	if err != nil {
 		return nil, asks{{Name: m.Name, Error: err.Error()}}, fmt.Errorf("%s: %w", m.Name, err)
@@ -71,7 +71,8 @@ func (p *Plan) ask(ctx context.Context, req Request, m Member) (Answers, asks, e
 	return answers, asks{{Name: m.Name, Answers: answers}}, nil
 }
 
-// The first member that answers every question at the threshold, or the last member
+// The first member that answers every question at the threshold
+// The last member answers when none does
 // A member that fails passes the request on like one below the threshold
 func (p *Plan) cascade(ctx context.Context, req Request) (Answers, asks, error) {
 	var all asks
@@ -79,7 +80,7 @@ func (p *Plan) cascade(ctx context.Context, req Request) (Answers, asks, error) 
 		answers, one, err := p.ask(ctx, req, m)
 		all = append(all, one...)
 		last := i == len(p.members)-1
-		if last || (err == nil && answers.Confident(p.setup.Threshold)) {
+		if last || (err == nil && answers.confident(p.setup.Threshold)) {
 			return answers, all, err
 		}
 	}
@@ -105,12 +106,13 @@ func (p *Plan) parallel(ctx context.Context, req Request) (Answers, asks, error)
 }
 
 // The trace of one request
-// The state is left out because the ref holds it
+// The state is kept because it holds the draft the members judged and no other record keeps a refused draft
 func (p *Plan) record(ctx context.Context, req Request, all asks, answers Answers, failed error) error {
 	input, err := json.Marshal(struct {
+		State     string    `json:"state"`
 		Questions Questions `json:"questions"`
 		Setup     Setup     `json:"setup"`
-	}{req.Questions, p.setup})
+	}{req.State, req.Questions, p.setup})
 	if err != nil {
 		return err
 	}
