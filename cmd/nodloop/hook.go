@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -56,7 +57,7 @@ func runHook(args []string, getenv func(string) string, start starter, now func(
 		fmt.Fprintln(stderr, "nodloop hook:", err)
 		return 0
 	}
-	cmd := hookCommand{app: a, start: start, out: stdout, manual: getenv(envSession) == "manual"}
+	cmd := hookCommand{app: a, start: start, out: stdout, manual: getenv(envSession) == "manual", plugin: cmp.Or(getenv(envPluginVersion), buildVersion())}
 	labels := workDir(in.Cwd).within(workDir(getenv(envProjectDir))).labels()
 	ctx := context.Background()
 	switch args[0] {
@@ -85,6 +86,8 @@ type hookCommand struct {
 	start  starter
 	out    io.Writer
 	manual bool
+	// The version the launcher ran this binary for and else the build version
+	plugin string
 }
 
 // The approved items of this place and the session note added to the prompt as context, or nothing when neither has a line
@@ -165,7 +168,7 @@ func (c hookCommand) stop(ctx context.Context, sessionID string, labels trace.La
 	for _, k := range shown {
 		applied = append(applied, knowledge.Ref{ID: k.ID, Version: k.Version})
 	}
-	input, err := json.Marshal(runInput{Applied: applied})
+	input, err := json.Marshal(runInput{Applied: applied, Plugin: c.plugin})
 	if err != nil {
 		return err
 	}

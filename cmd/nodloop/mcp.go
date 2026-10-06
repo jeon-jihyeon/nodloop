@@ -118,5 +118,5 @@ func (o mcpOpen) open(context.Context) (*mcp.Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	return mcp.New(traces, verdicts, outcomes, ledger, compactor, extract.New(ledger, traces, verdicts), o.now, o.session, executable(), a.cfg.recordArgs()), nil
+	return mcp.New(traces, verdicts, outcomes, ledger, compactor, extract.New(ledger, traces, verdicts, o.now), o.now, o.session, executable(), a.cfg.recordArgs()), nil
 }

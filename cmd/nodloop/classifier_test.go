@@ -193,6 +193,9 @@ func TestRunKnowledgeExtractClassifier(t *testing.T) {
 			recorded, err := traces.List(context.Background(), trace.Filter{Name: trace.NameClassify})
 			require.NoError(t, err)
 			assert.Len(t, recorded, tc.want.classified)
+			var report bytes.Buffer
+			require.Equal(t, 0, runReport([]string{"extract"}, getenv, now, &report, &stderr), stderr.String())
+			assert.Equal(t, "extract\tunknown\tmodel\textractions 1\tproposed 1\trefused drafts -\tquestions false -\n", report.String())
 		})
 	}
 }
