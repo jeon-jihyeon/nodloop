@@ -147,3 +147,37 @@ func TestRunsExtractions(t *testing.T) {
 			Refusals: map[string]int{"model": 1}, Questions: map[string]int{}},
 	}, got)
 }
+
+func TestRunsDrafts(t *testing.T) {
+	at := time.Date(2026, 10, 6, 0, 0, 0, 0, time.UTC)
+	run := func(id, plugin string) trace.Trace {
+		in, _ := json.Marshal(map[string]any{"applied": []knowledge.Ref{}, "plugin": plugin})
+		return trace.Trace{ID: id, Name: trace.NameRun, Producer: "session", Input: in}
+	}
+	traces := trace.Traces{
+		run("r1", "0.7.0"), run("r2", "0.7.0"), run("r3", ""),
+		{ID: "x1", Name: trace.NameExtract, Subject: "conversation", Ref: "r1", Output: json.RawMessage(`{"conclusion":"proposed","candidate":{"id":"a","version":1}}`)},
+		{ID: "x2", Name: trace.NameExtract, Subject: "conversation", Ref: "r2", Output: json.RawMessage(`{"conclusion":"proposed","candidate":{"id":"b","version":1}}`)},
+	}
+	record := func(id string, status knowledge.Status, after time.Duration, drafted bool, cites string) knowledge.Knowledge {
+		return knowledge.Knowledge{ID: id, Version: 1, Status: status, Time: at.Add(after), Drafted: drafted,
+			Evidence: knowledge.Evidence{FeedbackTraceIDs: []string{cites}}}
+	}
+	// Newest first as the store lists them
+	items := knowledge.Set{
+		record("a", knowledge.StatusRetired, 5*time.Hour, true, "r1"),
+		record("b", knowledge.StatusRetired, 3*time.Hour, true, "r2"),
+		record("a", knowledge.StatusApproved, 2*time.Hour, true, "r1"),
+		record("c", knowledge.StatusCandidate, time.Hour, true, "r3"),
+		record("hand", knowledge.StatusCandidate, time.Hour, false, "r3"),
+		record("b", knowledge.StatusCandidate, time.Hour, true, "r2"),
+		record("a", knowledge.StatusCandidate, 0, true, "r1"),
+	}
+
+	got := loop.NewRuns(traces, nil).Drafts(items, traces)
+
+	assert.Equal(t, []loop.DraftRow{
+		{Version: "0.7.0", Path: "conversation", Drafted: 2, Approved: 1, Dropped: 1, Waiting: 0, Decide: 2 * time.Hour},
+		{Version: "unknown", Path: "unknown", Drafted: 1, Waiting: 1},
+	}, got)
+}

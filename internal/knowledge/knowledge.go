@@ -291,6 +291,14 @@ func (e Evidence) TraceIDs() []string {
 	return slices.Concat(e.FeedbackTraceIDs, e.OutcomeTraceIDs)
 }
 
+// The run whose feedback taught the item first and empty when none did
+func (e Evidence) FirstFeedback() string {
+	if len(e.FeedbackTraceIDs) == 0 {
+		return ""
+	}
+	return e.FeedbackTraceIDs[0]
+}
+
 func (e Evidence) empty() bool {
 	return len(e.FeedbackTraceIDs) == 0 && len(e.OutcomeTraceIDs) == 0 && len(e.ParagraphIDs) == 0 && len(e.Knowledge) == 0
 }
