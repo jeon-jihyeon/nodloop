@@ -1,4 +1,5 @@
 import pytest
+from mcp.shared.exceptions import MCPError
 
 from nodloop import Client, ToolError
 
@@ -54,3 +55,23 @@ async def test_check_call(binary: str, records: str, tool: str, arguments: dict,
 
     assert decision.action == action
     assert decision.allowed == (action == "allow")
+
+
+async def test_server(server: tuple[str, str]) -> None:
+    url, key = server
+    async with Client(url=url, key=key) as c:
+        run = await c.record("support-bot", "Here are the refund steps", ACME)
+        await c.judge(run, "reject", reason="the refund window was missing")
+        proposed = await c.propose("judgment", "Quote the refund window", from_run=run, item_id="refund-window")
+        approved = await c.approve(proposed["id"], proposed["version"], "mallory")
+        acme = await c.knowledge("support-bot", ACME)
+
+    assert approved["approver"] == "ann"
+    assert [i.id for i in acme.items] == ["refund-window"]
+
+
+async def test_server_refuses_a_wrong_key(server: tuple[str, str]) -> None:
+    url, _ = server
+    with pytest.raises(MCPError):
+        async with Client(url=url, key="nl_wrong") as c:
+            await c.knowledge("support-bot", ACME)

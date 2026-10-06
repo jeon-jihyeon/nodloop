@@ -4,7 +4,7 @@ version = "0.6.6"
 description = "Record AI runs and the verdicts people give on them, and hand the knowledge they approve to the next run in the same place"
 license = "MIT"
 requires-python = ">=3.10"
-dependencies = ["mcp>=1.25"]
+dependencies = ["mcp>=2.0"]
 
 [project.optional-dependencies]
 langchain = ["langchain>=1.0"]

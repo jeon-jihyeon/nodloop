@@ -57,7 +57,7 @@ type reaffirmInput struct {
 }
 
 func (s *Server) reaffirm(ctx context.Context, _ *sdk.CallToolRequest, in reaffirmInput) (*sdk.CallToolResult, any, error) {
-	k, err := s.ledger.Reaffirm(ctx, in.ID, in.Version, in.Approver)
+	k, err := s.ledger.Reaffirm(ctx, in.ID, in.Version, s.approver(in.Approver))
 	if err != nil {
 		return nil, nil, err
 	}
