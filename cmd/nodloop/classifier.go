@@ -42,7 +42,10 @@ func runClassifier(args []string, getenv func(string) string, now func() time.Ti
 	case "add":
 		err = cmd.add(name, classify.Endpoint{URL: f.url, Model: f.model, KeyEnv: f.keyEnv})
 	case "use":
-		err = f.use(cmd, classify.Point(name))
+		var setup classify.Setup
+		if setup, err = f.setup(); err == nil {
+			err = cmd.use(classify.Point(name), setup)
+		}
 	case "reset":
 		err = cmd.reset(classify.Point(name))
 	case "remove":
@@ -77,15 +80,17 @@ func (f *classifierFlags) bind(fs *flag.FlagSet) {
 	fs.StringVar(&f.combine, "combine", "", "use: parallel combines all or any. all when empty")
 }
 
-func (f classifierFlags) use(cmd classifierCommand, point classify.Point) error {
+// The setup the use flags name
+// Members are split at commas and trimmed so `laya, claude` reads as two names
+func (f classifierFlags) setup() (classify.Setup, error) {
 	if f.members == "" {
-		return fmt.Errorf("use: --members %w", errRequired)
+		return classify.Setup{}, fmt.Errorf("use: --members %w", errRequired)
 	}
-	setup, err := classify.NewSetup(strings.Split(f.members, ","), classify.Mode(f.mode), f.threshold, classify.Combine(f.combine))
-	if err != nil {
-		return err
+	members := strings.Split(f.members, ",")
+	for i, m := range members {
+		members[i] = strings.TrimSpace(m)
 	}
-	return cmd.use(point, setup)
+	return classify.NewSetup(members, classify.Mode(f.mode), f.threshold, classify.Combine(f.combine))
 }
 
 type classifierCommand struct {
@@ -109,8 +114,8 @@ func (c classifierCommand) add(name string, e classify.Endpoint) error {
 }
 
 func (c classifierCommand) use(point classify.Point, setup classify.Setup) error {
-	if !point.Valid() {
-		return fmt.Errorf("%w: %q. Use one of %v", classify.ErrPointUnknown, point, classify.Points())
+	if err := point.Check(); err != nil {
+		return err
 	}
 	if err := c.endpoints.Check(setup); err != nil {
 		return err
@@ -129,8 +134,8 @@ func (c classifierCommand) use(point classify.Point, setup classify.Setup) error
 
 // The point asks claude alone again
 func (c classifierCommand) reset(point classify.Point) error {
-	if !point.Valid() {
-		return fmt.Errorf("%w: %q. Use one of %v", classify.ErrPointUnknown, point, classify.Points())
+	if err := point.Check(); err != nil {
+		return err
 	}
 	decisions := maps.Clone(c.decisions)
 	delete(decisions, point)
@@ -157,7 +162,7 @@ func (c classifierCommand) remove(name string) error {
 	return c.home.save("classifiers", endpoints)
 }
 
-// Endpoints by name, then every point with its setup or claude alone
+// Endpoints by name and after them every point with its setup or claude alone
 func (c classifierCommand) list() {
 	for _, name := range slices.Sorted(maps.Keys(c.endpoints)) {
 		e := c.endpoints[name]

@@ -23,7 +23,8 @@ const (
 	// off turns the conversation hooks off so the plugin records no conversation
 	// manual records runs and items and leaves reactions to an explicit nod
 	envSession = "NODLOOP_SESSION"
-	// The directory Claude Code started in, which stays put when a Bash call runs cd
+	// The directory Claude Code started in
+	// It stays put when a Bash call runs cd
 	envProjectDir = "CLAUDE_PROJECT_DIR"
 	// Runes of an answer a run keeps
 	answerRunes = 20000
@@ -144,6 +145,7 @@ func (c hookCommand) previous(ctx context.Context, sessionID string) (trace.Trac
 // The answer as a run of the conversation with the items its prompt received, then the lesson of the previous run
 // 1. an empty answer such as an interrupted turn records nothing
 // 2. the previous run is the one the prompt hook named this turn, so each run is looked at for a lesson once
+// 3. a correction the conversation already drafted in this turn is not drafted again in the background
 func (c hookCommand) stop(ctx context.Context, sessionID string, labels trace.Labels, answer reply) error {
 	if strings.TrimSpace(string(answer)) == "" {
 		return nil
@@ -186,7 +188,6 @@ func (c hookCommand) stop(ctx context.Context, sessionID string, labels trace.La
 // The extraction of the run started when its latest verdict is a correction the conversation inferred
 // 1. a person's verdict is left to the nod skill, which drafts in the conversation with that person
 // 2. it runs as `knowledge extract` in a process of its own because Claude Code may end an async hook when it exits
-// 3. it is the fallback for a turn that recorded the correction without drafting its lesson
 func (c hookCommand) extract(ctx context.Context, runID string) error {
 	if c.manual || runID == "" {
 		return nil
@@ -309,14 +310,17 @@ func (r reply) text() string {
 // The working directory of a conversation
 type workDir string
 
-// The working directory when it lies inside the project, otherwise the project
+// The working directory while it lies inside the project and the project otherwise
 // A cd into a scratchpad or a clone elsewhere would label the run with a place the next session never works in
 func (w workDir) within(project workDir) workDir {
-	if project == "" {
+	switch {
+	case project == "":
 		return w
+	case w == "":
+		return project
 	}
 	rel, err := filepath.Rel(string(project), string(w))
-	if w == "" || err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return project
 	}
 	return w

@@ -230,7 +230,8 @@ func runReportLoop(args []string, getenv func(string) string, now func() time.Ti
 	return 0
 }
 
-// A first line of totals, then one line per approved run item: applied, followed of judged and repeat by people then by a session, and settle
+// A first line of totals
+// One line per approved run item after it: applied, followed of judged and repeat by people then by a session, and settle
 // A last line says misapplied is not measured
 func (c loopCommand) runs(ctx context.Context) error {
 	traces, err := c.app.traces()
