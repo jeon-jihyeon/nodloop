@@ -44,6 +44,7 @@ linters:
             - "**/internal/settings/**"
             - "**/internal/jsonl/**"
             - "**/internal/atomicfile/**"
+            - "**/internal/classify/**"
           deny:
             - pkg: github.com/jeon-jihyeon/nodloop/internal/knowledge
               desc: domain packages do not import knowledge

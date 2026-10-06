@@ -9,7 +9,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jeon-jihyeon/nodloop/internal/classify"
 	"github.com/jeon-jihyeon/nodloop/internal/compact"
+	"github.com/jeon-jihyeon/nodloop/internal/extract"
 	feedbackfile "github.com/jeon-jihyeon/nodloop/internal/feedback/file"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	knowledgefile "github.com/jeon-jihyeon/nodloop/internal/knowledge/file"
@@ -107,6 +109,32 @@ func (a app) compactor(ledger *knowledge.Ledger) (*compact.Compactor, error) {
 		return nil, err
 	}
 	return compact.New(ledger, traces, verdicts, traces, a.now), nil
+}
+
+// Seconds an endpoint may take for one request
+// The critic runs in the detached extraction so a slow CPU model only delays a draft
+const classifierTimeout = 30 * time.Second
+
+// The critic of an extraction
+// 1. claude alone with no classify trace while the user set up nothing for the critic point
+// 2. otherwise the plan of the setup with claude as the built in member and every answer recorded
+func (a app) critic(claude extract.ClaudeCritic, getenv func(string) string) (extract.Classifier, error) {
+	setup, ok := a.cfg.decisions[classify.PointCritic]
+	if !ok {
+		return claude, nil
+	}
+	if err := setup.Check(); err != nil {
+		return nil, fmt.Errorf("%w: decisions.%s in %s", err, classify.PointCritic, configFile)
+	}
+	members, err := a.cfg.classifiers.Members(setup, claude, getenv, classifierTimeout)
+	if err != nil {
+		return nil, err
+	}
+	traces, err := a.traces()
+	if err != nil {
+		return nil, err
+	}
+	return classify.NewPlan(classify.PointCritic, setup, members, traces, a.now), nil
 }
 
 // The prefix and the clock milliseconds in hex and two random bytes so two ids in one millisecond differ

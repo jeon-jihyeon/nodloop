@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/jeon-jihyeon/nodloop/internal/classify"
 	"github.com/jeon-jihyeon/nodloop/internal/feedback"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	"github.com/jeon-jihyeon/nodloop/internal/llm"
@@ -26,6 +27,11 @@ type TraceStore interface {
 // Newest first
 type FeedbackStore interface {
 	List(ctx context.Context, f feedback.Filter) ([]feedback.Feedback, error)
+}
+
+// Answers the critic questions of a draft
+type Classifier interface {
+	Classify(ctx context.Context, req classify.Request) (classify.Answers, error)
 }
 
 // Drafts and checks and proposes lessons through the ledger
@@ -89,7 +95,8 @@ func (e *Extractor) Reaction(ctx context.Context, runID string) (Reaction, error
 // 1. the code checks run before the critic so a draft code refuses never costs a critic call
 // 2. a refusal of either is sent back once with its text and the second refusal is returned
 // 3. ledger refusals such as a widened scope are returned at once
-func (e *Extractor) Extract(ctx context.Context, client llm.Client, runID, model, author string) (Result, error) {
+// 4. the critic is ClaudeCritic or the plan of classifiers the user set up for the critic point
+func (e *Extractor) Extract(ctx context.Context, client llm.Client, critic Classifier, runID, model, author string) (Result, error) {
 	r, err := e.Reaction(ctx, runID)
 	if err != nil {
 		return Result{}, err
@@ -99,13 +106,13 @@ func (e *Extractor) Extract(ctx context.Context, client llm.Client, runID, model
 	if err != nil {
 		return Result{}, err
 	}
-	c, err := r.criticize(ctx, client, d, model)
+	c, err := r.criticize(ctx, critic, d)
 	if fixable.has(err) {
 		redraft := llm.Request{System: Rules, Prompt: d.redraftPrompt(prompt, err), Schema: json.RawMessage(Schema), Model: model}
 		if d, err = complete[Draft](ctx, client, redraft); err != nil {
 			return Result{}, err
 		}
-		c, err = r.criticize(ctx, client, d, model)
+		c, err = r.criticize(ctx, critic, d)
 	}
 	if err != nil {
 		return Result{}, err
@@ -122,16 +129,15 @@ func (rs refusals) has(err error) bool {
 	return slices.ContainsFunc(rs, func(r error) bool { return errors.Is(err, r) })
 }
 
-func (r Reaction) criticize(ctx context.Context, client llm.Client, d Draft, model string) (Critique, error) {
+func (r Reaction) criticize(ctx context.Context, critic Classifier, d Draft) (Critique, error) {
 	if err := r.check(d); err != nil {
 		return Critique{}, err
 	}
-	c, err := complete[Critique](ctx, client, llm.Request{
-		System: CriticRules, Prompt: r.critiquePrompt(d), Schema: json.RawMessage(CriticSchema), Model: model,
-	})
+	answers, err := critic.Classify(ctx, classify.Request{Ref: r.Run.ID, State: r.critiquePrompt(d), Questions: CriticQuestions})
 	if err != nil {
 		return Critique{}, err
 	}
+	c := newCritique(answers)
 	return c, c.check()
 }
 

@@ -6,6 +6,8 @@ import (
 	"io"
 	"path/filepath"
 	"strings"
+
+	"github.com/jeon-jihyeon/nodloop/internal/classify"
 )
 
 const (
@@ -18,8 +20,10 @@ const (
 
 // What every command reads and writes
 type config struct {
-	recordDir string
-	home      homeDir
+	recordDir   string
+	home        homeDir
+	classifiers classify.Endpoints
+	decisions   classify.Decisions
 }
 
 // The record directory as the flag, then NODLOOP_RECORD_DIR, then config.json, then the default under home
@@ -38,7 +42,7 @@ func resolveConfig(getenv func(string) string, recordDir string) (config, error)
 	if err != nil {
 		return config{}, err
 	}
-	return config{recordDir: records, home: h}, nil
+	return config{recordDir: records, home: h, classifiers: uc.Classifiers, decisions: uc.Decisions}, nil
 }
 
 // The record flag a command pasted into another shell needs to read these records

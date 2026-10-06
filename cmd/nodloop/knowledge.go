@@ -150,7 +150,7 @@ func runKnowledge(
 	case args[0] == "propose":
 		err = flags.runPropose(ctx, a, stdout)
 	case args[0] == "extract":
-		err = flags.runExtract(ctx, a, client, stdout)
+		err = flags.runExtract(ctx, a, client, getenv, stdout)
 	default:
 		err = flags.runRecords(ctx, args[0], id, a, stdout)
 	}

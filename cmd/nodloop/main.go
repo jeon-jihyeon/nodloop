@@ -104,6 +104,17 @@ commands:
   mcp                       Serve the MCP tools on stdio. --list prints the tool names
   llm probe [--model <m>]   Send a minimal structured-output request through claude -p and print cost
   config approver [<name>]  Print the name saved in ~/.nodloop/config.json to approve under, or save one
+  classifier add <name> --url <u> [--model <m>] [--key-env <ENV>]
+                            Add an endpoint of the Jev wire format, such as laya-serve at
+                            http://localhost:8000/v1/systemone. The key is read from the env at call time and never saved
+  classifier use <point> --members <a,b> [--mode single|cascade|parallel] [--threshold <t>] [--combine all|any]
+                            Set which classifiers answer a decision point and how. claude is the built in member.
+                            The only point is critic, the second reader of a drafted lesson. Every answer is recorded
+                            as a classify trace
+  classifier reset <point>  The point asks claude alone again
+  classifier remove <name>  Remove an endpoint no point uses
+  classifier list           Endpoints and the setup of every point
+  classifier probe <name>   Ask the endpoint one question and print its answer and time
   version                   Print the build version
 
 Every command that reads records accepts --record-dir, which overrides NODLOOP_RECORD_DIR, then record_dir of
@@ -168,8 +179,9 @@ func run(args []string, getenv func(string) string, stdin io.Reader, stdout io.W
 		"knowledge": func(args []string) int {
 			return runKnowledge(args, getenv, claudeCLI(getenv), time.Now, stdout, stderr)
 		},
-		"mcp":    func(args []string) int { return runMCP(args, getenv, time.Now, stdin, stdout, stderr) },
-		"config": func(args []string) int { return runConfig(args, getenv, stdout, stderr) },
+		"mcp":        func(args []string) int { return runMCP(args, getenv, time.Now, stdin, stdout, stderr) },
+		"config":     func(args []string) int { return runConfig(args, getenv, stdout, stderr) },
+		"classifier": func(args []string) int { return runClassifier(args, getenv, time.Now, stdout, stderr) },
 		"version": func([]string) int {
 			fmt.Fprintln(stdout, buildVersion())
 			return 0

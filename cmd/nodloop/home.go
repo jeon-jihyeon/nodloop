@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 
 	"github.com/jeon-jihyeon/nodloop/internal/atomicfile"
+	"github.com/jeon-jihyeon/nodloop/internal/classify"
 )
 
 const configFile = "config.json"
@@ -18,6 +19,11 @@ type userConfig struct {
 	RecordDir string `json:"record_dir,omitempty"`
 	// The name a person gave to approve under, saved so a review asks for it once
 	Approver string `json:"approver,omitempty"`
+	// Endpoints a decision point may ask by name
+	Classifiers classify.Endpoints `json:"classifiers,omitempty"`
+	// The setup of each decision point a user set up
+	// A point left out asks claude alone
+	Decisions classify.Decisions `json:"decisions,omitempty"`
 }
 
 // nodloop keeps the config and the default records under `.nodloop` there
@@ -67,6 +73,11 @@ func (h homeDir) readConfig() (userConfig, error) {
 
 // Writes the approver into config.json and keeps every other key as written
 func (h homeDir) saveApprover(name string) error {
+	return h.save("approver", name)
+}
+
+// Writes one key of config.json and keeps every other key as written
+func (h homeDir) save(key string, value any) error {
 	doc := map[string]json.RawMessage{}
 	b, err := os.ReadFile(h.configPath())
 	switch {
@@ -78,7 +89,7 @@ func (h homeDir) saveApprover(name string) error {
 			return fmt.Errorf("%w: %s: %w", errConfigInvalid, h.configPath(), err)
 		}
 	}
-	if doc["approver"], err = json.Marshal(name); err != nil {
+	if doc[key], err = json.Marshal(value); err != nil {
 		return err
 	}
 	out, err := json.MarshalIndent(doc, "", "  ")
