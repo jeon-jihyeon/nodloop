@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,6 +17,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeon-jihyeon/nodloop/internal/feedback"
+	feedbackfile "github.com/jeon-jihyeon/nodloop/internal/feedback/file"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
 	tracefile "github.com/jeon-jihyeon/nodloop/internal/trace/file"
@@ -623,4 +627,87 @@ func TestRunHookHoldout(t *testing.T) {
 	require.NoError(t, json.Unmarshal(runs[0].Input, &in))
 	assert.Empty(t, in.Applied)
 	assert.Equal(t, []knowledge.Ref{{ID: "git-c", Version: 1}}, in.Withheld)
+}
+
+// The reaction point judges the user's message on the previous answer before the conversation does
+func TestRunHookReaction(t *testing.T) {
+	type args struct {
+		// The answer of the endpoint and empty for one that fails
+		answer string
+		// Members of the reaction setup
+		members string
+	}
+	type want struct {
+		verdict feedback.Verdict
+		reason  string
+		// A substring of the added context and one it must not hold
+		context string
+		absent  string
+		stderr  string
+	}
+	message := "that was wrong, use git -C"
+	tcs := []struct {
+		name string
+		args args
+		want want
+	}{
+		{"a sure correction is recorded as a reject with the message", args{`{"answers":{"corrects":{"noul":0.9},"approves":{"noul":0.1}}}`, "laya"},
+			want{feedback.VerdictReject, message, "was recorded as a reject of your previous answer", "first call the nodloop feedback tool", ""}},
+		{"a sure approval is recorded and asks nothing", args{`{"answers":{"corrects":{"noul":0.1},"approves":{"noul":0.9}}}`, "laya"},
+			want{feedback.VerdictApprove, "", "use git -C", "previous answer", ""}},
+		{"an unsure answer leaves the conversation to judge", args{`{"answers":{"corrects":{"noul":0.3},"approves":{"noul":0.3}}}`, "laya"},
+			want{"", "", "first call the nodloop feedback tool", "recorded as a reject", ""}},
+		{"a cascade that ends at claude defers to the conversation", args{`{"answers":{"corrects":{"noul":0.6},"approves":{"noul":0.3}}}`, "laya,claude"},
+			want{"", "", "first call the nodloop feedback tool", "recorded as a reject", ""}},
+		{"a failing endpoint leaves the conversation to judge", args{"", "laya"},
+			want{"", "", "first call the nodloop feedback tool", "recorded as a reject", "nodloop hook: laya: classify: endpoint answered an error status"}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				if tc.args.answer == "" {
+					http.Error(w, "down", http.StatusServiceUnavailable)
+					return
+				}
+				_, _ = w.Write([]byte(tc.args.answer))
+			}))
+			t.Cleanup(srv.Close)
+			home, records, repo := hookHome(t, "use git -C")
+			getenv := func(k string) string { return map[string]string{"HOME": home, envRecordDir: records}[k] }
+			for _, args := range [][]string{{"add", "laya", "--url", srv.URL}, {"use", "reaction", "--members", tc.args.members}} {
+				var stderr bytes.Buffer
+				require.Equal(t, 0, runClassifier(args, getenv, time.Now, &bytes.Buffer{}, &stderr), stderr.String())
+			}
+			run := hookPromptSetup(t, getenv, repo, true, false, false)
+			stdin := `{"session_id":"s1","cwd":"` + repo + `","prompt":"` + message + `"}`
+			var stdout, stderr bytes.Buffer
+
+			code := runHook([]string{"prompt"}, getenv, nil, time.Now, strings.NewReader(stdin), &stdout, &stderr)
+
+			assert.Equal(t, 0, code)
+			var got struct {
+				Out struct {
+					Context string `json:"additionalContext"`
+				} `json:"hookSpecificOutput"`
+			}
+			require.NoError(t, json.Unmarshal(stdout.Bytes(), &got), stdout.String())
+			assert.Contains(t, got.Out.Context, tc.want.context)
+			assert.NotContains(t, got.Out.Context, tc.want.absent)
+			assert.Contains(t, stderr.String(), tc.want.stderr)
+			verdicts, err := feedbackfile.New(records)
+			require.NoError(t, err)
+			recorded, err := verdicts.List(context.Background(), feedback.Filter{TraceID: run})
+			require.NoError(t, err)
+			var latest struct {
+				verdict feedback.Verdict
+				reason  string
+			}
+			if newest := feedback.Records(recorded).Latest(); len(newest) > 0 {
+				latest.verdict, latest.reason = newest[0].Verdict, newest[0].Reason
+			}
+			assert.Equal(t, tc.want.verdict, latest.verdict)
+			assert.Equal(t, tc.want.reason, latest.reason)
+		})
+	}
 }

@@ -75,6 +75,8 @@ When you record what a real check found with `outcome`, `nodloop knowledge healt
 
 `nodloop report loop` starts with one line of how many runs were recorded, judged by you, judged by the conversation, corrected, waiting for approval and approved, so the stage where the loop stalls shows at once. Then it shows per approved item how many runs received it, how many of those you approved, how many you corrected again for the reason that taught it, and how long the correction took to become an item. Verdicts you gave and verdicts the conversation inferred from your words are counted apart, and yours wins where a run has both. `nodloop queue` lists the runs that wait for a verdict, with a random audit share.
 
+To see whether approved items help, set `nodloop config holdout 0.1`. One turn in ten then gets no item in its prompt and its run records what it would have received, and `nodloop report effect` compares how often those turns were corrected against the turns that got the items. `nodloop report extract` shows how drafting ended per plugin version, with the drafts refused and the critic questions they failed, and `nodloop report critic` shows how often the critic agreed with what you later decided on the same run. `knowledge health` marks approved items no run applied for 30 days as idle, and items whose runs were corrected again for the same reason as contested, with the items to compact them with.
+
 </details>
 
 ## Any producer
