@@ -286,6 +286,14 @@ func (c loopCommand) extractions(ctx context.Context) error {
 	return nil
 }
 
+// A duration rounded to the second and at least one second, or a dash for none
+func seconds(d time.Duration) string {
+	if d <= 0 {
+		return "-"
+	}
+	return max(d.Round(time.Second), time.Second).String()
+}
+
 // Counts as `a 2, b 1` in key order or a dash when there is none
 func counts(m map[string]int) string {
 	if len(m) == 0 {
@@ -298,8 +306,8 @@ func counts(m map[string]int) string {
 	return strings.Join(parts, ", ")
 }
 
-// A first line of totals
-// One line per approved run item after it: applied, followed of judged and repeat by people then by a session, and settle
+// A first line of totals and one drafts line per plugin version and drafting path
+// One line per approved run item after them: applied, followed of judged and repeat by people then by a session, and settle
 // A last line says misapplied is not measured
 func (c loopCommand) runs(ctx context.Context) error {
 	ev, err := c.evidence(ctx)
@@ -310,14 +318,14 @@ func (c loopCommand) runs(ctx context.Context) error {
 	t := report.Totals(items)
 	fmt.Fprintf(c.out, "loop\truns %d\tjudged %d\tinferred %d\tcorrected %d\twaiting %d\tapproved %d\n",
 		t.Runs, t.Judged, t.Inferred, t.Corrected, t.Waiting, t.Approved)
+	for _, d := range report.Drafts(items, ev.traces) {
+		fmt.Fprintf(c.out, "drafts\t%s\t%s\tdrafted %d\tapproved %d\tdropped %d\twaiting %d\tdecide %s\n",
+			d.Version, d.Path, d.Drafted, d.Approved, d.Dropped, d.Waiting, seconds(d.Decide))
+	}
 	for _, row := range report.Report(items) {
-		settle := "-"
-		if row.Settle > 0 {
-			settle = max(row.Settle.Round(time.Second), time.Second).String()
-		}
 		fmt.Fprintf(c.out, "%s\tv%d\tapplied %d\tfollowed %d of %d\trepeat %d\tinferred followed %d of %d\tinferred repeat %d\tsettle %s\n",
 			row.ID, row.Version, row.Applied, row.Followed, row.Judged, row.Repeat,
-			row.InferredFollowed, row.InferredJudged, row.InferredRepeat, settle)
+			row.InferredFollowed, row.InferredJudged, row.InferredRepeat, seconds(row.Settle))
 	}
 	fmt.Fprintln(c.out, "misapplied\tnot measured: no label says which runs an item should have reached")
 	return nil
