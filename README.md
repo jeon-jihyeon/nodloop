@@ -29,7 +29,7 @@ You correct an AI answer, the session ends, and next week in the same repository
 /plugin install nodloop@nodloop
 ```
 
-On first run the plugin downloads its binary. From then on it records every answer of the conversation as a run labeled with the repository and directory you work in. Work as usual. When you tell Claude an answer was wrong or right, the conversation records that as a verdict on the answer's run. For a correction it also drafts the lesson in the same turn and ends its answer by quoting your words and asking whether to approve it. A correction it could not draft is drafted after the turn in the background and asked about on your next prompt, and the first prompt of a later session in that repository asks about the drafts still waiting. `/nodloop:nod` with nothing after it walks you through them at any time. The name you approve under is asked once and saved, and `~/.nodloop/bin/nodloop config approver <name>` changes it. To record a correction at once, nod on it:
+On first run the plugin downloads its binary. From then on it records every answer of the conversation as a run labeled with the repository and directory you work in. Work as usual. When you tell Claude an answer was wrong or right, the conversation records that as a verdict on the answer's run without interrupting you. A correction is drafted as a lesson after the turn in the background, and the first prompt of a later session in that repository asks about the drafts waiting, quoting your words and the answer you corrected. Mark one not a correction and its verdict is withdrawn with the draft, so a redirect in a discussion never counts as a correction. `/nodloop:nod` with nothing after it walks you through them at any time. The name you approve under is asked once and saved, and `~/.nodloop/bin/nodloop config approver <name>` changes it. To record a correction at once, nod on it:
 
 ```
 > /nodloop:nod you ran cd before git again. Use git -C <dir> instead
@@ -39,7 +39,7 @@ On first run the plugin downloads its binary. From then on it records every answ
 The nod records an edit on that answer's run, drafts one sentence of what it taught, has it checked against the items this repository already has, and approves it only when you name yourself. Before every later prompt in this repository a hook adds the approved items as context, so the next answer follows the correction without being told again. `~/.nodloop/bin/nodloop knowledge for --producer session --label repo=<repo> --label dir=<dir>` lists what a prompt in that directory receives.
 
 > [!TIP]
-> Set `NODLOOP_SESSION=off` where Claude Code starts to keep the plugin without recording conversations, or `manual` to record answers and leave every verdict to an explicit nod. Answers are stored on your machine under `~/.nodloop/records` with keys, tokens and passwords redacted.
+> `~/.nodloop/bin/nodloop config session_mode <mode>` picks how a conversation is recorded, and `NODLOOP_SESSION` set where Claude Code starts overrides it. `deferred`, the default, works as above. `immediate` drafts a correction in the same turn and asks about it at the end of the answer. `manual` records answers and leaves every verdict to an explicit nod. `off` keeps the plugin without recording conversations. Answers are stored on your machine under `~/.nodloop/records` with keys, tokens and passwords redacted.
 
 ## Why nodloop
 
@@ -60,7 +60,7 @@ answer → run with labels → your nod → proposed item → approved by name
    ← ← ← the next prompt in the same place receives it ← ← ←
 ```
 
-A run is one output of a producer with the labels of its situation. The built in producer is the Claude Code session, whose labels are `repo`, the directory holding `.git` above where you work, and `dir`, the path below it. Where you work is the directory Claude Code started in, or the working directory while it lies inside it, so a `cd` into a scratchpad or a clone elsewhere never labels a run. A nod is approve, edit with the corrected output, or reject with what was wrong. An item is a `meaning`, how to read something in this place, or a `judgment`, what to do or not do, and its scope names a producer, labels a run must carry and labels it must not. A label must be one a recorded run already carries, so a misspelled label fails instead of making an item that matches nothing.
+A run is one output of a producer with the labels of its situation. The built in producer is the Claude Code session, whose labels are `repo`, the directory holding `.git` above where you work, and `dir`, the path below it. Where you work is the directory Claude Code started in, or the working directory while it lies inside it, so a `cd` into a scratchpad or a clone elsewhere never labels a run. A nod is approve, edit with the corrected output, or reject with what was wrong, and withdraw takes back a verdict so the run has none. An item is a `meaning`, how to read something in this place, or a `judgment`, what to do or not do, and its scope names a producer, labels a run must carry and labels it must not. A label must be one a recorded run already carries, so a misspelled label fails instead of making an item that matches nothing.
 
 <details>
 <summary>How items are approved, kept within budget and kept fresh</summary>

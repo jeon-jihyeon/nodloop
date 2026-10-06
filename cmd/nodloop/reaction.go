@@ -70,11 +70,11 @@ func verdictOf(answers classify.Answers) feedback.Verdict {
 }
 
 // The verdict the reaction point recorded on the previous run of the session and empty when it recorded none
-// 1. nothing is asked without a reaction setup, in manual mode, on the first prompt or for an empty message
+// 1. nothing is asked without a reaction setup, in a mode that infers nothing, on the first prompt or for an empty message
 // 2. a deferral to the conversation is no failure since the conversation then judges as it would without the point
 // 3. a reject keeps the user's message redacted and cut as its reason because no reason code can be told from it
 func (c hookCommand) react(ctx context.Context, t turn) (feedback.Verdict, error) {
-	if c.reaction == nil || c.manual || t.run.ID == "" || strings.TrimSpace(t.message) == "" {
+	if c.reaction == nil || !c.mode.infers() || t.run.ID == "" || strings.TrimSpace(t.message) == "" {
 		return "", nil
 	}
 	answers, err := c.reaction.Classify(ctx, classify.Request{Ref: t.run.ID, State: t.state(), Questions: reactionQuestions})

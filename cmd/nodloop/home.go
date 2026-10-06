@@ -21,6 +21,9 @@ type userConfig struct {
 	Approver string `json:"approver,omitempty"`
 	// The share of conversation turns whose prompt receives no item so report effect has a comparison
 	Holdout float64 `json:"holdout,omitempty"`
+	// How a conversation records the verdicts it infers
+	// NODLOOP_SESSION overrides it per process
+	SessionMode string `json:"session_mode,omitempty"`
 	// Endpoints a decision point may ask by name
 	Classifiers classify.Endpoints `json:"classifiers,omitempty"`
 	// The setup of each decision point a user set up

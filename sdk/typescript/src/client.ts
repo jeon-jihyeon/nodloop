@@ -100,10 +100,10 @@ export class Client {
     return (await this.call("run", args)).trace_id;
   }
 
-  // Records a verdict on a run: approve, edit with the corrected output, or reject with what was wrong
+  // Records a verdict on a run: approve, edit with the corrected output, reject with what was wrong, or withdraw an earlier one
   async judge(
     run: string,
-    verdict: "approve" | "edit" | "reject",
+    verdict: "approve" | "edit" | "reject" | "withdraw",
     options: { reason?: string; reasonCode?: string; edited?: unknown; reviewer?: string } = {},
   ): Promise<void> {
     const args: Record<string, unknown> = { trace_id: run, verdict };

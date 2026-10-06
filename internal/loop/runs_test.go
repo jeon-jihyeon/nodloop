@@ -108,6 +108,9 @@ func TestRunsTotals(t *testing.T) {
 		verdict("r2", feedback.VerdictEdit, feedback.ReviewerAuthor),
 		verdict("r3", feedback.VerdictReject, feedback.ReviewerSession),
 		verdict("failed", feedback.VerdictReject, feedback.ReviewerAuthor),
+		// An inferred reject of r4 a person withdrew counts as no verdict
+		{TraceID: "r4", Time: time.Unix(2, 0), Verdict: feedback.VerdictWithdraw, Reviewer: "ann"},
+		{TraceID: "r4", Time: time.Unix(1, 0), Verdict: feedback.VerdictReject, ReasonCode: feedback.ReasonScope, Reviewer: feedback.ReviewerSession},
 	}
 	items := knowledge.Set{
 		item("approved", knowledge.StatusApproved, ""), item("draft", knowledge.StatusCandidate, ""),
