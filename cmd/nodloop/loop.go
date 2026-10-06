@@ -7,6 +7,9 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"maps"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/jeon-jihyeon/nodloop/internal/feedback"
@@ -177,8 +180,8 @@ func runReport(args []string, getenv func(string) string, now func() time.Time, 
 	if len(args) == 0 {
 		return fail(stderr, "report", errNoAction)
 	}
-	if args[0] == "loop" {
-		return runReportLoop(args[1:], getenv, now, stdout, stderr)
+	if show, ok := recordReports[args[0]]; ok {
+		return runRecordReport(args, show, getenv, now, stdout, stderr)
 	}
 	if args[0] != "online" {
 		return fail(stderr, "report", fmt.Errorf("%w %q", errUnknownAction, args[0]))
@@ -211,54 +214,99 @@ func runReport(args []string, getenv func(string) string, now func() time.Time, 
 	return 0
 }
 
-// How each approved run item fared on the runs that applied it, over the records alone
-func runReportLoop(args []string, getenv func(string) string, now func() time.Time, stdout, stderr io.Writer) int {
-	fs := flag.NewFlagSet("report loop", flag.ContinueOnError)
+// The reports read from the records alone with their flags parsed the same way
+var recordReports = map[string]func(c loopCommand, ctx context.Context) error{
+	"loop":    loopCommand.runs,
+	"extract": loopCommand.extractions,
+}
+
+func runRecordReport(args []string, show func(loopCommand, context.Context) error, getenv func(string) string, now func() time.Time, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("report "+args[0], flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	var records recordFlags
 	records.bind(fs)
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(args[1:]); err != nil {
 		return 1
 	}
 	a, err := records.app(getenv, now)
 	if err != nil {
 		return fail(stderr, "report", err)
 	}
-	if err := (loopCommand{app: a, out: stdout}).runs(context.Background()); err != nil {
+	if err := show(loopCommand{app: a, out: stdout}, context.Background()); err != nil {
 		return fail(stderr, "report", err)
 	}
 	return 0
+}
+
+// Every trace and verdict and knowledge record a report reads
+type evidence struct {
+	traces trace.Traces
+	runs   loop.Runs
+	items  knowledge.Set
+}
+
+func (c loopCommand) evidence(ctx context.Context) (evidence, error) {
+	store, err := c.app.traces()
+	if err != nil {
+		return evidence{}, err
+	}
+	traces, err := store.List(ctx, trace.Filter{})
+	if err != nil {
+		return evidence{}, err
+	}
+	verdicts, err := c.app.feedback()
+	if err != nil {
+		return evidence{}, err
+	}
+	records, err := verdicts.List(ctx, feedback.Filter{})
+	if err != nil {
+		return evidence{}, err
+	}
+	ledger, err := c.app.ledger()
+	if err != nil {
+		return evidence{}, err
+	}
+	items, err := ledger.All(ctx)
+	if err != nil {
+		return evidence{}, err
+	}
+	return evidence{traces: traces, runs: loop.NewRuns(traces, records), items: items}, nil
+}
+
+// One line per plugin version and path: extractions by conclusion, drafts by refusal and the critic questions answered false
+func (c loopCommand) extractions(ctx context.Context) error {
+	ev, err := c.evidence(ctx)
+	if err != nil {
+		return err
+	}
+	for _, row := range ev.runs.Extractions(ev.traces) {
+		fmt.Fprintf(c.out, "extract\t%s\t%s\textractions %d\t%s\trefused drafts %s\tquestions false %s\n",
+			row.Version, row.Path, row.Extractions, counts(row.Conclusions), counts(row.Refusals), counts(row.Questions))
+	}
+	return nil
+}
+
+// Counts as `a 2, b 1` in key order or a dash when there is none
+func counts(m map[string]int) string {
+	if len(m) == 0 {
+		return "-"
+	}
+	parts := make([]string, 0, len(m))
+	for _, k := range slices.Sorted(maps.Keys(m)) {
+		parts = append(parts, fmt.Sprintf("%s %d", k, m[k]))
+	}
+	return strings.Join(parts, ", ")
 }
 
 // A first line of totals
 // One line per approved run item after it: applied, followed of judged and repeat by people then by a session, and settle
 // A last line says misapplied is not measured
 func (c loopCommand) runs(ctx context.Context) error {
-	traces, err := c.app.traces()
+	ev, err := c.evidence(ctx)
 	if err != nil {
 		return err
 	}
-	runs, err := traces.List(ctx, trace.Filter{Name: trace.NameRun})
-	if err != nil {
-		return err
-	}
-	verdicts, err := c.app.feedback()
-	if err != nil {
-		return err
-	}
-	records, err := verdicts.List(ctx, feedback.Filter{})
-	if err != nil {
-		return err
-	}
-	ledger, err := c.app.ledger()
-	if err != nil {
-		return err
-	}
-	items, err := ledger.All(ctx)
-	if err != nil {
-		return err
-	}
-	report := loop.NewRuns(runs, records)
+	report, items := ev.runs, ev.items
 	t := report.Totals(items)
 	fmt.Fprintf(c.out, "loop\truns %d\tjudged %d\tinferred %d\tcorrected %d\twaiting %d\tapproved %d\n",
 		t.Runs, t.Judged, t.Inferred, t.Corrected, t.Waiting, t.Approved)

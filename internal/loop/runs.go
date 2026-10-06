@@ -1,6 +1,7 @@
 package loop
 
 import (
+	"cmp"
 	"encoding/json"
 	"slices"
 	"time"
@@ -48,8 +49,11 @@ type Totals struct {
 
 // Runs and the verdicts on them
 type Runs struct {
-	ids     map[string]bool
-	applied map[knowledge.Ref][]string
+	ids map[string]bool
+	// Plugin version per run
+	// Empty for a run recorded before 0.7 or outside the conversation hooks
+	versions map[string]string
+	applied  map[knowledge.Ref][]string
 	// Latest verdict of a person per trace, or the latest one a session inferred when no person gave one
 	verdicts map[string]feedback.Feedback
 	// First correction per trace by anyone
@@ -59,7 +63,7 @@ type Runs struct {
 // Failed runs and runs whose input does not read are left out because they applied nothing a person could judge
 func NewRuns(traces trace.Traces, verdicts feedback.Records) Runs {
 	r := Runs{
-		ids: map[string]bool{}, applied: map[knowledge.Ref][]string{},
+		ids: map[string]bool{}, versions: map[string]string{}, applied: map[knowledge.Ref][]string{},
 		verdicts: map[string]feedback.Feedback{}, firstCorrection: map[string]time.Time{},
 	}
 	for _, tr := range traces {
@@ -68,11 +72,13 @@ func NewRuns(traces trace.Traces, verdicts feedback.Records) Runs {
 		}
 		var in struct {
 			Applied []knowledge.Ref `json:"applied"`
+			Plugin  string          `json:"plugin"`
 		}
 		if json.Unmarshal(tr.Input, &in) != nil {
 			continue
 		}
 		r.ids[tr.ID] = true
+		r.versions[tr.ID] = in.Plugin
 		for _, ref := range in.Applied {
 			r.applied[ref] = append(r.applied[ref], tr.ID)
 		}
@@ -176,3 +182,11 @@ func (r Runs) taught(traceIDs []string) ([]feedback.ReasonCode, time.Time) {
 	}
 	return codes, first
 }
+
+// The plugin version a run was recorded under and unknown when it names none
+func (r Runs) version(runID string) string {
+	return cmp.Or(r.versions[runID], unknownVersion)
+}
+
+// The version of runs recorded before 0.7 or outside the conversation hooks
+const unknownVersion = "unknown"

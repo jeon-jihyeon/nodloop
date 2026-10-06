@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/jeon-jihyeon/nodloop/internal/classify"
 	"github.com/jeon-jihyeon/nodloop/internal/feedback"
@@ -22,6 +23,7 @@ const defaultAuthor = "claude"
 
 type TraceStore interface {
 	Get(ctx context.Context, id string) (trace.Trace, error)
+	Append(ctx context.Context, tr trace.Trace) error
 }
 
 // Newest first
@@ -34,16 +36,17 @@ type Classifier interface {
 	Classify(ctx context.Context, req classify.Request) (classify.Answers, error)
 }
 
-// Drafts and checks and proposes lessons through the ledger
+// Drafts and checks and proposes lessons through the ledger and records every extraction as an extract trace
 // Nothing is kept between calls
 type Extractor struct {
 	ledger   *knowledge.Ledger
 	traces   TraceStore
 	verdicts FeedbackStore
+	now      func() time.Time
 }
 
-func New(ledger *knowledge.Ledger, traces TraceStore, verdicts FeedbackStore) *Extractor {
-	return &Extractor{ledger: ledger, traces: traces, verdicts: verdicts}
+func New(ledger *knowledge.Ledger, traces TraceStore, verdicts FeedbackStore, now func() time.Time) *Extractor {
+	return &Extractor{ledger: ledger, traces: traces, verdicts: verdicts, now: now}
 }
 
 // What a lesson is drafted from
@@ -91,32 +94,47 @@ func (e *Extractor) Reaction(ctx context.Context, runID string) (Reaction, error
 	return Reaction{Run: run, Verdict: latest[0], Reached: all.For(run.Producer, run.Labels)}, nil
 }
 
-// One model call drafts the lesson and one more criticizes it
+// One model call drafts the lesson and the critic judges it
 // 1. the code checks run before the critic so a draft code refuses never costs a critic call
 // 2. a refusal of either is sent back once with its text and the second refusal is returned
 // 3. ledger refusals such as a widened scope are returned at once
 // 4. the critic is ClaudeCritic or the plan of classifiers the user set up for the critic point
+// 5. every extraction of a run that exists is recorded with its drafts and how it ended
 func (e *Extractor) Extract(ctx context.Context, drafter ClaudeDrafter, critic Classifier, runID, author string) (Result, error) {
 	r, err := e.Reaction(ctx, runID)
 	if err != nil {
 		return Result{}, err
 	}
+	var rec Record
+	res, err := e.extract(ctx, r, drafter, critic, author, &rec)
+	return res, e.record(ctx, r, PathModel, rec.end(res, err), err)
+}
+
+func (e *Extractor) extract(ctx context.Context, r Reaction, drafter ClaudeDrafter, critic Classifier, author string, rec *Record) (Result, error) {
 	prompt := r.String()
 	d, err := drafter.Draft(ctx, prompt)
 	if err != nil {
+		rec.add(Attempt{}.refused(RefusalModel, err))
 		return Result{}, err
 	}
-	c, err := r.criticize(ctx, critic, d)
+	a, err := r.review(ctx, critic, d)
+	rec.add(a)
 	if fixable.has(err) {
 		if d, err = drafter.Draft(ctx, d.redraftPrompt(prompt, err)); err != nil {
+			rec.add(Attempt{}.refused(RefusalModel, err))
 			return Result{}, err
 		}
-		c, err = r.criticize(ctx, critic, d)
+		a, err = r.review(ctx, critic, d)
+		rec.add(a)
 	}
 	if err != nil {
 		return Result{}, err
 	}
-	return e.Propose(ctx, r, d, c, author)
+	res, err := e.propose(ctx, r, d, author)
+	if err != nil {
+		rec.refuseLast(err)
+	}
+	return res, err
 }
 
 // Refusals the drafter can fix by writing another draft
@@ -128,16 +146,34 @@ func (rs refusals) has(err error) bool {
 	return slices.ContainsFunc(rs, func(r error) bool { return errors.Is(err, r) })
 }
 
-func (r Reaction) criticize(ctx context.Context, critic Classifier, d Draft) (Critique, error) {
+// The code checks and then the critique of one draft
+// No critique checks the code alone
+func (r Reaction) judge(d Draft, c *Critique) (Attempt, error) {
+	a := Attempt{Draft: d, Critique: c}
 	if err := r.check(d); err != nil {
-		return Critique{}, err
+		return a.refused(RefusalCode, err), err
+	}
+	if c == nil {
+		return a, nil
+	}
+	if err := c.check(); err != nil {
+		a.Questions = c.failed()
+		return a.refused(RefusalCritic, err), err
+	}
+	return a, nil
+}
+
+// The code checks and then the critic asked about one draft
+func (r Reaction) review(ctx context.Context, critic Classifier, d Draft) (Attempt, error) {
+	if a, err := r.judge(d, nil); err != nil {
+		return a, err
 	}
 	answers, err := critic.Classify(ctx, classify.Request{Ref: r.Run.ID, State: r.critiquePrompt(d), Questions: criticQuestions})
 	if err != nil {
-		return Critique{}, err
+		return Attempt{Draft: d}.refused(RefusalModel, err), err
 	}
 	c := newCritique(answers)
-	return c, c.check()
+	return r.judge(d, &c)
 }
 
 func complete[T any](ctx context.Context, client llm.Client, req llm.Request) (T, error) {
@@ -152,15 +188,24 @@ func complete[T any](ctx context.Context, client llm.Client, req llm.Request) (T
 	return out, nil
 }
 
-// Checks the draft and the critique and proposes an add or an update
+// Checks the draft and the critique the conversation wrote and proposes an add or an update
 // A duplicate and a conflict propose nothing and answer the item they name
 func (e *Extractor) Propose(ctx context.Context, r Reaction, d Draft, c Critique, author string) (Result, error) {
-	if err := r.check(d); err != nil {
-		return Result{}, err
+	var rec Record
+	a, err := r.judge(d, &c)
+	rec.add(a)
+	if err != nil {
+		return Result{}, e.record(ctx, r, PathConversation, rec.end(Result{}, err), err)
 	}
-	if err := c.check(); err != nil {
-		return Result{}, err
+	res, err := e.propose(ctx, r, d, author)
+	if err != nil {
+		rec.refuseLast(err)
 	}
+	return res, e.record(ctx, r, PathConversation, rec.end(res, err), err)
+}
+
+// The candidate of a judged draft through the ledger
+func (e *Extractor) propose(ctx context.Context, r Reaction, d Draft, author string) (Result, error) {
 	res := Result{Relation: d.Relation, Content: d.Content}
 	if related, ok := r.Reached.Find(d.RelatesTo); ok {
 		res.Related = &related

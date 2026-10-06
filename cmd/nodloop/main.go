@@ -91,6 +91,8 @@ commands:
                             and approved items. Then per approved item: runs that applied it, how many a person approved of
                             those judged, how many were corrected again for the reason that taught it, the same two counts
                             over verdicts a session inferred, and the time from that correction to the approval
+  report extract            Per plugin version of the corrected run and per drafting path: extractions by how they
+                            ended, refused drafts by what refused them, and the critic questions answered false
   trace list [--name <n>] [--session <id>] [--subject <s>] [--limit <n>]
                             List traces newest first
   trace show <id>           Print one trace as JSON

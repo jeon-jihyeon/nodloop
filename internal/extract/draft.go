@@ -90,17 +90,23 @@ type Critique struct {
 
 // Fails with ErrCriticRefused naming the questions answered false
 func (c Critique) check() error {
+	failed := c.failed()
+	if len(failed) == 0 {
+		return nil
+	}
+	return fmt.Errorf("%w: %s false: %s", ErrCriticRefused, strings.Join(failed, " and "), c.Why)
+}
+
+// The questions answered false in name order
+func (c Critique) failed() []string {
 	var failed []string
 	for name, ok := range map[string]bool{"states": c.States, "holds": c.Holds, "fits": c.Fits} {
 		if !ok {
 			failed = append(failed, name)
 		}
 	}
-	if len(failed) == 0 {
-		return nil
-	}
 	slices.Sort(failed)
-	return fmt.Errorf("%w: %s false: %s", ErrCriticRefused, strings.Join(failed, " and "), c.Why)
+	return failed
 }
 
 // The scope of an add: the producer of the run and the labels of the keys the draft kept

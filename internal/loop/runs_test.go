@@ -119,3 +119,31 @@ func TestRunsTotals(t *testing.T) {
 
 	assert.Equal(t, loop.Totals{Runs: 4, Judged: 2, Inferred: 1, Corrected: 2, Waiting: 1, Approved: 1}, got)
 }
+
+func TestRunsExtractions(t *testing.T) {
+	run := func(id, plugin string) trace.Trace {
+		in, _ := json.Marshal(map[string]any{"applied": []knowledge.Ref{}, "plugin": plugin})
+		return trace.Trace{ID: id, Name: trace.NameRun, Producer: "session", Input: in}
+	}
+	extracted := func(ref, path, output string) trace.Trace {
+		return trace.Trace{ID: "x-" + ref + path, Name: trace.NameExtract, Subject: path, Ref: ref, Output: json.RawMessage(output)}
+	}
+	traces := trace.Traces{
+		run("r1", "0.7.0"), run("r2", ""),
+		extracted("r1", "model", `{"attempts":[{"refusal":"critic","questions":["holds","states"]},{}],"conclusion":"proposed"}`),
+		extracted("r1", "conversation", `{"attempts":[{"refusal":"code"}],"conclusion":"refused"}`),
+		extracted("r2", "model", `{"attempts":[{"refusal":"model"}],"conclusion":"failed"}`),
+		extracted("r3", "model", `not json`),
+	}
+
+	got := loop.NewRuns(traces, nil).Extractions(traces)
+
+	assert.Equal(t, []loop.ExtractRow{
+		{Version: "0.7.0", Path: "conversation", Extractions: 1, Conclusions: map[string]int{"refused": 1},
+			Refusals: map[string]int{"code": 1}, Questions: map[string]int{}},
+		{Version: "0.7.0", Path: "model", Extractions: 1, Conclusions: map[string]int{"proposed": 1},
+			Refusals: map[string]int{"critic": 1}, Questions: map[string]int{"holds": 1, "states": 1}},
+		{Version: "unknown", Path: "model", Extractions: 1, Conclusions: map[string]int{"failed": 1},
+			Refusals: map[string]int{"model": 1}, Questions: map[string]int{}},
+	}, got)
+}

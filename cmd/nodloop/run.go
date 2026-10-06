@@ -121,4 +121,7 @@ func (c runCommand) record(
 // What a run trace keeps as its input
 type runInput struct {
 	Applied []knowledge.Ref `json:"applied"`
+	// The plugin version a conversation hook ran under so a report can compare releases
+	// Empty for a run recorded through run record
+	Plugin string `json:"plugin,omitempty"`
 }
