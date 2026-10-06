@@ -157,7 +157,7 @@ class Client:
         edited: Any = None,
         reviewer: str = "",
     ) -> None:
-        """Records a verdict on a run: approve, edit with the corrected output, or reject with what was wrong"""
+        """Records a verdict on a run: approve, edit with the corrected output, reject with what was wrong, or withdraw an earlier one"""
         args: dict[str, Any] = {"trace_id": run, "verdict": verdict}
         for key, value in (("reason", reason), ("reason_code", reason_code), ("reviewer", reviewer)):
             if value:

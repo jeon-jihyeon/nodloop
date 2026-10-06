@@ -24,7 +24,7 @@ type feedbackFlags struct {
 
 func (f *feedbackFlags) bind(fs *flag.FlagSet) {
 	fs.StringVar(&f.traceID, "trace", "", "trace id")
-	fs.StringVar(&f.verdict, "verdict", "", "approve or edit or reject")
+	fs.StringVar(&f.verdict, "verdict", "", "approve or edit or reject or withdraw")
 	fs.StringVar(&f.reviewer, "reviewer", "", "reviewer such as author")
 	fs.IntVar(&f.limit, "limit", 0, "newest n records. 0 means all")
 	fs.StringVar(&f.code, "reason-code", "",
@@ -108,7 +108,7 @@ func (c feedbackCommand) add(
 	ctx context.Context, traceID string, verdict feedback.Verdict, code feedback.ReasonCode, reason, editedPath, reviewer string,
 ) error {
 	if traceID == "" || verdict == "" {
-		return fmt.Errorf("add: --trace and a --verdict of approve or edit or reject %w", errRequired)
+		return fmt.Errorf("add: --trace and a --verdict of approve or edit or reject or withdraw %w", errRequired)
 	}
 	var edited json.RawMessage
 	if editedPath != "" {

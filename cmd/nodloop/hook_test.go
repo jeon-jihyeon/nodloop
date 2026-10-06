@@ -153,8 +153,8 @@ func TestRunHookPrompt(t *testing.T) {
 			},
 		},
 		{
-			"a later prompt asks about a lesson drafted since the previous answer",
-			args{stdin: `{"session_id":"s1","cwd":"{repo}"}`, content: "use git -C", answered: true, waiting: true, drafted: true},
+			"a later prompt in immediate mode asks about a lesson drafted since the previous answer",
+			args{stdin: `{"session_id":"s1","cwd":"{repo}"}`, session: "immediate", content: "use git -C", answered: true, waiting: true, drafted: true},
 			want{context: []string{
 				"with reviewer session",
 				"wait for approval: 1. After your answer, review them without waiting for /nodloop:nod: invoke the nodloop:nod skill",
@@ -219,6 +219,133 @@ func TestRunHookPrompt(t *testing.T) {
 			for _, absent := range tc.want.absent {
 				assert.NotContains(t, got.Out.Context, absent)
 			}
+		})
+	}
+}
+
+// Each session mode on the first prompt with a draft waiting, on a later prompt after a draft was made, and after the reaction point recorded a reject
+func TestRunHookPromptModes(t *testing.T) {
+	type turn string
+	const (
+		first    turn = "first"    // no answer yet and one draft waiting
+		later    turn = "later"    // one answer with a draft before it and one after it
+		recorded turn = "recorded" // one answer the reaction point judged a correction
+	)
+	type args struct {
+		mode string
+		turn turn
+	}
+	type want struct {
+		// Substrings of the added context and ones it must not hold
+		context []string
+		absent  []string
+	}
+	reaction, draft, waiting := "call the nodloop feedback tool on trace {run}", "Draft the correction of this turn", "wait for approval: "
+	silent, rejected := "Do it without telling the user", "was recorded as a reject of your previous answer, run {run}"
+	tcs := []struct {
+		name string
+		args args
+		want want
+	}{
+		{"deferred asks about every waiting draft on the first prompt", args{"deferred", first}, want{[]string{waiting + "1."}, []string{reaction}}},
+		{"deferred records silently later and asks nothing", args{"deferred", later}, want{[]string{reaction, silent}, []string{draft, waiting}}},
+		{"deferred drafts nothing in the turn of a recorded reject", args{"deferred", recorded}, want{[]string{rejected, "drafted after the turn"}, []string{draft, reaction}}},
+		{"immediate asks about every waiting draft on the first prompt", args{"immediate", first}, want{[]string{waiting + "1."}, []string{reaction}}},
+		{"immediate drafts in the turn and asks about the new draft later", args{"immediate", later}, want{[]string{reaction, draft, waiting + "1."}, []string{silent}}},
+		{"immediate drafts the recorded reject in the turn", args{"immediate", recorded}, want{[]string{rejected, draft}, []string{reaction}}},
+		{"manual adds items alone on the first prompt", args{"manual", first}, want{[]string{"use git -C\n"}, []string{waiting}}},
+		{"manual adds items alone later", args{"manual", later}, want{[]string{"use git -C\n"}, []string{reaction, waiting}}},
+		{"manual asks no reaction point", args{"manual", recorded}, want{[]string{"use git -C\n"}, []string{rejected, reaction}}},
+		{"off adds nothing on the first prompt", args{"off", first}, want{}},
+		{"off adds nothing later", args{"off", later}, want{}},
+		{"off adds nothing after a correction", args{"off", recorded}, want{}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			home, records, repo := hookHome(t, "use git -C")
+			getenv := func(k string) string { return map[string]string{"HOME": home, envRecordDir: records}[k] }
+			if tc.args.turn == recorded {
+				srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+					_, _ = w.Write([]byte(`{"answers":{"corrects":{"noul":0.95},"approves":{"noul":0.05}}}`))
+				}))
+				t.Cleanup(srv.Close)
+				for _, args := range [][]string{{"add", "laya", "--url", srv.URL}, {"use", "reaction", "--members", "laya"}} {
+					require.Equal(t, 0, runClassifier(args, getenv, time.Now, &bytes.Buffer{}, &bytes.Buffer{}))
+				}
+			}
+			run := hookPromptSetup(t, getenv, repo, tc.args.turn != first, true, tc.args.turn == later)
+			require.Equal(t, 0, runConfig([]string{"session_mode", tc.args.mode}, getenv, &bytes.Buffer{}, &bytes.Buffer{}))
+			stdin := `{"session_id":"s1","cwd":"` + repo + `","prompt":"that was wrong"}`
+			var stdout, stderr bytes.Buffer
+
+			code := runHook([]string{"prompt"}, getenv, nil, time.Now, strings.NewReader(stdin), &stdout, &stderr)
+
+			assert.Equal(t, 0, code)
+			assert.Empty(t, stderr.String())
+			if len(tc.want.context) == 0 {
+				assert.Empty(t, stdout.String())
+				return
+			}
+			var got struct {
+				Out struct {
+					Context string `json:"additionalContext"`
+				} `json:"hookSpecificOutput"`
+			}
+			require.NoError(t, json.Unmarshal(stdout.Bytes(), &got), stdout.String())
+			for _, want := range tc.want.context {
+				assert.Contains(t, got.Out.Context, strings.ReplaceAll(want, "{run}", run))
+			}
+			for _, absent := range tc.want.absent {
+				assert.NotContains(t, got.Out.Context, strings.ReplaceAll(absent, "{run}", run))
+			}
+		})
+	}
+}
+
+// The mode comes from NODLOOP_SESSION, then session_mode in config.json, then deferred, and an unknown one records nothing
+func TestRunHookSessionMode(t *testing.T) {
+	type args struct {
+		env   string
+		saved string
+	}
+	type want struct {
+		// The prompt gets the session note
+		note   bool
+		stderr string
+	}
+	tcs := []struct {
+		name string
+		args args
+		want want
+	}{
+		{"nothing set is deferred", args{"", ""}, want{note: true}},
+		{"the config sets the mode", args{"", `{"session_mode":"manual"}`}, want{}},
+		{"the env wins over the config", args{"immediate", `{"session_mode":"manual"}`}, want{note: true}},
+		{"an unknown mode in the config names config.json", args{"", `{"session_mode":"later"}`},
+			want{stderr: `nodloop hook: unknown session mode: session_mode in config.json is "later"`}},
+		{"an unknown mode in the env names the env", args{"on", ""}, want{stderr: `nodloop hook: unknown session mode: NODLOOP_SESSION is "on"`}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			home, records, repo := hookHome(t, "use git -C")
+			getenv := func(k string) string {
+				return map[string]string{"HOME": home, envRecordDir: records, envSession: tc.args.env}[k]
+			}
+			hookPromptSetup(t, func(k string) string { return map[string]string{"HOME": home, envRecordDir: records}[k] }, repo, true, false, false)
+			if tc.args.saved != "" {
+				require.NoError(t, os.MkdirAll(homeDir(home).dir(), 0o755))
+				require.NoError(t, os.WriteFile(homeDir(home).configPath(), []byte(tc.args.saved), 0o600))
+			}
+			stdin := `{"session_id":"s1","cwd":"` + repo + `"}`
+			var stdout, stderr bytes.Buffer
+
+			code := runHook([]string{"prompt"}, getenv, nil, time.Now, strings.NewReader(stdin), &stdout, &stderr)
+
+			assert.Equal(t, 0, code)
+			assert.True(t, strings.HasPrefix(stderr.String(), tc.want.stderr), stderr.String())
+			assert.Equal(t, tc.want.note, strings.Contains(stdout.String(), "your previous answer"), stdout.String())
 		})
 	}
 }
@@ -321,6 +448,8 @@ func TestRunHookStopExtract(t *testing.T) {
 		stops int
 		// The start fails
 		fails bool
+		// A person withdraws the reject
+		withdrawn bool
 		// The conversation drafted the lesson of the reject in its turn
 		drafted bool
 	}
@@ -339,6 +468,8 @@ func TestRunHookStopExtract(t *testing.T) {
 		{"a person's approve wins over a later inferred reject", args{reviewer: "session", person: "approve", stops: 1}, want{}},
 		{"an answer without a verdict extracts nothing", args{stops: 1}, want{}},
 		{"manual extracts nothing", args{reviewer: "session", session: "manual", stops: 1}, want{}},
+		{"immediate extracts like deferred", args{reviewer: "session", session: "immediate", stops: 1}, want{extracts: true}},
+		{"a reject a person withdrew is not extracted", args{reviewer: "session", stops: 1, withdrawn: true}, want{}},
 		{"a correction the turn already drafted is not extracted again", args{reviewer: "session", stops: 1, drafted: true}, want{}},
 		{"a failed start still records the answer", args{reviewer: "session", stops: 1, fails: true}, want{extracts: true, stderr: "nodloop hook: no process"}},
 	}
@@ -378,6 +509,11 @@ func TestRunHookStopExtract(t *testing.T) {
 				var stderr bytes.Buffer
 				require.Equal(t, 0, runFeedback([]string{"add", "--trace", first[0].ID, "--verdict", "reject", "--reason-code", "form",
 					"--reason", "the message was too long", "--reviewer", tc.args.reviewer}, getenv, time.Now, &bytes.Buffer{}, &stderr), stderr.String())
+			}
+			if tc.args.withdrawn {
+				var stderr bytes.Buffer
+				require.Equal(t, 0, runFeedback([]string{"add", "--trace", first[0].ID, "--verdict", "withdraw", "--reviewer", "ann"},
+					getenv, time.Now, &bytes.Buffer{}, &stderr), stderr.String())
 			}
 			if tc.args.drafted {
 				var stderr bytes.Buffer
@@ -652,15 +788,15 @@ func TestRunHookReaction(t *testing.T) {
 		want want
 	}{
 		{"a sure correction is recorded as a reject with the message", args{`{"answers":{"corrects":{"noul":0.9},"approves":{"noul":0.1}}}`, "laya"},
-			want{feedback.VerdictReject, message, "was recorded as a reject of your previous answer", "first call the nodloop feedback tool", ""}},
+			want{feedback.VerdictReject, message, "was recorded as a reject of your previous answer", "call the nodloop feedback tool", ""}},
 		{"a sure approval is recorded and asks nothing", args{`{"answers":{"corrects":{"noul":0.1},"approves":{"noul":0.9}}}`, "laya"},
 			want{feedback.VerdictApprove, "", "use git -C", "previous answer", ""}},
 		{"an unsure answer leaves the conversation to judge", args{`{"answers":{"corrects":{"noul":0.3},"approves":{"noul":0.3}}}`, "laya"},
-			want{"", "", "first call the nodloop feedback tool", "recorded as a reject", ""}},
+			want{"", "", "call the nodloop feedback tool", "recorded as a reject", ""}},
 		{"a cascade that ends at claude defers to the conversation", args{`{"answers":{"corrects":{"noul":0.6},"approves":{"noul":0.3}}}`, "laya,claude"},
-			want{"", "", "first call the nodloop feedback tool", "recorded as a reject", ""}},
+			want{"", "", "call the nodloop feedback tool", "recorded as a reject", ""}},
 		{"a failing endpoint leaves the conversation to judge", args{"", "laya"},
-			want{"", "", "first call the nodloop feedback tool", "recorded as a reject", "nodloop hook: laya: classify: endpoint answered an error status"}},
+			want{"", "", "call the nodloop feedback tool", "recorded as a reject", "nodloop hook: laya: classify: endpoint answered an error status"}},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {

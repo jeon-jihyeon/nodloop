@@ -77,6 +77,11 @@ func (o Outcome) Implicit() bool {
 	return o.Reviewer == ReviewerSession
 }
 
+// An outcome is a check that happened and is never taken back
+func (o Outcome) withdraws() bool {
+	return false
+}
+
 func (o Outcome) trace() string {
 	return o.TraceID
 }

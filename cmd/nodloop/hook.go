@@ -12,6 +12,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -25,8 +26,7 @@ import (
 const (
 	// The producer of the runs a Claude Code conversation records
 	sessionProducer = "session"
-	// off turns the conversation hooks off so the plugin records no conversation
-	// manual records runs and items and leaves reactions to an explicit nod
+	// The session mode of the process over session_mode of config.json
 	envSession = "NODLOOP_SESSION"
 	// The directory Claude Code started in
 	// It stays put when a Bash call runs cd
@@ -48,7 +48,17 @@ func runHook(args []string, getenv func(string) string, start starter, now func(
 		fmt.Fprintln(stderr, "nodloop hook:", errNoAction)
 		return 0
 	}
-	if getenv(envSession) == "off" {
+	a, err := recordFlags{}.app(getenv, now)
+	if err != nil {
+		fmt.Fprintln(stderr, "nodloop hook:", err)
+		return 0
+	}
+	mode, err := sessionModeOf(getenv(envSession), a.cfg.sessionMode)
+	if err != nil {
+		fmt.Fprintln(stderr, "nodloop hook:", err)
+		return 0
+	}
+	if mode == sessionOff {
 		return 0
 	}
 	var in hookInput
@@ -56,13 +66,8 @@ func runHook(args []string, getenv func(string) string, start starter, now func(
 		fmt.Fprintln(stderr, "nodloop hook:", err)
 		return 0
 	}
-	a, err := recordFlags{}.app(getenv, now)
-	if err != nil {
-		fmt.Fprintln(stderr, "nodloop hook:", err)
-		return 0
-	}
 	cmd := hookCommand{
-		app: a, start: start, out: stdout, manual: getenv(envSession) == "manual",
+		app: a, start: start, out: stdout, mode: mode,
 		plugin: cmp.Or(getenv(envPluginVersion), buildVersion()), holdout: a.cfg.holdout,
 	}
 	if args[0] == "prompt" {
@@ -96,10 +101,10 @@ type hookInput struct {
 }
 
 type hookCommand struct {
-	app    app
-	start  starter
-	out    io.Writer
-	manual bool
+	app   app
+	start starter
+	out   io.Writer
+	mode  sessionMode
 	// The version the launcher ran this binary for and else the build version
 	plugin  string
 	holdout holdout
@@ -138,18 +143,23 @@ func (c hookCommand) prompt(ctx context.Context, sessionID, message string, labe
 
 // The previous run of the session and the candidates waiting in the place
 // 1. the first prompt counts every candidate waiting
-// 2. a later prompt counts the candidates drafted since the previous answer so each is asked about once in the session that corrected it
-// 3. manual mode and a prompt without a session id get no note
+// 2. a later prompt in immediate mode counts the candidates drafted since the previous answer so each is asked about once in the session that corrected it
+// 3. a later prompt in deferred mode counts none so the review comes once per session
+// 4. a mode that infers nothing and a prompt without a session id get no note
 func (c hookCommand) note(sessionID string, labels trace.Labels, all knowledge.Set, runs trace.Traces) sessionNote {
-	if c.manual || sessionID == "" {
+	if !c.mode.infers() || sessionID == "" {
 		return sessionNote{}
 	}
 	run := runs.Newest()
 	waiting := all.Waiting(sessionProducer, labels)
-	if run.ID != "" {
+	switch {
+	case run.ID == "":
+	case c.mode.inTurn():
 		waiting = waiting.Since(run.Time)
+	default:
+		waiting = nil
 	}
-	return sessionNote{run: run.ID, waiting: len(waiting)}
+	return sessionNote{mode: c.mode, run: run.ID, waiting: len(waiting)}
 }
 
 // The runs of the session newest first
@@ -216,9 +226,10 @@ func (c hookCommand) stop(ctx context.Context, sessionID string, labels trace.La
 
 // The extraction of the run started when the conversation alone judged it and its latest verdict corrects it
 // 1. a run with a verdict of a person is left to the nod skill even after a later inferred one because the person's verdict wins
+// A person's withdraw is such a verdict so a withdrawn run is never drafted
 // 2. it runs as `knowledge extract` in a process of its own because Claude Code may end an async hook when it exits
 func (c hookCommand) extract(ctx context.Context, runID string) error {
-	if c.manual || runID == "" {
+	if !c.mode.infers() || runID == "" {
 		return nil
 	}
 	verdicts, err := c.app.feedback()
@@ -294,6 +305,7 @@ func (items hookItems) fitting() (knowledge.Set, []string) {
 
 // What the prompt hook tells the conversation about its session
 type sessionNote struct {
+	mode sessionMode
 	// The previous run of the session, empty on its first prompt
 	run string
 	// Candidates waiting for approval in the place
@@ -303,7 +315,14 @@ type sessionNote struct {
 }
 
 // The reaction a conversation records is an inferred verdict, so only words that judge the previous answer count
-// A correction is drafted in the same turn so the user is asked while the correction is fresh
+// The verdict is recorded without a word to the user and its lesson is drafted after the turn so a discussion goes on undisturbed
+const deferredReactionNote = "nodloop: your previous answer in this conversation is run %s. " +
+	"If the user's message says that answer was wrong or right, call the nodloop feedback tool on trace %s with reviewer session: " +
+	"verdict reject with what was wrong in the user's words and a reason code, or approve. " +
+	"Do it without telling the user and go on with what they asked. Its lesson is drafted after the turn and reviewed in a later session. " +
+	"Skip it for a new request, a follow up, a change of topic, or when the user calls /nodloop:nod.\n"
+
+// In immediate mode a correction is drafted in the same turn so the user is asked while the correction is fresh
 const reactionNote = "nodloop: your previous answer in this conversation is run %s. " +
 	"If the user's message says that answer was wrong or right, first call the nodloop feedback tool on trace %s with reviewer session: " +
 	"verdict reject with what was wrong in the user's words and a reason code, or approve. " +
@@ -315,23 +334,74 @@ const waitingNote = "nodloop: knowledge candidates for this place wait for appro
 	"After your answer, review them without waiting for /nodloop:nod: invoke the nodloop:nod skill and follow its section " +
 	"Review the waiting drafts, which asks the user about each draft.\n"
 
-// The reaction point already recorded a reject so the conversation only drafts the correction
+// The reaction point already recorded a reject so the conversation records nothing more
+const deferredRecordedNote = "nodloop: the user's message was recorded as a reject of your previous answer, run %s. " +
+	"Do what the user asked. Its lesson is drafted after the turn and reviewed in a later session.\n"
+
+// In immediate mode the conversation drafts the correction the reaction point recorded
 const recordedNote = "nodloop: the user's message was recorded as a reject of your previous answer, run %s. " +
 	"Do what the user asked, then invoke the nodloop:nod skill and follow its section Draft the correction of this turn.\n"
 
 func (n sessionNote) text() string {
+	reaction, recorded := deferredReactionNote, deferredRecordedNote
+	if n.mode.inTurn() {
+		reaction, recorded = reactionNote, recordedNote
+	}
 	var b strings.Builder
 	switch {
 	case n.run == "", n.recorded == feedback.VerdictApprove:
 	case n.recorded == feedback.VerdictReject:
-		fmt.Fprintf(&b, recordedNote, n.run)
+		fmt.Fprintf(&b, recorded, n.run)
 	default:
-		fmt.Fprintf(&b, reactionNote, n.run, n.run)
+		fmt.Fprintf(&b, reaction, n.run, n.run)
 	}
 	if n.waiting > 0 {
 		fmt.Fprintf(&b, waitingNote, n.waiting)
 	}
 	return b.String()
+}
+
+// How a conversation records and reviews the verdicts it infers
+type sessionMode string
+
+const (
+	sessionDeferred  sessionMode = "deferred"  // infers each verdict silently, drafts after the turn and asks once per session
+	sessionImmediate sessionMode = "immediate" // drafts a correction and asks about it in the same turn
+	sessionManual    sessionMode = "manual"    // records answers and items and leaves every verdict to an explicit nod
+	sessionOff       sessionMode = "off"       // records nothing
+)
+
+var sessionModes = []sessionMode{sessionDeferred, sessionImmediate, sessionManual, sessionOff}
+
+const sessionModeHint = "Use deferred, immediate, manual or off"
+
+func (m sessionMode) valid() bool {
+	return slices.Contains(sessionModes, m)
+}
+
+// Whether the conversation records the verdicts it reads and the stop hook drafts their lessons
+func (m sessionMode) infers() bool {
+	return m == sessionDeferred || m == sessionImmediate
+}
+
+// Whether a correction is drafted and asked about in the turn that recorded it
+func (m sessionMode) inTurn() bool {
+	return m == sessionImmediate
+}
+
+// The mode of the process
+// 1. NODLOOP_SESSION wins, then session_mode in config.json, then deferred
+// 2. a value outside the set is refused with where it came from so the hooks record nothing the user did not choose
+func sessionModeOf(env, configured string) (sessionMode, error) {
+	switch {
+	case env != "" && !sessionMode(env).valid():
+		return "", fmt.Errorf("%w: %s is %q. %s", errSessionModeUnknown, envSession, env, sessionModeHint)
+	case env != "":
+		return sessionMode(env), nil
+	case configured != "" && !sessionMode(configured).valid():
+		return "", fmt.Errorf("%w: session_mode in %s is %q. %s", errSessionModeUnknown, configFile, configured, sessionModeHint)
+	}
+	return cmp.Or(sessionMode(configured), sessionDeferred), nil
 }
 
 // The last answer of a turn

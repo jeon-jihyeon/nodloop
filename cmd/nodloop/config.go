@@ -28,6 +28,8 @@ type config struct {
 	classifiers classify.Endpoints
 	decisions   classify.Decisions
 	holdout     holdout
+	// session_mode of config.json as written, checked where a hook reads it
+	sessionMode string
 }
 
 // The record directory as the flag, then NODLOOP_RECORD_DIR, then config.json, then the default under home
@@ -46,7 +48,7 @@ func resolveConfig(getenv func(string) string, recordDir string) (config, error)
 	if err != nil {
 		return config{}, err
 	}
-	return config{recordDir: records, home: h, classifiers: uc.Classifiers, decisions: uc.Decisions, holdout: holdout(uc.Holdout)}, nil
+	return config{recordDir: records, home: h, classifiers: uc.Classifiers, decisions: uc.Decisions, holdout: holdout(uc.Holdout), sessionMode: uc.SessionMode}, nil
 }
 
 // The record flag a command pasted into another shell needs to read these records
@@ -77,7 +79,7 @@ func recordDirOf(flag, env, configured, fallback string) (string, error) {
 	return "", nil
 }
 
-// config approver and config holdout print the saved value and save the value given after them
+// config approver, holdout and session_mode print the saved value and save the value given after them
 func runConfig(args []string, getenv func(string) string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		return fail(stderr, "config", errNoAction)
@@ -94,6 +96,8 @@ func runConfig(args []string, getenv func(string) string, stdout, stderr io.Writ
 		err = cmd.approver(value)
 	case "holdout":
 		err = cmd.holdout(value)
+	case "session_mode":
+		err = cmd.sessionMode(value)
 	default:
 		err = fmt.Errorf("%w %q", errUnknownAction, args[0])
 	}
@@ -146,5 +150,29 @@ func (c configCommand) holdout(value string) error {
 		return err
 	}
 	fmt.Fprintln(c.out, strconv.FormatFloat(share, 'g', -1, 64))
+	return nil
+}
+
+// Prints the saved mode or deferred, or saves the one given
+func (c configCommand) sessionMode(value string) error {
+	if value == "" {
+		uc, err := c.home.readConfig()
+		if err != nil {
+			return err
+		}
+		mode, err := sessionModeOf("", uc.SessionMode)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintln(c.out, mode)
+		return nil
+	}
+	if !sessionMode(value).valid() {
+		return fmt.Errorf("%w: %q. %s", errSessionModeUnknown, value, sessionModeHint)
+	}
+	if err := c.home.save("session_mode", value); err != nil {
+		return err
+	}
+	fmt.Fprintln(c.out, value)
 	return nil
 }

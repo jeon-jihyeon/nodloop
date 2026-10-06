@@ -127,6 +127,12 @@ func TestRunConfig(t *testing.T) {
 		{"no holdout prints 0", args{"", []string{"holdout"}, false}, want{0, "0\n", "", ""}},
 		{"a holdout of 1 is refused", args{"", []string{"holdout", "1"}, false}, want{1, "", "invalid holdout", ""}},
 		{"a holdout that is no number is refused", args{"", []string{"holdout", "some"}, false}, want{1, "", "invalid holdout", ""}},
+		{"no session mode prints deferred", args{"", []string{"session_mode"}, false}, want{0, "deferred\n", "", ""}},
+		{"a session mode is saved", args{"", []string{"session_mode", "immediate"}, false}, want{0, "immediate\n", "", "{\n  \"session_mode\": \"immediate\"\n}\n"}},
+		{"a saved session mode is printed", args{`{"session_mode":"manual"}`, []string{"session_mode"}, false}, want{0, "manual\n", "", `{"session_mode":"manual"}`}},
+		{"an unknown session mode is refused", args{"", []string{"session_mode", "later"}, false}, want{1, "", "unknown session mode", ""}},
+		{"a saved unknown session mode names config.json", args{`{"session_mode":"later"}`, []string{"session_mode"}, false},
+			want{1, "", `session_mode in config.json is "later"`, `{"session_mode":"later"}`}},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {

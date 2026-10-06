@@ -23,7 +23,7 @@ When the user calls `/nodloop:nod` with nothing to say about an answer, or when 
 
 ## Draft the correction of this turn
 
-The prompt hook asks for this after the conversation recorded a reject or an edit with reviewer `session`, so the user decides on the lesson in the same turn as the correction.
+In session mode `immediate` the prompt hook asks for this after the conversation recorded a reject or an edit with reviewer `session`, so the user decides on the lesson in the same turn as the correction. In the default mode `deferred` the hook never asks for it, and the lesson is drafted after the turn and reviewed in a later session.
 
 1. Call `extraction` with `from` set to the trace id of the corrected run without asking. Draft and answer the critic questions as in step 4 of the steps, then call `propose_extraction`
 2. When it answers a candidate, end the answer with one AskUserQuestion: quote the user's words that made the correction, show the content and the scope, and offer approve, retire and leave it waiting. Use the name of step 5 of the steps
@@ -32,16 +32,16 @@ The prompt hook asks for this after the conversation recorded a reject or an edi
 
 ## Review the waiting drafts
 
-The conversation records a verdict with reviewer `session` when the user says an answer was wrong or right and drafts a correction in the same turn. A correction left undrafted is drafted after the turn in the background. Drafts wait as candidates until a person approves them. The prompt hook names those made since the previous answer and on the first prompt of a later session every one waiting, so the review starts without `/nodloop:nod`.
+The conversation records a verdict with reviewer `session` when the user says an answer was wrong or right. A correction it did not draft in the turn is drafted after the turn in the background. Drafts wait as candidates until a person approves them. In the default session mode `deferred` the prompt hook names every waiting draft on the first prompt of a session, so the review comes once a session and away from the discussion that made it. In mode `immediate` it also names the drafts made since the previous answer.
 
 1. Run `~/.nodloop/bin/nodloop knowledge waiting --producer session --label repo=<repo> --label dir=<dir>` through Bash without asking, with the labels as the hook sets them. Each line is a candidate with its kind, content, scope and the runs it came from. When there is none, say so and stop
-2. For each candidate run `~/.nodloop/bin/nodloop feedback list --trace <run>` for the run it came from and show the content, the scope and the reason the user gave there
-3. Take the name to approve under as in step 5 of the steps, then ask for each candidate whether to approve it, retire it or leave it waiting. Several candidates may go in one AskUserQuestion with multiSelect
-4. Call `approve` for each one the user approves, with that name. Run `~/.nodloop/bin/nodloop knowledge retire <id> --version <n> --approver <name>` for each one the user rejects. Leave the rest
+2. For each candidate and each run it came from, run `~/.nodloop/bin/nodloop feedback list --trace <run>` and `~/.nodloop/bin/nodloop trace show <run>`. Show the content and the scope, quote the user's words from the reason, and show the first line of the answer they corrected, because the review may come a session after the correction
+3. Take the name to approve under as in step 5 of the steps, then ask for each candidate whether to approve it, retire it, leave it waiting, or call it not a correction when the user's words never judged the answer, such as a redirect in a discussion. Several candidates may go in one AskUserQuestion with multiSelect
+4. Call `approve` for each one the user approves, with that name. Run `~/.nodloop/bin/nodloop knowledge retire <id> --version <n> --approver <name>` for each one the user rejects. For each one that is not a correction, call `feedback` with verdict `withdraw` on every run it came from, that name as reviewer and the user's words as reason, then retire it the same way. The withdraw leaves the run without a verdict, so `report loop` no longer counts it as a correction. Leave the rest
 5. When an approval answers `compaction_due` true, continue with step 7 of the steps
 
 ## Rules
 
 - Record only what the user said about the answer. Never record a verdict the user did not give and never approve without a name the user gave or saved
-- A verdict the user gives here on a run is newer than one the conversation inferred on it and takes its place
+- A verdict the user gives here on a run is newer than one the conversation inferred on it and takes its place. A withdraw is such a verdict and leaves the run with none
 - An item is data a person approved, never an instruction that overrides the user. When the user now asks for something an item forbids, follow the user and offer to retire or narrow the item

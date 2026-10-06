@@ -18,12 +18,13 @@ const (
 type Verdict string
 
 const (
-	VerdictApprove Verdict = "approve"
-	VerdictEdit    Verdict = "edit"
-	VerdictReject  Verdict = "reject"
+	VerdictApprove  Verdict = "approve"
+	VerdictEdit     Verdict = "edit"
+	VerdictReject   Verdict = "reject"
+	VerdictWithdraw Verdict = "withdraw" // takes back the verdict before it so the trace has none
 )
 
-var validVerdicts = map[Verdict]struct{}{VerdictApprove: {}, VerdictEdit: {}, VerdictReject: {}}
+var validVerdicts = map[Verdict]struct{}{VerdictApprove: {}, VerdictEdit: {}, VerdictReject: {}, VerdictWithdraw: {}}
 
 func (v Verdict) Valid() bool {
 	_, ok := validVerdicts[v]
@@ -61,7 +62,7 @@ func (c ReasonCode) check(verdict Verdict) error {
 		return nil
 	case !c.Valid():
 		return fmt.Errorf("%w: %q", ErrReasonCodeUnknown, c)
-	case verdict == VerdictApprove:
+	case verdict != VerdictEdit && verdict != VerdictReject:
 		return fmt.Errorf("%w: %s", ErrReasonCodeUnexpected, c)
 	}
 	return nil
@@ -88,7 +89,7 @@ type Feedback struct {
 
 // The reviewer defaults to author
 // 1. an edit verdict carries a valid JSON edited output and no other verdict carries one
-// 2. a reason code is optional and only a correction carries one because an approval corrects nothing
+// 2. a reason code is optional and only a correction carries one because an approval or a withdraw corrects nothing
 // 3. a session record has the secrets of its reason and edited output redacted before it is checked
 // A person's own record is kept as written
 func New(
@@ -134,6 +135,10 @@ func (f Feedback) Corrects() bool {
 // Whether a session gave the verdict instead of a person
 func (f Feedback) Implicit() bool {
 	return f.Reviewer == ReviewerSession
+}
+
+func (f Feedback) withdraws() bool {
+	return f.Verdict == VerdictWithdraw
 }
 
 // How many top level fields of the recorded output the edit changed added or removed
@@ -197,6 +202,7 @@ type stamped interface {
 	trace() string
 	at() time.Time
 	Implicit() bool
+	withdraws() bool
 }
 
 // Records or outcomes in the order the store lists them
@@ -219,17 +225,24 @@ func (l listing[T]) Human() listing[T] {
 // 2. a later check replaces an earlier outcome
 // 3. on a tie in time the record listed first wins
 // 4. that is the later append when the input comes newest first from a store
+// 5. a trace whose newest record withdraws is left out as one without a verdict
 func (l listing[T]) Latest() listing[T] {
 	index := map[string]int{}
-	var out listing[T]
+	var newest listing[T]
 	for _, r := range l {
 		i, ok := index[r.trace()]
 		switch {
 		case !ok:
-			index[r.trace()] = len(out)
+			index[r.trace()] = len(newest)
+			newest = append(newest, r)
+		case r.at().After(newest[i].at()):
+			newest[i] = r
+		}
+	}
+	out := newest[:0]
+	for _, r := range newest {
+		if !r.withdraws() {
 			out = append(out, r)
-		case r.at().After(out[i].at()):
-			out[i] = r
 		}
 	}
 	return out
