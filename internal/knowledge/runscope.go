@@ -1,12 +1,14 @@
 package knowledge
 
 import (
+	"cmp"
 	"fmt"
 	"maps"
 	"slices"
 	"strings"
 	"unicode/utf8"
 
+	"github.com/jeon-jihyeon/nodloop/internal/feedback"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
 )
 
@@ -179,4 +181,29 @@ func (s Set) runCarried(id string, run RunScope) Set {
 		}
 	}
 	return out
+}
+
+// The draft with the producer and labels of a run a person corrected and the run as evidence
+// 1. the producer and labels the draft already names win over those of the run
+// 2. the latest of the verdicts on the run must correct it
+func (k Knowledge) From(run trace.Trace, verdicts feedback.Records) (Knowledge, error) {
+	if err := run.CheckRun(); err != nil {
+		return Knowledge{}, err
+	}
+	if latest := verdicts.Latest(); len(latest) == 0 || !latest[0].Corrects() {
+		return Knowledge{}, fmt.Errorf("%w: %s", ErrNotCorrected, run.ID)
+	}
+	scope := RunScope{}
+	if k.Run != nil {
+		scope = *k.Run
+	}
+	scope.Producer = cmp.Or(scope.Producer, run.Producer)
+	if len(scope.Labels) == 0 {
+		scope.Labels = run.Labels
+	}
+	k.Run = &scope
+	if !slices.Contains(k.Evidence.FeedbackTraceIDs, run.ID) {
+		k.Evidence.FeedbackTraceIDs = append(slices.Clone(k.Evidence.FeedbackTraceIDs), run.ID)
+	}
+	return k, nil
 }

@@ -46,7 +46,7 @@ func TestServerLoop(t *testing.T) {
 	recordRun(t, c, "other")
 
 	err := c.Run(t, "propose", map[string]any{"kind": "judgment", "content": "x", "from": runID})
-	assert.ErrorContains(t, err, mcp.ErrRunNotCorrected.Error())
+	assert.ErrorContains(t, err, knowledge.ErrNotCorrected.Error())
 	require.NoError(t, c.Run(t, "feedback", map[string]any{
 		"trace_id": runID, "verdict": "edit", "reason_code": "other", "edited_output": "git -C repo status",
 	}))
@@ -222,4 +222,32 @@ func TestServerExtraction(t *testing.T) {
 		"from": second, "relation": "add", "kind": "judgment", "content": lesson, "critique": map[string]any{"states": true, "holds": false, "fits": true, "why": "x"},
 	})
 	assert.ErrorContains(t, err, extract.ErrCriticRefused.Error())
+}
+
+// A proposal may name a new tenant only when it says so, and an approved veto answers check_call
+func TestServerNewLabelsAndCheckCall(t *testing.T) {
+	st := testkit.Open(t)
+	c := connect(t, st)
+	runID := recordRun(t, c, "nodloop")
+	require.NoError(t, c.Run(t, "feedback", map[string]any{"trace_id": runID, "verdict": "reject", "reason_code": "approach", "reason": "never sed -i"}))
+	scope := map[string]any{"repo": []any{"newrepo"}}
+
+	refused := c.Run(t, "propose", map[string]any{"kind": "judgment", "content": "x", "producer": "session", "labels": scope, "trace_ids": []any{runID}})
+	var proposed struct {
+		ID      string `json:"id"`
+		Version int    `json:"version"`
+	}
+	require.NoError(t, c.Call(t, "propose", map[string]any{
+		"id": "no-sed", "kind": "judgment", "content": "Never edit with sed -i", "from": runID, "new_labels": true,
+		"labels": scope,
+		"veto":   map[string]any{"tool": "Bash", "when": []any{map[string]any{"field": "commands", "match": `(?m)^sed -i`}}, "example": map[string]any{"command": "sed -i s/a/b/ f"}},
+	}, &proposed))
+	require.NoError(t, c.Run(t, "approve", map[string]any{"id": proposed.ID, "version": proposed.Version, "approver": "ann"}))
+	var blocked, allowed map[string]any
+	require.NoError(t, c.Call(t, "check_call", map[string]any{"tool": "Bash", "input": map[string]any{"command": "sed -i s/a/b/ f"}}, &blocked))
+	require.NoError(t, c.Call(t, "check_call", map[string]any{"tool": "Bash", "input": map[string]any{"command": "ls"}}, &allowed))
+
+	assert.ErrorContains(t, refused, knowledge.ErrScopeUnobserved.Error())
+	assert.Equal(t, map[string]any{"action": "block", "veto": "no-sed", "reason": "Never edit with sed -i"}, blocked)
+	assert.Equal(t, map[string]any{"action": "allow"}, allowed)
 }

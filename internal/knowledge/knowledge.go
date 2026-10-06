@@ -100,6 +100,8 @@ type Knowledge struct {
 	// A model wrote the content from a correction and no person rewrote it
 	// Kept through approval so an approved item still shows where its text came from
 	Drafted bool `json:"drafted,omitempty"`
+	// The proposer let the scope name label values no recorded run carried yet such as a new tenant
+	NewLabels bool `json:"new_labels,omitempty"`
 	// A tool call the judgment forbids
 	// Approval exports it as a guard veto whose id is the knowledge id and whose reason is the content
 	Veto *Veto `json:"veto,omitempty"`

@@ -1,6 +1,8 @@
 package main
 
 import (
+	"cmp"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -39,6 +41,16 @@ func runGuard(
 		err = cmd.install()
 	case "uninstall":
 		err = cmd.uninstall()
+	case "call":
+		fs := flag.NewFlagSet("guard call", flag.ContinueOnError)
+		fs.SetOutput(stderr)
+		tool := fs.String("tool", "", "the tool an agent is about to call such as Bash")
+		input := fs.String("input", "{}", "the arguments of the call as JSON. A shell command goes under command")
+		dir := fs.String("dir", "", "the directory whose project vetoes apply. The working directory when empty")
+		if err := fs.Parse(args[1:]); err != nil {
+			return 1
+		}
+		err = cmd.call(cmp.Or(*dir, currentDir(stderr)), *tool, *input)
 	case "log":
 		fs := flag.NewFlagSet("guard log", flag.ContinueOnError)
 		fs.SetOutput(stderr)
@@ -279,4 +291,28 @@ func (c guardCommand) settingsPath() (string, error) {
 		return "", fmt.Errorf("%w: cannot locate settings.json", errHomeUnknown)
 	}
 	return c.home.settingsPath(), nil
+}
+
+// Prints as JSON whether a call an agent outside Claude Code is about to make passes the vetoes the hook would apply in dir
+// 1. the vetoes are those the hook discovers: project files, files under home and approved knowledge exported there
+// 2. the answer is action allow, block or ask with the veto and its reason
+func (c guardCommand) call(dir, tool, input string) error {
+	if tool == "" {
+		return fmt.Errorf("call: --tool %w", errRequired)
+	}
+	var args map[string]any
+	if err := json.Unmarshal([]byte(input), &args); err != nil {
+		return fmt.Errorf("%w: --input: %w", errCallInput, err)
+	}
+	vetoes, err := c.discover(dir)
+	if err != nil {
+		return err
+	}
+	answer := map[string]any{"action": "allow"}
+	if matched := vetoes.Match(tool, args); matched != nil {
+		answer = map[string]any{"action": matched.Action(), "veto": matched.ID(), "reason": matched.Reason()}
+	}
+	enc := json.NewEncoder(c.out)
+	enc.SetEscapeHTML(false)
+	return enc.Encode(answer)
 }

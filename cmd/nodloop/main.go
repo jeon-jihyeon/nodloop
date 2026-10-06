@@ -39,11 +39,12 @@ commands:
                             Record what a real check found: confirmed, refuted or inconclusive
   knowledge propose --kind <k> --content <text> (--producer <p> [--label <key=value>] | --from <run id>)
                     [--except <key=value>] [--id <id>] [--basis stated or verified] [--author <a>] [--trace <run id>]
-                    [--evidence-feedback <id>] [--evidence-outcome <id>]
+                    [--evidence-feedback <id>] [--evidence-outcome <id>] [--new-labels]
                     [--veto-tool <t> --veto-field <f> --veto-match <re> [--veto-unless <re>] --veto-example <json>]
                             Add a candidate scoped to the runs of a producer and list its overlaps. Every label must be one
-                            a recorded run carries. --from fills producer, labels and evidence from a run a person
-                            corrected. A judgment with a veto becomes a guard veto once approved
+                            a recorded run carries unless --new-labels allows new values such as a new tenant. --from fills
+                            producer, labels and evidence from a run a person corrected. A judgment with a veto becomes a
+                            guard veto once approved
   knowledge extract --from <run id> [--model <m>] [--author <a>]
                             Draft through claude -p what a correction of the run taught, check it against the items the run
                             reaches with the critic, a second claude call or the classifiers set up for the critic point, and
@@ -111,6 +112,9 @@ commands:
                             and from $HOME and then every approved veto file under $HOME/.claude/nodloop.
                             Logs every block and ask to ~/.nodloop/guard.jsonl
   guard log [--limit <n>]   Logged blocks and asks newest first. 20 by default and 0 prints every one
+  guard call --tool <t> [--input <json>] [--dir <d>]
+                            Check one tool call an agent outside Claude Code is about to make against the vetoes the hook
+                            would apply in dir. Prints action allow, block or ask with the veto and its reason as JSON
   guard check               Load the veto files guard reads for the current directory, report counts or errors
                             and whether the hook is installed
   guard install             Register this binary as a PreToolUse hook in ~/.claude/settings.json (backs up first)
