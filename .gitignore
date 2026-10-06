@@ -4,6 +4,14 @@
 *.test
 *.prof
 
+# SDK dependencies and build output
+node_modules/
+/sdk/typescript/dist/
+.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+
 # local records, vetoes and settings
 /.nodloop/
 /.claude/nodloop/

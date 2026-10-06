@@ -67,8 +67,23 @@ func New(id, tool string, when []Condition, reason string, action Action, enable
 // A shape and not a list so a tool Claude Code adds later is still accepted
 var toolName = regexp.MustCompile(`^([A-Z][A-Za-z0-9]*|mcp__[A-Za-z0-9_-]+__[A-Za-z0-9_.-]+)$`)
 
-// Tool names no tool call carries such as bash or a permission rule like `Bash(sed:*)`
-// Matching is exact so a veto that lists only these blocks nothing
+// Shape of a tool name any agent may give its tools such as bash or search_docs
+// A permission rule such as `Bash(sed:*)` or a name with spaces is no tool name anywhere
+var agentToolName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_.:-]*$`)
+
+// Tool names no agent calls a tool by such as a permission rule like `Bash(sed:*)`
+func (v Veto) MalformedTools() []string {
+	var malformed []string
+	for _, t := range v.tools {
+		if !agentToolName.MatchString(t) {
+			malformed = append(malformed, t)
+		}
+	}
+	return malformed
+}
+
+// Tool names no Claude Code tool call carries such as bash or a permission rule like `Bash(sed:*)`
+// Matching is exact so in Claude Code a veto that lists only these blocks nothing while another agent may call such a tool
 func (v Veto) UnknownTools() []string {
 	var unknown []string
 	for _, t := range v.tools {

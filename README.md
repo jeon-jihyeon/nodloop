@@ -106,6 +106,32 @@ d, _ := c.CheckCall(ctx, "Bash", map[string]any{"command": cmd}) // d.Action is 
 
 Labels are any keys and values. For a service, name the situation the way your team reads it: `tenant` and `customer` for who it served, `agent` for which agent ran, `task` for the kind of work and `env` for where it ran. A proposal may name only label values a recorded run carries, so a typo fails instead of making an item that matches nothing. To prepare an item for a tenant before its first run, pass `--new-labels` to `knowledge propose`, `new_labels` to the MCP tool or `NewLabels` to the Go client, and the item keeps that it was allowed.
 
+Python and TypeScript agents use the packages under `sdk/`. They start a local `nodloop mcp` over stdio, so no server runs, and fetch the release binary when none is installed. Each package carries adapters for three frameworks, so a correction reaches the agent's next run without glue code:
+
+```python
+from nodloop import Client
+from nodloop.langchain import NodloopMiddleware      # LangChain create_agent middleware
+from nodloop.openai_agents import NodloopHooks, veto_guardrail
+from nodloop.claude_agent import NodloopHooks as ClaudeHooks
+
+async with Client() as c:
+    mw = NodloopMiddleware(c, "support-bot", {"tenant": ["acme"]})
+    agent = create_agent(model, tools, middleware=[mw])  # items in the system message, the answer recorded, vetoed tool calls refused
+    await agent.ainvoke({"messages": [...]})
+    await c.judge(mw.run, "reject", reason="the refund window was missing")
+```
+
+```ts
+import { Client } from "nodloop";
+import { NodloopHooks } from "nodloop/claude-agent";
+
+const c = await Client.open();
+const hooks = new NodloopHooks(c, "support-bot", { tenant: ["acme"] });
+for await (const m of query({ prompt, options: { hooks: hooks.hooks() } })) {}
+```
+
+A veto names the tool the way the agent calls it, such as `bash` for a LangChain tool, and `guard check` points out a name no Claude Code tool carries.
+
 An agent outside Claude Code checks a tool call before running it with `nodloop guard call --tool Bash --input '{"command":"rm -rf /data"}'`, the MCP tool `check_call` or `CheckCall` in Go, and gets back allow, block or ask with the veto and its reason.
 
 ## Guard

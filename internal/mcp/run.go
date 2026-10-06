@@ -101,6 +101,7 @@ func (s *Server) knowledgeFor(ctx context.Context, _ *sdk.CallToolRequest, in kn
 	}
 	return nil, map[string]any{
 		"items": out, "chars": chars, "over_budget": chars > knowledge.RunChars || len(items) > knowledge.RunItems,
+		"context": items.Prompt(),
 	}, nil
 }
 

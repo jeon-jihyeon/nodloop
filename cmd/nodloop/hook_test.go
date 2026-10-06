@@ -163,7 +163,7 @@ func TestRunHookPrompt(t *testing.T) {
 		{
 			"a later prompt in a place without items gets the note alone",
 			args{stdin: `{"session_id":"s1","cwd":"{other}"}`, content: "use git -C", answered: true},
-			want{context: []string{"is run {run}."}, absent: []string{promptLead}},
+			want{context: []string{"is run {run}."}, absent: []string{knowledge.PromptLead}},
 		},
 		{
 			"the first prompt counts the lessons waiting in the place",
@@ -519,7 +519,7 @@ func TestHookItemsContextNote(t *testing.T) {
 
 			assert.Equal(t, tc.want, strings.Contains(got, note.text()))
 			assert.LessOrEqual(t, len([]rune(got)), contextRunes)
-			assert.Equal(t, len(tc.items) > 0, strings.HasPrefix(got, promptLead))
+			assert.Equal(t, len(tc.items) > 0, strings.HasPrefix(got, knowledge.PromptLead))
 		})
 	}
 }
