@@ -342,7 +342,7 @@ func (s *Server) compactionDue(ctx context.Context, id string, f knowledge.Folde
 type approveInput struct {
 	ID       string `json:"id" jsonschema:"knowledge id"`
 	Version  int    `json:"version" jsonschema:"version to approve"`
-	Approver string `json:"approver" jsonschema:"the name the user gave. Never a default"`
+	Approver string `json:"approver" jsonschema:"the name the user gave or saved with nodloop config approver. Never a default"`
 }
 
 func (s *Server) approve(ctx context.Context, _ *sdk.CallToolRequest, in approveInput) (*sdk.CallToolResult, any, error) {
@@ -435,7 +435,7 @@ func (s *Server) proposeCompaction(
 
 type approveCompactionInput struct {
 	Compaction string `json:"compaction" jsonschema:"the compaction id from propose_compaction"`
-	Approver   string `json:"approver" jsonschema:"the name the user gave. Never a default"`
+	Approver   string `json:"approver" jsonschema:"the name the user gave or saved with nodloop config approver. Never a default"`
 }
 
 func (s *Server) approveCompaction(
