@@ -1,6 +1,6 @@
 {
   "name": "nodloop",
-  "version": "0.6.4",
+  "version": "0.6.5",
   "description": "Your nods and corrections on AI output, recorded and carried to the next run in the same place once a named person approves them.",
   "author": {
     "name": "jeon-jihyeon"
