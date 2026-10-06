@@ -13,6 +13,10 @@ import (
 // Bytes of an error body a message quotes
 const bodyQuote = 200
 
+// Bytes of an answer read at most
+// A few questions answer in well under a kilobyte so a larger body is a wrong endpoint and is cut before it fills memory
+const bodyLimit = 1 << 20
+
 // A classifier behind the Jev wire format
 // laya-serve and OpenRouter decisions and TypeSafe answer the same body so one implementation serves them all
 type HTTP struct {
@@ -66,7 +70,7 @@ func (h *HTTP) Classify(ctx context.Context, req Request) (Answers, error) {
 	}
 	// A body fully read leaves nothing for Close to report
 	defer func() { _ = res.Body.Close() }()
-	b, err := io.ReadAll(res.Body)
+	b, err := io.ReadAll(io.LimitReader(res.Body, bodyLimit))
 	if err != nil {
 		return nil, err
 	}
@@ -83,5 +87,8 @@ func (h *HTTP) Classify(ctx context.Context, req Request) (Answers, error) {
 			answers[name] = Answer{Yes: *a.Noul}
 		}
 	}
-	return answers, answers.Check(req.Questions)
+	if err := answers.Check(req.Questions); err != nil {
+		return nil, err
+	}
+	return answers, nil
 }

@@ -25,6 +25,14 @@ func (p Point) Valid() bool {
 	return slices.Contains(Points(), p)
 }
 
+// Fails with ErrPointUnknown naming the valid points
+func (p Point) Check() error {
+	if !p.Valid() {
+		return fmt.Errorf("%w: %q. Use one of %v", ErrPointUnknown, p, Points())
+	}
+	return nil
+}
+
 // How the members of a setup answer together
 type Mode string
 
@@ -66,7 +74,8 @@ type Setup struct {
 	Combine Combine `json:"combine,omitempty"`
 }
 
-// The mode, the members in order and the parameter of the mode, tab separated
+// The mode and the members in order and the parameter of the mode
+// Tab separated
 func (s Setup) String() string {
 	text := fmt.Sprintf("%s\t%s", s.Mode, strings.Join(s.Members, ","))
 	switch s.Mode {
@@ -89,24 +98,33 @@ func NewSetup(members []string, mode Mode, threshold float64, combine Combine) (
 		}
 	}
 	s := Setup{Mode: mode, Members: members, Threshold: threshold, Combine: combine}
-	if err := s.Check(); err != nil {
-		return Setup{}, err
-	}
 	switch mode {
 	case ModeCascade:
 		s.Threshold = cmp.Or(threshold, defaultThreshold)
 	case ModeParallel:
 		s.Combine = cmp.Or(combine, CombineAll)
 	}
+	if err := s.Check(); err != nil {
+		return Setup{}, err
+	}
 	return s, nil
 }
 
-// The mode takes the members and the parameters given
+// The mode takes the members and exactly the parameter it needs
 // A config edited by hand is checked again when it is read
 func (s Setup) Check() error {
 	if !s.Mode.Valid() {
 		return fmt.Errorf("%w: mode %q", ErrSetupInvalid, s.Mode)
 	}
+	if err := s.checkMembers(); err != nil {
+		return err
+	}
+	return s.checkParameter()
+}
+
+// Single takes one member and the other modes two or more
+// No member is named twice
+func (s Setup) checkMembers() error {
 	single := s.Mode == ModeSingle
 	switch {
 	case single && len(s.Members) != 1:
@@ -115,13 +133,22 @@ func (s Setup) Check() error {
 		return fmt.Errorf("%w: %s takes two members or more, got %d", ErrSetupInvalid, s.Mode, len(s.Members))
 	case len(slices.Compact(slices.Sorted(slices.Values(s.Members)))) < len(s.Members):
 		return fmt.Errorf("%w: a member is named twice", ErrSetupInvalid)
-	case s.Threshold != 0 && s.Mode != ModeCascade:
+	}
+	return nil
+}
+
+// A cascade needs a threshold and a parallel a combine and no other mode takes either
+// Without them a cascade would let its first member answer alone and a parallel would keep the first answer
+func (s Setup) checkParameter() error {
+	cascade, parallel := s.Mode == ModeCascade, s.Mode == ModeParallel
+	switch {
+	case !cascade && s.Threshold != 0:
 		return fmt.Errorf("%w: threshold is for cascade only", ErrSetupInvalid)
-	case s.Threshold < 0 || s.Threshold > 1:
-		return fmt.Errorf("%w: threshold %v is outside 0 to 1", ErrSetupInvalid, s.Threshold)
-	case s.Combine != "" && s.Mode != ModeParallel:
+	case cascade && (s.Threshold <= 0 || s.Threshold > 1):
+		return fmt.Errorf("%w: a cascade threshold lies above 0 and up to 1, got %v", ErrSetupInvalid, s.Threshold)
+	case !parallel && s.Combine != "":
 		return fmt.Errorf("%w: combine is for parallel only", ErrSetupInvalid)
-	case s.Combine != "" && !s.Combine.Valid():
+	case parallel && !s.Combine.Valid():
 		return fmt.Errorf("%w: combine %q is neither all nor any", ErrSetupInvalid, s.Combine)
 	}
 	return nil
@@ -175,7 +202,10 @@ type Endpoints map[string]Endpoint
 // The endpoints with one added or replaced
 // claude names the built in member of every point so no endpoint takes it
 func (es Endpoints) With(name string, e Endpoint) (Endpoints, error) {
-	if name == "" || name == Claude {
+	switch name {
+	case "":
+		return nil, fmt.Errorf("%w: a name is required", ErrEndpointInvalid)
+	case Claude:
 		return nil, fmt.Errorf("%w: the name %q is reserved", ErrEndpointInvalid, name)
 	}
 	if err := e.Check(); err != nil {

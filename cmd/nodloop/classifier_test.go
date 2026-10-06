@@ -27,66 +27,75 @@ const layaURL = "http://localhost:8000/v1/systemone"
 
 // Each row runs its commands in order on one home and checks the last
 func TestRunClassifier(t *testing.T) {
+	type args struct {
+		// Commands run first on the same home
+		setup [][]string
+		args  []string
+	}
 	type want struct {
 		code   int
 		stdout string
+		// The first line of stderr
+		// The usage text may follow it
 		stderr string
 	}
+	add := []string{"add", "laya", "--url", layaURL}
 	tcs := []struct {
-		name  string
-		setup [][]string
-		args  []string
-		want  want
+		name string
+		args args
+		want want
 	}{
-		{"a fresh home lists the critic as claude alone", nil, []string{"list"},
+		{"a fresh home lists the critic as claude alone", args{nil, []string{"list"}},
 			want{0, "point\tcritic\tclaude (default)\n", ""}},
 		{"an added endpoint is listed with its model and key env",
-			[][]string{{"add", "laya", "--url", layaURL, "--model", "laya", "--key-env", "LAYA_KEY"}},
-			[]string{"list"},
+			args{[][]string{{"add", "laya", "--url", layaURL, "--model", "laya", "--key-env", "LAYA_KEY"}}, []string{"list"}},
 			want{0, "classifier\tlaya\t" + layaURL + "\tmodel laya\tkey $LAYA_KEY\npoint\tcritic\tclaude (default)\n", ""}},
-		{"two members default to a cascade at 0.8",
-			[][]string{{"add", "laya", "--url", layaURL}},
-			[]string{"use", "critic", "--members", "laya,claude"},
+		{"two members default to a cascade at 0.8", args{[][]string{add}, []string{"use", "critic", "--members", "laya,claude"}},
+			want{0, "point\tcritic\tcascade\tlaya,claude\tthreshold 0.8\n", ""}},
+		{"members are trimmed around the commas", args{[][]string{add}, []string{"use", "critic", "--members", "laya, claude"}},
 			want{0, "point\tcritic\tcascade\tlaya,claude\tthreshold 0.8\n", ""}},
 		{"a parallel setup is listed with its combine",
-			[][]string{{"add", "laya", "--url", layaURL}, {"use", "critic", "--members", "laya,claude", "--mode", "parallel", "--combine", "any"}},
-			[]string{"list"},
+			args{[][]string{add, {"use", "critic", "--members", "laya,claude", "--mode", "parallel", "--combine", "any"}}, []string{"list"}},
 			want{0, "classifier\tlaya\t" + layaURL + "\npoint\tcritic\tparallel\tlaya,claude\tcombine any\n", ""}},
-		{"reset leaves claude alone",
-			[][]string{{"add", "laya", "--url", layaURL}, {"use", "critic", "--members", "laya"}},
-			[]string{"reset", "critic"},
+		{"reset leaves claude alone", args{[][]string{add, {"use", "critic", "--members", "laya"}}, []string{"reset", "critic"}},
 			want{0, "point\tcritic\tclaude (default)\n", ""}},
-		{"claude is reserved", nil, []string{"add", "claude", "--url", layaURL},
-			want{1, "", "nodloop classifier: classify: invalid endpoint: the name \"claude\" is reserved\n"}},
-		{"a member never added is refused", nil, []string{"use", "critic", "--members", "laya,claude"},
-			want{1, "", "nodloop classifier: classify: unknown classifier: laya. Add it with nodloop classifier add\n"}},
-		{"an unknown point is refused", nil, []string{"use", "reaction", "--members", "claude"},
-			want{1, "", "nodloop classifier: classify: unknown decision point: \"reaction\". Use one of [critic]\n"}},
-		{"an endpoint in use is not removed",
-			[][]string{{"add", "laya", "--url", layaURL}, {"use", "critic", "--members", "laya"}},
-			[]string{"remove", "laya"},
-			want{1, "", "nodloop classifier: classify: classifier in use: laya is a member of [critic]. Run nodloop classifier use or reset first\n"}},
-		{"a removed endpoint leaves the list",
-			[][]string{{"add", "laya", "--url", layaURL}},
-			[]string{"remove", "laya"},
-			want{0, "", ""}},
+		{"a removed endpoint leaves the list", args{[][]string{add}, []string{"remove", "laya"}}, want{0, "", ""}},
+		{"claude is reserved", args{nil, []string{"add", "claude", "--url", layaURL}},
+			want{1, "", "nodloop classifier: classify: invalid endpoint: the name \"claude\" is reserved"}},
+		{"use without members is refused", args{nil, []string{"use", "critic"}},
+			want{1, "", "nodloop classifier: use: --members is required"}},
+		{"a member never added is refused", args{nil, []string{"use", "critic", "--members", "laya,claude"}},
+			want{1, "", "nodloop classifier: classify: unknown classifier: laya. Add it with nodloop classifier add"}},
+		{"an unknown point is refused", args{nil, []string{"use", "reaction", "--members", "claude"}},
+			want{1, "", "nodloop classifier: classify: unknown decision point: \"reaction\". Use one of [critic]"}},
+		{"reset of an unknown point is refused", args{nil, []string{"reset", "reaction"}},
+			want{1, "", "nodloop classifier: classify: unknown decision point: \"reaction\". Use one of [critic]"}},
+		{"an endpoint in use is not removed", args{[][]string{add, {"use", "critic", "--members", "laya"}}, []string{"remove", "laya"}},
+			want{1, "", "nodloop classifier: classify: classifier in use: laya is a member of [critic]. Run nodloop classifier use or reset first"}},
+		{"an endpoint never added is not removed", args{nil, []string{"remove", "laya"}},
+			want{1, "", "nodloop classifier: classify: unknown classifier: laya"}},
+		{"an endpoint never added is not probed", args{nil, []string{"probe", "laya"}},
+			want{1, "", "nodloop classifier: classify: unknown classifier: laya"}},
+		{"an unknown action is refused", args{nil, []string{"rename", "laya"}},
+			want{1, "", "nodloop classifier: unknown action \"rename\""}},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			home := t.TempDir()
 			getenv := func(k string) string { return map[string]string{"HOME": home}[k] }
-			for _, args := range tc.setup {
+			for _, args := range tc.args.setup {
 				var stderr bytes.Buffer
 				require.Equal(t, 0, runClassifier(args, getenv, time.Now, &bytes.Buffer{}, &stderr), stderr.String())
 			}
 			var stdout, stderr bytes.Buffer
 
-			code := runClassifier(tc.args, getenv, time.Now, &stdout, &stderr)
+			code := runClassifier(tc.args.args, getenv, time.Now, &stdout, &stderr)
 
 			assert.Equal(t, tc.want.code, code)
 			assert.Equal(t, tc.want.stdout, stdout.String())
-			assert.Equal(t, tc.want.stderr, stderr.String())
+			line, _, _ := strings.Cut(stderr.String(), "\n")
+			assert.Equal(t, tc.want.stderr, line)
 		})
 	}
 }
@@ -184,4 +193,23 @@ func TestRunKnowledgeExtractClassifier(t *testing.T) {
 			assert.Len(t, recorded, tc.want.classified)
 		})
 	}
+}
+
+// A critic setup edited by hand into config.json is checked before any model call
+func TestRunKnowledgeExtractInvalidSetup(t *testing.T) {
+	home, records := homeDir(t.TempDir()), t.TempDir()
+	require.NoError(t, os.MkdirAll(home.dir(), 0o700))
+	require.NoError(t, os.WriteFile(home.configPath(), []byte(`{"decisions":{"critic":{"mode":"cascade","members":["claude","laya"]}}}`), 0o600))
+	getenv := func(k string) string { return map[string]string{"HOME": string(home), envRecordDir: records}[k] }
+	out := filepath.Join(string(home), "out.txt")
+	require.NoError(t, os.WriteFile(out, []byte("cd repo && git status"), 0o600))
+	var id bytes.Buffer
+	require.Equal(t, 0, runRun([]string{"record", "--producer", "session", "--label", "repo=nodloop", "--output", out}, getenv, time.Now, &id, &bytes.Buffer{}))
+	client := llmmock.NewMockClient(gomock.NewController(t))
+	var stderr bytes.Buffer
+
+	code := runKnowledge([]string{"extract", "--from", strings.TrimSpace(id.String())}, getenv, client, time.Now, &bytes.Buffer{}, &stderr)
+
+	assert.Equal(t, 1, code)
+	assert.Contains(t, stderr.String(), "classify: invalid setup: a cascade threshold lies above 0 and up to 1, got 0: decisions.critic in config.json")
 }

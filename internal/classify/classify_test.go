@@ -1,6 +1,7 @@
 package classify_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -25,6 +26,8 @@ var fixed = time.Date(2026, 10, 6, 9, 0, 0, 0, time.UTC)
 type endpoint struct {
 	yes    map[string]float64
 	status int
+	// Bytes of blank before the answer so the body passes the read limit
+	pad int
 }
 
 // Serves the Jev wire format and keeps the last request body and authorization header
@@ -39,6 +42,7 @@ func (e endpoint) serve(t *testing.T) (*httptest.Server, *[]byte, *string) {
 			http.Error(w, "model not loaded", e.status)
 			return
 		}
+		_, _ = w.Write(bytes.Repeat([]byte(" "), e.pad))
 		answers := map[string]any{}
 		for name, yes := range e.yes {
 			answers[name] = map[string]any{"type": "noul", "noul": yes, "confidence": yes, "action": map[string]any{"act_probability": 1.0}}
@@ -85,6 +89,9 @@ func TestHTTPClassify(t *testing.T) {
 		{"an error status fails",
 			args{endpoint{status: http.StatusServiceUnavailable}, ""},
 			want{err: classify.ErrStatus}},
+		{"a body over the read limit fails",
+			args{endpoint{yes: map[string]float64{"holds": 1, "states": 1}, pad: 1 << 20}, ""},
+			want{err: classify.ErrResponseInvalid}},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
@@ -99,9 +106,7 @@ func TestHTTPClassify(t *testing.T) {
 			assert.JSONEq(t, `{"model":"laya","state":"the draft","questions":{
 				"holds":{"type":"noul","instructions":"It holds beyond this run."},
 				"states":{"type":"noul","instructions":"It states the correction."}}}`, string(*body))
-			if tc.want.err == nil {
-				assert.Equal(t, tc.want.answers, got)
-			}
+			assert.Equal(t, tc.want.answers, got)
 		})
 	}
 }
@@ -214,6 +219,7 @@ func TestNewSetup(t *testing.T) {
 		{"cascade with one member fails", args{members: []string{"laya"}, mode: classify.ModeCascade}, classify.Setup{}, classify.ErrSetupInvalid},
 		{"a member named twice fails", args{members: []string{"laya", "laya"}}, classify.Setup{}, classify.ErrSetupInvalid},
 		{"a threshold over 1 fails", args{members: []string{"laya", "claude"}, threshold: 1.5}, classify.Setup{}, classify.ErrSetupInvalid},
+		{"a negative threshold fails", args{members: []string{"laya", "claude"}, threshold: -0.5}, classify.Setup{}, classify.ErrSetupInvalid},
 		{"a threshold outside cascade fails", args{members: []string{"laya"}, threshold: 0.5}, classify.Setup{}, classify.ErrSetupInvalid},
 		{"a combine outside parallel fails", args{members: []string{"laya", "claude"}, combine: classify.CombineAny}, classify.Setup{}, classify.ErrSetupInvalid},
 		{"an unknown combine fails", args{members: []string{"laya", "claude"}, mode: classify.ModeParallel, combine: "most"}, classify.Setup{}, classify.ErrSetupInvalid},
@@ -231,29 +237,63 @@ func TestNewSetup(t *testing.T) {
 	}
 }
 
-func TestEndpointsWith(t *testing.T) {
+// A setup read from a config edited by hand holds the parameter its mode needs
+func TestSetupCheck(t *testing.T) {
+	two := []string{"laya", "claude"}
 	tcs := []struct {
-		name     string
-		endpoint string
-		url      string
-		err      error
+		name  string
+		setup classify.Setup
+		want  error
 	}{
-		{"a local server is added", "laya", "http://localhost:8000/v1/systemone", nil},
-		{"an https API is added", "jev", "https://openrouter.ai/api/alpha/decisions", nil},
-		{"claude is reserved", "claude", "http://localhost:8000/v1/systemone", classify.ErrEndpointInvalid},
-		{"a relative URL fails", "laya", "localhost:8000", classify.ErrEndpointInvalid},
-		{"another scheme fails", "laya", "ftp://localhost/v1", classify.ErrEndpointInvalid},
+		{"a cascade with a threshold passes", classify.Setup{Mode: classify.ModeCascade, Members: two, Threshold: 0.8}, nil},
+		{"a cascade without a threshold fails", classify.Setup{Mode: classify.ModeCascade, Members: two}, classify.ErrSetupInvalid},
+		{"a parallel with a combine passes", classify.Setup{Mode: classify.ModeParallel, Members: two, Combine: classify.CombineAny}, nil},
+		{"a parallel without a combine fails", classify.Setup{Mode: classify.ModeParallel, Members: two}, classify.ErrSetupInvalid},
+		{"no mode fails", classify.Setup{Members: two}, classify.ErrSetupInvalid},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			got, err := classify.Endpoints(nil).With(tc.endpoint, classify.Endpoint{URL: tc.url})
+			err := tc.setup.Check()
 
-			require.ErrorIs(t, err, tc.err)
-			if tc.err == nil {
-				assert.Equal(t, tc.url, got[tc.endpoint].URL)
-			}
+			assert.ErrorIs(t, err, tc.want)
+		})
+	}
+}
+
+func TestEndpointsWith(t *testing.T) {
+	type args struct {
+		name string
+		url  string
+	}
+	type want struct {
+		// The URL saved under the name
+		// Empty when the endpoint is refused
+		url string
+		err error
+	}
+	const local = "http://localhost:8000/v1/systemone"
+	tcs := []struct {
+		name string
+		args args
+		want want
+	}{
+		{"a local server is added", args{"laya", local}, want{local, nil}},
+		{"an https API is added", args{"jev", "https://openrouter.ai/api/alpha/decisions"}, want{"https://openrouter.ai/api/alpha/decisions", nil}},
+		{"claude is reserved", args{"claude", local}, want{"", classify.ErrEndpointInvalid}},
+		{"an empty name fails", args{"", local}, want{"", classify.ErrEndpointInvalid}},
+		{"a relative URL fails", args{"laya", "localhost:8000"}, want{"", classify.ErrEndpointInvalid}},
+		{"another scheme fails", args{"laya", "ftp://localhost/v1"}, want{"", classify.ErrEndpointInvalid}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := classify.Endpoints(nil).With(tc.args.name, classify.Endpoint{URL: tc.args.url})
+
+			assert.ErrorIs(t, err, tc.want.err)
+			assert.Equal(t, tc.want.url, got[tc.args.name].URL)
 		})
 	}
 }
