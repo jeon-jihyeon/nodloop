@@ -132,6 +132,8 @@ for await (const m of query({ prompt, options: { hooks: hooks.hooks() } })) {}
 
 A veto names the tool the way the agent calls it, such as `bash` for a LangChain tool, and `guard check` points out a name no Claude Code tool carries.
 
+Several services or people can share one set of records through `nodloop server serve`, which offers the same MCP tools over streamable HTTP at `/mcp`. Each key names a tenant, whose records live apart from every other tenant's, and a role: a `producer` records runs and verdicts, a `reviewer` also drafts and proposes knowledge, and an `approver` also approves. An approval through a key is recorded under the key's name whatever the call says. `nodloop server key add ann --tenant acme --role approver` prints a key once and keeps only its hash in `~/.nodloop/config.json`, and the SDKs connect with `Client(url=..., key=...)` in Python or `Client.open({ url, key })` in TypeScript.
+
 An agent outside Claude Code checks a tool call before running it with `nodloop guard call --tool Bash --input '{"command":"rm -rf /data"}'`, the MCP tool `check_call` or `CheckCall` in Go, and gets back allow, block or ask with the veto and its reason.
 
 ## Guard

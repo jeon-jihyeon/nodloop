@@ -10,6 +10,7 @@ from typing import Any
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
+from mcp.client.streamable_http import create_mcp_http_client, streamable_http_client
 
 from . import binary
 
@@ -61,28 +62,51 @@ class Knowledge:
 
 
 class Client:
-    """The nodloop tools of one process
+    """The nodloop tools of one process or of a nodloop server
 
     1. by default it starts `nodloop mcp` over stdio, so nothing runs as a server
     2. record_dir names the records and else NODLOOP_RECORD_DIR, config.json or ~/.nodloop/records decide as in the CLI
-    3. use it as an async context manager so the process ends with the block
+    3. url and key connect to `nodloop server serve` instead, where the key decides the tenant and the role
+    4. use it as an async context manager so the process or the connection ends with the block
     """
 
-    def __init__(self, record_dir: str | None = None, binary_path: str | None = None) -> None:
+    def __init__(
+        self,
+        record_dir: str | None = None,
+        binary_path: str | None = None,
+        url: str | None = None,
+        key: str | None = None,
+    ) -> None:
         self._record_dir = record_dir
         self._binary = binary_path
+        self._url = url
+        self._key = key
         self._stack = AsyncExitStack()
         self._session: ClientSession | None = None
 
     async def __aenter__(self) -> Client:
-        env = dict(os.environ)
-        if self._record_dir:
-            env["NODLOOP_RECORD_DIR"] = os.path.abspath(self._record_dir)
-        params = StdioServerParameters(command=self._binary or binary.find(VERSION), args=["mcp"], env=env)
-        read, write = await self._stack.enter_async_context(stdio_client(params))
+        try:
+            await self._connect()
+        except BaseException:
+            # A failed handshake such as a refused key closes what it opened since __aexit__ never runs
+            await self._stack.aclose()
+            raise
+        return self
+
+    async def _connect(self) -> None:
+        if self._url:
+            http = create_mcp_http_client(headers={"Authorization": f"Bearer {self._key}"} if self._key else None)
+            await self._stack.enter_async_context(http)
+            streams = await self._stack.enter_async_context(streamable_http_client(self._url, http_client=http))
+        else:
+            env = dict(os.environ)
+            if self._record_dir:
+                env["NODLOOP_RECORD_DIR"] = os.path.abspath(self._record_dir)
+            params = StdioServerParameters(command=self._binary or binary.find(VERSION), args=["mcp"], env=env)
+            streams = await self._stack.enter_async_context(stdio_client(params))
+        read, write = streams[0], streams[1]
         self._session = await self._stack.enter_async_context(ClientSession(read, write))
         await self._session.initialize()
-        return self
 
     async def __aexit__(self, *exc: object) -> None:
         await self._stack.aclose()

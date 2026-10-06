@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { ToolError } from "../src/client.ts";
-import { acme, open, runs, seed } from "./setup.ts";
+import { Client } from "../src/client.ts";
+import { acme, open, runs, seed, server } from "./setup.ts";
 
 test("a corrected run teaches an item the same tenant receives and another does not", async () => {
   const c = await open();
@@ -46,3 +47,30 @@ for (const [command, action] of [["cd / && rm -rf /x", "block"], ["ls", "allow"]
     }
   });
 }
+
+test("a server key works the same and approves under its own name", async () => {
+  const { url, key, proc } = await server();
+  const c = await Client.open({ url, key });
+  try {
+    const run = await c.record("support-bot", "steps", acme);
+    await c.judge(run, "reject", { reason: "the window was missing" });
+    const p = await c.propose({ kind: "judgment", content: "Quote the refund window", from: run, id: "window" });
+    const approved: any = await c.approve(p.id, p.version, "mallory");
+    const mine = await c.knowledge("support-bot", acme);
+
+    assert.equal(approved.approver, "ann");
+    assert.deepEqual(mine.items.map((i) => i.id), ["window"]);
+  } finally {
+    await c.close();
+    proc.kill();
+  }
+});
+
+test("a wrong server key is refused", async () => {
+  const { url, proc } = await server();
+  try {
+    await assert.rejects(Client.open({ url, key: "nl_wrong" }));
+  } finally {
+    proc.kill();
+  }
+});

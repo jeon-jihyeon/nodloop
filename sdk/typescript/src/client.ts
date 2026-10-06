@@ -2,6 +2,7 @@
 
 import { Client as McpClient } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { resolve } from "node:path";
 import { find } from "./binary.ts";
 
@@ -41,10 +42,13 @@ export interface Options {
   recordDir?: string;
   // The binary to run, else the one find picks
   binary?: string;
+  // A nodloop server to connect to instead of a local binary, where the key decides the tenant and the role
+  url?: string;
+  key?: string;
 }
 
-// The nodloop tools of one process
-// open starts `nodloop mcp` over stdio so nothing runs as a server, and close ends it
+// The nodloop tools of one process or of a nodloop server
+// open starts `nodloop mcp` over stdio so nothing runs as a server, or connects to url with key, and close ends it
 export class Client {
   private readonly mcp: McpClient;
 
@@ -53,13 +57,21 @@ export class Client {
   }
 
   static async open(options: Options = {}): Promise<Client> {
+    const mcp = new McpClient({ name: "nodloop-sdk", version });
+    await mcp.connect(options.url ? Client.http(options.url, options.key) : await Client.stdio(options));
+    return new Client(mcp);
+  }
+
+  private static http(url: string, key?: string): StreamableHTTPClientTransport {
+    const headers: Record<string, string> = key ? { Authorization: `Bearer ${key}` } : {};
+    return new StreamableHTTPClientTransport(new URL(url), { requestInit: { headers } });
+  }
+
+  private static async stdio(options: Options): Promise<StdioClientTransport> {
     const env: Record<string, string> = {};
     for (const [k, v] of Object.entries(process.env)) if (v !== undefined) env[k] = v;
     if (options.recordDir) env.NODLOOP_RECORD_DIR = resolve(options.recordDir);
-    const transport = new StdioClientTransport({ command: options.binary ?? (await find(version)), args: ["mcp"], env });
-    const mcp = new McpClient({ name: "nodloop-sdk", version });
-    await mcp.connect(transport);
-    return new Client(mcp);
+    return new StdioClientTransport({ command: options.binary ?? (await find(version)), args: ["mcp"], env });
   }
 
   async close(): Promise<void> {
