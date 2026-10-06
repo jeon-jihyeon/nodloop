@@ -78,6 +78,11 @@ func (s Set) Since(t time.Time) Set {
 	return out
 }
 
+// Whether a version of any status cites the trace as the feedback that taught it
+func (s Set) Cites(traceID string) bool {
+	return slices.ContainsFunc(s, func(k Knowledge) bool { return slices.Contains(k.Evidence.FeedbackTraceIDs, traceID) })
+}
+
 // The vetoes of the approved items in id order
 // The source names the version and the approver so a reader of the veto file can trace a block back
 func (s Set) Vetoes() []veto.Spec {
