@@ -218,6 +218,7 @@ func runReport(args []string, getenv func(string) string, now func() time.Time, 
 var recordReports = map[string]func(c loopCommand, ctx context.Context) error{
 	"loop":    loopCommand.runs,
 	"extract": loopCommand.extractions,
+	"critic":  loopCommand.critics,
 }
 
 func runRecordReport(args []string, show func(loopCommand, context.Context) error, getenv func(string) string, now func() time.Time, stdout, stderr io.Writer) int {
@@ -292,6 +293,19 @@ func seconds(d time.Duration) string {
 		return "-"
 	}
 	return max(d.Round(time.Second), time.Second).String()
+}
+
+// One line per critic: drafts it judged and how its judgments matched what a person later decided on the run
+func (c loopCommand) critics(ctx context.Context) error {
+	ev, err := c.evidence(ctx)
+	if err != nil {
+		return err
+	}
+	for _, row := range ev.runs.Critics(ev.items, ev.traces) {
+		fmt.Fprintf(c.out, "critic\t%s\tjudged %d\tagree %d\tfalse pass %d\tfalse refuse %d\topen %d\n",
+			row.Critic, row.Judged, row.Agree, row.FalsePass, row.FalseRefuse, row.Open)
+	}
+	return nil
 }
 
 // Counts as `a 2, b 1` in key order or a dash when there is none
