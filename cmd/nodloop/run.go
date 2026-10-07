@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -52,8 +51,7 @@ func runRun(args []string, getenv func(string) string, now func() time.Time, std
 	if len(args) == 0 {
 		return fail(stderr, "run", errNoAction)
 	}
-	fs := flag.NewFlagSet("run "+args[0], flag.ContinueOnError)
-	fs.SetOutput(stderr)
+	fs := newFlagSet("run "+args[0], stderr)
 	var records recordFlags
 	records.bind(fs)
 	producer := fs.String("producer", "", "record: the producer that made the output such as session")
@@ -64,7 +62,7 @@ func runRun(args []string, getenv func(string) string, now func() time.Time, std
 	var applied appliedFlag
 	fs.Var(&applied, "applied", "record: id:version of a knowledge item the run applied. Repeatable")
 	if err := fs.Parse(args[1:]); err != nil {
-		return 1
+		return parseFailed(err)
 	}
 	a, err := records.app(getenv, now)
 	if err != nil {

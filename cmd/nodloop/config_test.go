@@ -2,8 +2,10 @@ package main
 
 import (
 	"bytes"
+	"maps"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -155,6 +157,54 @@ func TestRunConfig(t *testing.T) {
 			assert.Contains(t, stderr.String(), tc.want.stderr)
 			saved, _ := os.ReadFile(home.configPath())
 			assert.Equal(t, tc.want.saved, string(saved))
+		})
+	}
+}
+
+func TestRunConfigList(t *testing.T) {
+	type args struct {
+		saved string
+		env   map[string]string
+	}
+	tcs := []struct {
+		name string
+		args args
+		want string
+	}{
+		{
+			"nothing saved lists the defaults",
+			args{"", nil},
+			"record_dir\t<home>/.nodloop/records\tdefault\nsession_mode\tdeferred\tdefault\napprover\t-\tdefault\nholdout\t0\tdefault\n" +
+				"classifiers\t-\tdefault\ndecisions\t-\tdefault\nserver keys\t-\tdefault\nclaude binary\tclaude\tdefault\nmodel\tsonnet\tdefault\npostgres\t-\tdefault\n",
+		},
+		{
+			"config.json and the environment name their source and the environment wins",
+			args{
+				`{"record_dir":"/saved","approver":"ann","holdout":0.1,"session_mode":"manual","classifiers":{"local":{"url":"http://x"}},` +
+					`"decisions":{"critic":{"members":["local"]}},"server":{"keys":[{"name":"ci","tenant":"acme","role":"producer","sha256":"x"}]}}`,
+				map[string]string{envRecordDir: "/env", envSession: "off", envLLMModel: "opus", envPostgres: "postgres://u:secret@db/n"},
+			},
+			"record_dir\t/env\tNODLOOP_RECORD_DIR\nsession_mode\toff\tNODLOOP_SESSION\napprover\tann\tconfig.json\nholdout\t0.1\tconfig.json\n" +
+				"classifiers\tlocal\tconfig.json\ndecisions\tcritic\tconfig.json\nserver keys\tci\tconfig.json\nclaude binary\tclaude\tdefault\n" +
+				"model\topus\tNODLOOP_LLM_MODEL\npostgres\tset\tNODLOOP_POSTGRES\n",
+		},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			home := homeDir(t.TempDir())
+			require.NoError(t, os.MkdirAll(home.dir(), 0o755))
+			if tc.args.saved != "" {
+				require.NoError(t, os.WriteFile(home.configPath(), []byte(tc.args.saved), 0o600))
+			}
+			env := map[string]string{"HOME": string(home)}
+			maps.Copy(env, tc.args.env)
+			var stdout, stderr bytes.Buffer
+
+			code := runConfig(nil, func(k string) string { return env[k] }, &stdout, &stderr)
+
+			assert.Equal(t, 0, code, stderr.String())
+			assert.Equal(t, strings.ReplaceAll(tc.want, "<home>", string(home)), stdout.String())
 		})
 	}
 }

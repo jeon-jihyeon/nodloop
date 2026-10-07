@@ -197,7 +197,7 @@ Every record file is append only JSON lines. A status change of an item is a new
 | PostgreSQL | `--postgres`, `NODLOOP_POSTGRES` | the database of `nodloop server serve` |
 | Binary | `NODLOOP_ALLOW_PATH`, `NODLOOP_BIN` | lets the plugin run a PATH build of another version, and points an SDK at a binary |
 
-Keys without a prefix live in `~/.nodloop/config.json`. Environment variables are read where Claude Code or your process starts.
+Keys without a prefix live in `~/.nodloop/config.json`. Environment variables are read where Claude Code or your process starts. `nodloop config` lists every setting with its value and where it came from, and `nodloop help <command>` prints the usage of one command.
 
 ## Privacy
 

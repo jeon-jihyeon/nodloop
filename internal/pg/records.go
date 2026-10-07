@@ -38,7 +38,7 @@ func (s *TraceStore) Get(ctx context.Context, id string) (trace.Trace, error) {
 		return trace.Trace{}, err
 	}
 	if len(found) == 0 {
-		return trace.Trace{}, fmt.Errorf("trace %q: %w", id, trace.ErrNotFound)
+		return trace.Trace{}, fmt.Errorf("%w: %q", trace.ErrNotFound, id)
 	}
 	return found[0], nil
 }

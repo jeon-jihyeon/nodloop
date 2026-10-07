@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"flag"
 	"fmt"
 	"io"
 	"time"
@@ -20,12 +19,11 @@ func runLLM(args []string, client llm.Client, now func() time.Time, stdout, stde
 	if args[0] != "probe" {
 		return fail(stderr, "llm", fmt.Errorf("%w %q", errUnknownAction, args[0]))
 	}
-	fs := flag.NewFlagSet("llm probe", flag.ContinueOnError)
-	fs.SetOutput(stderr)
+	fs := newFlagSet("llm probe", stderr)
 	// The cheapest model because the probe only checks login and structured output
 	model := fs.String("model", "haiku", "model alias or name")
 	if err := fs.Parse(args[1:]); err != nil {
-		return 1
+		return parseFailed(err)
 	}
 	cmd := llmCommand{client: client, now: now, out: stdout}
 	if err := cmd.probe(context.Background(), *model); err != nil {

@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"flag"
 	"fmt"
 	"io"
 	"strings"
@@ -17,8 +16,7 @@ func runTrace(args []string, getenv func(string) string, now func() time.Time, s
 	if len(args) == 0 {
 		return fail(stderr, "trace", errNoAction)
 	}
-	fs := flag.NewFlagSet("trace "+args[0], flag.ContinueOnError)
-	fs.SetOutput(stderr)
+	fs := newFlagSet("trace "+args[0], stderr)
 	var records recordFlags
 	records.bind(fs)
 	var f trace.Filter
@@ -28,7 +26,7 @@ func runTrace(args []string, getenv func(string) string, now func() time.Time, s
 	fs.IntVar(&f.Limit, "limit", 0, "newest n traces. 0 means all")
 	id, err := parseID(fs, args[1:])
 	if err != nil {
-		return 1
+		return parseFailed(err)
 	}
 	f.Name = trace.Name(*name)
 	if *name != "" && !f.Name.Valid() {
