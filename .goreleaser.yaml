@@ -25,5 +25,9 @@ archives:
 checksum:
   name_template: checksums.txt
 
+# One SPDX SBOM of syft per archive, attached to the release next to it
+sboms:
+  - artifacts: archive
+
 release:
   draft: false

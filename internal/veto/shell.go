@@ -159,12 +159,18 @@ func unescape(s, only string) string {
 // The words of one simple command
 type words []word
 
+// The command as one line
+// A command named ( or ) alone renders quoted so it never reads as the line that opens or closes a scope
 func (ws words) line() string {
 	texts := make([]string, len(ws))
 	for i, w := range ws {
 		texts[i] = w.text
 	}
-	return strings.Join(texts, " ")
+	line := strings.Join(texts, " ")
+	if line == "(" || line == ")" {
+		return "'" + line + "'"
+	}
+	return line
 }
 
 // The actions of find that run a command up to `;` or `+`
