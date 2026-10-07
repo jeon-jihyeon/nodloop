@@ -50,7 +50,7 @@ commands:
                             guard veto once approved
   knowledge extract --from <run id> [--model <m>] [--author <a>]
                             Draft through claude -p what a correction of the run taught, check it against the items the run
-                            reaches with the critic, a second claude call or the classifiers set up for the critic point, and
+                            reaches with the critic, a second claude call or the endpoint set for the critic point, and
                             propose an add or an update. A duplicate or a conflict names the item
   knowledge replay <id> [--version <n>] [--model <m>]
                             Judge the version through claude -p against the outputs it should change, the corrected runs it
@@ -111,9 +111,9 @@ commands:
   report extract            Per plugin version of the corrected run and per drafting path: extractions by how they
                             ended, refused drafts by what refused them, and the critic questions answered false
   report critic             Per critic: drafts judged and how often a pass or a refusal matched what a person later
-                            decided on candidates of the same run, with the runs nobody decided yet.
+                            decided on candidates of the same run, with the runs nobody decided yet
   report replay             Per knowledge version its newest replay: passed or failed, corrected outputs it missed and
-                            approved outputs it would have changed.
+                            approved outputs it would have changed
                             --json on loop, effect, extract, critic and replay prints the report as one JSON value
   trace list [--name <n>] [--session <id>] [--subject <s>] [--limit <n>]
                             List traces newest first
@@ -144,8 +144,8 @@ commands:
                             or off. deferred by default and NODLOOP_SESSION overrides it
   classifier set <point> --url <u> [--model <m>] [--key-env <ENV>]
                             Ask an endpoint of the Jev wire format the README shows at a decision point before claude,
-                            such as http://localhost:8000/v1/classify. claude answers when the endpoint fails or any
-                            answer is below 0.8. Points: critic, the second reader of a drafted lesson, and reaction,
+                            such as http://localhost:8000/v1/classify. claude answers when the endpoint fails or is less
+                            than 0.8 sure of any answer. Points: critic, the second reader of a drafted lesson, and reaction,
                             which judges whether the user's message corrects or approves the previous answer before the
                             conversation does. The key is read from the env at call time and never saved. Every answer
                             is recorded as a classify trace
@@ -154,14 +154,14 @@ commands:
   classifier probe <point>  Ask the endpoint of the point one question and print its answer and time
   server                    Moved to its own binary nodloop-server in 0.7.0
   export otel [--endpoint <url>] [--header <Name=value>] [--since <RFC3339>] [--with-output]
-                            Send every run as an OpenTelemetry GenAI span and every verdict as a gen_ai.evaluation.result
-                            event on it, in OTLP JSON over HTTP, so a collector, Langfuse or Phoenix shows them. The ids derive
-                            from the run so sending again replaces. OTEL_EXPORTER_OTLP_TRACES_ENDPOINT, OTEL_EXPORTER_OTLP_ENDPOINT
+                            Send every run as an OpenTelemetry GenAI span and its newest verdict as a gen_ai.evaluation.result
+                            event on it, in OTLP JSON over HTTP, so a collector, Langfuse or Phoenix shows them. A run whose
+                            newest verdict is withdraw gets no event. The ids derive from the run so sending again replaces. OTEL_EXPORTER_OTLP_TRACES_ENDPOINT, OTEL_EXPORTER_OTLP_ENDPOINT
                             and OTEL_EXPORTER_OTLP_HEADERS fill what the flags leave out. The output goes only with --with-output
   doctor [--repair]         Read every record file and the guard log, and name the lines that fail to decode.
                             A read skips such a line, and --repair moves them to <file>.corrupt. Run it while nothing writes
   version                   Print the build version
-  help [<command>]          Print this text or the part of one command. -h and --help after a command or an action do the same
+  help [<command>]          Print this text or the part of one command. -h or --help as the first flag does the same
 
 Every command that reads records accepts --record-dir, which overrides NODLOOP_RECORD_DIR, then record_dir of
 ~/.nodloop/config.json, then ~/.nodloop/records
@@ -290,7 +290,7 @@ func helpWords(args []string) ([]string, bool) {
 }
 
 // One line on stderr per failed command
-// 1. the command names the line once even when the error starts with it, as a sentinel of the package of that name does
+// 1. the command names the line once even when the error starts with it as a sentinel of the package of that name does
 // 2. a usage error adds the usage of the command
 func fail(stderr io.Writer, command string, err error) int {
 	fmt.Fprintf(stderr, "nodloop %s: %s\n", command, strings.TrimPrefix(err.Error(), command+": "))

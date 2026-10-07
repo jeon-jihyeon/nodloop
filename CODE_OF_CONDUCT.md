@@ -36,7 +36,7 @@ This Code of Conduct applies within all community spaces, and also applies when 
 
 ## Enforcement
 
-Instances of abusive, harassing, or otherwise unacceptable behavior may be reported to the community leaders responsible for enforcement through a private report at https://github.com/jeon-jihyeon/nodloop/security/advisories/new, which only the maintainers can read. All complaints will be reviewed and investigated promptly and fairly.
+Instances of abusive, harassing, or otherwise unacceptable behavior may be reported privately to the maintainer, [@jeon-jihyeon](https://github.com/jeon-jihyeon), through GitHub, for example with GitHub's [report content](https://docs.github.com/en/communities/maintaining-your-safety-on-github/reporting-abuse-or-spam) feature on the comment, issue or pull request involved. Do not report conduct in a public issue. All complaints will be reviewed and investigated promptly and fairly.
 
 All community leaders are obligated to respect the privacy and security of the reporter of any incident.
 

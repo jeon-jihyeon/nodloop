@@ -188,7 +188,8 @@ var tools = []tool{
 		"versions past their review deadline and references that no longer resolve. "+
 		"Reads only. Retire, narrow and reaffirm stay with a named person", (*Server).knowledgeHealth),
 	newTool("report", "Read one report of the records as JSON: loop for the totals and how each approved item fared, extract for how drafting ended, "+
-		"critic for how critics agreed with people, effect for runs with items against the holdout, health for each knowledge version. "+
+		"critic for how critics agreed with people, effect for runs with items against the holdout, health for each knowledge version, "+
+		"replay for the newest replay of each version against recorded outputs. "+
 		"Reads only", (*Server).report),
 	newTool("check_call", "Check a tool call against the vetoes of approved knowledge before an agent runs it. "+
 		"Answers allow, block or ask with the veto and its reason. Pass the arguments of the call as input and a shell command under command", (*Server).checkCall),

@@ -67,3 +67,43 @@ func TestRunDoctor(t *testing.T) {
 		})
 	}
 }
+
+// The guard log under home is checked beside the record files
+func TestRunDoctorGuardLog(t *testing.T) {
+	type want struct {
+		code   int
+		stdout string
+		stderr string
+	}
+	tcs := []struct {
+		name string
+		// guard.jsonl under home and nothing written when empty
+		args string
+		want want
+	}{
+		{"a missing guard log reads as zero records", "", want{0, "guard.jsonl\t0 records\tok\n", ""}},
+		{
+			"a corrupt guard log is named and fails",
+			"not json\n",
+			want{1, "guard.jsonl\t0 records\tguard.jsonl has corrupt lines: line 1: invalid", "1 files hold corrupt lines"},
+		},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			home := t.TempDir()
+			require.NoError(t, os.Mkdir(filepath.Join(home, ".nodloop"), 0o700))
+			if tc.args != "" {
+				require.NoError(t, os.WriteFile(filepath.Join(home, ".nodloop", "guard.jsonl"), []byte(tc.args), 0o600))
+			}
+			getenv := func(k string) string { return map[string]string{"HOME": home}[k] }
+			var stdout, stderr bytes.Buffer
+
+			code := runDoctor([]string{"--record-dir", t.TempDir()}, getenv, time.Now, &stdout, &stderr)
+
+			assert.Equal(t, tc.want.code, code, stderr.String())
+			assert.Contains(t, stdout.String(), tc.want.stdout)
+			assert.Contains(t, stderr.String(), tc.want.stderr)
+		})
+	}
+}

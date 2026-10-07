@@ -37,12 +37,13 @@ func New(url string, headers map[string]string, version string, client *http.Cli
 	return &Exporter{url: url, headers: headers, version: version, client: client}
 }
 
-// Sends one span per run with one evaluation event per verdict on it
+// Sends one span per run with one evaluation event for the verdict in effect on it
 // 1. the span and trace ids derive from the run id so sending a run again replaces it in a collector that keys on them
 // 2. the output goes along only when output is true since it may hold what a person wrote
+// 3. only the newest verdict of a run counts and a run whose newest verdict withdraws gets no event
 func (e *Exporter) Export(ctx context.Context, runs trace.Traces, verdicts []feedback.Feedback, output bool) error {
 	byRun := map[string][]feedback.Feedback{}
-	for _, v := range verdicts {
+	for _, v := range feedback.Records(verdicts).Latest() {
 		byRun[v.TraceID] = append(byRun[v.TraceID], v)
 	}
 	for chunk := range slices.Chunk(runs, batch) {
@@ -86,7 +87,7 @@ func (e *Exporter) send(ctx context.Context, spans []span) error {
 }
 
 // The verdict as the score of an evaluation
-// approve is 1 and a correction 0, while withdraw takes back a verdict and carries only its label
+// approve is 1 and a correction 0
 var scores = map[feedback.Verdict]float64{
 	feedback.VerdictApprove: 1,
 	feedback.VerdictEdit:    0,

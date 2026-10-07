@@ -69,10 +69,10 @@ func (f File[T]) AppendDecided(decide func(current []T) ([]T, error)) error {
 func (f File[T]) append(decide func() ([]T, error)) error {
 	file, err := os.OpenFile(f.path, os.O_CREATE|os.O_APPEND|os.O_RDWR, perms)
 	if err != nil {
-		return fmt.Errorf("%s: %w", f.name(), err)
+		return fmt.Errorf("%s: %w", f.Name(), err)
 	}
 	if err = errors.Join(f.write(file, decide), file.Close()); err != nil {
-		return fmt.Errorf("%s: %w", f.name(), err)
+		return fmt.Errorf("%s: %w", f.Name(), err)
 	}
 	return nil
 }
@@ -118,7 +118,7 @@ func (File[T]) lastLine(file *os.File) (int64, []byte, error) {
 	if err != nil {
 		return 0, nil, err
 	}
-	var tail []byte
+	var tail chunks
 	for pos := info.Size(); pos > 0; {
 		n := min(chunk, pos)
 		pos -= n
@@ -127,31 +127,31 @@ func (File[T]) lastLine(file *os.File) (int64, []byte, error) {
 			return 0, nil, err
 		}
 		if i := bytes.LastIndexByte(buf, '\n'); i >= 0 {
-			return pos + int64(i) + 1, slices.Concat(buf[i+1:], tail), nil
+			return pos + int64(i) + 1, append(tail, buf[i+1:]).join(), nil
 		}
-		tail = slices.Concat(buf, tail)
+		tail = append(tail, buf)
 	}
-	return 0, tail, nil
+	return 0, tail.join(), nil
 }
 
 // File order
 // A missing file reads as empty only while its directory exists
 // A directory moved or removed after Open is a store failure and never an empty store
-// A line that fails to decode or a check is left out and named by its number in ErrCorrupt
-func (f File[T]) All(checks ...func(T) error) ([]T, error) {
+// A line that fails to decode is left out and named by its number in ErrCorrupt
+func (f File[T]) All() ([]T, error) {
 	data, err := os.ReadFile(f.path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, f.missing()
 	}
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", f.name(), err)
+		return nil, fmt.Errorf("%s: %w", f.Name(), err)
 	}
 	var all []T
 	var bad []string
 	line := 0
 	for raw := range bytes.Lines(bytes.TrimPrefix(data, byteOrderMark)) {
 		line++
-		v, ok, err := f.decode(raw, checks)
+		v, ok, err := f.decode(raw)
 		if err != nil {
 			bad = append(bad, fmt.Sprintf("line %d: %v", line, err))
 		}
@@ -162,10 +162,11 @@ func (f File[T]) All(checks ...func(T) error) ([]T, error) {
 	return all, f.corrupt(bad)
 }
 
-// Newest first, read from the end of the file
+// Newest first and read from the end of the file
 // 1. a record that fails keep is skipped and limit zero means all
-// 2. the read ends at the first record stop holds for, without returning it, so a reader of recent records leaves the old part of the file unread
-// 3. a line that fails to decode is left out and named by its byte offset in ErrCorrupt
+// 2. the read ends at the first record stop holds for and leaves that record out
+// 3. a reader of recent records thus leaves the old part of the file unread
+// 4. a line that fails to decode is left out and named by its byte offset in ErrCorrupt
 // A nil stop reads to the start of the file
 func (f File[T]) Newest(keep, stop func(T) bool, limit int) ([]T, error) {
 	file, err := os.Open(f.path)
@@ -173,19 +174,19 @@ func (f File[T]) Newest(keep, stop func(T) bool, limit int) ([]T, error) {
 		return nil, f.missing()
 	}
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", f.name(), err)
+		return nil, fmt.Errorf("%s: %w", f.Name(), err)
 	}
 	defer func() { _ = file.Close() }()
 	lines, err := newBackward(file)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", f.name(), err)
+		return nil, fmt.Errorf("%s: %w", f.Name(), err)
 	}
 	var out []T
 	var bad []string
 	for {
 		raw, offset, err := lines.next()
 		if err != nil {
-			return out, errors.Join(fmt.Errorf("%s: %w", f.name(), err), f.corrupt(bad))
+			return out, errors.Join(fmt.Errorf("%s: %w", f.Name(), err), f.corrupt(bad))
 		}
 		if raw == nil {
 			break
@@ -193,7 +194,7 @@ func (f File[T]) Newest(keep, stop func(T) bool, limit int) ([]T, error) {
 		if offset == 0 {
 			raw = bytes.TrimPrefix(raw, byteOrderMark)
 		}
-		v, ok, err := f.decode(raw, nil)
+		v, ok, err := f.decode(raw)
 		if err != nil {
 			bad = append(bad, fmt.Sprintf("byte %d: %v", offset, err))
 		}
@@ -215,22 +216,23 @@ func (f File[T]) Newest(keep, stop func(T) bool, limit int) ([]T, error) {
 }
 
 // Moves the lines that fail to decode to the file of the same name with .corrupt added and returns how many
-// 1. it holds the append lock and rewrites the file in place so a writer waiting on the lock appends to the repaired file
-// 2. a reader takes no lock and may read the file short while it is rewritten
-// 3. the whole file is kept as .bak until the rewrite is synced so a crash in between loses no record
-// 4. a line is judged as All judges it so a repaired file reads without ErrCorrupt
-// 5. an unterminated last line stays for the next append to cut or keep
+// 1. it holds the append lock and rewrites the file in place
+// 2. a writer waiting on the lock thus appends to the repaired file
+// 3. a reader takes no lock and may read the file short while it is rewritten
+// 4. the whole file is kept as .bak until the rewrite is synced so a crash in between loses no record
+// 5. a line is judged as All judges it so a repaired file reads without ErrCorrupt
+// 6. an unterminated last line stays for the next append to cut or keep
 func (f File[T]) Repair() (int, error) {
 	file, err := os.OpenFile(f.path, os.O_APPEND|os.O_RDWR, perms)
 	if errors.Is(err, os.ErrNotExist) {
 		return 0, f.missing()
 	}
 	if err != nil {
-		return 0, fmt.Errorf("%s: %w", f.name(), err)
+		return 0, fmt.Errorf("%s: %w", f.Name(), err)
 	}
 	moved, err := f.repair(file)
 	if err = errors.Join(err, file.Close()); err != nil {
-		return 0, fmt.Errorf("%s: %w", f.name(), err)
+		return 0, fmt.Errorf("%s: %w", f.Name(), err)
 	}
 	return moved, nil
 }
@@ -245,7 +247,7 @@ func (f File[T]) repair(file *os.File) (int, error) {
 	}
 	var kept, bad []byte
 	for raw := range bytes.Lines(bytes.TrimPrefix(data, byteOrderMark)) {
-		if _, _, err := f.decode(raw, nil); err != nil {
+		if _, _, err := f.decode(raw); err != nil {
 			bad = append(bad, raw...)
 			continue
 		}
@@ -288,7 +290,7 @@ func writeSynced(path string, flags int, data []byte) error {
 // The record of one line and whether there was one
 // 1. a blank line holds none
 // 2. an unterminated line that fails to decode is a write in flight and holds none without an error
-func (f File[T]) decode(raw []byte, checks []func(T) error) (T, bool, error) {
+func (f File[T]) decode(raw []byte) (T, bool, error) {
 	var v T
 	if !bytes.HasSuffix(raw, []byte{'\n'}) && f.torn(raw) {
 		return v, false, nil
@@ -300,11 +302,6 @@ func (f File[T]) decode(raw []byte, checks []func(T) error) (T, bool, error) {
 	if err := json.Unmarshal(raw, &v); err != nil {
 		return v, false, err
 	}
-	for _, check := range checks {
-		if err := check(v); err != nil {
-			return v, false, err
-		}
-	}
 	return v, true, nil
 }
 
@@ -312,13 +309,13 @@ func (f File[T]) corrupt(bad []string) error {
 	if len(bad) == 0 {
 		return nil
 	}
-	return fmt.Errorf("%s %w: %s", f.name(), ErrCorrupt, strings.Join(bad, "; "))
+	return fmt.Errorf("%s %w: %s", f.Name(), ErrCorrupt, strings.Join(bad, "; "))
 }
 
 // A file not written yet reads as empty while its directory exists
 func (f File[T]) missing() error {
 	if _, err := os.Stat(filepath.Dir(f.path)); err != nil {
-		return fmt.Errorf("%s: %w", f.name(), err)
+		return fmt.Errorf("%s: %w", f.Name(), err)
 	}
 	return nil
 }
@@ -330,6 +327,12 @@ func (File[T]) torn(tail []byte) bool {
 	return json.Unmarshal(bytes.TrimPrefix(tail, byteOrderMark), &v) != nil
 }
 
-func (f File[T]) name() string {
+func (f File[T]) Name() string {
 	return filepath.Base(f.path)
+}
+
+// How many records the file holds and the error naming its corrupt lines
+func (f File[T]) Check() (int, error) {
+	all, err := f.All()
+	return len(all), err
 }

@@ -44,7 +44,8 @@ func BenchmarkHook(b *testing.B) {
 	}
 }
 
-// Runs of sessions of twenty runs each a minute apart up to now, the last three in session s-last
+// Runs of sessions of twenty runs each a minute apart up to now
+// The last three are in session s-last
 func appendRuns(b *testing.B, records, repo string, n int) {
 	b.Helper()
 	file, err := os.OpenFile(filepath.Join(records, "traces.jsonl"), os.O_APPEND|os.O_WRONLY, 0o600)

@@ -19,9 +19,10 @@ import (
 
 	"github.com/jeon-jihyeon/nodloop/internal/classify"
 	"github.com/jeon-jihyeon/nodloop/internal/feedback"
-	"github.com/jeon-jihyeon/nodloop/internal/jsonl"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
+	knowledgefile "github.com/jeon-jihyeon/nodloop/internal/knowledge/file"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
+	tracefile "github.com/jeon-jihyeon/nodloop/internal/trace/file"
 )
 
 const (
@@ -40,9 +41,9 @@ const (
 	// The session note follows only in the room left under contextRunes so it never pushes an item out
 	promptRunes = 9_800
 	// How far back the hooks look for the previous run of a session
-	// 1. the hooks read the records from the end and stop here, so the first prompt of a session reads one window of runs
+	// 1. the hooks read the records from the end and stop here so the first prompt of a session reads one window of runs
 	// 2. a session resumed after it starts without a previous run
-	// A week of the busiest day recorded so far, 573 runs, is about 4000 runs
+	// The busiest day so far recorded 573 runs so a week of such days is about 4000 runs
 	sessionWindow = 7 * 24 * time.Hour
 )
 
@@ -124,7 +125,7 @@ type hookCommand struct {
 // 3. a turn the holdout draws gets the note and no item
 func (c hookCommand) prompt(ctx context.Context, sessionID, message string, labels trace.Labels) error {
 	all, allErr := c.all(ctx)
-	if allErr != nil && !errors.Is(allErr, jsonl.ErrCorrupt) {
+	if allErr != nil && !errors.Is(allErr, knowledgefile.ErrCorrupt) {
 		return allErr
 	}
 	previous, runsErr := c.previousRun(ctx, sessionID)
@@ -194,11 +195,11 @@ func (c hookCommand) stop(ctx context.Context, sessionID string, labels trace.La
 		return nil
 	}
 	previous, runsErr := c.previousRun(ctx, sessionID)
-	if runsErr != nil && !errors.Is(runsErr, jsonl.ErrCorrupt) {
+	if runsErr != nil && !errors.Is(runsErr, tracefile.ErrCorrupt) {
 		return runsErr
 	}
 	all, allErr := c.all(ctx)
-	if allErr != nil && !errors.Is(allErr, jsonl.ErrCorrupt) {
+	if allErr != nil && !errors.Is(allErr, knowledgefile.ErrCorrupt) {
 		return allErr
 	}
 	corrupt := errors.Join(runsErr, allErr)
@@ -237,7 +238,7 @@ func (c hookCommand) stop(ctx context.Context, sessionID string, labels trace.La
 // 1. a run with a verdict of a person is left to the nod skill even after a later inferred one because the person's verdict wins
 // A person's withdraw is such a verdict so a withdrawn run is never drafted
 // 2. it runs as `knowledge extract` in a process of its own because Claude Code may end an async hook when it exits
-// 3. the verdicts are read from the end of the records back to the run, since none comes before it
+// 3. the verdicts are read from the end of the records back to the run since none comes before it
 func (c hookCommand) extract(ctx context.Context, runID string, at time.Time) error {
 	if !c.mode.infers() || runID == "" {
 		return nil

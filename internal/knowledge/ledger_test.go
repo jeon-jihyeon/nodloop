@@ -1839,3 +1839,13 @@ func TestLedgerConcurrentApprovalsKeepEveryVeto(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, vetoes, judgments)
 }
+
+// An id is the prefix and the clock milliseconds in hex and four hex digits of random bytes
+func TestNewIDs(t *testing.T) {
+	at := time.UnixMilli(0x19a0b0c0d0e)
+	ids := knowledge.NewIDs(func() time.Time { return at })
+
+	got := ids("k-")
+
+	assert.Regexp(t, `^k-19a0b0c0d0e[0-9a-f]{4}$`, got)
+}

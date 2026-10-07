@@ -170,7 +170,7 @@ type Filter struct {
 	Verdicts []Verdict
 	Reviewer string
 	// Verdicts before it are left out
-	// A store reads newest first and stops at the first one, so it relies on verdicts being appended in time order
+	// Verdicts are appended in time order
 	Since time.Time
 	// Zero means all
 	Limit int

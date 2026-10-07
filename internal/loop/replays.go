@@ -21,6 +21,14 @@ type ReplayRow struct {
 	Time      time.Time `json:"time"`
 }
 
+// passed or failed as a report line shows the replay
+func (r ReplayRow) Outcome() string {
+	if r.Passed {
+		return "passed"
+	}
+	return "failed"
+}
+
 // The output of a replay trace as the replay package writes it
 // loop reads it as a record and never imports replay
 type replayRecord struct {
@@ -33,18 +41,18 @@ type replayRecord struct {
 	Overreach int `json:"overreach"`
 }
 
-// One row per version replayed, from its newest replay, in the order of the traces
-// A replay trace whose output does not decode is left out
-func Replays(traces trace.Traces) []ReplayRow {
+// One row per version replayed from its newest replay in the order of the traces
+// A failed replay and a replay trace whose output does not decode are left out
+func (s Snapshot) Replays() []ReplayRow {
 	type key struct {
 		id      string
 		version int
 	}
 	seen := map[key]bool{}
 	rows := []ReplayRow{}
-	for _, tr := range traces {
+	for _, tr := range s.traces {
 		var rec replayRecord
-		if tr.Name != trace.NameReplay || json.Unmarshal(tr.Output, &rec) != nil || seen[key{rec.ID, rec.Version}] {
+		if tr.Name != trace.NameReplay || tr.Error != "" || json.Unmarshal(tr.Output, &rec) != nil || seen[key{rec.ID, rec.Version}] {
 			continue
 		}
 		seen[key{rec.ID, rec.Version}] = true

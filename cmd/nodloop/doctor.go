@@ -7,14 +7,15 @@ import (
 	"os"
 	"time"
 
-	"github.com/jeon-jihyeon/nodloop/internal/feedback"
+	feedbackfile "github.com/jeon-jihyeon/nodloop/internal/feedback/file"
 	"github.com/jeon-jihyeon/nodloop/internal/guard"
 	"github.com/jeon-jihyeon/nodloop/internal/jsonl"
-	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
-	"github.com/jeon-jihyeon/nodloop/internal/trace"
+	knowledgefile "github.com/jeon-jihyeon/nodloop/internal/knowledge/file"
+	tracefile "github.com/jeon-jihyeon/nodloop/internal/trace/file"
 )
 
-// doctor reads every record file and names the lines that fail to decode, and --repair moves them aside
+// doctor reads every record file and names the lines that fail to decode
+// --repair moves them aside
 func runDoctor(args []string, getenv func(string) string, now func() time.Time, stdout, stderr io.Writer) int {
 	fs := newFlagSet("doctor", stderr)
 	var records recordFlags
@@ -48,78 +49,83 @@ func runDoctor(args []string, getenv func(string) string, now func() time.Time, 
 	return 0
 }
 
-// One record file with the checks doctor runs on it
+// A record file doctor reads and repairs
+type checkedFile interface {
+	Name() string
+	// How many records the file holds and the error naming its corrupt lines
+	Check() (int, error)
+	// Moves the corrupt lines aside and returns how many
+	Repair() (int, error)
+}
+
+// One record file with the error its corrupt lines come back as
 type recordFile struct {
-	name string
-	// Records read and the error naming the corrupt lines
-	read func() (int, error)
-	// Lines moved aside
-	repair func() (int, error)
+	file    checkedFile
+	corrupt error
 }
 
-func newRecordFile[T any](dir, name string) (recordFile, error) {
-	f, err := jsonl.Open[T](dir, name)
-	if err != nil {
-		return recordFile{}, err
-	}
-	read := func() (int, error) {
-		all, err := f.All()
-		return len(all), err
-	}
-	return recordFile{name: name, read: read, repair: f.Repair}, nil
-}
-
-// One line of the file with its records and corrupt lines, moving them aside on repair
+// One line of the file with its records and corrupt lines
+// repair moves the corrupt lines aside
 // Returns whether corrupt lines are left in place
 func (f recordFile) check(out io.Writer, repair bool) (bool, error) {
-	n, err := f.read()
+	name := f.file.Name()
+	n, err := f.file.Check()
 	switch {
-	case errors.Is(err, jsonl.ErrCorrupt) && repair:
-		moved, err := f.repair()
+	case errors.Is(err, f.corrupt) && repair:
+		moved, err := f.file.Repair()
 		if err != nil {
 			return false, err
 		}
-		fmt.Fprintf(out, "%s\t%d records\tmoved %d corrupt lines to %s.corrupt\n", f.name, n, moved, f.name)
+		fmt.Fprintf(out, "%s\t%d records\tmoved %d corrupt lines to %s.corrupt\n", name, n, moved, name)
 		return false, nil
-	case errors.Is(err, jsonl.ErrCorrupt):
-		fmt.Fprintf(out, "%s\t%d records\t%v\n", f.name, n, err)
+	case errors.Is(err, f.corrupt):
+		fmt.Fprintf(out, "%s\t%d records\t%v\n", name, n, err)
 		return true, nil
 	case err != nil:
 		return false, err
 	}
-	fmt.Fprintf(out, "%s\t%d records\tok\n", f.name, n)
+	fmt.Fprintf(out, "%s\t%d records\tok\n", name, n)
 	return false, nil
 }
 
 // The record files of the record directory and the guard log under home
 // A file not written yet reads as zero records
 func (a app) recordFiles() ([]recordFile, error) {
+	traces, err := a.traces()
+	if err != nil {
+		return nil, err
+	}
+	verdicts, err := a.feedback()
+	if err != nil {
+		return nil, err
+	}
+	outcomes, err := a.outcomes()
+	if err != nil {
+		return nil, err
+	}
 	dir, err := a.makeRecordDir()
 	if err != nil {
 		return nil, err
 	}
-	var files []recordFile
-	for _, open := range []func() (recordFile, error){
-		func() (recordFile, error) { return newRecordFile[trace.Trace](dir, "traces.jsonl") },
-		func() (recordFile, error) { return newRecordFile[feedback.Feedback](dir, "feedback.jsonl") },
-		func() (recordFile, error) { return newRecordFile[feedback.Outcome](dir, "outcomes.jsonl") },
-		func() (recordFile, error) { return newRecordFile[knowledge.Knowledge](dir, "knowledge.jsonl") },
-	} {
-		f, err := open()
-		if err != nil {
-			return nil, err
-		}
-		files = append(files, f)
+	ledger, err := knowledgefile.New(dir)
+	if err != nil {
+		return nil, err
+	}
+	files := []recordFile{
+		{traces, tracefile.ErrCorrupt},
+		{verdicts, feedbackfile.ErrCorrupt},
+		{outcomes, feedbackfile.ErrCorrupt},
+		{ledger, knowledgefile.ErrCorrupt},
 	}
 	if a.cfg.home == "" {
 		return files, nil
 	}
-	log, err := newRecordFile[guard.Entry](a.cfg.home.dir(), decisionLog)
+	log, err := jsonl.Open[guard.Entry](a.cfg.home.dir(), decisionLog)
 	if errors.Is(err, os.ErrNotExist) {
 		return files, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	return append(files, log), nil
+	return append(files, recordFile{log, jsonl.ErrCorrupt}), nil
 }

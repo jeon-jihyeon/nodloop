@@ -146,7 +146,7 @@ type Filter struct {
 	// Every tag must be present
 	Tags []string
 	// Traces before it are left out
-	// A store reads newest first and stops at the first one, so it relies on traces being appended in time order
+	// Traces are appended in time order
 	Since time.Time
 	// Zero means all
 	Limit int

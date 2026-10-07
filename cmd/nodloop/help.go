@@ -17,7 +17,7 @@ type usageText string
 // 2. an action no block names falls back to every block of the command
 // 3. a command no block names gets the whole text
 func (u usageText) of(name string) string {
-	head, rest, _ := strings.Cut(string(u), "commands:\n")
+	_, rest, _ := strings.Cut(string(u), "commands:\n")
 	commands, notes, _ := strings.Cut(rest, "\n\n")
 	blocks := u.blocks(commands)
 	command, _, _ := strings.Cut(name, " ")
@@ -32,7 +32,7 @@ func (u usageText) of(name string) string {
 			return "usage:\n" + b.String() + "\n" + notes
 		}
 	}
-	return head + "commands:\n" + rest
+	return string(u)
 }
 
 func (usageText) blocks(commands string) []usageBlock {
@@ -73,7 +73,8 @@ func parseFailed(err error) int {
 	return 1
 }
 
-// help, -h and --help print the whole usage and help <command> the usage of that command
+// help and -h and --help print the whole usage
+// help <command> prints the usage of that command
 func runHelp(args []string, stdout io.Writer) int {
 	if len(args) == 0 {
 		fmt.Fprint(stdout, usage)

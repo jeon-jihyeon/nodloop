@@ -1,6 +1,8 @@
 // Package classify asks the yes or no questions of a decision point of the classifiers a user set up for it
 package classify
 
+//go:generate mockgen -source=classify.go -destination=classifymock/classifier.go -package=classifymock Classifier
+
 import (
 	"context"
 	"fmt"

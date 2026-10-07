@@ -2,7 +2,6 @@
 package nodloop
 
 import (
-	"crypto/rand"
 	"fmt"
 	"os"
 	"time"
@@ -69,13 +68,8 @@ func Open(dir string, opts ...Option) (*Client, error) {
 	if o.vetoHome != "" {
 		sink = vetofile.NewApprovedFile(o.vetoHome, dir).Of(o.vetoProducer)
 	}
-	newID := func(prefix string) string {
-		var suffix [2]byte
-		// crypto rand Read never returns an error
-		_, _ = rand.Read(suffix[:])
-		return fmt.Sprintf("%s%x%x", prefix, o.now().UnixMilli(), suffix)
-	}
-	return &Client{traces: traces, verdicts: verdicts, ledger: knowledge.NewLedger(store, sink, o.now, newID), now: o.now}, nil
+	ledger := knowledge.NewLedger(store, sink, o.now, knowledge.NewIDs(o.now))
+	return &Client{traces: traces, verdicts: verdicts, ledger: ledger, now: o.now}, nil
 }
 
 // The veto sink of a client without a veto home

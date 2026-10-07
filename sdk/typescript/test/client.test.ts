@@ -10,12 +10,13 @@ test("a corrected run teaches an item the same tenant receives and another does 
     const run = await c.record({ producer: "support-bot", output: "Here are the refund steps", labels: acme });
     await c.judge(run, "reject", { reason: "the refund window was missing", reasonCode: "scope" });
     const p = await c.propose({ kind: "judgment", content: "Quote the refund window before the steps", from: run, id: "refund-window" });
-    await c.approve(p.id, p.version, "ann");
+    const approved = await c.approve(p.id, p.version, "ann");
 
     const mine = await c.knowledge("support-bot", acme);
     const other = await c.knowledge("support-bot", { tenant: ["globex"] });
     const next = await c.record({ producer: "support-bot", output: "The window is 30 days", labels: acme, applied: mine.items });
 
+    assert.deepEqual(approved, { id: "refund-window", version: 1, status: "approved", approver: "ann", veto: false, compactionDue: false, exportError: "", folderError: "" });
     assert.deepEqual(mine.items.map((i) => i.id), ["refund-window"]);
     assert.match(mine.text, /^nodloop: corrections a person approved/);
     assert.deepEqual(other, { items: [], text: "" });
@@ -73,5 +74,21 @@ test("a wrong server key is refused", async () => {
     await assert.rejects(Client.open({ url, key: "nl_wrong" }));
   } finally {
     proc.kill();
+  }
+});
+
+test("the approval of a sixth item for the same runs says a compaction is due", async () => {
+  const c = await open();
+  try {
+    const run = await c.record({ producer: "support-bot", output: "steps", labels: acme });
+    await c.judge(run, "reject", { reason: "the window was missing" });
+    const due: boolean[] = [];
+    for (let n = 0; n < 6; n++) {
+      const p = await c.propose({ kind: "judgment", content: `Refund rule number ${n}`, from: run, id: `rule-${n}` });
+      due.push((await c.approve(p.id, p.version, "ann")).compactionDue);
+    }
+    assert.deepEqual(due, [false, false, false, false, false, true]);
+  } finally {
+    await c.close();
   }
 });
