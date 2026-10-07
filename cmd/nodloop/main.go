@@ -158,6 +158,11 @@ commands:
                             under tenants of the record directory, or in one PostgreSQL database with --postgres or
                             NODLOOP_POSTGRES. 127.0.0.1:8787 by default. GET /v1/reports/<name> answers loop, extract,
                             critic, effect or health as JSON to a reviewer or approver key and GET /healthz answers without one
+  export otel [--endpoint <url>] [--header <Name=value>] [--since <RFC3339>] [--with-output]
+                            Send every run as an OpenTelemetry GenAI span and every verdict as a gen_ai.evaluation.result
+                            event on it, in OTLP JSON over HTTP, so a collector, Langfuse or Phoenix shows them. The ids derive
+                            from the run so sending again replaces. OTEL_EXPORTER_OTLP_TRACES_ENDPOINT, OTEL_EXPORTER_OTLP_ENDPOINT
+                            and OTEL_EXPORTER_OTLP_HEADERS fill what the flags leave out. The output goes only with --with-output
   doctor [--repair]         Read every record file and the guard log, and name the lines that fail to decode.
                             A read skips such a line, and --repair moves them to <file>.corrupt. Run it while nothing writes
   version                   Print the build version
@@ -237,6 +242,7 @@ func run(args []string, getenv func(string) string, stdin io.Reader, stdout io.W
 		"classifier": func(args []string) int { return runClassifier(args, getenv, time.Now, stdout, stderr) },
 		"server":     func(args []string) int { return runServer(args, getenv, time.Now, stdout, stderr) },
 		"doctor":     func(args []string) int { return runDoctor(args, getenv, time.Now, stdout, stderr) },
+		"export":     func(args []string) int { return runExport(args, getenv, time.Now, stdout, stderr) },
 		"version": func([]string) int {
 			fmt.Fprintln(stdout, buildVersion())
 			return 0
