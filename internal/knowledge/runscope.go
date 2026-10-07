@@ -6,6 +6,7 @@ import (
 	"maps"
 	"slices"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/jeon-jihyeon/nodloop/internal/feedback"
@@ -140,8 +141,11 @@ func carriesAny(labels trace.Labels, key string, values []string) bool {
 	return slices.ContainsFunc(values, func(v string) bool { return labels.Has(key, v) })
 }
 
-// The approved items that apply to a run of the producer with the labels
-// A judgment with a veto acts through the guard and never reaches a run
+// The approved items that apply to a run of the producer with the labels, in the order a prompt carries them
+// 1. a judgment with a veto acts through the guard and never reaches a run
+// 2. an item that names more label keys comes first since it was taught for a narrower place than a general one
+// 3. then the one approved or reaffirmed last, so a cap on the prompt leaves out stale items before fresh ones
+// 4. then the id so the order is the same in every hook of a turn
 func (s Set) For(producer string, labels trace.Labels) Set {
 	out := Set{}
 	for _, k := range s.Current() {
@@ -149,7 +153,30 @@ func (s Set) For(producer string, labels trace.Labels) Set {
 			out = append(out, k)
 		}
 	}
+	slices.SortStableFunc(out, Knowledge.rank)
 	return out
+}
+
+// Negative when a goes before b in a prompt
+func (a Knowledge) rank(b Knowledge) int {
+	return cmp.Or(
+		cmp.Compare(b.Run.specificity(), a.Run.specificity()),
+		b.fresh().Compare(a.fresh()),
+		strings.Compare(a.ID, b.ID),
+	)
+}
+
+// The label keys the scope requires or excludes
+func (r RunScope) specificity() int {
+	return len(r.Labels) + len(r.Except)
+}
+
+// When a person last stood behind the version: its approval or its last reaffirm
+func (k Knowledge) fresh() time.Time {
+	if k.ReviewedAt.After(k.ApprovedAt) {
+		return k.ReviewedAt
+	}
+	return k.ApprovedAt
 }
 
 // The candidates a person has yet to approve that would reach a run of the producer with the labels
