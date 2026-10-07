@@ -216,8 +216,10 @@ func (f File[T]) Newest(keep, stop func(T) bool, limit int) ([]T, error) {
 
 // Moves the lines that fail to decode to the file of the same name with .corrupt added and returns how many
 // 1. it holds the append lock and rewrites the file in place so a writer waiting on the lock appends to the repaired file
-// 2. a reader takes no lock and may read the file short while it is rewritten, so it runs while nothing reads
-// 3. an unterminated last line stays for the next append to cut or keep
+// 2. a reader takes no lock and may read the file short while it is rewritten
+// 3. the whole file is kept as .bak until the rewrite is synced so a crash in between loses no record
+// 4. a line is judged as All judges it so a repaired file reads without ErrCorrupt
+// 5. an unterminated last line stays for the next append to cut or keep
 func (f File[T]) Repair() (int, error) {
 	file, err := os.OpenFile(f.path, os.O_APPEND|os.O_RDWR, perms)
 	if errors.Is(err, os.ErrNotExist) {
@@ -242,8 +244,8 @@ func (f File[T]) repair(file *os.File) (int, error) {
 		return 0, err
 	}
 	var kept, bad []byte
-	for raw := range bytes.Lines(data) {
-		if _, _, err := f.decode(bytes.TrimPrefix(raw, byteOrderMark), nil); err != nil {
+	for raw := range bytes.Lines(bytes.TrimPrefix(data, byteOrderMark)) {
+		if _, _, err := f.decode(raw, nil); err != nil {
 			bad = append(bad, raw...)
 			continue
 		}
@@ -252,23 +254,35 @@ func (f File[T]) repair(file *os.File) (int, error) {
 	if len(bad) == 0 {
 		return 0, nil
 	}
-	aside, err := os.OpenFile(f.path+".corrupt", os.O_CREATE|os.O_APPEND|os.O_WRONLY, perms)
+	backup := f.path + ".bak"
+	if err := writeSynced(backup, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, data); err != nil {
+		return 0, err
+	}
+	if err := writeSynced(f.path+".corrupt", os.O_CREATE|os.O_APPEND|os.O_WRONLY, bad); err != nil {
+		return 0, err
+	}
+	if err := file.Truncate(0); err != nil {
+		return 0, err
+	}
+	if _, err := file.Write(kept); err != nil {
+		return 0, err
+	}
+	if err := file.Sync(); err != nil {
+		return 0, err
+	}
+	return bytes.Count(bad, []byte{'\n'}), os.Remove(backup)
+}
+
+// Writes the bytes to the path opened with the flags and syncs them before closing
+func writeSynced(path string, flags int, data []byte) error {
+	out, err := os.OpenFile(path, flags, perms)
 	if err != nil {
-		return 0, err
+		return err
 	}
-	if _, err = aside.Write(bad); err != nil {
-		return 0, errors.Join(err, aside.Close())
+	if _, err := out.Write(data); err != nil {
+		return errors.Join(err, out.Close())
 	}
-	if err = aside.Close(); err != nil {
-		return 0, err
-	}
-	if err = file.Truncate(0); err != nil {
-		return 0, err
-	}
-	if _, err = file.Write(kept); err != nil {
-		return 0, err
-	}
-	return bytes.Count(bad, []byte{'\n'}), nil
+	return errors.Join(out.Sync(), out.Close())
 }
 
 // The record of one line and whether there was one

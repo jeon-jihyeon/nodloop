@@ -39,16 +39,23 @@ func (h *headerFlag) Set(v string) error {
 	return nil
 }
 
-// The headers of OTEL_EXPORTER_OTLP_HEADERS: comma separated name=value pairs with URL encoded values
-func (h *headerFlag) setAll(env string) error {
+// The headers of OTEL_EXPORTER_OTLP_HEADERS a --header flag left out
+// The variable holds comma separated name=value pairs with URL encoded values
+func (h *headerFlag) fill(env string) error {
 	for pair := range strings.SplitSeq(env, ",") {
 		if strings.TrimSpace(pair) == "" {
 			continue
 		}
-		name, value, _ := strings.Cut(pair, "=")
+		name, value, ok := strings.Cut(pair, "=")
+		if !ok {
+			return fmt.Errorf("%w: %s holds %q, which is not name=value", errHeaderFlag, envOTLPHeaders, pair)
+		}
 		decoded, err := url.QueryUnescape(strings.TrimSpace(value))
 		if err != nil {
 			return fmt.Errorf("%w: %s: %w", errHeaderFlag, envOTLPHeaders, err)
+		}
+		if _, set := (*h)[strings.TrimSpace(name)]; set {
+			continue
 		}
 		if err := h.Set(strings.TrimSpace(name) + "=" + decoded); err != nil {
 			return err
@@ -70,13 +77,13 @@ func runExport(args []string, getenv func(string) string, now func() time.Time, 
 	records.bind(fs)
 	endpoint := fs.String("endpoint", "", "the OTLP traces URL such as http://localhost:4318/v1/traces. "+envOTLPTracesEndpoint+" or "+envOTLPEndpoint+" when empty")
 	var headers headerFlag
-	fs.Var(&headers, "header", "Name=value of a header to send, repeatable, such as Authorization=Basic <token>. "+envOTLPHeaders+" adds more")
+	fs.Var(&headers, "header", "Name=value of a header to send, repeatable, such as Authorization=Basic <token>. "+envOTLPHeaders+" adds the names it leaves out")
 	since := fs.String("since", "", "only runs from this RFC3339 time on")
 	output := fs.Bool("with-output", false, "send the output of each run as output.value")
 	if err := fs.Parse(args[1:]); err != nil {
 		return parseFailed(err)
 	}
-	if err := headers.setAll(getenv(envOTLPHeaders)); err != nil {
+	if err := headers.fill(getenv(envOTLPHeaders)); err != nil {
 		return fail(stderr, "export", err)
 	}
 	target := cmp.Or(*endpoint, getenv(envOTLPTracesEndpoint))

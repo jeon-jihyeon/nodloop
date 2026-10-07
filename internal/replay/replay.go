@@ -210,10 +210,11 @@ func (r *Replayer) approved(ctx context.Context, item knowledge.Knowledge, lates
 	return nil
 }
 
-// Whether the run lies in the scope of the item and was recorded before its newest record, so it never received the item
-// A cited run is a case of its own
+// Whether the run lies in the scope of the item and was recorded before runs began to receive it
+// 1. a run recorded later may have followed the item and would pass whatever it says
+// 2. a cited run is a case of its own
 func unseen(item knowledge.Knowledge, run trace.Trace) bool {
-	return run.Time.Before(item.Time) && !slices.Contains(item.Evidence.FeedbackTraceIDs, run.ID) && item.Run.Admits(run.Producer, run.Labels)
+	return run.Time.Before(item.ReachedSince()) && !slices.Contains(item.Evidence.FeedbackTraceIDs, run.ID) && item.Run.Admits(run.Producer, run.Labels)
 }
 
 func (r *Replayer) record(ctx context.Context, item knowledge.Knowledge, result Result, res llm.Response) error {

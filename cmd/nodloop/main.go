@@ -211,11 +211,8 @@ func run(args []string, getenv func(string) string, stdin io.Reader, stdout io.W
 		fmt.Fprint(stderr, usage)
 		return 1
 	}
-	if helps(args[0]) {
-		return runHelp(args[1:], stdout)
-	}
-	if len(args) > 1 && helps(args[1]) {
-		return runHelp(args[:1], stdout)
+	if words, ok := helpWords(args); ok {
+		return runHelp(words, stdout)
 	}
 	commands := map[string]func(args []string) int{
 		"help":  func(args []string) int { return runHelp(args, stdout) },
@@ -273,6 +270,23 @@ func parseID(fs *flag.FlagSet, args []string) (string, error) {
 // Whether the argument asks for the usage instead of naming a command or an action
 func helps(arg string) bool {
 	return arg == "-h" || arg == "--help"
+}
+
+// The command and action whose usage the arguments ask for
+// 1. -h or --help first asks for the usage of the words after it
+// 2. otherwise -h or --help as the first flag asks for the usage of the command and action before it
+// 3. a later -h is the value of a flag such as --reason -h and runs the command
+// The check comes before any command so an action without flags never takes -h as its value
+func helpWords(args []string) ([]string, bool) {
+	if helps(args[0]) {
+		return args[1:], true
+	}
+	for i, arg := range args[1:] {
+		if strings.HasPrefix(arg, "-") {
+			return args[:min(i+1, 2)], helps(arg)
+		}
+	}
+	return nil, false
 }
 
 // One line on stderr per failed command

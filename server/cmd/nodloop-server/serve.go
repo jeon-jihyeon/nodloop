@@ -39,6 +39,9 @@ func runServe(args []string, getenv func(string) string, now func() time.Time, s
 		return parseFailed(err)
 	}
 	h := homeDir(getenv("HOME"))
+	if h == "" {
+		return fail(stderr, "serve", errHomeUnknown)
+	}
 	uc, err := h.readConfig()
 	if err != nil {
 		return fail(stderr, "serve", err)
@@ -63,7 +66,7 @@ func runServe(args []string, getenv func(string) string, now func() time.Time, s
 		stores, where = fileTenants{base: dir}, "records under "+dir
 	}
 	fmt.Fprintf(stderr, "nodloop-server: %d keys, %s, listening on http://%s/mcp with reports at /v1/reports/{name}\n", len(uc.Server.Keys), where, *addr)
-	srv := &http.Server{Addr: *addr, Handler: newServeHandler(stores, uc.Server, now), ReadHeaderTimeout: 10 * time.Second}
+	srv := &http.Server{Addr: *addr, Handler: newServeHandler(stores, uc.Server, now, stderr), ReadHeaderTimeout: 10 * time.Second}
 	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return fail(stderr, "serve", err)
 	}
@@ -80,16 +83,18 @@ type serveHandler struct {
 	stores tenantStores
 	config serverConfig
 	now    func() time.Time
-	mu     sync.Mutex
-	hosts  map[string]*sdk.Server
-	mcp    http.Handler
+	// Where an internal failure is written since its answer names none of it
+	log   io.Writer
+	mu    sync.Mutex
+	hosts map[string]*sdk.Server
+	mcp   http.Handler
 }
 
 type keyContext struct{}
 
 // Every other path is the MCP endpoint, as before the reports came, so a client that names no path keeps working
-func newServeHandler(stores tenantStores, config serverConfig, now func() time.Time) http.Handler {
-	h := &serveHandler{stores: stores, config: config, now: now, hosts: map[string]*sdk.Server{}}
+func newServeHandler(stores tenantStores, config serverConfig, now func() time.Time, log io.Writer) http.Handler {
+	h := &serveHandler{stores: stores, config: config, now: now, log: log, hosts: map[string]*sdk.Server{}}
 	h.mcp = sdk.NewStreamableHTTPHandler(h.server, &sdk.StreamableHTTPOptions{Stateless: true})
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { fmt.Fprintln(w, "ok") })
@@ -122,7 +127,7 @@ func (h *serveHandler) report(w http.ResponseWriter, r *http.Request) {
 	}
 	srv, err := h.stores.open(key, h.now, mcp.NewSession(h.now()))(r.Context())
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		h.internal(w, key, err)
 		return
 	}
 	report, err := srv.Report(r.Context(), loop.ReportName(r.PathValue("name")))
@@ -131,11 +136,18 @@ func (h *serveHandler) report(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusNotFound)
 		return
 	case err != nil:
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		h.internal(w, key, err)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(report)
+}
+
+// Answers a failure of the server without its cause and writes the cause to the log
+// A cause may name a path or a database error that a key holder has no need to read
+func (h *serveHandler) internal(w http.ResponseWriter, key serverKey, err error) {
+	fmt.Fprintf(h.log, "nodloop-server: key %s: %v\n", key.Name, err)
+	http.Error(w, "internal error", http.StatusInternalServerError)
 }
 
 // The MCP server of the key the request was authenticated with

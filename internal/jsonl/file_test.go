@@ -521,6 +521,11 @@ func TestFileRepair(t *testing.T) {
 			want{2, "{\"id\":\"a\"}\n{\"id\":\"b\"}\n{\"id\":\"c\"}\n", "not json\n[1]\n"},
 		},
 		{"a torn last line stays for the next append", "{\"id\":\"a\"}\n{\"id", want{0, "{\"id\":\"a\"}\n{\"id", ""}},
+		{
+			"a byte order mark inside the file is corrupt as All reads it",
+			"\uFEFF{\"id\":\"a\"}\n\uFEFF{\"id\":\"b\"}\n",
+			want{1, "{\"id\":\"a\"}\n", "\uFEFF{\"id\":\"b\"}\n"},
+		},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
@@ -540,6 +545,7 @@ func TestFileRepair(t *testing.T) {
 			assert.Equal(t, tc.want.content, string(got))
 			aside, _ := os.ReadFile(path + ".corrupt")
 			assert.Equal(t, tc.want.aside, string(aside))
+			assert.NoFileExists(t, path+".bak", "the backup goes once the rewrite is synced")
 			_, err = f.All()
 			assert.NoError(t, err)
 		})
