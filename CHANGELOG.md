@@ -8,11 +8,14 @@ Every release tag publishes the plugin, the darwin and linux binaries and both S
 - `Item.Ref` and `Items.Refs` in the Go package, and a runnable example of the loop
 - The LangChain middleware in the TypeScript SDK as `nodloop/langchain`
 - READMEs for the PyPI and npm pages
+- `nodloop help [<command>]`, `-h` and `--help`, printing the usage of one command or action
+- `nodloop config` with no action lists every setting with its value and source
 
 ### Changed
 - `Client.Items` and `Client.Waiting` return `Items`
 - The TypeScript `record` takes one object: `record({ producer, output, labels, applied, subject })`
 - `propose` and `approve` return `Candidate` and `Approval` in both SDKs instead of untyped objects
+- A CLI error names its command once, and a usage error prints the usage of that command alone
 
 ## 0.6.6 - 2026-10-07
 

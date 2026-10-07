@@ -72,7 +72,7 @@ func TestRun(t *testing.T) {
 		{
 			"llm probe fails on an unknown flag",
 			args{[]string{"llm", "probe", "--nope"}, nil},
-			want{1, "", `^flag provided but not defined: -nope\n`},
+			want{1, "", `^flag provided but not defined: -nope\nusage:\n  llm probe`},
 		},
 		{
 			"trace without an action fails",
@@ -102,7 +102,21 @@ func TestRun(t *testing.T) {
 		{
 			"mcp fails on an unknown flag",
 			args{[]string{"mcp", "--nope"}, nil},
-			want{1, "", `^flag provided but not defined: -nope\n`},
+			want{1, "", `^flag provided but not defined: -nope\nusage:\n  mcp `},
+		},
+		{"--help prints the usage", args{[]string{"--help"}, nil}, want{0, usage, `^$`}},
+		{"help prints the usage", args{[]string{"help"}, nil}, want{0, usage, `^$`}},
+		{"help of a command prints its part", args{[]string{"help", "queue"}, nil}, want{0, usageText(usage).of("queue"), `^$`}},
+		{"-h after a command prints its part", args{[]string{"report", "-h"}, nil}, want{0, usageText(usage).of("report"), `^$`}},
+		{
+			"-h after an action prints the part of the action and succeeds",
+			args{[]string{"knowledge", "for", "-h"}, nil},
+			want{0, "", `^usage:\n  knowledge for --producer <p> \[--label <key=value>\]\n {28}The approved items[^\n]*\n\nEvery command`},
+		},
+		{
+			"an error that starts with the command names it once",
+			args{[]string{"feedback", "add", "--trace", "t1", "--verdict", "bogus"}, nil},
+			want{1, "", `^nodloop feedback: verdict must be`},
 		},
 	}
 	for _, tc := range tcs {
@@ -156,6 +170,27 @@ func TestPluginVersionMismatch(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			assert.Equal(t, tc.want, tc.args.want.mismatch(tc.args.have, "/bin/nodloop"))
+		})
+	}
+}
+
+func TestUsageTextOf(t *testing.T) {
+	text := usageText("usage: x <command>\n\nintro\n\ncommands:\n  a one     First\n              more of a one\n  a two     Second\n  b         Third\n\nnotes\n")
+	tcs := []struct {
+		name string
+		args string
+		want string
+	}{
+		{"an action keeps its block", "a two", "usage:\n  a two     Second\n\nnotes\n"},
+		{"a command keeps the blocks of every action", "a", "usage:\n  a one     First\n              more of a one\n  a two     Second\n\nnotes\n"},
+		{"an unknown action falls back to its command", "a three", "usage:\n  a one     First\n              more of a one\n  a two     Second\n\nnotes\n"},
+		{"a name that only starts like a command is not it", "bb", string(text)},
+		{"an unknown command gets the whole text", "c", string(text)},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.want, text.of(tc.args))
 		})
 	}
 }

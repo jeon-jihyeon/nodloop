@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"maps"
@@ -152,8 +151,7 @@ func (c loopCommand) online(ctx context.Context, since time.Time) error {
 }
 
 func runQueue(args []string, getenv func(string) string, now func() time.Time, stdout, stderr io.Writer) int {
-	fs := flag.NewFlagSet("queue", flag.ContinueOnError)
-	fs.SetOutput(stderr)
+	fs := newFlagSet("queue", stderr)
 	var records recordFlags
 	records.bind(fs)
 	opts := loop.QueueOptions{}
@@ -161,7 +159,7 @@ func runQueue(args []string, getenv func(string) string, now func() time.Time, s
 	fs.Float64Var(&opts.AuditRate, "audit-rate", loop.QueueAuditRate, "share of the limit drawn at random from the rest of the order")
 	fs.Int64Var(&opts.Seed, "seed", now().UnixNano(), "the same seed draws the same audit samples")
 	if err := fs.Parse(args); err != nil {
-		return 1
+		return parseFailed(err)
 	}
 	if fs.NArg() != 0 {
 		return fail(stderr, "queue", fmt.Errorf("%w %q", errUnknownAction, fs.Arg(0)))
@@ -186,13 +184,12 @@ func runReport(args []string, getenv func(string) string, now func() time.Time, 
 	if args[0] != "online" {
 		return fail(stderr, "report", fmt.Errorf("%w %q", errUnknownAction, args[0]))
 	}
-	fs := flag.NewFlagSet("report online", flag.ContinueOnError)
-	fs.SetOutput(stderr)
+	fs := newFlagSet("report online", stderr)
 	var records recordFlags
 	records.bind(fs)
 	since := fs.String("since", "", "only verdicts and outcomes from this RFC3339 time on")
 	if err := fs.Parse(args[1:]); err != nil {
-		return 1
+		return parseFailed(err)
 	}
 	if fs.NArg() != 0 {
 		return fail(stderr, "report", fmt.Errorf("%w %q", errUnknownAction, fs.Arg(0)))
@@ -223,12 +220,11 @@ var recordReports = map[string]func(c loopCommand, ctx context.Context) error{
 }
 
 func runRecordReport(args []string, show func(loopCommand, context.Context) error, getenv func(string) string, now func() time.Time, stdout, stderr io.Writer) int {
-	fs := flag.NewFlagSet("report "+args[0], flag.ContinueOnError)
-	fs.SetOutput(stderr)
+	fs := newFlagSet("report "+args[0], stderr)
 	var records recordFlags
 	records.bind(fs)
 	if err := fs.Parse(args[1:]); err != nil {
-		return 1
+		return parseFailed(err)
 	}
 	a, err := records.app(getenv, now)
 	if err != nil {

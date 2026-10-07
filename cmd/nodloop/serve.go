@@ -7,7 +7,6 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"net/http"
@@ -74,13 +73,12 @@ func runServer(args []string, getenv func(string) string, now func() time.Time, 
 	if args[0] != "key" || len(args) < 2 {
 		return fail(stderr, "server", fmt.Errorf("%w %q", errUnknownAction, strings.Join(args, " ")))
 	}
-	fs := flag.NewFlagSet("server key "+args[1], flag.ContinueOnError)
-	fs.SetOutput(stderr)
+	fs := newFlagSet("server key "+args[1], stderr)
 	tenant := fs.String("tenant", "", "add: the tenant whose records the key reads and writes")
 	role := fs.String("role", "", "add: producer, reviewer or approver")
 	name, err := parseID(fs, args[2:])
 	if err != nil {
-		return 1
+		return parseFailed(err)
 	}
 	uc, err := h.readConfig()
 	if err != nil {
@@ -153,14 +151,13 @@ func (c serverCommand) remove(name string) error {
 
 // Serves the MCP tools over streamable HTTP until the process ends
 func runServe(args []string, getenv func(string) string, now func() time.Time, stderr io.Writer) int {
-	fs := flag.NewFlagSet("server serve", flag.ContinueOnError)
-	fs.SetOutput(stderr)
+	fs := newFlagSet("server serve", stderr)
 	var records recordFlags
 	records.bind(fs)
 	addr := fs.String("addr", "127.0.0.1:8787", "the address to listen on")
 	dsn := fs.String("postgres", getenv(envPostgres), "a PostgreSQL URL to keep the records of every tenant in. "+envPostgres+" when empty")
 	if err := fs.Parse(args); err != nil {
-		return 1
+		return parseFailed(err)
 	}
 	a, err := records.app(getenv, now)
 	if err != nil {
