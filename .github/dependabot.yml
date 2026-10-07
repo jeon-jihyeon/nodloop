@@ -5,6 +5,11 @@ updates:
     directories: ["/", "/server"]
     schedule:
       interval: weekly
+    # go.mod stays at go 1.25 for the MCP SDK and the contributors on that toolchain
+    # mvdan.cc/sh 3.14 needs go 1.26 so it waits until the floor moves
+    ignore:
+      - dependency-name: mvdan.cc/sh/v3
+        versions: [">=3.14.0"]
     cooldown:
       default-days: 7
     groups:
