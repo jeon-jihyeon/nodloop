@@ -1,0 +1,30 @@
+name: server-release
+
+# go install of nodloop-server resolves the server/v* tag outside go.work
+# The tag is valid only when server/go.mod requires a core release that holds every API the server uses
+on:
+  push:
+    tags:
+      - "server/v*"
+
+permissions:
+  contents: read
+
+jobs:
+  standalone:
+    runs-on: ubuntu-latest
+    env:
+      GOWORK: "off"
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: server/go.mod
+      - run: go build ./...
+      - run: go vet ./...
+      - run: go test ./...

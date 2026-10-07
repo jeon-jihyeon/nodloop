@@ -108,11 +108,11 @@ func TestRun(t *testing.T) {
 		{"help prints the usage", args{[]string{"help"}, nil}, want{0, usage, `^$`}},
 		{"help of a command prints its part", args{[]string{"help", "queue"}, nil}, want{0, usageText(usage).of("queue"), `^$`}},
 		{"-h after a command prints its part", args{[]string{"report", "-h"}, nil}, want{0, usageText(usage).of("report"), `^$`}},
-		{
-			"-h after an action prints the part of the action and succeeds",
-			args{[]string{"knowledge", "for", "-h"}, nil},
-			want{0, "", `^usage:\n  knowledge for --producer <p> \[--label <key=value>\]\n {28}The approved items[^\n]*\n\nEvery command`},
-		},
+		{"-h after an action prints the part of the action", args{[]string{"knowledge", "for", "-h"}, nil}, want{0, usageText(usage).of("knowledge for"), `^$`}},
+		{"-h after an action without flags never becomes its value", args{[]string{"config", "approver", "-h"}, nil}, want{0, usageText(usage).of("config approver"), `^$`}},
+		{"-h after an action that changes settings never runs it", args{[]string{"guard", "install", "-h"}, nil}, want{0, usageText(usage).of("guard install"), `^$`}},
+		{"-h as the value of a flag runs the command", args{[]string{"feedback", "add", "--trace", "t1", "--verdict", "bogus", "--reason", "-h"}, nil},
+			want{1, "", `^nodloop feedback: verdict must be`}},
 		{
 			"an error that starts with the command names it once",
 			args{[]string{"feedback", "add", "--trace", "t1", "--verdict", "bogus"}, nil},

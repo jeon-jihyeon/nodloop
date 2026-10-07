@@ -28,7 +28,7 @@ golangci-lint run ./...
 cd server && golangci-lint run --config ../.golangci.yml ./...
 ```
 
-`server/` is a Go module of its own for `nodloop-server`, joined to the root module by `go.work`, so its packages need `./server/...` beside `./...`.
+`server/` is a Go module of its own for `nodloop-server`, joined to the root module by `go.work`, so its packages need `./server/...` beside `./...`. A release tags `v<version>` first, then sets `require github.com/jeon-jihyeon/nodloop v<version>` in `server/go.mod` and tags `server/v<version>`, since `go install` of the server resolves that tag without `go.work`. The workflow `server-release` builds and tests the server that way on every `server/v*` tag.
 
 CI runs the Go tests on Linux with the Go version of go.mod and the newest stable one, and on macOS without the PostgreSQL suites. The fuzz tests run their seeds as plain tests. Fuzz a parser you change for a minute and commit any input it finds under `testdata/fuzz`:
 

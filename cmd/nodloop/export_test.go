@@ -64,6 +64,13 @@ func TestRunExportOtel(t *testing.T) {
 			args{[]string{"otel"}, map[string]string{envOTLPEndpoint: srv.URL + "/otel/", envOTLPHeaders: "Authorization=Basic%20env"}},
 			want{0, "exported 1 runs and 1 verdicts\n", "", "/otel/v1/traces", "Basic env"},
 		},
+		{
+			"a header of the flags wins over the same name in the environment",
+			args{[]string{"otel", "--endpoint", srv.URL + "/v1/traces", "--header", "Authorization=Basic flag"}, map[string]string{envOTLPHeaders: "Authorization=Basic%20env"}},
+			want{0, "exported 1 runs and 1 verdicts\n", "", "/v1/traces", "Basic flag"},
+		},
+		{"a pair without = in the environment fails", args{[]string{"otel", "--endpoint", srv.URL}, map[string]string{envOTLPHeaders: "Authorization"}},
+			want{1, "", "is not name=value", "", ""}},
 		{"since after every run sends no request", args{[]string{"otel", "--endpoint", srv.URL, "--since", "2026-10-08T00:00:00Z"}, nil}, want{0, "exported 0 runs and 0 verdicts\n", "", "", ""}},
 		{"no endpoint fails", args{[]string{"otel"}, nil}, want{1, "", "--endpoint is required", "", ""}},
 		{"another target is unknown", args{[]string{"zipkin"}, nil}, want{1, "", "unknown action", "", ""}},

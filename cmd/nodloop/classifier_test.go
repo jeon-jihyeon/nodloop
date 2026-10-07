@@ -115,6 +115,9 @@ func TestRunClassifierLegacyConfig(t *testing.T) {
 			`{` + named + `"decisions":{"critic":{"mode":"parallel","members":["laya","spare"],"combine":"all"}}}`, []string{"list"},
 			want{1, "", "nodloop classifier: classifier setup no longer run: decisions.critic in config.json asks [laya spare]. " +
 				"Run nodloop classifier set critic --url <url> to ask one endpoint before claude"}},
+		{"unset clears a setup nodloop no longer runs",
+			`{` + named + `"decisions":{"critic":{"mode":"parallel","members":["laya","spare"],"combine":"all"}}}`, []string{"unset", "critic"},
+			want{0, "point\tcritic\tclaude (default)\n", ""}},
 		{"set repairs a setup nodloop no longer runs",
 			`{` + named + `"decisions":{"critic":{"mode":"cascade","members":["claude","laya"],"threshold":0.8}}}`, []string{"set", "critic", "--url", layaURL},
 			want{0, "point\tcritic\t" + layaURL + "\n", ""}},

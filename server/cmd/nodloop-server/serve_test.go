@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -114,7 +115,7 @@ func serveScenario(t *testing.T, stores tenantStores) {
 	config := serverConfig{Keys: []serverKey{
 		hashed("bot", "acme", mcp.RoleProducer), hashed("ann", "acme", mcp.RoleApprover), hashed("globex-bot", "globex", mcp.RoleProducer),
 	}}
-	srv := httptest.NewServer(newServeHandler(stores, config, time.Now))
+	srv := httptest.NewServer(newServeHandler(stores, config, time.Now, io.Discard))
 	t.Cleanup(srv.Close)
 	bot, ann, globex := dial(t, srv.URL, "bot"), dial(t, srv.URL, "ann"), dial(t, srv.URL, "globex-bot")
 	labels := map[string]any{"task": []any{"refund"}}
@@ -135,7 +136,7 @@ func serveScenario(t *testing.T, stores tenantStores) {
 
 // A request without a known key is refused before any tool runs
 func TestServeHandlerUnauthorized(t *testing.T) {
-	srv := httptest.NewServer(newServeHandler(fileTenants{base: t.TempDir()}, serverConfig{Keys: []serverKey{hashed("bot", "acme", mcp.RoleProducer)}}, time.Now))
+	srv := httptest.NewServer(newServeHandler(fileTenants{base: t.TempDir()}, serverConfig{Keys: []serverKey{hashed("bot", "acme", mcp.RoleProducer)}}, time.Now, io.Discard))
 	t.Cleanup(srv.Close)
 	tcs := []struct {
 		name   string
@@ -166,7 +167,7 @@ func TestServeHandlerUnauthorized(t *testing.T) {
 // The HTTP API answers reports to a key whose role reads them and a probe without a key
 func TestServeHandlerReports(t *testing.T) {
 	config := serverConfig{Keys: []serverKey{hashed("bot", "acme", mcp.RoleProducer), hashed("ann", "acme", mcp.RoleApprover)}}
-	srv := httptest.NewServer(newServeHandler(fileTenants{base: t.TempDir()}, config, time.Now))
+	srv := httptest.NewServer(newServeHandler(fileTenants{base: t.TempDir()}, config, time.Now, io.Discard))
 	t.Cleanup(srv.Close)
 	call(t, dial(t, srv.URL+"/mcp", "bot"), "run", map[string]any{"producer": "support-bot", "output": "steps"})
 	type want struct {
@@ -273,4 +274,43 @@ func TestServerKeySavedAsHash(t *testing.T) {
 	saved, err := os.ReadFile(home.configPath())
 	require.NoError(t, err)
 	assert.NotContains(t, string(saved), key)
+}
+
+// Tenant stores that never open, as a record directory without permission would
+type unopened struct{}
+
+func (unopened) open(serverKey, func() time.Time, string) mcp.Open {
+	return func(context.Context) (*mcp.Server, error) {
+		return nil, errors.New("mkdir /srv/records/tenants/acme: permission denied")
+	}
+}
+
+// A failure of the server answers without its cause, which goes to the log
+func TestServeHandlerInternalError(t *testing.T) {
+	var log bytes.Buffer
+	srv := httptest.NewServer(newServeHandler(unopened{}, serverConfig{Keys: []serverKey{hashed("ann", "acme", mcp.RoleApprover)}}, time.Now, &log))
+	t.Cleanup(srv.Close)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, srv.URL+"/v1/reports/loop", nil)
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer key-ann")
+
+	res, err := http.DefaultClient.Do(req)
+
+	require.NoError(t, err)
+	body, err := io.ReadAll(res.Body)
+	require.NoError(t, err)
+	_ = res.Body.Close()
+	assert.Equal(t, http.StatusInternalServerError, res.StatusCode)
+	assert.Equal(t, "internal error\n", string(body))
+	assert.Contains(t, log.String(), "key ann: mkdir /srv/records/tenants/acme: permission denied")
+}
+
+// serve refuses to start without a home since the keys live under it
+func TestRunServeWithoutHome(t *testing.T) {
+	var stderr bytes.Buffer
+
+	code := run([]string{"serve"}, func(string) string { return "" }, time.Now, &bytes.Buffer{}, &stderr)
+
+	assert.Equal(t, 1, code)
+	assert.Equal(t, "nodloop-server serve: home directory unknown\n", stderr.String())
 }
