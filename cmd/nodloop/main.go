@@ -105,7 +105,8 @@ commands:
   report extract            Per plugin version of the corrected run and per drafting path: extractions by how they
                             ended, refused drafts by what refused them, and the critic questions answered false
   report critic             Per critic: drafts judged and how often a pass or a refusal matched what a person later
-                            decided on candidates of the same run, with the runs nobody decided yet
+                            decided on candidates of the same run, with the runs nobody decided yet.
+                            --json on loop, effect, extract and critic prints the report as one JSON value
   trace list [--name <n>] [--session <id>] [--subject <s>] [--limit <n>]
                             List traces newest first
   trace show <id>           Print one trace as JSON
@@ -155,7 +156,8 @@ commands:
   server serve [--addr <host:port>] [--postgres <url>]
                             Serve the MCP tools over streamable HTTP at /mcp for the keys, each tenant on its own records
                             under tenants of the record directory, or in one PostgreSQL database with --postgres or
-                            NODLOOP_POSTGRES. 127.0.0.1:8787 by default
+                            NODLOOP_POSTGRES. 127.0.0.1:8787 by default. GET /v1/reports/<name> answers loop, extract,
+                            critic, effect or health as JSON to a reviewer or approver key and GET /healthz answers without one
   doctor [--repair]         Read every record file and the guard log, and name the lines that fail to decode.
                             A read skips such a line, and --repair moves them to <file>.corrupt. Run it while nothing writes
   version                   Print the build version

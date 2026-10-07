@@ -21,6 +21,7 @@ import (
 	feedbackfile "github.com/jeon-jihyeon/nodloop/internal/feedback/file"
 	"github.com/jeon-jihyeon/nodloop/internal/jsonl"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
+	"github.com/jeon-jihyeon/nodloop/internal/loop"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
 	tracefile "github.com/jeon-jihyeon/nodloop/internal/trace/file"
 )
@@ -581,6 +582,12 @@ func TestRunReportLoop(t *testing.T) {
 		"scope\tunknown\titems 1\tsingle session 0\tnever applied 0\n"+
 		"git-c\tv1\tapplied 1\tfollowed 1 of 1\trepeat 0\tinferred followed 0 of 0\tinferred repeat 0\tsettle -\n"+
 		"misapplied\tnot measured: no label says which runs an item should have reached\n", stdout.String())
+	var asJSON bytes.Buffer
+	require.Equal(t, 0, runReport([]string{"loop", "--json"}, getenv, time.Now, &asJSON, &stderr), stderr.String())
+	var report loop.LoopReport
+	require.NoError(t, json.Unmarshal(asJSON.Bytes(), &report))
+	assert.Equal(t, loop.Totals{Runs: 2, Judged: 1, Approved: 1}, report.Totals)
+	assert.Equal(t, []loop.RunItem{{ID: "git-c", Version: 1, Applied: 1, Judged: 1, Followed: 1}}, report.Items)
 }
 
 // A run item narrows by the dir of its refuted run and promotes on its confirmed run, all on the records alone

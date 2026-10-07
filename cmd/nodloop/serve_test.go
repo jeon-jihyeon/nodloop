@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -158,6 +159,51 @@ func TestServeHandlerUnauthorized(t *testing.T) {
 			require.NoError(t, err)
 			_ = res.Body.Close()
 			assert.Equal(t, http.StatusUnauthorized, res.StatusCode)
+		})
+	}
+}
+
+// The HTTP API answers reports to a key whose role reads them and a probe without a key
+func TestServeHandlerReports(t *testing.T) {
+	config := serverConfig{Keys: []serverKey{hashed("bot", "acme", mcp.RoleProducer), hashed("ann", "acme", mcp.RoleApprover)}}
+	srv := httptest.NewServer(newServeHandler(fileTenants{base: t.TempDir()}, config, time.Now))
+	t.Cleanup(srv.Close)
+	call(t, dial(t, srv.URL+"/mcp", "bot"), "run", map[string]any{"producer": "support-bot", "output": "steps"})
+	type want struct {
+		status int
+		// A fragment of the body
+		body string
+	}
+	tcs := []struct {
+		name string
+		path string
+		key  string
+		want want
+	}{
+		{"healthz needs no key", "/healthz", "", want{http.StatusOK, "ok"}},
+		{"a report of the tenant of the key", "/v1/reports/loop", "ann", want{http.StatusOK, `"totals":{"runs":1,`}},
+		{"health is a report too", "/v1/reports/health", "ann", want{http.StatusOK, `[]`}},
+		{"a producer may not read reports", "/v1/reports/loop", "bot", want{http.StatusForbidden, "may not read reports"}},
+		{"an unknown report is not found", "/v1/reports/nope", "ann", want{http.StatusNotFound, "no such report"}},
+		{"a report needs a key", "/v1/reports/loop", "", want{http.StatusUnauthorized, "key is required"}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, srv.URL+tc.path, nil)
+			require.NoError(t, err)
+			if tc.key != "" {
+				req.Header.Set("Authorization", "Bearer key-"+tc.key)
+			}
+
+			res, err := http.DefaultClient.Do(req)
+
+			require.NoError(t, err)
+			body, err := io.ReadAll(res.Body)
+			require.NoError(t, err)
+			_ = res.Body.Close()
+			assert.Equal(t, tc.want.status, res.StatusCode, string(body))
+			assert.Contains(t, string(body), tc.want.body)
 		})
 	}
 }

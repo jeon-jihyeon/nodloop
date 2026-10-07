@@ -24,7 +24,7 @@ type DraftRow struct {
 	Waiting int `json:"waiting"`
 	// Median time from the candidate to its first decision
 	// Zero when none was decided
-	Decide time.Duration `json:"decide"`
+	Decide time.Duration `json:"decide_ns"`
 }
 
 // One drafted version as its records tell it

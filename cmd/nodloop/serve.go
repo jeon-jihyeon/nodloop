@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -22,6 +23,7 @@ import (
 	"github.com/jeon-jihyeon/nodloop/internal/compact"
 	"github.com/jeon-jihyeon/nodloop/internal/extract"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
+	"github.com/jeon-jihyeon/nodloop/internal/loop"
 	"github.com/jeon-jihyeon/nodloop/internal/mcp"
 	"github.com/jeon-jihyeon/nodloop/internal/pg"
 	vetofile "github.com/jeon-jihyeon/nodloop/internal/veto/file"
@@ -180,7 +182,7 @@ func runServe(args []string, getenv func(string) string, now func() time.Time, s
 		defer db.Close()
 		stores, where = pgTenants{db: db}, "records in PostgreSQL"
 	}
-	fmt.Fprintf(stderr, "nodloop server: %d keys, %s, listening on http://%s/mcp\n", len(uc.Server.Keys), where, *addr)
+	fmt.Fprintf(stderr, "nodloop server: %d keys, %s, listening on http://%s/mcp with reports at /v1/reports/{name}\n", len(uc.Server.Keys), where, *addr)
 	srv := &http.Server{Addr: *addr, Handler: newServeHandler(stores, uc.Server, now), ReadHeaderTimeout: 10 * time.Second}
 	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return fail(stderr, "server", err)
@@ -192,6 +194,8 @@ func runServe(args []string, getenv func(string) string, now func() time.Time, s
 // 1. stateless so every request carries its own key and no session outlives it
 // 2. a tenant reads and writes the records under tenants of the record directory and never those of another tenant
 // 3. one host per key so its calls are serialized like a stdio server while keys of one tenant share the file locks of its records
+// 4. GET /v1/reports/{name} answers a report as JSON for a dashboard to a key whose role may read reports
+// 5. GET /healthz answers without a key so a load balancer can probe it
 type serveHandler struct {
 	stores tenantStores
 	config serverConfig
@@ -203,21 +207,55 @@ type serveHandler struct {
 
 type keyContext struct{}
 
-func newServeHandler(stores tenantStores, config serverConfig, now func() time.Time) *serveHandler {
+// Every other path is the MCP endpoint, as before the reports came, so a client that names no path keeps working
+func newServeHandler(stores tenantStores, config serverConfig, now func() time.Time) http.Handler {
 	h := &serveHandler{stores: stores, config: config, now: now, hosts: map[string]*sdk.Server{}}
 	h.mcp = sdk.NewStreamableHTTPHandler(h.server, &sdk.StreamableHTTPOptions{Stateless: true})
-	return h
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { fmt.Fprintln(w, "ok") })
+	mux.Handle("GET /v1/reports/{name}", h.authorized(http.HandlerFunc(h.report)))
+	mux.Handle("/", h.authorized(h.mcp))
+	return mux
 }
 
-func (h *serveHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	token, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
-	key, known := h.config.match(token)
-	if !ok || !known {
-		w.Header().Set("WWW-Authenticate", `Bearer realm="nodloop"`)
-		http.Error(w, "a nodloop server key is required", http.StatusUnauthorized)
+// The handler behind a known bearer key with the key in the request context
+func (h *serveHandler) authorized(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		token, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+		key, known := h.config.match(token)
+		if !ok || !known {
+			w.Header().Set("WWW-Authenticate", `Bearer realm="nodloop"`)
+			http.Error(w, "a nodloop server key is required", http.StatusUnauthorized)
+			return
+		}
+		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), keyContext{}, key)))
+	})
+}
+
+// One report of the tenant of the key as JSON
+// A role without the MCP tool report is forbidden and an unknown name is not found
+func (h *serveHandler) report(w http.ResponseWriter, r *http.Request) {
+	key, _ := r.Context().Value(keyContext{}).(serverKey)
+	if !slices.Contains(key.Role.Tools(), "report") {
+		http.Error(w, fmt.Sprintf("the role %s may not read reports", key.Role), http.StatusForbidden)
 		return
 	}
-	h.mcp.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), keyContext{}, key)))
+	srv, err := h.stores.open(key, h.now, mcp.NewSession(h.now()))(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	report, err := srv.Report(r.Context(), loop.ReportName(r.PathValue("name")))
+	switch {
+	case errors.Is(err, loop.ErrReportUnknown):
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	case err != nil:
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(report)
 }
 
 // The MCP server of the key the request was authenticated with

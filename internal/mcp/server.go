@@ -19,6 +19,7 @@ import (
 	"github.com/jeon-jihyeon/nodloop/internal/extract"
 	"github.com/jeon-jihyeon/nodloop/internal/feedback"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
+	"github.com/jeon-jihyeon/nodloop/internal/loop"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
 )
 
@@ -115,7 +116,7 @@ type tool struct {
 func newTool[In any](
 	name, description string, h func(*Server, context.Context, *sdk.CallToolRequest, In) (*sdk.CallToolResult, any, error),
 ) tool {
-	schema, err := jsonschema.For[In](&jsonschema.ForOptions{TypeSchemas: reasonCodes()})
+	schema, err := jsonschema.For[In](&jsonschema.ForOptions{TypeSchemas: enums()})
 	if err != nil {
 		// An input type the schema cannot express is a programming error the SDK would also panic on
 		panic(err)
@@ -133,12 +134,19 @@ func newTool[In any](
 
 // Input types whose schema lists the valid values
 // So the SDK refuses a value outside the set before the handler records anything
-func reasonCodes() map[reflect.Type]*jsonschema.Schema {
+func enums() map[reflect.Type]*jsonschema.Schema {
 	codes := make([]any, 0, len(feedback.ReasonCodes()))
 	for _, c := range feedback.ReasonCodes() {
 		codes = append(codes, string(c))
 	}
-	return map[reflect.Type]*jsonschema.Schema{reflect.TypeFor[feedback.ReasonCode](): {Type: "string", Enum: codes}}
+	reports := make([]any, 0, len(loop.ReportNames()))
+	for _, n := range loop.ReportNames() {
+		reports = append(reports, string(n))
+	}
+	return map[reflect.Type]*jsonschema.Schema{
+		reflect.TypeFor[feedback.ReasonCode](): {Type: "string", Enum: codes},
+		reflect.TypeFor[loop.ReportName]():     {Type: "string", Enum: reports},
+	}
 }
 
 var tools = []tool{
@@ -179,6 +187,9 @@ var tools = []tool{
 	newTool("knowledge_health", "Read how the runs that applied each knowledge version held up: verdicts, outcomes, retire and promotion candidates, "+
 		"versions past their review deadline and references that no longer resolve. "+
 		"Reads only. Retire, narrow and reaffirm stay with a named person", (*Server).knowledgeHealth),
+	newTool("report", "Read one report of the records as JSON: loop for the totals and how each approved item fared, extract for how drafting ended, "+
+		"critic for how critics agreed with people, effect for runs with items against the holdout, health for each knowledge version. "+
+		"Reads only", (*Server).report),
 	newTool("check_call", "Check a tool call against the vetoes of approved knowledge before an agent runs it. "+
 		"Answers allow, block or ask with the veto and its reason. Pass the arguments of the call as input and a shell command under command", (*Server).checkCall),
 	newTool("reaffirm", "Record that a named person rechecked an approved knowledge version, which restarts its review deadline. "+

@@ -11,11 +11,13 @@ Every release tag publishes the plugin, the darwin and linux binaries and both S
 - `nodloop help [<command>]`, `-h` and `--help`, printing the usage of one command or action
 - `nodloop config` with no action lists every setting with its value and source
 - `nodloop doctor` names corrupt record lines and `--repair` moves them to `<file>.corrupt`
+- Reports for other tools to draw: `--json` on `report loop`, `extract`, `critic` and `effect`, the MCP tool `report`, and `GET /v1/reports/{name}` and `GET /healthz` on `nodloop server serve`
 
 ### Changed
 - `Client.Items` and `Client.Waiting` return `Items`
 - The TypeScript `record` takes one object: `record({ producer, output, labels, applied, subject })`
 - `propose` and `approve` return `Candidate` and `Approval` in both SDKs instead of untyped objects
+- The durations of the loop report are `decide_ns` and `settle_ns` in JSON
 - A CLI error names its command once, and a usage error prints the usage of that command alone
 - The hooks read only the newest run of their session, from the end of the file and back one week at most. With 50,000 runs the prompt hook went from 503 ms to 0.8 ms and the stop hook from 539 ms to 2.4 ms
 - An append reads only the last line of the file instead of the whole file

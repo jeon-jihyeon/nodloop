@@ -11,10 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jeon-jihyeon/nodloop/internal/feedback"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	"github.com/jeon-jihyeon/nodloop/internal/loop"
-	"github.com/jeon-jihyeon/nodloop/internal/trace"
 )
 
 // The conversation records joined once for the loop views
@@ -212,17 +210,19 @@ func runReport(args []string, getenv func(string) string, now func() time.Time, 
 }
 
 // The reports read from the records alone with their flags parsed the same way
-var recordReports = map[string]func(c loopCommand, ctx context.Context) error{
+var recordReports = map[string]func(c loopCommand, e loop.Evidence){
 	"loop":    loopCommand.runs,
 	"extract": loopCommand.extractions,
 	"critic":  loopCommand.critics,
 	"effect":  loopCommand.effect,
 }
 
-func runRecordReport(args []string, show func(loopCommand, context.Context) error, getenv func(string) string, now func() time.Time, stdout, stderr io.Writer) int {
+// A report as text lines or with --json as the value a dashboard or the HTTP API reads
+func runRecordReport(args []string, show func(loopCommand, loop.Evidence), getenv func(string) string, now func() time.Time, stdout, stderr io.Writer) int {
 	fs := newFlagSet("report "+args[0], stderr)
 	var records recordFlags
 	records.bind(fs)
+	asJSON := fs.Bool("json", false, "print the report as one JSON value")
 	if err := fs.Parse(args[1:]); err != nil {
 		return parseFailed(err)
 	}
@@ -230,58 +230,56 @@ func runRecordReport(args []string, show func(loopCommand, context.Context) erro
 	if err != nil {
 		return fail(stderr, "report", err)
 	}
-	if err := show(loopCommand{app: a, out: stdout}, context.Background()); err != nil {
+	stores, err := a.reportStores()
+	if err != nil {
 		return fail(stderr, "report", err)
 	}
+	ctx := context.Background()
+	if *asJSON {
+		report, err := stores.Report(ctx, loop.ReportName(args[0]), now())
+		if err == nil {
+			err = json.NewEncoder(stdout).Encode(report)
+		}
+		if err != nil {
+			return fail(stderr, "report", err)
+		}
+		return 0
+	}
+	e, err := loop.LoadEvidence(ctx, stores.Traces, stores.Verdicts, stores.Items)
+	if err != nil {
+		return fail(stderr, "report", err)
+	}
+	show(loopCommand{app: a, out: stdout}, e)
 	return 0
 }
 
-// Every trace and verdict and knowledge record a report reads
-type evidence struct {
-	traces trace.Traces
-	runs   loop.Runs
-	items  knowledge.Set
-}
-
-func (c loopCommand) evidence(ctx context.Context) (evidence, error) {
-	store, err := c.app.traces()
+// The stores of the record directory every report reads
+func (a app) reportStores() (loop.Stores, error) {
+	traces, err := a.traces()
 	if err != nil {
-		return evidence{}, err
+		return loop.Stores{}, err
 	}
-	traces, err := store.List(ctx, trace.Filter{})
+	verdicts, err := a.feedback()
 	if err != nil {
-		return evidence{}, err
+		return loop.Stores{}, err
 	}
-	verdicts, err := c.app.feedback()
+	outcomes, err := a.outcomes()
 	if err != nil {
-		return evidence{}, err
+		return loop.Stores{}, err
 	}
-	records, err := verdicts.List(ctx, feedback.Filter{})
+	ledger, err := a.ledger()
 	if err != nil {
-		return evidence{}, err
+		return loop.Stores{}, err
 	}
-	ledger, err := c.app.ledger()
-	if err != nil {
-		return evidence{}, err
-	}
-	items, err := ledger.All(ctx)
-	if err != nil {
-		return evidence{}, err
-	}
-	return evidence{traces: traces, runs: loop.NewRuns(traces, records), items: items}, nil
+	return loop.Stores{Traces: traces, Verdicts: verdicts, Outcomes: outcomes, Items: ledger}, nil
 }
 
 // One line per plugin version and path: extractions by conclusion, drafts by refusal and the critic questions answered false
-func (c loopCommand) extractions(ctx context.Context) error {
-	ev, err := c.evidence(ctx)
-	if err != nil {
-		return err
-	}
-	for _, row := range ev.runs.Extractions(ev.traces) {
+func (c loopCommand) extractions(e loop.Evidence) {
+	for _, row := range e.Extractions() {
 		fmt.Fprintf(c.out, "extract\t%s\t%s\textractions %d\t%s\trefused drafts %s\tquestions false %s\n",
 			row.Version, row.Path, row.Extractions, counts(row.Conclusions), counts(row.Refusals), counts(row.Questions))
 	}
-	return nil
 }
 
 // A duration rounded to the second and at least one second, or a dash for none
@@ -293,29 +291,19 @@ func seconds(d time.Duration) string {
 }
 
 // One line per critic: drafts it judged and how its judgments matched what a person later decided on the run
-func (c loopCommand) critics(ctx context.Context) error {
-	ev, err := c.evidence(ctx)
-	if err != nil {
-		return err
-	}
-	for _, row := range ev.runs.Critics(ev.items, ev.traces) {
+func (c loopCommand) critics(e loop.Evidence) {
+	for _, row := range e.Critics() {
 		fmt.Fprintf(c.out, "critic\t%s\tjudged %d\tagree %d\tfalse pass %d\tfalse refuse %d\topen %d\n",
 			row.Critic, row.Judged, row.Agree, row.FalsePass, row.FalseRefuse, row.Open)
 	}
-	return nil
 }
 
 // One line per arm: runs that applied items and runs a holdout kept them from, judged, corrected and corrected for an item's reason
-func (c loopCommand) effect(ctx context.Context) error {
-	ev, err := c.evidence(ctx)
-	if err != nil {
-		return err
-	}
-	for _, row := range ev.runs.Effect(ev.items) {
+func (c loopCommand) effect(e loop.Evidence) {
+	for _, row := range e.Effect() {
 		fmt.Fprintf(c.out, "effect\t%s\truns %d\tjudged %d\tcorrected %d\tsame reason %d\n",
 			row.Arm, row.Runs, row.Judged, row.Corrected, row.SameReason)
 	}
-	return nil
 }
 
 // Counts as `a 2, b 1` in key order or a dash when there is none
@@ -333,27 +321,22 @@ func counts(m map[string]int) string {
 // A first line of totals, then one scope line per plugin version and one drafts line per plugin version and drafting path
 // One line per approved run item after them: applied, followed of judged and repeat by people then by a session, and settle
 // A last line says misapplied is not measured
-func (c loopCommand) runs(ctx context.Context) error {
-	ev, err := c.evidence(ctx)
-	if err != nil {
-		return err
-	}
-	report, items := ev.runs, ev.items
-	t := report.Totals(items)
+func (c loopCommand) runs(e loop.Evidence) {
+	report := e.Loop()
+	t := report.Totals
 	fmt.Fprintf(c.out, "loop\truns %d\tjudged %d\tinferred %d\tcorrected %d\twaiting %d\tapproved %d\n",
 		t.Runs, t.Judged, t.Inferred, t.Corrected, t.Waiting, t.Approved)
-	for _, sc := range report.Scopes(items, ev.traces) {
+	for _, sc := range report.Scopes {
 		fmt.Fprintf(c.out, "scope\t%s\titems %d\tsingle session %d\tnever applied %d\n", sc.Version, sc.Items, sc.SingleSession, sc.NeverApplied)
 	}
-	for _, d := range report.Drafts(items, ev.traces) {
+	for _, d := range report.Drafts {
 		fmt.Fprintf(c.out, "drafts\t%s\t%s\tdrafted %d\tapproved %d\tdropped %d\twaiting %d\tdecide %s\n",
 			d.Version, d.Path, d.Drafted, d.Approved, d.Dropped, d.Waiting, seconds(d.Decide))
 	}
-	for _, row := range report.Report(items) {
+	for _, row := range report.Items {
 		fmt.Fprintf(c.out, "%s\tv%d\tapplied %d\tfollowed %d of %d\trepeat %d\tinferred followed %d of %d\tinferred repeat %d\tsettle %s\n",
 			row.ID, row.Version, row.Applied, row.Followed, row.Judged, row.Repeat,
 			row.InferredFollowed, row.InferredJudged, row.InferredRepeat, seconds(row.Settle))
 	}
 	fmt.Fprintln(c.out, "misapplied\tnot measured: no label says which runs an item should have reached")
-	return nil
 }
