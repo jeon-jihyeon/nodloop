@@ -156,6 +156,8 @@ curl -H "Authorization: Bearer $NODLOOP_KEY" http://127.0.0.1:8787/v1/reports/lo
 
 Durations in a report are nanoseconds and `GET /healthz` answers without a key for a load balancer.
 
+To see runs and verdicts in a tracing tool, `nodloop export otel --endpoint <url>` sends every run as an OpenTelemetry GenAI span and every verdict as a `gen_ai.evaluation.result` event on it, in OTLP JSON over HTTP. An OpenTelemetry Collector, Langfuse at `/api/public/otel/v1/traces` or another OTLP backend then shows them next to the rest of your traces. The ids derive from the run, so sending the same runs again replaces them, and `--since` sends only the newer ones. The standard `OTEL_EXPORTER_OTLP_ENDPOINT` and `OTEL_EXPORTER_OTLP_HEADERS` work too. The output of a run goes along only with `--with-output`.
+
 An agent outside Claude Code checks a tool call before running it with `nodloop guard call --tool Bash --input '{"command":"rm -rf /data"}'`, the MCP tool `check_call` or `CheckCall` in Go, and gets back allow, block or ask with the veto and its reason.
 
 ## Guard
@@ -207,6 +209,7 @@ Every record file is append only JSON lines. A status change of an item is a new
 | Model calls | `NODLOOP_CLAUDE_BIN`, `NODLOOP_LLM_MODEL` | the claude binary and the model drafts and checks use, `sonnet` by default |
 | PostgreSQL | `--postgres`, `NODLOOP_POSTGRES` | the database of `nodloop server serve` |
 | Binary | `NODLOOP_ALLOW_PATH`, `NODLOOP_BIN` | lets the plugin run a PATH build of another version, and points an SDK at a binary |
+| Export | `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`, `OTEL_EXPORTER_OTLP_HEADERS` | where `nodloop export otel` sends when `--endpoint` and `--header` leave it out |
 
 Keys without a prefix live in `~/.nodloop/config.json`. Environment variables are read where Claude Code or your process starts. `nodloop config` lists every setting with its value and where it came from, and `nodloop help <command>` prints the usage of one command.
 
@@ -219,6 +222,7 @@ nodloop sends no telemetry. Records stay in the record directory, or in your Pos
 | A lesson is drafted or checked, a compaction drafted or checked | the run's output, the verdict and the items in its scope, to `claude -p` under your Claude Code login |
 | A decision point asks a classifier | the text to judge, to the endpoint you added |
 | The plugin or an SDK has no binary | a download of the release archive and its checksums from GitHub |
+| You run `nodloop export otel` | runs with their labels and verdicts with their reasons, and the outputs with `--with-output`, to the endpoint you name |
 
 Outputs are stored and sent with keys, tokens and passwords redacted, and the guard log never keeps a command.
 

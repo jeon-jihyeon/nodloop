@@ -25,6 +25,7 @@ nodloop runs locally unless you start `nodloop server serve`. These are the surf
 | Conversation hooks | `nodloop hook prompt` adds approved items to a prompt and `nodloop hook stop` records the last answer as a run with secrets redacted | A way for an answer or a label to make a hook write outside the record directory, block a prompt or keep a secret the redaction should remove is in scope |
 | Input files | Reads files named by `run record --output`, `knowledge import --file` and `feedback add --edited` | A crafted file that escapes its path or executes anything is in scope |
 | Records and config | Writes runs, feedback, outcomes, knowledge and coverage checks to the record directory and reads `~/.nodloop/config.json` | A write outside those paths is in scope |
+| OTLP export | `nodloop export otel` posts runs and verdicts to the endpoint and with the headers the user names | Sending to another endpoint, sending outputs without `--with-output`, or writing a header value to stdout or a record is in scope |
 | Model calls | `llm probe`, `knowledge compact`, `knowledge check` and `knowledge extract` run `claude -p`, or the binary `NODLOOP_CLAUDE_BIN` names | A way for a record or model output to change that command line is in scope |
 
 `nodloop guard call`, the MCP tool `check_call` and `CheckCall` in Go return allow, block or ask for a tool call of another agent. A call that matches a veto of its producer and comes back allow is in scope.
