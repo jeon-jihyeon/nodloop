@@ -30,10 +30,12 @@ func (s *Store) Append(_ context.Context, fb feedback.Feedback) error {
 	return nil
 }
 
+// Newest first
+// A corrupt line returns the verdicts of the other lines with the error
 func (s *Store) List(_ context.Context, f feedback.Filter) ([]feedback.Feedback, error) {
-	records, err := s.file.Newest(f.Matches, f.Limit)
+	records, err := s.file.Newest(f.Matches, f.Older, f.Limit)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrRead, err)
+		return records, fmt.Errorf("%w: %w", ErrRead, err)
 	}
 	return records, nil
 }

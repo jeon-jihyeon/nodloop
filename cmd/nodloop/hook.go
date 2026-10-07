@@ -19,6 +19,7 @@ import (
 
 	"github.com/jeon-jihyeon/nodloop/internal/classify"
 	"github.com/jeon-jihyeon/nodloop/internal/feedback"
+	"github.com/jeon-jihyeon/nodloop/internal/jsonl"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
 )
@@ -38,6 +39,11 @@ const (
 	// Runes of the items and their lead
 	// The session note follows only in the room left under contextRunes so it never pushes an item out
 	promptRunes = 9_800
+	// How far back the hooks look for the previous run of a session
+	// 1. the hooks read the records from the end and stop here, so the first prompt of a session reads one window of runs
+	// 2. a session resumed after it starts without a previous run
+	// A week of the busiest day recorded so far, 573 runs, is about 4000 runs
+	sessionWindow = 7 * 24 * time.Hour
 )
 
 // The hooks of a Claude Code conversation
@@ -114,22 +120,23 @@ type hookCommand struct {
 
 // The approved items of this place and the session note added to the prompt as context, or nothing when neither has a line
 // 1. a failed read of the runs still adds the items
-// 2. a turn the holdout draws gets the note and no item
+// 2. a corrupt line in the records leaves out that record and the rest still reach the prompt
+// 3. a turn the holdout draws gets the note and no item
 func (c hookCommand) prompt(ctx context.Context, sessionID, message string, labels trace.Labels) error {
-	all, err := c.all(ctx)
-	if err != nil {
-		return err
+	all, allErr := c.all(ctx)
+	if allErr != nil && !errors.Is(allErr, jsonl.ErrCorrupt) {
+		return allErr
 	}
-	runs, runsErr := c.sessionRuns(ctx, sessionID)
+	previous, runsErr := c.previousRun(ctx, sessionID)
 	items := hookItems(all.For(sessionProducer, labels))
-	if c.holdout.withholds(sessionID, len(runs)) {
+	if c.holdout.withholds(sessionID, previous.ID) {
 		items = nil
 	}
-	recorded, reactErr := c.react(ctx, turn{run: runs.Newest(), message: message})
-	note := c.note(sessionID, labels, all, runs)
+	recorded, reactErr := c.react(ctx, turn{run: previous, message: message})
+	note := c.note(sessionID, labels, all, previous)
 	note.recorded = recorded
 	text := items.context(note)
-	runsErr = errors.Join(runsErr, reactErr)
+	runsErr = errors.Join(allErr, runsErr, reactErr)
 	if text == "" {
 		return runsErr
 	}
@@ -146,11 +153,10 @@ func (c hookCommand) prompt(ctx context.Context, sessionID, message string, labe
 // 2. a later prompt in immediate mode counts the candidates drafted since the previous answer so each is asked about once in the session that corrected it
 // 3. a later prompt in deferred mode counts none so the review comes once per session
 // 4. a mode that infers nothing and a prompt without a session id get no note
-func (c hookCommand) note(sessionID string, labels trace.Labels, all knowledge.Set, runs trace.Traces) sessionNote {
+func (c hookCommand) note(sessionID string, labels trace.Labels, all knowledge.Set, run trace.Trace) sessionNote {
 	if !c.mode.infers() || sessionID == "" {
 		return sessionNote{}
 	}
-	run := runs.Newest()
 	waiting := all.Waiting(sessionProducer, labels)
 	switch {
 	case run.ID == "":
@@ -162,17 +168,20 @@ func (c hookCommand) note(sessionID string, labels trace.Labels, all knowledge.S
 	return sessionNote{mode: c.mode, run: run.ID, waiting: len(waiting)}
 }
 
-// The runs of the session newest first
-// An empty id would match the runs of every session so it has none
-func (c hookCommand) sessionRuns(ctx context.Context, sessionID string) (trace.Traces, error) {
+// The newest run of the session within sessionWindow or none
+// 1. an empty id would match the runs of every session so it has none
+// 2. a corrupt line returns the run found with the error
+func (c hookCommand) previousRun(ctx context.Context, sessionID string) (trace.Trace, error) {
 	if sessionID == "" {
-		return nil, nil
+		return trace.Trace{}, nil
 	}
 	store, err := c.app.traces()
 	if err != nil {
-		return nil, err
+		return trace.Trace{}, err
 	}
-	return store.List(ctx, trace.Filter{Name: trace.NameRun, SessionID: sessionID})
+	since := c.app.now().Add(-sessionWindow)
+	runs, err := store.List(ctx, trace.Filter{Name: trace.NameRun, SessionID: sessionID, Since: since, Limit: 1})
+	return runs.Newest(), err
 }
 
 // The answer as a run of the conversation with the items its prompt received, then the lesson of the previous run
@@ -184,22 +193,22 @@ func (c hookCommand) stop(ctx context.Context, sessionID string, labels trace.La
 	if strings.TrimSpace(string(answer)) == "" {
 		return nil
 	}
-	runs, err := c.sessionRuns(ctx, sessionID)
-	if err != nil {
-		return err
+	previous, runsErr := c.previousRun(ctx, sessionID)
+	if runsErr != nil && !errors.Is(runsErr, jsonl.ErrCorrupt) {
+		return runsErr
 	}
-	previous := runs.Newest()
-	all, err := c.all(ctx)
-	if err != nil {
-		return err
+	all, allErr := c.all(ctx)
+	if allErr != nil && !errors.Is(allErr, jsonl.ErrCorrupt) {
+		return allErr
 	}
+	corrupt := errors.Join(runsErr, allErr)
 	shown, _ := hookItems(all.For(sessionProducer, labels)).fitting()
 	refs := make([]knowledge.Ref, 0, len(shown))
 	for _, k := range shown {
 		refs = append(refs, knowledge.Ref{ID: k.ID, Version: k.Version})
 	}
 	in := runInput{Applied: refs, Plugin: c.plugin}
-	if c.holdout.withholds(sessionID, len(runs)) {
+	if c.holdout.withholds(sessionID, previous.ID) {
 		in.Applied, in.Withheld = []knowledge.Ref{}, refs
 	}
 	input, err := json.Marshal(in)
@@ -219,16 +228,17 @@ func (c hookCommand) stop(ctx context.Context, sessionID string, labels trace.La
 		return err
 	}
 	if all.Cites(previous.ID) {
-		return nil
+		return corrupt
 	}
-	return c.extract(ctx, previous.ID)
+	return errors.Join(corrupt, c.extract(ctx, previous.ID, previous.Time))
 }
 
 // The extraction of the run started when the conversation alone judged it and its latest verdict corrects it
 // 1. a run with a verdict of a person is left to the nod skill even after a later inferred one because the person's verdict wins
 // A person's withdraw is such a verdict so a withdrawn run is never drafted
 // 2. it runs as `knowledge extract` in a process of its own because Claude Code may end an async hook when it exits
-func (c hookCommand) extract(ctx context.Context, runID string) error {
+// 3. the verdicts are read from the end of the records back to the run, since none comes before it
+func (c hookCommand) extract(ctx context.Context, runID string, at time.Time) error {
 	if !c.mode.infers() || runID == "" {
 		return nil
 	}
@@ -236,7 +246,7 @@ func (c hookCommand) extract(ctx context.Context, runID string) error {
 	if err != nil {
 		return err
 	}
-	list, err := verdicts.List(ctx, feedback.Filter{TraceID: runID})
+	list, err := verdicts.List(ctx, feedback.Filter{TraceID: runID, Since: at})
 	if err != nil {
 		return err
 	}
@@ -472,13 +482,14 @@ func repoName(root string) string {
 type holdout float64
 
 // Whether the turn withholds every item
-// 1. the draw hashes the session and the count of its runs so the prompt hook and the stop hook of one turn agree
-// SHA-256 because the high bits of FNV barely move between turn numbers
+// 1. the draw hashes the session and the id of its previous run so the prompt hook and the stop hook of one turn agree
+// The first turn of a session hashes an empty id
+// SHA-256 because the high bits of FNV barely move between similar ids
 // 2. a turn without a session id is never drawn
-func (h holdout) withholds(sessionID string, turn int) bool {
+func (h holdout) withholds(sessionID, previous string) bool {
 	if h <= 0 || sessionID == "" {
 		return false
 	}
-	sum := sha256.Sum256(fmt.Appendf(nil, "%s:%d", sessionID, turn))
+	sum := sha256.Sum256(fmt.Appendf(nil, "%s:%s", sessionID, previous))
 	return float64(binary.BigEndian.Uint64(sum[:8]))/math.MaxUint64 < float64(h)
 }

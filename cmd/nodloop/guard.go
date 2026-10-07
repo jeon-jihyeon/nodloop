@@ -151,7 +151,7 @@ func (c guardCommand) log(limit int) error {
 	if err != nil {
 		return err
 	}
-	entries, err := log.Newest(func(guard.Entry) bool { return true }, limit)
+	entries, err := log.Newest(func(guard.Entry) bool { return true }, nil, limit)
 	if err != nil {
 		return err
 	}

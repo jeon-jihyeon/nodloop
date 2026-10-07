@@ -63,6 +63,7 @@ func Run(t *testing.T, store Store) {
 		},
 		{"reviewer keeps that reviewer", feedback.Filter{Reviewer: "session"}, []feedback.Feedback{seed[3]}},
 		{"limit keeps the newest", feedback.Filter{Limit: 1}, []feedback.Feedback{seed[3]}},
+		{"since leaves out older verdicts", feedback.Filter{TraceID: "t1", Since: seed[1].Time}, []feedback.Feedback{seed[1]}},
 		{"no match lists nothing", feedback.Filter{TraceID: "t9"}, nil},
 	}
 	for _, tc := range tcs {

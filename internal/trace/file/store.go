@@ -35,8 +35,8 @@ func (s *Store) Append(_ context.Context, t trace.Trace) error {
 }
 
 func (s *Store) Get(_ context.Context, id string) (trace.Trace, error) {
-	found, err := s.file.Newest(trace.Filter{ID: id}.Matches, 1)
-	if err != nil {
+	found, err := s.file.Newest(trace.Filter{ID: id}.Matches, nil, 1)
+	if len(found) == 0 && err != nil {
 		return trace.Trace{}, fmt.Errorf("%w: %w", ErrRead, err)
 	}
 	if len(found) == 0 {
@@ -45,10 +45,12 @@ func (s *Store) Get(_ context.Context, id string) (trace.Trace, error) {
 	return found[0], nil
 }
 
+// Newest first
+// A corrupt line returns the traces of the other lines with the error
 func (s *Store) List(_ context.Context, f trace.Filter) (trace.Traces, error) {
-	found, err := s.file.Newest(f.Matches, f.Limit)
+	found, err := s.file.Newest(f.Matches, f.Older, f.Limit)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrRead, err)
+		return found, fmt.Errorf("%w: %w", ErrRead, err)
 	}
 	return found, nil
 }

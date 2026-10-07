@@ -88,10 +88,12 @@ func (s *Store) ReplaceRules(_ context.Context, render func(all knowledge.Set) s
 	return nil
 }
 
+// Newest first
+// A corrupt line returns the records of the other lines with the error
 func (s *Store) List(_ context.Context) ([]knowledge.Knowledge, error) {
 	records, err := s.file.All()
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrRead, err)
+		return newestFirst(records), fmt.Errorf("%w: %w", ErrRead, err)
 	}
 	return newestFirst(records), nil
 }
