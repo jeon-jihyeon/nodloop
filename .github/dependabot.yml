@@ -1,0 +1,39 @@
+version: 2
+# A week of cooldown like exclude-newer in sdk/python, so a compromised release has time to be pulled first
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      go:
+        patterns: ["*"]
+  - package-ecosystem: uv
+    directory: /sdk/python
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      python:
+        patterns: ["*"]
+  - package-ecosystem: npm
+    directory: /sdk/typescript
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      typescript:
+        patterns: ["*"]
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      actions:
+        patterns: ["*"]

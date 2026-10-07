@@ -23,9 +23,18 @@ Every pull request runs these in CI and they must be green.
 ```
 gofmt -l .
 go vet ./...
-go test ./... -cover
+go test -race -cover ./...
 golangci-lint run ./...
 ```
+
+CI runs the Go tests on Linux with the Go version of go.mod and the newest stable one, and on macOS without the PostgreSQL suites. The fuzz tests run their seeds as plain tests. Fuzz a parser you change for a minute and commit any input it finds under `testdata/fuzz`:
+
+```
+go test ./internal/veto -run '^$' -fuzz FuzzCommandLines -fuzztime 60s
+go test ./internal/jsonl -run '^$' -fuzz FuzzFileNewest -fuzztime 60s
+```
+
+`go test ./cmd/nodloop -run '^$' -bench BenchmarkHook` times the conversation hooks over 1,000 and 50,000 runs. A change to what the hooks read shows the numbers before and after.
 
 The SDK jobs run from their directories:
 

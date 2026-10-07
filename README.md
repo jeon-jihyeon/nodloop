@@ -14,6 +14,8 @@
   <a href="https://github.com/jeon-jihyeon/nodloop/releases"><img src="https://img.shields.io/github/v/release/jeon-jihyeon/nodloop?display_name=tag" alt="release"></a>
   <a href="https://github.com/jeon-jihyeon/nodloop/actions/workflows/test.yml"><img src="https://img.shields.io/github/actions/workflow/status/jeon-jihyeon/nodloop/test.yml?branch=main&label=test" alt="test"></a>
   <a href="https://goreportcard.com/report/github.com/jeon-jihyeon/nodloop"><img src="https://goreportcard.com/badge/github.com/jeon-jihyeon/nodloop" alt="go report"></a>
+  <a href="https://scorecard.dev/viewer/?uri=github.com/jeon-jihyeon/nodloop"><img src="https://api.scorecard.dev/projects/github.com/jeon-jihyeon/nodloop/badge" alt="openssf scorecard"></a>
+  <a href="https://pkg.go.dev/github.com/jeon-jihyeon/nodloop"><img src="https://pkg.go.dev/badge/github.com/jeon-jihyeon/nodloop.svg" alt="go reference"></a>
   <img src="https://img.shields.io/badge/license-MIT-green" alt="license">
   <img src="https://img.shields.io/badge/API%20key-none-lightgrey" alt="API key">
 </div>

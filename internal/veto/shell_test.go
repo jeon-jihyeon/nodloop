@@ -1,6 +1,8 @@
 package veto_test
 
 import (
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -40,6 +42,7 @@ func TestCommandLines(t *testing.T) {
 		{"an assignment alone gets no line", "V=$(pwd)", "(\npwd\n)"},
 		{"zsh syntax parses after bash fails", "echo =(ls)", "(\nls\n)\necho $"},
 		{"text that does not parse comes back as written", "sed -i 's/a/b f", "sed -i 's/a/b f"},
+		{"a command named like a scope line renders quoted", `\( && \)`, "'('\n')'"},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
@@ -82,4 +85,33 @@ func TestBlocksDerivesCommands(t *testing.T) {
 			assert.Equal(t, input, tc.args.input, "the caller input stays as it was")
 		})
 	}
+}
+
+// Any text renders without a panic and every scope a parsed command opens closes
+// Text that does not parse comes back as written so its parentheses are the user's
+func FuzzCommandLines(f *testing.F) {
+	for _, seed := range []string{
+		`\sed -i 's/a/b/' "f"`, "if ! eval x; then for f in *; do rm $f; done; fi", `cd "$(git rev-parse)" && git status`,
+		"diff <(sort a) b", "python3 - <<'EOF'\nprint('x')\nEOF", "echo =(ls)", "sed -i 's/a/b f", "",
+	} {
+		f.Add(seed)
+	}
+	f.Fuzz(func(t *testing.T, command string) {
+		rendered := veto.Command(command).Lines()
+		if rendered == command {
+			return
+		}
+		lines := strings.Split(rendered, "\n")
+		assert.Equal(t, slices.Index(lines, "(") >= 0, slices.Index(lines, ")") >= 0)
+		depth := 0
+		for _, line := range lines {
+			switch line {
+			case "(":
+				depth++
+			case ")":
+				depth--
+			}
+			require.GreaterOrEqual(t, depth, 0, "a scope closes before it opens")
+		}
+	})
 }
