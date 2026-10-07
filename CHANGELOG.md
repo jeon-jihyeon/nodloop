@@ -10,12 +10,17 @@ Every release tag publishes the plugin, the darwin and linux binaries and both S
 - READMEs for the PyPI and npm pages
 - `nodloop help [<command>]`, `-h` and `--help`, printing the usage of one command or action
 - `nodloop config` with no action lists every setting with its value and source
+- `nodloop doctor` names corrupt record lines and `--repair` moves them to `<file>.corrupt`
 
 ### Changed
 - `Client.Items` and `Client.Waiting` return `Items`
 - The TypeScript `record` takes one object: `record({ producer, output, labels, applied, subject })`
 - `propose` and `approve` return `Candidate` and `Approval` in both SDKs instead of untyped objects
 - A CLI error names its command once, and a usage error prints the usage of that command alone
+- The hooks read only the newest run of their session, from the end of the file and back one week at most. With 50,000 runs the prompt hook went from 503 ms to 0.8 ms and the stop hook from 539 ms to 2.4 ms
+- An append reads only the last line of the file instead of the whole file
+- A corrupt record line is skipped and named instead of failing every read, so a hook still adds the other items
+- The holdout draws a turn by the session and its previous run instead of the count of its runs
 
 ## 0.6.6 - 2026-10-07
 

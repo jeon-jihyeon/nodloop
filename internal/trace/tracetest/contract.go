@@ -88,6 +88,7 @@ func Run(t *testing.T, store Store) {
 				trace.Traces{seed[2], seed[1]},
 			},
 			{"limit keeps the newest", trace.Filter{SessionID: "session-1", Limit: 2}, trace.Traces{seed[2], seed[1]}},
+			{"since leaves out older traces", trace.Filter{SessionID: "session-1", Since: seed[1].Time}, trace.Traces{seed[2], seed[1]}},
 			{"no match lists nothing", trace.Filter{Ref: "ref-9"}, nil},
 		}
 		for _, tc := range tcs {

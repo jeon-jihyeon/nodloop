@@ -118,6 +118,11 @@ func TestFileAppendMendsTheTail(t *testing.T) {
 		},
 		{"torn first line is cut", args{"{\"id", row{"b", 1}}, "{\"id\":\"b\",\"n\":1}\n"},
 		{
+			"torn tail longer than one read from the end is cut whole",
+			args{"{\"id\":\"a\",\"n\":0}\n{\"id\":\"" + strings.Repeat("x", 200<<10), row{"b", 1}},
+			"{\"id\":\"a\",\"n\":0}\n{\"id\":\"b\",\"n\":1}\n",
+		},
+		{
 			"one record after a byte order mark without a newline is kept",
 			args{"\uFEFF{\"id\":\"a\",\"n\":0}", row{"b", 1}},
 			"\uFEFF{\"id\":\"a\",\"n\":0}\n{\"id\":\"b\",\"n\":1}\n",
@@ -341,10 +346,15 @@ func TestFileAllWithoutFile(t *testing.T) {
 	}
 }
 
-func TestFileAllNamesTheBrokenLine(t *testing.T) {
+func TestFileAllSkipsCorruptLines(t *testing.T) {
 	type args struct {
 		content string
 		check   func(row) error
+	}
+	type want struct {
+		rows []row
+		// A fragment of the message naming the file and line and the cause
+		err string
 	}
 	refuseB := func(r row) error {
 		return map[string]error{"b": assert.AnError}[r.ID]
@@ -352,14 +362,17 @@ func TestFileAllNamesTheBrokenLine(t *testing.T) {
 	tcs := []struct {
 		name string
 		args args
-		// A fragment of the message naming the file and line and the cause
-		want string
+		want want
 	}{
-		{"a line that is not JSON is named", args{"{\"id\":\"a\"}\n\nnot json\n", refuseB}, "rows.jsonl line 3: invalid"},
+		{
+			"a line that is not JSON is named and the others are read",
+			args{"{\"id\":\"a\"}\n\nnot json\n{\"id\":\"c\"}\n", refuseB},
+			want{[]row{{"a", 0}, {"c", 0}}, "rows.jsonl has corrupt lines: line 3: invalid"},
+		},
 		{
 			"a record the check refuses is named",
 			args{"{\"id\":\"a\"}\n\n{\"id\":\"b\"}\n", refuseB},
-			"rows.jsonl line 3: " + assert.AnError.Error(),
+			want{[]row{{"a", 0}}, "rows.jsonl has corrupt lines: line 3: " + assert.AnError.Error()},
 		},
 	}
 	for _, tc := range tcs {
@@ -370,10 +383,32 @@ func TestFileAllNamesTheBrokenLine(t *testing.T) {
 			f, err := jsonl.Open[row](dir, "rows.jsonl")
 			require.NoError(t, err)
 			got, err := f.All(tc.args.check)
-			assert.ErrorContains(t, err, tc.want)
-			assert.Nil(t, got)
+			assert.ErrorIs(t, err, jsonl.ErrCorrupt)
+			assert.ErrorContains(t, err, tc.want.err)
+			assert.Equal(t, tc.want.rows, got)
 		})
 	}
+}
+
+// A corrupt line leaves AppendDecided without a decision
+func TestFileAppendDecidedRefusesCorruptLines(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "rows.jsonl")
+	require.NoError(t, os.WriteFile(path, []byte("{\"id\":\"a\"}\nnot json\n"), 0o600))
+	f, err := jsonl.Open[row](dir, "rows.jsonl")
+	require.NoError(t, err)
+	called := false
+
+	err = f.AppendDecided(func([]row) ([]row, error) {
+		called = true
+		return []row{{"b", 1}}, nil
+	})
+
+	assert.ErrorIs(t, err, jsonl.ErrCorrupt)
+	assert.False(t, called)
+	got, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Equal(t, "{\"id\":\"a\"}\nnot json\n", string(got))
 }
 
 func TestFileNewest(t *testing.T) {
@@ -382,8 +417,10 @@ func TestFileNewest(t *testing.T) {
 	for _, r := range []row{{"a", 0}, {"b", 1}, {"c", 2}} {
 		require.NoError(t, f.Append(r))
 	}
+	all := func(row) bool { return true }
 	type args struct {
 		keep  func(row) bool
+		stop  func(row) bool
 		limit int
 	}
 	tcs := []struct {
@@ -391,23 +428,67 @@ func TestFileNewest(t *testing.T) {
 		args args
 		want []row
 	}{
-		{
-			"zero limit returns every row newest first",
-			args{func(row) bool { return true }, 0},
-			[]row{{"c", 2}, {"b", 1}, {"a", 0}},
-		},
-		{"rows failing keep are skipped", args{func(r row) bool { return r.N%2 == 0 }, 0}, []row{{"c", 2}, {"a", 0}}},
-		{"limit stops at the newest matches", args{func(row) bool { return true }, 2}, []row{{"c", 2}, {"b", 1}}},
-		{"no match returns nothing", args{func(row) bool { return false }, 0}, nil},
+		{"zero limit returns every row newest first", args{all, nil, 0}, []row{{"c", 2}, {"b", 1}, {"a", 0}}},
+		{"rows failing keep are skipped", args{func(r row) bool { return r.N%2 == 0 }, nil, 0}, []row{{"c", 2}, {"a", 0}}},
+		{"limit stops at the newest matches", args{all, nil, 2}, []row{{"c", 2}, {"b", 1}}},
+		{"no match returns nothing", args{func(row) bool { return false }, nil, 0}, nil},
+		{"stop ends the read before its row", args{all, func(r row) bool { return r.N < 1 }, 0}, []row{{"c", 2}, {"b", 1}}},
+		{"stop holds for rows keep skips too", args{func(r row) bool { return r.N == 0 }, func(r row) bool { return r.N < 2 }, 0}, nil},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got, err := f.Newest(tc.args.keep, tc.args.limit)
+			got, err := f.Newest(tc.args.keep, tc.args.stop, tc.args.limit)
 			assert.NoError(t, err)
 			assert.Equal(t, tc.want, got)
 		})
 	}
+}
+
+// Newest reads the file from its end in chunks and finds the records All does in the reverse order
+func TestFileNewestReadsLikeAll(t *testing.T) {
+	long := strings.Repeat("x", 100<<10)
+	tcs := []struct {
+		name string
+		args string
+		want []row
+	}{
+		{"empty file reads as empty", "", nil},
+		{"blank lines are skipped", "{\"id\":\"a\"}\n\n  \n{\"id\":\"b\",\"n\":1}\n", []row{{"b", 1}, {"a", 0}}},
+		{"torn last line is skipped", "{\"id\":\"a\"}\n{\"id\":\"b\",\"n", []row{{"a", 0}}},
+		{"last line missing only its newline is read", "{\"id\":\"a\"}\n{\"id\":\"b\",\"n\":1}", []row{{"b", 1}, {"a", 0}}},
+		{"a byte order mark before the first record is dropped", "\uFEFF{\"id\":\"a\"}\n{\"id\":\"b\"}\n", []row{{"b", 0}, {"a", 0}}},
+		{
+			"lines across several chunks are read whole",
+			"{\"id\":\"" + long + "\"}\n{\"id\":\"b\"}\n{\"id\":\"" + long + "\",\"n\":2}\n",
+			[]row{{long, 2}, {"b", 0}, {long, 0}},
+		},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "rows.jsonl"), []byte(tc.args), 0o600))
+			f, err := jsonl.Open[row](dir, "rows.jsonl")
+			require.NoError(t, err)
+			got, err := f.Newest(func(row) bool { return true }, nil, 0)
+			assert.NoError(t, err)
+			assert.Equal(t, tc.want, got)
+		})
+	}
+}
+
+func TestFileNewestSkipsCorruptLines(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "rows.jsonl"), []byte("{\"id\":\"a\"}\nnot json\n{\"id\":\"c\"}\n"), 0o600))
+	f, err := jsonl.Open[row](dir, "rows.jsonl")
+	require.NoError(t, err)
+
+	got, err := f.Newest(func(row) bool { return true }, nil, 0)
+
+	assert.ErrorIs(t, err, jsonl.ErrCorrupt)
+	assert.ErrorContains(t, err, "rows.jsonl has corrupt lines: byte 11: invalid")
+	assert.Equal(t, []row{{"c", 0}, {"a", 0}}, got)
 }
 
 func TestFileNewestFailsOnUnreadableFile(t *testing.T) {
@@ -415,7 +496,50 @@ func TestFileNewestFailsOnUnreadableFile(t *testing.T) {
 	require.NoError(t, os.Mkdir(filepath.Join(dir, "rows.jsonl"), 0o700))
 	f, err := jsonl.Open[row](dir, "rows.jsonl")
 	require.NoError(t, err)
-	got, err := f.Newest(func(row) bool { return true }, 0)
+	got, err := f.Newest(func(row) bool { return true }, nil, 0)
 	assert.ErrorIs(t, err, syscall.EISDIR)
 	assert.Nil(t, got)
+}
+
+func TestFileRepair(t *testing.T) {
+	type want struct {
+		moved   int
+		content string
+		aside   string
+	}
+	tcs := []struct {
+		name string
+		args string
+		want want
+	}{
+		{"a clean file stays as it is", "{\"id\":\"a\"}\n", want{0, "{\"id\":\"a\"}\n", ""}},
+		{
+			"corrupt lines move aside and the rest stays in order",
+			"{\"id\":\"a\"}\nnot json\n{\"id\":\"b\"}\n[1]\n{\"id\":\"c\"}\n",
+			want{2, "{\"id\":\"a\"}\n{\"id\":\"b\"}\n{\"id\":\"c\"}\n", "not json\n[1]\n"},
+		},
+		{"a torn last line stays for the next append", "{\"id\":\"a\"}\n{\"id", want{0, "{\"id\":\"a\"}\n{\"id", ""}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			path := filepath.Join(dir, "rows.jsonl")
+			require.NoError(t, os.WriteFile(path, []byte(tc.args), 0o600))
+			f, err := jsonl.Open[row](dir, "rows.jsonl")
+			require.NoError(t, err)
+
+			moved, err := f.Repair()
+
+			require.NoError(t, err)
+			assert.Equal(t, tc.want.moved, moved)
+			got, err := os.ReadFile(path)
+			require.NoError(t, err)
+			assert.Equal(t, tc.want.content, string(got))
+			aside, _ := os.ReadFile(path + ".corrupt")
+			assert.Equal(t, tc.want.aside, string(aside))
+			_, err = f.All()
+			assert.NoError(t, err)
+		})
+	}
 }

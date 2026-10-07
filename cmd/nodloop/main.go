@@ -156,6 +156,8 @@ commands:
                             Serve the MCP tools over streamable HTTP at /mcp for the keys, each tenant on its own records
                             under tenants of the record directory, or in one PostgreSQL database with --postgres or
                             NODLOOP_POSTGRES. 127.0.0.1:8787 by default
+  doctor [--repair]         Read every record file and the guard log, and name the lines that fail to decode.
+                            A read skips such a line, and --repair moves them to <file>.corrupt. Run it while nothing writes
   version                   Print the build version
   help [<command>]          Print this text or the part of one command. -h and --help after a command or an action do the same
 
@@ -232,6 +234,7 @@ func run(args []string, getenv func(string) string, stdin io.Reader, stdout io.W
 		"config":     func(args []string) int { return runConfig(args, getenv, stdout, stderr) },
 		"classifier": func(args []string) int { return runClassifier(args, getenv, time.Now, stdout, stderr) },
 		"server":     func(args []string) int { return runServer(args, getenv, time.Now, stdout, stderr) },
+		"doctor":     func(args []string) int { return runDoctor(args, getenv, time.Now, stdout, stderr) },
 		"version": func([]string) int {
 			fmt.Fprintln(stdout, buildVersion())
 			return 0

@@ -19,6 +19,7 @@ import (
 
 	"github.com/jeon-jihyeon/nodloop/internal/feedback"
 	feedbackfile "github.com/jeon-jihyeon/nodloop/internal/feedback/file"
+	"github.com/jeon-jihyeon/nodloop/internal/jsonl"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
 	tracefile "github.com/jeon-jihyeon/nodloop/internal/trace/file"
@@ -79,7 +80,7 @@ func TestWorkDirWithin(t *testing.T) {
 }
 
 // A home with one approved item of producer session for the repo nodloop
-func hookHome(t *testing.T, content string) (home, records, repo string) {
+func hookHome(t testing.TB, content string) (home, records, repo string) {
 	t.Helper()
 	home, records = t.TempDir(), t.TempDir()
 	repo = filepath.Join(t.TempDir(), "nodloop")
@@ -721,7 +722,7 @@ func TestHoldoutWithholds(t *testing.T) {
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			assert.Equal(t, tc.want, tc.share.withholds(tc.session, 0))
+			assert.Equal(t, tc.want, tc.share.withholds(tc.session, ""))
 		})
 	}
 }
@@ -730,17 +731,18 @@ func TestHoldoutWithholds(t *testing.T) {
 func TestHoldoutShare(t *testing.T) {
 	drawn := 0
 	for turn := range 1000 {
-		if holdout(0.2).withholds("s1", turn) {
+		previous := trace.NewID(time.Date(2026, 10, 7, 0, 0, 0, 0, time.UTC).Add(time.Duration(turn) * time.Minute))
+		if holdout(0.2).withholds("s1", previous) {
 			drawn++
 		}
-		assert.Equal(t, holdout(0.2).withholds("s1", turn), holdout(0.2).withholds("s1", turn))
+		assert.Equal(t, holdout(0.2).withholds("s1", previous), holdout(0.2).withholds("s1", previous))
 	}
 	assert.InDelta(t, 200, drawn, 50)
 }
 
 // A turn the holdout draws gets no item in its prompt and its run records them as withheld
 func TestRunHookHoldout(t *testing.T) {
-	require.True(t, holdout(0.999).withholds("s1", 0))
+	require.True(t, holdout(0.999).withholds("s1", ""))
 	home, records, repo := hookHome(t, "use git -C")
 	require.Equal(t, 0, runConfig([]string{"holdout", "0.999"}, func(k string) string { return map[string]string{"HOME": home}[k] }, &bytes.Buffer{}, &bytes.Buffer{}))
 	getenv := func(k string) string { return map[string]string{"HOME": home, envRecordDir: records}[k] }
@@ -853,4 +855,31 @@ func TestRunHookReaction(t *testing.T) {
 			assert.Equal(t, tc.want.reason, latest.reason)
 		})
 	}
+}
+
+// A corrupt line in the records leaves out its record and the hooks go on with the rest
+func TestRunHookCorruptLine(t *testing.T) {
+	home, records, repo := hookHome(t, "use git -C")
+	for _, name := range []string{"knowledge.jsonl", "traces.jsonl"} {
+		f, err := os.OpenFile(filepath.Join(records, name), os.O_APPEND|os.O_WRONLY, 0o600)
+		require.NoError(t, err)
+		_, err = f.WriteString("not json\n")
+		require.NoError(t, err)
+		require.NoError(t, f.Close())
+	}
+	getenv := func(k string) string { return map[string]string{"HOME": home, envRecordDir: records}[k] }
+	stdin := `{"session_id":"s1","cwd":"` + repo + `","last_assistant_message":"done"}`
+	var prompt, promptErr, stopErr bytes.Buffer
+
+	require.Equal(t, 0, runHook([]string{"prompt"}, getenv, nil, time.Now, strings.NewReader(stdin), &prompt, &promptErr))
+	require.Equal(t, 0, runHook([]string{"stop"}, getenv, nil, time.Now, strings.NewReader(stdin), &bytes.Buffer{}, &stopErr))
+
+	assert.Contains(t, prompt.String(), "use git -C")
+	assert.Contains(t, promptErr.String(), "knowledge.jsonl has corrupt lines")
+	assert.Contains(t, stopErr.String(), "traces.jsonl has corrupt lines")
+	store, err := tracefile.New(records)
+	require.NoError(t, err)
+	runs, err := store.List(context.Background(), trace.Filter{Name: trace.NameRun, SessionID: "s1"})
+	assert.ErrorIs(t, err, jsonl.ErrCorrupt)
+	assert.Len(t, runs, 1, "the stop hook still records the answer")
 }

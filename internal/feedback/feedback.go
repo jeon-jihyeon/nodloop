@@ -169,11 +169,22 @@ type Filter struct {
 	TraceID  string
 	Verdicts []Verdict
 	Reviewer string
+	// Verdicts before it are left out
+	// A store reads newest first and stops at the first one, so it relies on verdicts being appended in time order
+	Since time.Time
 	// Zero means all
 	Limit int
 }
 
+// Whether the verdict is from before Since
+func (f Filter) Older(fb Feedback) bool {
+	return fb.Time.Before(f.Since)
+}
+
 func (f Filter) Matches(fb Feedback) bool {
+	if f.Older(fb) {
+		return false
+	}
 	if f.TraceID != "" && fb.TraceID != f.TraceID {
 		return false
 	}

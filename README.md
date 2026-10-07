@@ -181,7 +181,7 @@ A correction can become a veto too. Propose it as a judgment with a veto, and on
 | Output of the drafts the stop hook starts | `~/.nodloop/hook.log` |
 | Records of each tenant of `nodloop server serve` | `tenants/<tenant>` in the record directory, or the PostgreSQL database of `--postgres` |
 
-Every record file is append only JSON lines. A status change of an item is a new record, so the history of every version stays.
+Every record file is append only JSON lines. A status change of an item is a new record, so the history of every version stays. The hooks read the runs from the end of the file back one week at most, so their time stays flat as the records grow. A line a crash or an editor broke is skipped and named on every read, and `nodloop doctor --repair` moves it aside.
 
 ## Settings
 

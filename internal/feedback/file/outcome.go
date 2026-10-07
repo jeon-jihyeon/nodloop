@@ -32,9 +32,9 @@ func (s *OutcomeStore) Append(_ context.Context, o feedback.Outcome) error {
 
 // Newest first
 func (s *OutcomeStore) List(_ context.Context, traceID string) ([]feedback.Outcome, error) {
-	outcomes, err := s.file.Newest(feedback.OutcomeFilter{TraceID: traceID}.Matches, 0)
+	outcomes, err := s.file.Newest(feedback.OutcomeFilter{TraceID: traceID}.Matches, nil, 0)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrRead, err)
+		return outcomes, fmt.Errorf("%w: %w", ErrRead, err)
 	}
 	return outcomes, nil
 }

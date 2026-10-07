@@ -144,11 +144,17 @@ type Filter struct {
 	Ref       string
 	// Every tag must be present
 	Tags []string
+	// Traces before it are left out
+	// A store reads newest first and stops at the first one, so it relies on traces being appended in time order
+	Since time.Time
 	// Zero means all
 	Limit int
 }
 
 func (f Filter) Matches(t Trace) bool {
+	if f.Older(t) {
+		return false
+	}
 	if f.ID != "" && t.ID != f.ID {
 		return false
 	}
@@ -170,6 +176,11 @@ func (f Filter) Matches(t Trace) bool {
 		}
 	}
 	return true
+}
+
+// Whether the trace is from before Since
+func (f Filter) Older(t Trace) bool {
+	return t.Time.Before(f.Since)
 }
 
 // Time sortable id
