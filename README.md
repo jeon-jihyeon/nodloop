@@ -83,9 +83,9 @@ When you record what a real check found with `outcome`, `nodloop knowledge healt
 
 To see whether approved items help, set `nodloop config holdout 0.1`. One turn in ten then gets no item in its prompt and its run records what it would have received, and `nodloop report effect` compares how often those turns were corrected against the turns that got the items. `nodloop report extract` shows how drafting ended per plugin version, with the drafts refused and the critic questions they failed, and `nodloop report critic` shows how often the critic agreed with what you later decided on the same run. `knowledge health` marks approved items no run applied for 30 days as idle, and items whose runs were corrected again for the same reason as contested, with the items to compact them with.
 
-The second check is a claude call by default. A classifier served over HTTP can answer its questions instead: `nodloop classifier add <name> --url <url>` names the endpoint and `nodloop classifier use critic --members <name>,claude --mode cascade --threshold 0.8` asks it first and claude only when it is unsure. The point `reaction` lets a classifier judge whether your message corrects the previous answer before the conversation does, and records only a sure reject. Every answer is recorded as a `classify` trace with the time each member took, and `nodloop classifier probe <name>` shows what an endpoint answers.
+The second check is a claude call by default. A classifier served over HTTP can answer its questions first: `nodloop classifier set critic --url <url>` asks that endpoint, and claude answers only when the endpoint fails or any answer is below 0.8. The point `reaction` lets a classifier judge whether your message corrects the previous answer before the conversation does, and records only a sure verdict. Every answer is recorded as a `classify` trace with the time each one took, and `nodloop classifier probe <point>` shows what the endpoint of a point answers.
 
-An endpoint takes a POST of the text to judge and named yes or no questions, with `Authorization: Bearer` when the classifier has a key, and answers each question with the probability of yes, in what the code calls the Jev wire format. A body over 1 MiB, a status outside 2xx, a missing answer or a value outside 0 to 1 counts as a failure, which a cascade passes on to its next member.
+An endpoint takes a POST of the text to judge and named yes or no questions, with `Authorization: Bearer` when the classifier has a key, and answers each question with the probability of yes, in what the code calls the Jev wire format. A body over 1 MiB, a status outside 2xx, a missing answer or a value outside 0 to 1 counts as a failure, and claude answers in its place.
 
 ```
 → {"model": "<model>", "state": "<text>", "questions": {"copies": {"type": "noul", "instructions": "Does the lesson copy the answer?"}}}
@@ -208,7 +208,7 @@ Every record file is append only JSON lines. A status change of an item is a new
 | Session mode | `NODLOOP_SESSION`, `session_mode` | `deferred`, `immediate`, `manual` or `off`, as in the tip above |
 | Approver | `approver` | the name a review approves under, asked once |
 | Holdout | `holdout` | the share of turns whose prompt gets no item, for `report effect` |
-| Classifiers | `classifiers`, `decisions` | endpoints and the decision points that ask them, written by `nodloop classifier` |
+| Classifiers | `classifiers` | the endpoint each decision point asks before claude, written by `nodloop classifier` |
 | Server keys | `server` | key names, tenants, roles and hashes, written by `nodloop server key` |
 | Model calls | `NODLOOP_CLAUDE_BIN`, `NODLOOP_LLM_MODEL` | the claude binary and the model drafts and checks use, `sonnet` by default |
 | PostgreSQL | `--postgres`, `NODLOOP_POSTGRES` | the database of `nodloop server serve` |

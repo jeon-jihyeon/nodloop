@@ -272,9 +272,7 @@ func TestRunHookPromptModes(t *testing.T) {
 					_, _ = w.Write([]byte(`{"answers":{"corrects":{"noul":0.95},"approves":{"noul":0.05}}}`))
 				}))
 				t.Cleanup(srv.Close)
-				for _, args := range [][]string{{"add", "laya", "--url", srv.URL}, {"use", "reaction", "--members", "laya"}} {
-					require.Equal(t, 0, runClassifier(args, getenv, time.Now, &bytes.Buffer{}, &bytes.Buffer{}))
-				}
+				require.Equal(t, 0, runClassifier([]string{"set", "reaction", "--url", srv.URL}, getenv, time.Now, &bytes.Buffer{}, &bytes.Buffer{}))
 			}
 			run := hookPromptSetup(t, getenv, repo, tc.args.turn != first, true, tc.args.turn == later)
 			require.Equal(t, 0, runConfig([]string{"session_mode", tc.args.mode}, getenv, &bytes.Buffer{}, &bytes.Buffer{}))
@@ -779,8 +777,6 @@ func TestRunHookReaction(t *testing.T) {
 	type args struct {
 		// The answer of the endpoint and empty for one that fails
 		answer string
-		// Members of the reaction setup
-		members string
 	}
 	type want struct {
 		verdict feedback.Verdict
@@ -796,16 +792,16 @@ func TestRunHookReaction(t *testing.T) {
 		args args
 		want want
 	}{
-		{"a sure correction is recorded as a reject with the message", args{`{"answers":{"corrects":{"noul":0.9},"approves":{"noul":0.1}}}`, "laya"},
+		{"a sure correction is recorded as a reject with the message", args{`{"answers":{"corrects":{"noul":0.9},"approves":{"noul":0.1}}}`},
 			want{feedback.VerdictReject, message, "was recorded as a reject of your previous answer", "call the nodloop feedback tool", ""}},
-		{"a sure approval is recorded and asks nothing", args{`{"answers":{"corrects":{"noul":0.1},"approves":{"noul":0.9}}}`, "laya"},
+		{"a sure approval is recorded and asks nothing", args{`{"answers":{"corrects":{"noul":0.1},"approves":{"noul":0.9}}}`},
 			want{feedback.VerdictApprove, "", "use git -C", "previous answer", ""}},
-		{"an unsure answer leaves the conversation to judge", args{`{"answers":{"corrects":{"noul":0.3},"approves":{"noul":0.3}}}`, "laya"},
+		{"an answer that says both leaves the conversation to judge", args{`{"answers":{"corrects":{"noul":0.9},"approves":{"noul":0.9}}}`},
 			want{"", "", "call the nodloop feedback tool", "recorded as a reject", ""}},
-		{"a cascade that ends at claude defers to the conversation", args{`{"answers":{"corrects":{"noul":0.6},"approves":{"noul":0.3}}}`, "laya,claude"},
+		{"an unsure answer defers to the conversation", args{`{"answers":{"corrects":{"noul":0.6},"approves":{"noul":0.3}}}`},
 			want{"", "", "call the nodloop feedback tool", "recorded as a reject", ""}},
-		{"a failing endpoint leaves the conversation to judge", args{"", "laya"},
-			want{"", "", "call the nodloop feedback tool", "recorded as a reject", "nodloop hook: laya: classify: endpoint answered an error status"}},
+		{"a failing endpoint defers to the conversation without a warning", args{""},
+			want{"", "", "call the nodloop feedback tool", "recorded as a reject", ""}},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
@@ -826,10 +822,8 @@ func TestRunHookReaction(t *testing.T) {
 			t.Cleanup(srv.Close)
 			home, records, repo := hookHome(t, "use git -C")
 			getenv := func(k string) string { return map[string]string{"HOME": home, envRecordDir: records}[k] }
-			for _, args := range [][]string{{"add", "laya", "--url", srv.URL}, {"use", "reaction", "--members", tc.args.members}} {
-				var stderr bytes.Buffer
-				require.Equal(t, 0, runClassifier(args, getenv, time.Now, &bytes.Buffer{}, &stderr), stderr.String())
-			}
+			var setStderr bytes.Buffer
+			require.Equal(t, 0, runClassifier([]string{"set", "reaction", "--url", srv.URL}, getenv, time.Now, &bytes.Buffer{}, &setStderr), setStderr.String())
 			run := hookPromptSetup(t, getenv, repo, true, false, false)
 			stdin := `{"session_id":"s1","cwd":"` + repo + `","prompt":"` + message + `"}`
 			var stdout, stderr bytes.Buffer
@@ -846,7 +840,7 @@ func TestRunHookReaction(t *testing.T) {
 			require.NoError(t, json.Unmarshal(stdout.Bytes(), &got), stdout.String())
 			assert.Contains(t, got.Out.Context, tc.want.context)
 			assert.NotContains(t, got.Out.Context, tc.want.absent)
-			assert.Contains(t, stderr.String(), tc.want.stderr)
+			assert.Equal(t, tc.want.stderr, stderr.String())
 			verdicts, err := feedbackfile.New(records)
 			require.NoError(t, err)
 			recorded, err := verdicts.List(context.Background(), feedback.Filter{TraceID: run})

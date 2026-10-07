@@ -5,14 +5,10 @@ import "errors"
 var (
 	// A decision point outside the valid set
 	ErrPointUnknown = errors.New("classify: unknown decision point")
-	// A mode, member list, threshold or combine the mode does not take
-	ErrSetupInvalid = errors.New("classify: invalid setup")
-	// A member that is neither claude nor an added endpoint
-	ErrClassifierUnknown = errors.New("classify: unknown classifier")
-	// An endpoint without an absolute http or https URL or without a name or named claude
+	// A point with no endpoint where one is needed
+	ErrPointUnset = errors.New("classify: no endpoint set for the point")
+	// An endpoint without an absolute http or https URL
 	ErrEndpointInvalid = errors.New("classify: invalid endpoint")
-	// An endpoint still named by the setup of a point
-	ErrClassifierInUse = errors.New("classify: classifier in use")
 	// A non 2xx answer of an endpoint
 	ErrStatus = errors.New("classify: endpoint answered an error status")
 	// A body that does not decode as the Jev answers or a probability outside 0 to 1
