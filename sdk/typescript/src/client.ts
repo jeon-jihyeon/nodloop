@@ -7,7 +7,7 @@ import { resolve } from "node:path";
 import { find } from "./binary.ts";
 
 /** The binary release the client fetches when no nodloop is installed */
-export const version = "0.6.6";
+export const version = "0.7.0";
 
 export type Labels = Record<string, string[]>;
 
