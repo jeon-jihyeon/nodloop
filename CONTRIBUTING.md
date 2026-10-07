@@ -79,6 +79,8 @@ depguard enforces the direction. If a change needs an import that the linter rej
 - Commit messages follow `type: what changed` with `feat`, `fix`, `docs`, `refactor`, `test` or `chore`, for example `fix: refuse a label no recorded run carries`
 - Say in the description what you ran. A pull request that touches a store format or what a prompt receives shows a trace or the `nodloop report loop` output before and after
 - New tools, commands and flags come with a line in the usage text and, when they change the plugin, in the skill under `plugin/skills` that calls them
+- A change users notice adds a line under Unreleased in CHANGELOG.md. A change that breaks a promise of the Versioning section in the README waits for a minor release
+- Everyone taking part follows the [code of conduct](CODE_OF_CONDUCT.md)
 
 ## Security
 

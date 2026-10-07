@@ -140,8 +140,25 @@ type Item struct {
 	Labels   Labels
 }
 
-func newItems(set knowledge.Set) []Item {
-	out := make([]Item, 0, len(set))
+// The version to pass in Applied for a run that received the item
+func (i Item) Ref() Ref {
+	return Ref{ID: i.ID, Version: i.Version}
+}
+
+// Items in the order the ledger keeps them
+type Items []Item
+
+// The versions to pass in Applied for a run that received the items
+func (items Items) Refs() []Ref {
+	out := make([]Ref, 0, len(items))
+	for _, it := range items {
+		out = append(out, it.Ref())
+	}
+	return out
+}
+
+func newItems(set knowledge.Set) Items {
+	out := make(Items, 0, len(set))
 	for _, k := range set {
 		item := Item{ID: k.ID, Version: k.Version, Kind: k.Kind, Content: k.Content, Status: k.Status}
 		if k.Run != nil {
@@ -154,7 +171,7 @@ func newItems(set knowledge.Set) []Item {
 
 // The approved items a run of the producer with the labels receives
 // Put them in the prompt of the run and pass their refs as Applied when recording it
-func (c *Client) Items(ctx context.Context, producer string, labels Labels) ([]Item, error) {
+func (c *Client) Items(ctx context.Context, producer string, labels Labels) (Items, error) {
 	all, err := c.ledger.All(ctx)
 	if err != nil {
 		return nil, err
@@ -163,7 +180,7 @@ func (c *Client) Items(ctx context.Context, producer string, labels Labels) ([]I
 }
 
 // The candidates a run of the producer with the labels would receive once a person approves them
-func (c *Client) Waiting(ctx context.Context, producer string, labels Labels) ([]Item, error) {
+func (c *Client) Waiting(ctx context.Context, producer string, labels Labels) (Items, error) {
 	all, err := c.ledger.All(ctx)
 	if err != nil {
 		return nil, err
