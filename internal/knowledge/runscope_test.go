@@ -36,6 +36,54 @@ func runItem(id string, run *knowledge.RunScope) knowledge.Knowledge {
 
 // Only approved run items whose labels the run carries and whose exceptions it does not reach a run
 // A record of the data review without a run scope never reaches a run
+// The items of one run in the order a prompt carries them
+func TestSetForOrder(t *testing.T) {
+	at := time.Date(2026, 10, 7, 0, 0, 0, 0, time.UTC)
+	approved := func(id string, scope *knowledge.RunScope, approvedAt, reviewedAt time.Time) knowledge.Knowledge {
+		k := runItem(id, scope)
+		k.Version, k.Status, k.Approver, k.ApprovedAt, k.ReviewedAt = 1, knowledge.StatusApproved, "ann", approvedAt, reviewedAt
+		return k
+	}
+	repo := &knowledge.RunScope{Producer: "session", Labels: trace.Labels{"repo": {"nodloop"}}}
+	dir := &knowledge.RunScope{Producer: "session", Labels: trace.Labels{"repo": {"nodloop"}, "dir": {"cmd"}}}
+	tcs := []struct {
+		name string
+		args knowledge.Set
+		want []string
+	}{
+		{
+			"a narrower scope goes first whatever its age",
+			knowledge.Set{approved("a-repo", repo, at, time.Time{}), approved("z-dir", dir, at.Add(-time.Hour), time.Time{})},
+			[]string{"z-dir", "a-repo"},
+		},
+		{
+			"among equal scopes the newest approval goes first",
+			knowledge.Set{approved("a-old", repo, at, time.Time{}), approved("b-new", repo, at.Add(time.Hour), time.Time{})},
+			[]string{"b-new", "a-old"},
+		},
+		{
+			"a reaffirm counts as the newest word of a person",
+			knowledge.Set{approved("a-reaffirmed", repo, at, at.Add(2*time.Hour)), approved("b-new", repo, at.Add(time.Hour), time.Time{})},
+			[]string{"a-reaffirmed", "b-new"},
+		},
+		{
+			"the id breaks a tie",
+			knowledge.Set{approved("b", repo, at, time.Time{}), approved("a", repo, at, time.Time{})},
+			[]string{"a", "b"},
+		},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var got []string
+			for _, k := range tc.args.For("session", trace.Labels{"repo": {"nodloop"}, "dir": {"cmd"}}) {
+				got = append(got, k.ID)
+			}
+			assert.Equal(t, tc.want, got)
+		})
+	}
+}
+
 func TestSetFor(t *testing.T) {
 	approved := func(k knowledge.Knowledge) knowledge.Knowledge {
 		k.Version, k.Status, k.Approver = 1, knowledge.StatusApproved, "ann"
