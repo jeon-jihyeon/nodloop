@@ -24,6 +24,7 @@ Every release tag publishes the plugin, the darwin and linux binaries and both S
 - An append reads only the last line of the file instead of the whole file
 - A corrupt record line is skipped and named instead of failing every read, so a hook still adds the other items
 - The holdout draws a turn by the session and its previous run instead of the count of its runs
+- A run receives its items most specific first, then the ones a person approved or reaffirmed last, instead of by id, so a cut at the size limit drops the general and stale ones
 - Release archives carry a build provenance attestation and an SPDX SBOM. CI tests on macOS too, with the race detector on every package and actions pinned by commit
 
 ### Fixed
