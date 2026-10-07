@@ -2,7 +2,7 @@
 
 Every release tag publishes the plugin, the darwin and linux binaries of `nodloop` and, from 0.7.0, `nodloop-server`, and both SDKs under one version. Versions before 0.6.0 reviewed incident data, which left this repository in 0.6.0.
 
-## Unreleased
+## 0.7.0 - 2026-10-07
 
 ### Added
 - `Item.Ref` and `Items.Refs` in the Go package, and a runnable example of the loop
