@@ -39,46 +39,32 @@ func TestRunClassifier(t *testing.T) {
 		// The usage text may follow it
 		stderr string
 	}
-	add := []string{"add", "laya", "--url", layaURL}
+	set := []string{"set", "critic", "--url", layaURL}
 	tcs := []struct {
 		name string
 		args args
 		want want
 	}{
-		{"a fresh home lists the critic as claude alone", args{nil, []string{"list"}},
+		{"a fresh home lists every point as claude alone", args{nil, []string{"list"}},
 			want{0, "point\tcritic\tclaude (default)\npoint\treaction\tclaude (default)\n", ""}},
-		{"an added endpoint is listed with its model and key env",
-			args{[][]string{{"add", "laya", "--url", layaURL, "--model", "laya", "--key-env", "LAYA_KEY"}}, []string{"list"}},
-			want{0, "classifier\tlaya\t" + layaURL + "\tmodel laya\tkey $LAYA_KEY\npoint\tcritic\tclaude (default)\npoint\treaction\tclaude (default)\n", ""}},
-		{"two members default to a cascade at 0.8", args{[][]string{add}, []string{"use", "critic", "--members", "laya,claude"}},
-			want{0, "point\tcritic\tcascade\tlaya,claude\tthreshold 0.8\n", ""}},
-		{"members are trimmed around the commas", args{[][]string{add}, []string{"use", "critic", "--members", "laya, claude"}},
-			want{0, "point\tcritic\tcascade\tlaya,claude\tthreshold 0.8\n", ""}},
-		{"a parallel setup is listed with its combine",
-			args{[][]string{add, {"use", "critic", "--members", "laya,claude", "--mode", "parallel", "--combine", "any"}}, []string{"list"}},
-			want{0, "classifier\tlaya\t" + layaURL + "\npoint\tcritic\tparallel\tlaya,claude\tcombine any\npoint\treaction\tclaude (default)\n", ""}},
-		{"reset leaves claude alone", args{[][]string{add, {"use", "critic", "--members", "laya"}}, []string{"reset", "critic"}},
+		{"a set point is listed with its model and key env",
+			args{[][]string{{"set", "critic", "--url", layaURL, "--model", "laya", "--key-env", "LAYA_KEY"}}, []string{"list"}},
+			want{0, "point\tcritic\t" + layaURL + "\tmodel laya\tkey $LAYA_KEY\npoint\treaction\tclaude (default)\n", ""}},
+		{"set prints the point and its URL", args{nil, set}, want{0, "point\tcritic\t" + layaURL + "\n", ""}},
+		{"set again replaces the endpoint", args{[][]string{set}, []string{"set", "critic", "--url", "https://openrouter.ai/api/alpha/decisions"}},
+			want{0, "point\tcritic\thttps://openrouter.ai/api/alpha/decisions\n", ""}},
+		{"unset leaves claude alone", args{[][]string{set}, []string{"unset", "critic"}},
 			want{0, "point\tcritic\tclaude (default)\n", ""}},
-		{"a removed endpoint leaves the list", args{[][]string{add, {"remove", "laya"}}, []string{"list"}},
-			want{0, "point\tcritic\tclaude (default)\npoint\treaction\tclaude (default)\n", ""}},
-		{"claude is reserved", args{nil, []string{"add", "claude", "--url", layaURL}},
-			want{1, "", "nodloop classifier: classify: invalid endpoint: the name \"claude\" is reserved"}},
-		{"use without members is refused", args{nil, []string{"use", "critic"}},
-			want{1, "", "nodloop classifier: use: --members is required"}},
-		{"a member never added is refused", args{nil, []string{"use", "critic", "--members", "laya,claude"}},
-			want{1, "", "nodloop classifier: classify: unknown classifier: laya. Add it with nodloop classifier add"}},
-		{"an unknown point is refused", args{nil, []string{"use", "review", "--members", "claude"}},
+		{"set without a URL is refused", args{nil, []string{"set", "critic"}},
+			want{1, "", "nodloop classifier: classify: invalid endpoint: \"\" is not an absolute http or https URL"}},
+		{"an unknown point is refused", args{nil, []string{"set", "review", "--url", layaURL}},
 			want{1, "", "nodloop classifier: classify: unknown decision point: \"review\". Use one of [critic reaction]"}},
-		{"reset of an unknown point is refused", args{nil, []string{"reset", "review"}},
+		{"unset of an unknown point is refused", args{nil, []string{"unset", "review"}},
 			want{1, "", "nodloop classifier: classify: unknown decision point: \"review\". Use one of [critic reaction]"}},
-		{"an endpoint in use is not removed", args{[][]string{add, {"use", "critic", "--members", "laya"}}, []string{"remove", "laya"}},
-			want{1, "", "nodloop classifier: classify: classifier in use: laya is a member of [critic]. Run nodloop classifier use or reset first"}},
-		{"an endpoint never added is not removed", args{nil, []string{"remove", "laya"}},
-			want{1, "", "nodloop classifier: classify: unknown classifier: laya"}},
-		{"an endpoint never added is not probed", args{nil, []string{"probe", "laya"}},
-			want{1, "", "nodloop classifier: classify: unknown classifier: laya"}},
-		{"an unknown action is refused", args{nil, []string{"rename", "laya"}},
-			want{1, "", "nodloop classifier: unknown action \"rename\""}},
+		{"a point never set is not probed", args{nil, []string{"probe", "critic"}},
+			want{1, "", "nodloop classifier: classify: no endpoint set for the point: critic"}},
+		{"an unknown action is refused", args{nil, []string{"use", "critic"}},
+			want{1, "", "nodloop classifier: unknown action \"use\""}},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
@@ -101,20 +87,76 @@ func TestRunClassifier(t *testing.T) {
 	}
 }
 
-// The values of the other keys of config.json are kept
+// A config written before 0.7.0 reads as the endpoint each point asked first
+// set rewrites it in the new shape and drops its decisions
+func TestRunClassifierLegacyConfig(t *testing.T) {
+	type want struct {
+		code   int
+		stdout string
+		stderr string
+	}
+	const named = `"classifiers":{"laya":{"url":"` + layaURL + `"},"spare":{"url":"http://spare"}},`
+	tcs := []struct {
+		name   string
+		config string
+		args   []string
+		want   want
+	}{
+		{"a cascade of an endpoint and claude asks that endpoint",
+			`{` + named + `"decisions":{"critic":{"mode":"cascade","members":["laya","claude"],"threshold":0.9}}}`, []string{"list"},
+			want{0, "point\tcritic\t" + layaURL + "\npoint\treaction\tclaude (default)\n", ""}},
+		{"a single endpoint asks that endpoint",
+			`{` + named + `"decisions":{"reaction":{"mode":"single","members":["laya"]}}}`, []string{"list"},
+			want{0, "point\tcritic\tclaude (default)\npoint\treaction\t" + layaURL + "\n", ""}},
+		{"claude alone has no endpoint",
+			`{` + named + `"decisions":{"critic":{"mode":"single","members":["claude"]}}}`, []string{"list"},
+			want{0, "point\tcritic\tclaude (default)\npoint\treaction\tclaude (default)\n", ""}},
+		{"a parallel setup is refused with how to repair it",
+			`{` + named + `"decisions":{"critic":{"mode":"parallel","members":["laya","spare"],"combine":"all"}}}`, []string{"list"},
+			want{1, "", "nodloop classifier: classifier setup no longer run: decisions.critic in config.json asks [laya spare]. " +
+				"Run nodloop classifier set critic --url <url> to ask one endpoint before claude"}},
+		{"set repairs a setup nodloop no longer runs",
+			`{` + named + `"decisions":{"critic":{"mode":"cascade","members":["claude","laya"],"threshold":0.8}}}`, []string{"set", "critic", "--url", layaURL},
+			want{0, "point\tcritic\t" + layaURL + "\n", ""}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			home := homeDir(t.TempDir())
+			require.NoError(t, os.MkdirAll(home.dir(), 0o700))
+			require.NoError(t, os.WriteFile(home.configPath(), []byte(tc.config), 0o600))
+			getenv := func(k string) string { return map[string]string{"HOME": string(home)}[k] }
+			var stdout, stderr bytes.Buffer
+
+			code := runClassifier(tc.args, getenv, time.Now, &stdout, &stderr)
+
+			assert.Equal(t, tc.want.code, code)
+			assert.Equal(t, tc.want.stdout, stdout.String())
+			line, _, _ := strings.Cut(stderr.String(), "\n")
+			assert.Equal(t, tc.want.stderr, line)
+		})
+	}
+}
+
+// set keeps the other keys of config.json and drops the decisions of a config before 0.7.0
 func TestRunClassifierKeepsConfig(t *testing.T) {
 	home := homeDir(t.TempDir())
 	require.NoError(t, os.MkdirAll(home.dir(), 0o700))
-	require.NoError(t, os.WriteFile(home.configPath(), []byte(`{"approver":"ann","record_dir":"/records"}`), 0o600))
+	legacy := `{"approver":"ann","record_dir":"/records","classifiers":{"laya":{"url":"` + layaURL + `"}},` +
+		`"decisions":{"reaction":{"mode":"single","members":["laya"]}}}`
+	require.NoError(t, os.WriteFile(home.configPath(), []byte(legacy), 0o600))
 	getenv := func(k string) string { return map[string]string{"HOME": string(home)}[k] }
 
-	require.Equal(t, 0, runClassifier([]string{"add", "laya", "--url", layaURL}, getenv, time.Now, &bytes.Buffer{}, &bytes.Buffer{}))
+	require.Equal(t, 0, runClassifier([]string{"set", "critic", "--url", layaURL}, getenv, time.Now, &bytes.Buffer{}, &bytes.Buffer{}))
 
 	uc, err := home.readConfig()
 	require.NoError(t, err)
 	assert.Equal(t, "ann", uc.Approver)
 	assert.Equal(t, "/records", uc.RecordDir)
-	assert.Equal(t, classify.Endpoints{"laya": {URL: layaURL}}, uc.Classifiers)
+	assert.Nil(t, uc.Decisions)
+	endpoints, err := uc.endpoints()
+	require.NoError(t, err)
+	assert.Equal(t, classify.Endpoints{classify.PointCritic: {URL: layaURL}, classify.PointReaction: {URL: layaURL}}, endpoints)
 }
 
 // A probe prints the answer of the endpoint and sends the key its env holds
@@ -127,17 +169,17 @@ func TestRunClassifierProbe(t *testing.T) {
 	t.Cleanup(srv.Close)
 	home := t.TempDir()
 	getenv := func(k string) string { return map[string]string{"HOME": home, "LAYA_KEY": "secret"}[k] }
-	require.Equal(t, 0, runClassifier([]string{"add", "laya", "--url", srv.URL, "--key-env", "LAYA_KEY"}, getenv, time.Now, &bytes.Buffer{}, &bytes.Buffer{}))
+	require.Equal(t, 0, runClassifier([]string{"set", "critic", "--url", srv.URL, "--key-env", "LAYA_KEY"}, getenv, time.Now, &bytes.Buffer{}, &bytes.Buffer{}))
 	var stdout, stderr bytes.Buffer
 
-	code := runClassifier([]string{"probe", "laya"}, getenv, time.Now, &stdout, &stderr)
+	code := runClassifier([]string{"probe", "critic"}, getenv, time.Now, &stdout, &stderr)
 
 	require.Equal(t, 0, code, stderr.String())
-	assert.True(t, strings.HasPrefix(stdout.String(), "laya\tblue 0.97\t"), stdout.String())
+	assert.True(t, strings.HasPrefix(stdout.String(), "critic\t"+strings.TrimPrefix(srv.URL, "http://")+"\tblue 0.97\t"), stdout.String())
 	assert.Equal(t, "Bearer secret", auth)
 }
 
-// extract asks the critic setup and records its answers
+// extract asks the endpoint of the critic point and records its answers
 // It asks claude alone with no record when nothing is set up
 func TestRunKnowledgeExtractClassifier(t *testing.T) {
 	at := time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC)
@@ -157,8 +199,8 @@ func TestRunKnowledgeExtractClassifier(t *testing.T) {
 		want  want
 	}{
 		{"without a setup claude criticizes and nothing is recorded", nil, want{2, 0}},
-		{"a confident first member of a cascade answers alone",
-			[][]string{{"add", "laya", "--url", srv.URL}, {"use", "critic", "--members", "laya,claude"}}, want{1, 1}},
+		{"a sure endpoint answers alone",
+			[][]string{{"set", "critic", "--url", srv.URL}}, want{1, 1}},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
@@ -200,11 +242,11 @@ func TestRunKnowledgeExtractClassifier(t *testing.T) {
 	}
 }
 
-// A critic setup edited by hand into config.json is checked before any model call
-func TestRunKnowledgeExtractInvalidSetup(t *testing.T) {
+// A critic endpoint edited by hand into config.json is checked before any model call
+func TestRunKnowledgeExtractInvalidEndpoint(t *testing.T) {
 	home, records := homeDir(t.TempDir()), t.TempDir()
 	require.NoError(t, os.MkdirAll(home.dir(), 0o700))
-	require.NoError(t, os.WriteFile(home.configPath(), []byte(`{"decisions":{"critic":{"mode":"cascade","members":["claude","laya"]}}}`), 0o600))
+	require.NoError(t, os.WriteFile(home.configPath(), []byte(`{"classifiers":{"critic":{"url":"localhost:8000"}}}`), 0o600))
 	getenv := func(k string) string { return map[string]string{"HOME": string(home), envRecordDir: records}[k] }
 	out := filepath.Join(string(home), "out.txt")
 	require.NoError(t, os.WriteFile(out, []byte("cd repo && git status"), 0o600))
@@ -216,5 +258,5 @@ func TestRunKnowledgeExtractInvalidSetup(t *testing.T) {
 	code := runKnowledge([]string{"extract", "--from", strings.TrimSpace(id.String())}, getenv, client, time.Now, &bytes.Buffer{}, &stderr)
 
 	assert.Equal(t, 1, code)
-	assert.Contains(t, stderr.String(), "classify: invalid setup: a cascade threshold lies above 0 and up to 1, got 0: decisions.critic in config.json")
+	assert.Contains(t, stderr.String(), `critic: classify: invalid endpoint: "localhost:8000" is not an absolute http or https URL`)
 }
