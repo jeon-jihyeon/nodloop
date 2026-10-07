@@ -85,9 +85,10 @@ commands:
   knowledge compact <id> [--model <m>] [--author <a>]
                             Draft through claude -p a smaller set of items for the runs the item reaches, with nothing said
                             twice and nothing lost, and propose it
-  knowledge check <compaction id> [--model <m>]
+  knowledge check <compaction id> [--model <m>] [--replay]
                             One claude -p call lists for every old item the new items that state it and the facts they lose,
-                            and records it as the coverage check
+                            and records it as the coverage check. --replay then replays every new item, whose evidence joins
+                            the corrections of the items it replaces, and totals what they miss and where they reach too far
   knowledge compaction <compaction id>
                             Print the new and old items and the newest coverage check
   knowledge approve-compaction <compaction id> --approver <name>

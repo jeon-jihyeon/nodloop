@@ -12,6 +12,7 @@ import (
 	"github.com/jeon-jihyeon/nodloop/internal/compact"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	"github.com/jeon-jihyeon/nodloop/internal/llm"
+	"github.com/jeon-jihyeon/nodloop/internal/replay"
 )
 
 // The compaction actions of the knowledge command
@@ -37,7 +38,10 @@ func (f knowledgeFlags) runCompaction(
 	case "compaction":
 		return cmd.show(ctx, id)
 	case "check":
-		return cmd.check(ctx, id, f.model)
+		if err := cmd.check(ctx, id, f.model); err != nil || !f.replay {
+			return err
+		}
+		return cmd.replay(ctx, a, id, f.model)
 	default:
 		return cmd.approve(ctx, id, f.approver)
 	}
@@ -75,6 +79,42 @@ func (c compactionCommand) check(ctx context.Context, id, model string) error {
 		return err
 	}
 	c.printCoverage(cov)
+	return nil
+}
+
+// Replays every new item of the compaction, whose evidence joins the corrected runs of the items it replaces
+// One line per item and a total, read beside the coverage check and never a condition of the approval
+func (c compactionCommand) replay(ctx context.Context, a app, id, model string) error {
+	compaction, err := c.ledger.Compaction(ctx, id)
+	if err != nil {
+		return err
+	}
+	traces, err := a.traces()
+	if err != nil {
+		return err
+	}
+	verdicts, err := a.feedback()
+	if err != nil {
+		return err
+	}
+	r := replay.New(c.ledger, traces, verdicts, c.client, model, a.now)
+	missed, overreach := 0, 0
+	for _, k := range compaction.Items {
+		if k.Veto != nil {
+			continue
+		}
+		res, err := r.Replay(ctx, k.ID, k.Version)
+		if errors.Is(err, replay.ErrNoCases) {
+			fmt.Fprintf(c.out, "replay\t%s\tv%d\tno recorded output to judge\n", k.ID, k.Version)
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		missed, overreach = missed+res.Missed, overreach+res.Overreach
+		fmt.Fprintf(c.out, "replay\t%s\tv%d\t%s\tmissed %d\toverreach %d\n", k.ID, k.Version, outcome(res), res.Missed, res.Overreach)
+	}
+	fmt.Fprintf(c.out, "replay\tcompaction %s\tmissed %d\toverreach %d\n", id, missed, overreach)
 	return nil
 }
 

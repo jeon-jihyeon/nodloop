@@ -72,3 +72,53 @@ func TestRunKnowledgeReplay(t *testing.T) {
 		})
 	}
 }
+
+// check --replay replays the new item of a compaction against the corrections of the items it replaces
+func TestRunKnowledgeCheckReplay(t *testing.T) {
+	dir, records := t.TempDir(), t.TempDir()
+	getenv := func(k string) string { return map[string]string{"HOME": dir, envRecordDir: records}[k] }
+	tick := 0
+	now := func() time.Time {
+		tick++
+		return time.Date(2026, 10, 7, 12, 0, tick, 0, time.UTC)
+	}
+	out := filepath.Join(dir, "out.txt")
+	require.NoError(t, os.WriteFile(out, []byte("cd repo && git status"), 0o600))
+	var id bytes.Buffer
+	require.Equal(t, 0, runRun([]string{"record", "--producer", "session", "--label", "repo=nodloop", "--output", out}, getenv, now, &id, &bytes.Buffer{}))
+	run := strings.TrimSpace(id.String())
+	require.Equal(t, 0, runFeedback([]string{"add", "--trace", run, "--verdict", "reject", "--reason", "ran cd"}, getenv, now, &bytes.Buffer{}, &bytes.Buffer{}))
+	var stderr bytes.Buffer
+	for item, content := range map[string]string{"a": "Use git -C", "b": "Never cd before git"} {
+		require.Equal(t, 0, runKnowledge([]string{"propose", "--id", item, "--kind", "judgment", "--content", content, "--from", run}, getenv, nil, now, &bytes.Buffer{}, &stderr), stderr.String())
+		require.Equal(t, 0, runKnowledge([]string{"approve", item, "--version", "1", "--approver", "ann"}, getenv, nil, now, &bytes.Buffer{}, &stderr), stderr.String())
+	}
+	client := llmmock.NewMockClient(gomock.NewController(t))
+	answers := []string{
+		`{"items":[{"id":"a","kind":"judgment","content":"Use git -C and never cd before git","from":["a","b"],"producer":"session","labels":{"repo":["nodloop"]}}]}`,
+		`{"items":[{"old":"a","covered_by":["a"]},{"old":"b","covered_by":["a"]}]}`,
+		fmt.Sprintf(`{"cases":[{"run":%q,"breaks":false,"why":"it misses the cd"}]}`, run),
+	}
+	client.EXPECT().Complete(gomock.Any(), gomock.Any()).Times(3).DoAndReturn(func(context.Context, llm.Request) (llm.Response, error) {
+		next := answers[0]
+		answers = answers[1:]
+		return llm.Response{Output: json.RawMessage(next)}, nil
+	})
+	var compacted bytes.Buffer
+	require.Equal(t, 0, runKnowledge([]string{"compact", "a"}, getenv, client, now, &compacted, &stderr), stderr.String())
+	compaction := ""
+	for line := range strings.Lines(compacted.String()) {
+		if rest, ok := strings.CutPrefix(line, "compaction\t"); ok {
+			compaction = strings.TrimSpace(rest)
+		}
+	}
+	require.NotEmpty(t, compaction)
+	var stdout bytes.Buffer
+
+	code := runKnowledge([]string{"check", compaction, "--replay"}, getenv, client, now, &stdout, &stderr)
+
+	require.Equal(t, 0, code, stderr.String())
+	assert.Contains(t, stdout.String(), "covered\ta v1\tby a v2\tlost -\n")
+	assert.Contains(t, stdout.String(), "replay\ta\tv2\tfailed\tmissed 1\toverreach 0\n")
+	assert.Contains(t, stdout.String(), "replay\tcompaction "+compaction+"\tmissed 1\toverreach 0\n")
+}
