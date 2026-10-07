@@ -6,12 +6,14 @@ updates:
     schedule:
       interval: weekly
     # go.mod stays at go 1.25 for the MCP SDK and the contributors on that toolchain
-    # mvdan.cc/sh 3.14 and golang.org/x/text 0.42 need go 1.26 so they wait until the floor moves
+    # These releases need go 1.26 so they wait until the floor moves
     ignore:
       - dependency-name: mvdan.cc/sh/v3
         versions: [">=3.14.0"]
       - dependency-name: golang.org/x/text
         versions: [">=0.42.0"]
+      - dependency-name: golang.org/x/sys
+        versions: [">=0.48.0"]
     cooldown:
       default-days: 7
     groups:
