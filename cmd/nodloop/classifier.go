@@ -7,7 +7,6 @@ import (
 	"io"
 	"maps"
 	"slices"
-	"strings"
 	"time"
 
 	"github.com/jeon-jihyeon/nodloop/internal/classify"
@@ -16,6 +15,81 @@ import (
 // The question a probe asks
 // Any decision model answers it with a yes near 1
 var probeQuestion = classify.Request{State: "The sky is blue.", Questions: classify.Questions{"blue": "The text says the sky is blue."}}
+
+// The member every point falls back to
+const builtinMember = "claude"
+
+// What config.json holds for the classifiers
+// Before 0.7.0 classifiers named endpoints and decisions set up how each point combined them
+type classifierConfig struct {
+	// The endpoint each decision point asks before claude
+	// An endpoint name of a config before 0.7.0
+	Classifiers map[string]classify.Endpoint `json:"classifiers,omitempty"`
+	// Only in a config before 0.7.0
+	Decisions map[classify.Point]legacySetup `json:"decisions,omitempty"`
+}
+
+// The setup of one point before 0.7.0 as far as its members tell the endpoint it asked first
+type legacySetup struct {
+	Mode    string   `json:"mode"`
+	Members []string `json:"members"`
+}
+
+// The endpoint of each point
+// 1. a config before 0.7.0 is read through its decisions
+// 2. a point that asked claude alone has no endpoint
+// 3. a point whose single or cascade asked one endpoint and then claude asks that endpoint
+// 4. any other setup fails and names the point, since no endpoint of it alone answers as it did
+func (c classifierConfig) endpoints() (classify.Endpoints, error) {
+	if !c.legacy() {
+		out := classify.Endpoints{}
+		for name, e := range c.Classifiers {
+			out[classify.Point(name)] = e
+		}
+		return out, out.Check()
+	}
+	out := classify.Endpoints{}
+	for _, p := range slices.Sorted(maps.Keys(c.Decisions)) {
+		s := c.Decisions[p]
+		if slices.Equal(s.Members, []string{builtinMember}) {
+			continue
+		}
+		e, ok := s.endpoint(c.Classifiers)
+		if !ok {
+			return nil, fmt.Errorf("%w: decisions.%s in %s asks %v. "+
+				"Run nodloop classifier set %s --url <url> to ask one endpoint before claude", errSetupRetired, p, configFile, s.Members, p)
+		}
+		out[p] = e
+	}
+	return out, out.Check()
+}
+
+// The same config without the decision of the point so setting that point repairs a config before 0.7.0
+func (c classifierConfig) without(p classify.Point) classifierConfig {
+	if c.Decisions == nil {
+		return c
+	}
+	c.Decisions = maps.Clone(c.Decisions)
+	delete(c.Decisions, p)
+	return c
+}
+
+// The endpoint a single or a cascade asked before claude and false for any other setup
+func (s legacySetup) endpoint(named map[string]classify.Endpoint) (classify.Endpoint, bool) {
+	if s.Mode == "parallel" || len(s.Members) == 0 || len(s.Members) > 2 || (len(s.Members) == 2 && s.Members[1] != builtinMember) {
+		return classify.Endpoint{}, false
+	}
+	e, ok := named[s.Members[0]]
+	return e, ok
+}
+
+// Whether the config was written before 0.7.0
+// Such a config holds decisions or names an endpoint by a name that is no point
+func (c classifierConfig) legacy() bool {
+	return c.Decisions != nil || slices.ContainsFunc(slices.Collect(maps.Keys(c.Classifiers)), func(name string) bool {
+		return !classify.Point(name).Valid()
+	})
+}
 
 func runClassifier(args []string, getenv func(string) string, now func() time.Time, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
@@ -36,23 +110,17 @@ func runClassifier(args []string, getenv func(string) string, now func() time.Ti
 	if err != nil {
 		return fail(stderr, "classifier", err)
 	}
-	cmd := classifierCommand{home: h, endpoints: uc.Classifiers, decisions: uc.Decisions, now: now, out: stdout}
+	cmd := classifierCommand{home: h, now: now, out: stdout}
+	point := classify.Point(name)
 	switch args[0] {
-	case "add":
-		err = cmd.add(name, classify.Endpoint{URL: f.url, Model: f.model, KeyEnv: f.keyEnv})
-	case "use":
-		var setup classify.Setup
-		if setup, err = f.setup(); err == nil {
-			err = cmd.use(classify.Point(name), setup)
-		}
-	case "reset":
-		err = cmd.reset(classify.Point(name))
-	case "remove":
-		err = cmd.remove(name)
+	case "set":
+		err = cmd.set(uc.classifierConfig, point, classify.Endpoint{URL: f.url, Model: f.model, KeyEnv: f.keyEnv})
+	case "unset":
+		err = cmd.unset(uc.classifierConfig, point)
 	case "list":
-		cmd.list()
+		err = cmd.list(uc.classifierConfig)
 	case "probe":
-		err = cmd.probe(context.Background(), name, getenv)
+		err = cmd.probe(context.Background(), uc.classifierConfig, point, getenv)
 	default:
 		err = fmt.Errorf("%w %q", errUnknownAction, args[0])
 	}
@@ -64,108 +132,75 @@ func runClassifier(args []string, getenv func(string) string, now func() time.Ti
 
 type classifierFlags struct {
 	url, model, keyEnv string
-	members, mode      string
-	combine            string
-	threshold          float64
 }
 
 func (f *classifierFlags) bind(fs *flag.FlagSet) {
-	fs.StringVar(&f.url, "url", "", "add: the whole URL a request posts to, such as http://localhost:8000/v1/systemone")
-	fs.StringVar(&f.model, "model", "", "add: the model field of a request. Empty leaves it out")
-	fs.StringVar(&f.keyEnv, "key-env", "", "add: the env variable that holds the API key at call time")
-	fs.StringVar(&f.members, "members", "", "use: classifiers in the order they are asked, comma separated. claude is built in")
-	fs.StringVar(&f.mode, "mode", "", "use: single, cascade or parallel. Empty is single for one member and cascade for more")
-	fs.Float64Var(&f.threshold, "threshold", 0, "use: cascade stops at the first member whose every answer reaches it. 0.8 when empty")
-	fs.StringVar(&f.combine, "combine", "", "use: parallel combines all or any. all when empty")
-}
-
-// The setup the use flags name
-// Members are split at commas and trimmed so `laya, claude` reads as two names
-func (f classifierFlags) setup() (classify.Setup, error) {
-	if f.members == "" {
-		return classify.Setup{}, fmt.Errorf("use: --members %w", errRequired)
-	}
-	members := strings.Split(f.members, ",")
-	for i, m := range members {
-		members[i] = strings.TrimSpace(m)
-	}
-	return classify.NewSetup(members, classify.Mode(f.mode), f.threshold, classify.Combine(f.combine))
+	fs.StringVar(&f.url, "url", "", "set: the whole URL a request posts to, such as http://localhost:8000/v1/systemone")
+	fs.StringVar(&f.model, "model", "", "set: the model field of a request. Empty leaves it out")
+	fs.StringVar(&f.keyEnv, "key-env", "", "set: the env variable that holds the API key at call time")
 }
 
 type classifierCommand struct {
-	home      homeDir
-	endpoints classify.Endpoints
-	decisions classify.Decisions
-	now       func() time.Time
-	out       io.Writer
+	home homeDir
+	now  func() time.Time
+	out  io.Writer
 }
 
-func (c classifierCommand) add(name string, e classify.Endpoint) error {
-	endpoints, err := c.endpoints.With(name, e)
+// A config before 0.7.0 is read without the decision of the point so set repairs a setup nodloop no longer runs
+func (c classifierCommand) set(cfg classifierConfig, point classify.Point, e classify.Endpoint) error {
+	current, err := cfg.without(point).endpoints()
 	if err != nil {
 		return err
 	}
-	if err := c.home.save("classifiers", endpoints); err != nil {
+	endpoints, err := current.With(point, e)
+	if err != nil {
 		return err
 	}
-	fmt.Fprintf(c.out, "classifier\t%s\t%s\n", name, e.URL)
-	return nil
-}
-
-func (c classifierCommand) use(point classify.Point, setup classify.Setup) error {
-	if err := point.Check(); err != nil {
+	if err := c.save(endpoints); err != nil {
 		return err
 	}
-	if err := c.endpoints.Check(setup); err != nil {
-		return err
-	}
-	decisions := maps.Clone(c.decisions)
-	if decisions == nil {
-		decisions = classify.Decisions{}
-	}
-	decisions[point] = setup
-	if err := c.home.save("decisions", decisions); err != nil {
-		return err
-	}
-	fmt.Fprintf(c.out, "point\t%s\t%s\n", point, setup)
+	fmt.Fprintf(c.out, "point\t%s\t%s\n", point, e.URL)
 	return nil
 }
 
 // The point asks claude alone again
-func (c classifierCommand) reset(point classify.Point) error {
-	if err := point.Check(); err != nil {
+func (c classifierCommand) unset(cfg classifierConfig, point classify.Point) error {
+	current, err := cfg.endpoints()
+	if err != nil {
 		return err
 	}
-	decisions := maps.Clone(c.decisions)
-	delete(decisions, point)
-	if decisions == nil {
-		decisions = classify.Decisions{}
+	endpoints, err := current.Without(point)
+	if err != nil {
+		return err
 	}
-	if err := c.home.save("decisions", decisions); err != nil {
+	if err := c.save(endpoints); err != nil {
 		return err
 	}
 	fmt.Fprintf(c.out, "point\t%s\tclaude (default)\n", point)
 	return nil
 }
 
-// Refused while a point names it so no setup is left with a member that cannot be built
-func (c classifierCommand) remove(name string) error {
-	if _, ok := c.endpoints[name]; !ok {
-		return fmt.Errorf("%w: %s", classify.ErrClassifierUnknown, name)
+// Writes the endpoints and drops the decisions of a config before 0.7.0
+func (c classifierCommand) save(endpoints classify.Endpoints) error {
+	if err := c.home.save("classifiers", endpoints); err != nil {
+		return err
 	}
-	if points := c.decisions.Using(name); len(points) > 0 {
-		return fmt.Errorf("%w: %s is a member of %v. Run nodloop classifier use or reset first", classify.ErrClassifierInUse, name, points)
-	}
-	endpoints := maps.Clone(c.endpoints)
-	delete(endpoints, name)
-	return c.home.save("classifiers", endpoints)
+	return c.home.save("decisions", nil)
 }
 
-// Endpoints by name and after them every point with its setup or claude alone
-func (c classifierCommand) list() {
-	for _, name := range slices.Sorted(maps.Keys(c.endpoints)) {
-		e := c.endpoints[name]
-		fmt.Fprintf(c.out, "classifier\t%s\t%s", name, e.URL)
+// Every point with its endpoint or claude alone
+func (c classifierCommand) list(cfg classifierConfig) error {
+	endpoints, err := cfg.endpoints()
+	if err != nil {
+		return err
+	}
+	for _, point := range classify.Points() {
+		e, ok := endpoints[point]
+		if !ok {
+			fmt.Fprintf(c.out, "point\t%s\tclaude (default)\n", point)
+			continue
+		}
+		fmt.Fprintf(c.out, "point\t%s\t%s", point, e.URL)
 		if e.Model != "" {
 			fmt.Fprintf(c.out, "\tmodel %s", e.Model)
 		}
@@ -174,26 +209,27 @@ func (c classifierCommand) list() {
 		}
 		fmt.Fprintln(c.out)
 	}
-	for _, point := range classify.Points() {
-		text := "claude (default)"
-		if setup, ok := c.decisions[point]; ok {
-			text = setup.String()
-		}
-		fmt.Fprintf(c.out, "point\t%s\t%s\n", point, text)
-	}
+	return nil
 }
 
-// One question to the endpoint so a user sees it answers before a point relies on it
-func (c classifierCommand) probe(ctx context.Context, name string, getenv func(string) string) error {
-	e, ok := c.endpoints[name]
+// One question to the endpoint of the point so a user sees it answers before the point relies on it
+func (c classifierCommand) probe(ctx context.Context, cfg classifierConfig, point classify.Point, getenv func(string) string) error {
+	if err := point.Check(); err != nil {
+		return err
+	}
+	endpoints, err := cfg.endpoints()
+	if err != nil {
+		return err
+	}
+	e, ok := endpoints[point]
 	if !ok {
-		return fmt.Errorf("%w: %s", classify.ErrClassifierUnknown, name)
+		return fmt.Errorf("%w: %s", classify.ErrPointUnset, point)
 	}
 	start := c.now()
 	answers, err := e.Classifier(getenv, classifierTimeout).Classify(ctx, probeQuestion)
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(c.out, "%s\t%s\t%dms\n", name, answers, c.now().Sub(start).Milliseconds())
+	fmt.Fprintf(c.out, "%s\t%s\t%s\t%dms\n", point, e.Name(), answers, c.now().Sub(start).Milliseconds())
 	return nil
 }

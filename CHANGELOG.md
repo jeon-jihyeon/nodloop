@@ -28,6 +28,7 @@ Every release tag publishes the plugin, the darwin and linux binaries and both S
 - The holdout draws a turn by the session and its previous run instead of the count of its runs
 - A run receives its items most specific first, then the ones a person approved or reaffirmed last, instead of by id, so a cut at the size limit drops the general and stale ones
 - Release archives carry a build provenance attestation and an SPDX SBOM. CI tests on macOS too, with the race detector on every package and actions pinned by commit
+- A decision point asks one endpoint and falls back to claude when the endpoint fails or any answer is below 0.8. `nodloop classifier set`, `unset`, `list` and `probe <point>` replace `add`, `use`, `reset` and `remove`, and cascades of several endpoints and parallel setups are gone. A config before 0.7.0 is read as the endpoint each point asked first, and one that asked another way fails with how to set it again
 
 ### Fixed
 - A command named `(` or `)` alone renders quoted for the guard, so it can never read as the start or end of a subshell. Found by fuzzing

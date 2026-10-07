@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 
 	"github.com/jeon-jihyeon/nodloop/internal/atomicfile"
-	"github.com/jeon-jihyeon/nodloop/internal/classify"
 )
 
 const configFile = "config.json"
@@ -24,11 +23,7 @@ type userConfig struct {
 	// How a conversation records the verdicts it infers
 	// NODLOOP_SESSION overrides it per process
 	SessionMode string `json:"session_mode,omitempty"`
-	// Endpoints a decision point may ask by name
-	Classifiers classify.Endpoints `json:"classifiers,omitempty"`
-	// The setup of each decision point a user set up
-	// A point left out asks claude alone
-	Decisions classify.Decisions `json:"decisions,omitempty"`
+	classifierConfig
 	// The keys nodloop server serve accepts
 	Server serverConfig `json:"server,omitzero"`
 }
@@ -79,7 +74,8 @@ func (h homeDir) readConfig() (userConfig, error) {
 }
 
 // Writes one key of config.json and keeps the value of every other key
-// The file is written again indented with its keys sorted
+// 1. a nil value removes the key
+// 2. the file is written again indented with its keys sorted
 func (h homeDir) save(key string, value any) error {
 	doc := map[string]json.RawMessage{}
 	b, err := os.ReadFile(h.configPath())
@@ -92,7 +88,9 @@ func (h homeDir) save(key string, value any) error {
 			return fmt.Errorf("%w: %s: %w", errConfigInvalid, h.configPath(), err)
 		}
 	}
-	if doc[key], err = json.Marshal(value); err != nil {
+	if value == nil {
+		delete(doc, key)
+	} else if doc[key], err = json.Marshal(value); err != nil {
 		return err
 	}
 	out, err := json.MarshalIndent(doc, "", "  ")

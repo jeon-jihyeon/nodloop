@@ -142,19 +142,16 @@ commands:
   config session_mode [<mode>]
                             Print or save how a conversation records the verdicts it infers: deferred, immediate, manual
                             or off. deferred by default and NODLOOP_SESSION overrides it
-  classifier add <name> --url <u> [--model <m>] [--key-env <ENV>]
-                            Add an endpoint of the Jev wire format the README shows, such as
-                            http://localhost:8000/v1/classify. The key is read from the env at call time and never saved
-  classifier use <point> --members <a,b> [--mode single|cascade|parallel] [--threshold <t>] [--combine all|any]
-                            Set which classifiers answer a decision point and how. claude is the built in member.
-                            Points: critic, the second reader of a drafted lesson, where claude is the claude critic, and
-                            reaction, which judges whether the user's message corrects or approves the previous answer
-                            before the conversation does, where claude defers to the conversation. Every answer is
-                            recorded as a classify trace
-  classifier reset <point>  The point asks claude alone again
-  classifier remove <name>  Remove an endpoint no point uses
-  classifier list           Endpoints and the setup of every point
-  classifier probe <name>   Ask the endpoint one question and print its answer and time
+  classifier set <point> --url <u> [--model <m>] [--key-env <ENV>]
+                            Ask an endpoint of the Jev wire format the README shows at a decision point before claude,
+                            such as http://localhost:8000/v1/classify. claude answers when the endpoint fails or any
+                            answer is below 0.8. Points: critic, the second reader of a drafted lesson, and reaction,
+                            which judges whether the user's message corrects or approves the previous answer before the
+                            conversation does. The key is read from the env at call time and never saved. Every answer
+                            is recorded as a classify trace
+  classifier unset <point>  The point asks claude alone again
+  classifier list           Every point with its endpoint or claude alone
+  classifier probe <point>  Ask the endpoint of the point one question and print its answer and time
   server key add <name> --tenant <t> --role producer|reviewer|approver
                             Print a new key for nodloop server serve once and save only its SHA-256 in config.json.
                             A producer records runs and verdicts, a reviewer also drafts and proposes knowledge and an

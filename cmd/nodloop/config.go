@@ -4,9 +4,7 @@ import (
 	"cmp"
 	"fmt"
 	"io"
-	"maps"
 	"path/filepath"
-	"slices"
 	"strconv"
 	"strings"
 
@@ -27,8 +25,7 @@ const (
 type config struct {
 	recordDir   string
 	home        homeDir
-	classifiers classify.Endpoints
-	decisions   classify.Decisions
+	classifiers classifierConfig
 	holdout     holdout
 	// session_mode of config.json as written, checked where a hook reads it
 	sessionMode string
@@ -50,7 +47,7 @@ func resolveConfig(getenv func(string) string, recordDir string) (config, error)
 	if err != nil {
 		return config{}, err
 	}
-	return config{recordDir: records, home: h, classifiers: uc.Classifiers, decisions: uc.Decisions, holdout: holdout(uc.Holdout), sessionMode: uc.SessionMode}, nil
+	return config{recordDir: records, home: h, classifiers: uc.classifierConfig, holdout: holdout(uc.Holdout), sessionMode: uc.SessionMode}, nil
 }
 
 // The record flag a command pasted into another shell needs to read these records
@@ -139,9 +136,15 @@ func (c configCommand) list(getenv func(string) string) error {
 	if uc.Holdout != 0 {
 		holdout = strconv.FormatFloat(uc.Holdout, 'g', -1, 64)
 	}
-	decisions := make([]string, 0, len(uc.Decisions))
-	for _, p := range slices.Sorted(maps.Keys(uc.Decisions)) {
-		decisions = append(decisions, string(p))
+	points := "unreadable, run nodloop classifier list"
+	if endpoints, err := uc.endpoints(); err == nil {
+		var set []string
+		for _, p := range classify.Points() {
+			if _, ok := endpoints[p]; ok {
+				set = append(set, string(p))
+			}
+		}
+		points = strings.Join(set, ",")
 	}
 	keys := make([]string, 0, len(uc.Server.Keys))
 	for _, k := range uc.Server.Keys {
@@ -156,8 +159,7 @@ func (c configCommand) list(getenv func(string) string) error {
 		{"session_mode", envSession, uc.SessionMode, string(mode)},
 		{"approver", "", uc.Approver, uc.Approver},
 		{"holdout", "", holdout, cmp.Or(holdout, "0")},
-		{"classifiers", "", strings.Join(slices.Sorted(maps.Keys(uc.Classifiers)), ","), ""},
-		{"decisions", "", strings.Join(decisions, ","), ""},
+		{"classifiers", "", points, ""},
 		{"server keys", "", strings.Join(keys, ","), ""},
 		{"claude binary", envClaudeBin, "", cmp.Or(getenv(envClaudeBin), "claude")},
 		{"model", envLLMModel, "", cmp.Or(getenv(envLLMModel), "sonnet")},

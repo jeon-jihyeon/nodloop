@@ -12,7 +12,9 @@ var (
 	errAppliedFlag = errors.New("bad --applied")
 	errHeaderFlag  = errors.New("bad --header")
 	// A proposal from a run teaches what a person corrected
-	errConfigInvalid    = errors.New(configFile + " is not valid JSON")
+	errConfigInvalid = errors.New(configFile + " is not valid JSON")
+	// A classifier setup of a config before 0.7.0 that no single endpoint answers like
+	errSetupRetired     = errors.New("classifier setup no longer run")
 	errUnexpectedOutput = errors.New("unexpected output")
 	errWrongAnswer      = errors.New("wrong answer")
 	errVetoExample      = errors.New("veto example is not a JSON object")

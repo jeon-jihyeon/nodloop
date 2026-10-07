@@ -1,12 +1,10 @@
 package classify
 
 import (
-	"cmp"
 	"fmt"
 	"maps"
 	"net/url"
 	"slices"
-	"strings"
 	"time"
 )
 
@@ -34,141 +32,6 @@ func (p Point) Check() error {
 	return nil
 }
 
-// How the members of a setup answer together
-type Mode string
-
-const (
-	ModeSingle   Mode = "single"   // one member
-	ModeCascade  Mode = "cascade"  // in order until one answers every question at the threshold
-	ModeParallel Mode = "parallel" // every member and their answers combined
-)
-
-func (m Mode) Valid() bool {
-	return slices.Contains([]Mode{ModeSingle, ModeCascade, ModeParallel}, m)
-}
-
-// How parallel answers combine
-type Combine string
-
-const (
-	CombineAll Combine = "all" // yes only when every member says yes
-	CombineAny Combine = "any" // yes when one member says yes
-)
-
-func (c Combine) Valid() bool {
-	return c == CombineAll || c == CombineAny
-}
-
-// The member every point has without an endpoint
-const claude = "claude"
-
-// Threshold of a cascade that names none
-const defaultThreshold = 0.8
-
-type Setup struct {
-	Mode Mode `json:"mode"`
-	// Asked in this order
-	Members []string `json:"members"`
-	// Only for cascade
-	Threshold float64 `json:"threshold,omitempty"`
-	// Only for parallel
-	Combine Combine `json:"combine,omitempty"`
-}
-
-// The mode and the members in order and the parameter of the mode
-// Tab separated
-func (s Setup) String() string {
-	text := fmt.Sprintf("%s\t%s", s.Mode, strings.Join(s.Members, ","))
-	switch s.Mode {
-	case ModeCascade:
-		text += fmt.Sprintf("\tthreshold %v", s.Threshold)
-	case ModeParallel:
-		text += "\tcombine " + string(s.Combine)
-	}
-	return text
-}
-
-// A checked setup with the defaults filled
-// 1. no mode is single for one member and cascade for more
-// 2. a cascade without a threshold stops at 0.8 and a parallel without a combine is all
-func NewSetup(members []string, mode Mode, threshold float64, combine Combine) (Setup, error) {
-	if mode == "" {
-		mode = ModeCascade
-		if len(members) == 1 {
-			mode = ModeSingle
-		}
-	}
-	s := Setup{Mode: mode, Members: members, Threshold: threshold, Combine: combine}
-	switch mode {
-	case ModeCascade:
-		s.Threshold = cmp.Or(threshold, defaultThreshold)
-	case ModeParallel:
-		s.Combine = cmp.Or(combine, CombineAll)
-	}
-	if err := s.Check(); err != nil {
-		return Setup{}, err
-	}
-	return s, nil
-}
-
-// The mode takes the members and exactly the parameter it needs
-// A config edited by hand is checked again when it is read
-func (s Setup) Check() error {
-	if !s.Mode.Valid() {
-		return fmt.Errorf("%w: mode %q", ErrSetupInvalid, s.Mode)
-	}
-	if err := s.checkMembers(); err != nil {
-		return err
-	}
-	return s.checkParameter()
-}
-
-// Single takes one member and the other modes two or more
-// No member is named twice
-func (s Setup) checkMembers() error {
-	single := s.Mode == ModeSingle
-	switch {
-	case single && len(s.Members) != 1:
-		return fmt.Errorf("%w: single takes one member, got %d", ErrSetupInvalid, len(s.Members))
-	case !single && len(s.Members) < 2:
-		return fmt.Errorf("%w: %s takes two members or more, got %d", ErrSetupInvalid, s.Mode, len(s.Members))
-	case len(slices.Compact(slices.Sorted(slices.Values(s.Members)))) < len(s.Members):
-		return fmt.Errorf("%w: a member is named twice", ErrSetupInvalid)
-	}
-	return nil
-}
-
-// A cascade needs a threshold and a parallel a combine and no other mode takes either
-// Without them a cascade would let its first member answer alone and a parallel would keep the first answer
-func (s Setup) checkParameter() error {
-	cascade, parallel := s.Mode == ModeCascade, s.Mode == ModeParallel
-	switch {
-	case !cascade && s.Threshold != 0:
-		return fmt.Errorf("%w: threshold is for cascade only", ErrSetupInvalid)
-	case cascade && (s.Threshold <= 0 || s.Threshold > 1):
-		return fmt.Errorf("%w: a cascade threshold lies above 0 and up to 1, got %v", ErrSetupInvalid, s.Threshold)
-	case !parallel && s.Combine != "":
-		return fmt.Errorf("%w: combine is for parallel only", ErrSetupInvalid)
-	case parallel && !s.Combine.Valid():
-		return fmt.Errorf("%w: combine %q is neither all nor any", ErrSetupInvalid, s.Combine)
-	}
-	return nil
-}
-
-// The setup of each point a user set up
-type Decisions map[Point]Setup
-
-// The points whose setup names the member
-func (d Decisions) Using(name string) []Point {
-	var points []Point
-	for _, p := range slices.Sorted(maps.Keys(d)) {
-		if slices.Contains(d[p].Members, name) {
-			points = append(points, p)
-		}
-	}
-	return points
-}
-
 type Endpoint struct {
 	// The whole URL a request posts to such as http://localhost:8000/v1/systemone
 	URL string `json:"url"`
@@ -188,6 +51,15 @@ func (e Endpoint) check() error {
 	return nil
 }
 
+// The host of the URL as records and reports name the endpoint
+func (e Endpoint) Name() string {
+	u, err := url.Parse(e.URL)
+	if err != nil || u.Host == "" {
+		return e.URL
+	}
+	return u.Host
+}
+
 // The client of the endpoint with the key its env holds now
 func (e Endpoint) Classifier(getenv func(string) string, timeout time.Duration) *HTTP {
 	key := ""
@@ -197,17 +69,14 @@ func (e Endpoint) Classifier(getenv func(string) string, timeout time.Duration) 
 	return NewHTTP(e, key, timeout)
 }
 
-// Endpoints by the name a setup uses
-type Endpoints map[string]Endpoint
+// The endpoint each point asks before its built in member
+// A point left out asks the built in member alone
+type Endpoints map[Point]Endpoint
 
-// The endpoints with one added or replaced
-// claude names the built in member of every point so no endpoint takes it
-func (es Endpoints) With(name string, e Endpoint) (Endpoints, error) {
-	switch name {
-	case "":
-		return nil, fmt.Errorf("%w: a name is required", ErrEndpointInvalid)
-	case claude:
-		return nil, fmt.Errorf("%w: the name %q is reserved", ErrEndpointInvalid, name)
+// The endpoints with the one of the point added or replaced
+func (es Endpoints) With(p Point, e Endpoint) (Endpoints, error) {
+	if err := p.Check(); err != nil {
+		return nil, err
 	}
 	if err := e.check(); err != nil {
 		return nil, err
@@ -216,33 +85,29 @@ func (es Endpoints) With(name string, e Endpoint) (Endpoints, error) {
 	if out == nil {
 		out = Endpoints{}
 	}
-	out[name] = e
+	out[p] = e
 	return out, nil
 }
 
-// Every member of the setup is claude or an endpoint
-func (es Endpoints) Check(s Setup) error {
-	for _, name := range s.Members {
-		if _, ok := es[name]; !ok && name != claude {
-			return fmt.Errorf("%w: %s. Add it with nodloop classifier add", ErrClassifierUnknown, name)
+// The endpoints without the one of the point
+func (es Endpoints) Without(p Point) (Endpoints, error) {
+	if err := p.Check(); err != nil {
+		return nil, err
+	}
+	out := maps.Clone(es)
+	delete(out, p)
+	return out, nil
+}
+
+// Every key is a point and every endpoint a URL so a config edited by hand fails before a call
+func (es Endpoints) Check() error {
+	for _, p := range slices.Sorted(maps.Keys(es)) {
+		if err := p.Check(); err != nil {
+			return err
+		}
+		if err := es[p].check(); err != nil {
+			return fmt.Errorf("%s: %w", p, err)
 		}
 	}
 	return nil
-}
-
-// The members of the setup in order
-// claude is the built in member of the point and every other name is its endpoint with the key its env holds
-func (es Endpoints) Members(s Setup, builtin Classifier, getenv func(string) string, timeout time.Duration) ([]Member, error) {
-	if err := es.Check(s); err != nil {
-		return nil, err
-	}
-	members := make([]Member, 0, len(s.Members))
-	for _, name := range s.Members {
-		if name == claude {
-			members = append(members, Member{Name: name, Classifier: builtin})
-			continue
-		}
-		members = append(members, Member{Name: name, Classifier: es[name].Classifier(getenv, timeout)})
-	}
-	return members, nil
 }
