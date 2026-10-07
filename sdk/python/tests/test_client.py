@@ -16,7 +16,7 @@ async def test_loop(binary: str, records: str) -> None:
         run = await c.record("support-bot", "Here are the refund steps", ACME)
         await c.judge(run, "reject", reason="the refund window was missing", reason_code="scope")
         proposed = await c.propose("judgment", "Quote the refund window before the steps", from_run=run, item_id="refund-window")
-        await c.approve(proposed["id"], proposed["version"], "ann")
+        await c.approve(proposed.id, proposed.version, "ann")
 
         acme = await c.knowledge("support-bot", ACME)
         globex = await c.knowledge("support-bot", {"tenant": ["globex"], "task": ["refund"]})
@@ -49,7 +49,7 @@ async def test_check_call(binary: str, records: str, tool: str, arguments: dict,
         run = await c.record("ops-bot", "ran rm -rf /data", {"env": ["prod"]})
         await c.judge(run, "reject", reason="never delete data")
         proposed = await c.propose("judgment", "Never delete under /data", from_run=run, item_id="no-rm-data", veto=NO_RM)
-        await c.approve(proposed["id"], proposed["version"], "ann")
+        await c.approve(proposed.id, proposed.version, "ann")
 
         decision = await c.check_call(tool, arguments)
 
@@ -63,10 +63,11 @@ async def test_server(server: tuple[str, str]) -> None:
         run = await c.record("support-bot", "Here are the refund steps", ACME)
         await c.judge(run, "reject", reason="the refund window was missing")
         proposed = await c.propose("judgment", "Quote the refund window", from_run=run, item_id="refund-window")
-        approved = await c.approve(proposed["id"], proposed["version"], "mallory")
+        approved = await c.approve(proposed.id, proposed.version, "mallory")
         acme = await c.knowledge("support-bot", ACME)
 
-    assert approved["approver"] == "ann"
+    assert (approved.id, approved.version, approved.status, approved.approver) == ("refund-window", 1, "approved", "ann")
+    assert (proposed.id, proposed.status) == ("refund-window", "candidate")
     assert [i.id for i in acme.items] == ["refund-window"]
 
 

@@ -21,7 +21,7 @@ async def seed(c: Client) -> None:
     await c.judge(run, "reject", reason="missing the window")
     for item_id, content, veto in (("window", "Quote the refund window", None), ("no-rm", "Never run rm", NO_RM)):
         p = await c.propose("judgment", content, from_run=run, item_id=item_id, veto=veto)
-        await c.approve(p["id"], p["version"], "ann")
+        await c.approve(p.id, p.version, "ann")
 
 
 async def runs(c: Client) -> list[str]:
@@ -133,7 +133,7 @@ async def test_langchain_create_agent(binary: str, records: str) -> None:
         await c.judge(run, "reject", reason="never rm")
         veto = {"tool": "bash", "when": [{"field": "commands", "match": "(?m)^rm "}], "example": {"command": "rm -rf /data"}}
         p = await c.propose("judgment", "Never run rm through bash", from_run=run, item_id="no-rm-bash", veto=veto)
-        await c.approve(p["id"], p["version"], "ann")
+        await c.approve(p.id, p.version, "ann")
         mw = NodloopMiddleware(c, "bot", ACME)
         agent = create_agent(Scripted(messages=script), tools=[bash], system_prompt="You help", middleware=[mw])
 

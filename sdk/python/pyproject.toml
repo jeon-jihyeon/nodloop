@@ -2,7 +2,9 @@
 name = "nodloop"
 version = "0.6.6"
 description = "Record AI runs and the verdicts people give on them, and hand the knowledge they approve to the next run in the same place"
+readme = "README.md"
 license = "MIT"
+keywords = ["ai", "agents", "feedback", "human-in-the-loop", "langchain", "mcp", "memory"]
 requires-python = ">=3.10"
 dependencies = ["mcp>=2.0"]
 

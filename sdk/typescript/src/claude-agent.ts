@@ -41,7 +41,7 @@ export class NodloopHooks {
   // Claude Code sends the last answer under last_assistant_message and a turn without one records nothing
   stop: HookCallback = async (input) => {
     const answer = (input as { last_assistant_message?: string }).last_assistant_message ?? "";
-    if (answer.trim()) this.run = await this.client.record(this.producer, answer, this.labels, this.applied);
+    if (answer.trim()) this.run = await this.client.record({ producer: this.producer, output: answer, labels: this.labels, applied: this.applied });
     return {};
   };
 

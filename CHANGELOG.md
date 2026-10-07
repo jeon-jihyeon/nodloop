@@ -6,9 +6,13 @@ Every release tag publishes the plugin, the darwin and linux binaries and both S
 
 ### Added
 - `Item.Ref` and `Items.Refs` in the Go package, and a runnable example of the loop
+- The LangChain middleware in the TypeScript SDK as `nodloop/langchain`
+- READMEs for the PyPI and npm pages
 
 ### Changed
 - `Client.Items` and `Client.Waiting` return `Items`
+- The TypeScript `record` takes one object: `record({ producer, output, labels, applied, subject })`
+- `propose` and `approve` return `Candidate` and `Approval` in both SDKs instead of untyped objects
 
 ## 0.6.6 - 2026-10-07
 

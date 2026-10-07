@@ -15,6 +15,7 @@
   "exports": {
     ".": "./dist/index.js",
     "./claude-agent": "./dist/claude-agent.js",
+    "./langchain": "./dist/langchain.js",
     "./openai-agents": "./dist/openai-agents.js"
   },
   "files": [
@@ -30,20 +31,39 @@
   },
   "peerDependencies": {
     "@anthropic-ai/claude-agent-sdk": ">=0.1",
-    "@openai/agents": ">=0.1"
+    "@langchain/core": ">=1.0",
+    "@openai/agents": ">=0.1",
+    "langchain": ">=1.0"
   },
   "peerDependenciesMeta": {
     "@anthropic-ai/claude-agent-sdk": {
       "optional": true
     },
+    "@langchain/core": {
+      "optional": true
+    },
     "@openai/agents": {
+      "optional": true
+    },
+    "langchain": {
       "optional": true
     }
   },
   "devDependencies": {
     "@anthropic-ai/claude-agent-sdk": ">=0.1.0",
+    "@langchain/core": "^1.2.13",
     "@openai/agents": ">=0.3.0",
     "@types/node": "^24.0.0",
+    "langchain": "^1.5.14",
     "typescript": "^5.9.0"
-  }
+  },
+  "keywords": [
+    "ai",
+    "agents",
+    "feedback",
+    "human-in-the-loop",
+    "langchain",
+    "mcp",
+    "memory"
+  ]
 }

@@ -34,7 +34,7 @@ export class NodloopHooks {
   // Records the output of an agent that ended as a run
   async record(output: unknown): Promise<string> {
     const text = typeof output === "string" ? output : JSON.stringify(output);
-    this.run = await this.client.record(this.producer, text, this.labels, this.applied);
+    this.run = await this.client.record({ producer: this.producer, output: text, labels: this.labels, applied: this.applied });
     return this.run;
   }
 

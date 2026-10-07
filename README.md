@@ -117,7 +117,7 @@ The whole loop runs as [example_test.go](example_test.go). A verdict of `edit` c
 
 Labels are any keys and values. For a service, name the situation the way your team reads it: `tenant` and `customer` for who it served, `agent` for which agent ran, `task` for the kind of work and `env` for where it ran. A proposal may name only label values a recorded run carries, so a typo fails instead of making an item that matches nothing. To prepare an item for a tenant before its first run, pass `--new-labels` to `knowledge propose`, `new_labels` to the MCP tool or `NewLabels` to the Go client, and the item keeps that it was allowed.
 
-Python and TypeScript agents install `pip install nodloop` or `npm install nodloop`, built from `sdk/`. They start a local `nodloop mcp` over stdio, so no server runs, and fetch the release binary when none is installed. Each package carries adapters for three frameworks, so a correction reaches the agent's next run without glue code:
+Python and TypeScript agents install `pip install nodloop` or `npm install nodloop`, built from `sdk/`. They start a local `nodloop mcp` over stdio, so no server runs, and fetch the release binary when none is installed. Each package carries adapters for LangChain, the OpenAI Agents SDK and the Claude Agent SDK, so a correction reaches the agent's next run without glue code. The [Python](sdk/python/README.md) and [TypeScript](sdk/typescript/README.md) READMEs list every method:
 
 ```python
 from nodloop import Client
