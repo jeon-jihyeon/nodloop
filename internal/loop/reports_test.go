@@ -2,7 +2,9 @@ package loop_test
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -41,4 +43,37 @@ func TestStoresReport(t *testing.T) {
 	}
 	_, err = stores.Report(ctx, "nope", st.Clock.Now())
 	assert.ErrorIs(t, err, loop.ErrReportUnknown)
+}
+
+func TestReplays(t *testing.T) {
+	at := time.Date(2026, 10, 7, 0, 0, 0, 0, time.UTC)
+	replayed := func(minute int, output string) trace.Trace {
+		return trace.Trace{Name: trace.NameReplay, Time: at.Add(time.Duration(minute) * time.Minute), Output: json.RawMessage(output)}
+	}
+	failed := `{"id":"a","version":1,"cases":[{"expect":"breaks"},{"expect":"keeps"},{"expect":"keeps"}],"missed":0,"overreach":1}`
+	passed := `{"id":"a","version":1,"cases":[{"expect":"breaks"}],"missed":0,"overreach":0}`
+	tcs := []struct {
+		name string
+		args trace.Traces
+		want []loop.ReplayRow
+	}{
+		{"no replay has no row", trace.Traces{{Name: trace.NameRun}}, []loop.ReplayRow{}},
+		{
+			"the newest replay of a version wins",
+			trace.Traces{replayed(2, passed), replayed(1, failed)},
+			[]loop.ReplayRow{{ID: "a", Version: 1, Passed: true, Corrected: 1, Time: at.Add(2 * time.Minute)}},
+		},
+		{
+			"cases count by what they expect",
+			trace.Traces{replayed(1, failed)},
+			[]loop.ReplayRow{{ID: "a", Version: 1, Corrected: 1, Approved: 2, Overreach: 1, Time: at.Add(time.Minute)}},
+		},
+		{"an output that does not decode is left out", trace.Traces{replayed(1, `[`)}, []loop.ReplayRow{}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.want, loop.Replays(tc.args))
+		})
+	}
 }

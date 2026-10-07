@@ -35,6 +35,16 @@ func (s Set) Versions() Set {
 	return out
 }
 
+// The newest record of one version of id
+func (s Set) Version(id string, version int) (Knowledge, error) {
+	for _, k := range s {
+		if k.ID == id && k.Version == version {
+			return k, nil
+		}
+	}
+	return Knowledge{}, fmt.Errorf("%w: %s v%d", ErrNotFound, id, version)
+}
+
 // Active record per id
 // 1. the latest record per id and version decides that version's status
 // 2. an approved version wins

@@ -20,10 +20,11 @@ const (
 	ReportCritic  ReportName = "critic"  // how each critic agreed with people
 	ReportEffect  ReportName = "effect"  // the runs that applied items against the holdout
 	ReportHealth  ReportName = "health"  // verdicts and outcomes per knowledge version
+	ReportReplay  ReportName = "replay"  // the newest replay of each version
 )
 
 func ReportNames() []ReportName {
-	return []ReportName{ReportLoop, ReportExtract, ReportCritic, ReportEffect, ReportHealth}
+	return []ReportName{ReportLoop, ReportExtract, ReportCritic, ReportEffect, ReportHealth, ReportReplay}
 }
 
 func (n ReportName) Valid() bool {
@@ -82,6 +83,10 @@ func (e Evidence) Effect() []EffectRow {
 	return e.runs.Effect(e.items)
 }
 
+func (e Evidence) Replays() []ReplayRow {
+	return Replays(e.traces)
+}
+
 // The stores every report reads from
 type Stores struct {
 	Traces   TraceStore
@@ -113,6 +118,8 @@ func (s Stores) Report(ctx context.Context, name ReportName, now time.Time) (any
 		return e.Critics(), nil
 	case ReportEffect:
 		return e.Effect(), nil
+	case ReportReplay:
+		return e.Replays(), nil
 	}
 	return e.Loop(), nil
 }
