@@ -32,11 +32,12 @@ type knowledgeFlags struct {
 	feedbackIDs, outcomeIDs                                           listFlag
 	labels, except                                                    labelFlag
 	vetoTool, vetoField, vetoMatch, vetoUnless, vetoExample           string
-	stale, newLabels                                                  bool
+	stale, newLabels, replay                                          bool
 }
 
 func (f *knowledgeFlags) bind(fs *flag.FlagSet) {
 	fs.BoolVar(&f.stale, "stale", false, "list: only the approved versions past their review deadline")
+	fs.BoolVar(&f.replay, "replay", false, "check: also replay every new item of the compaction against its outputs")
 	fs.BoolVar(&f.newLabels, "new-labels", false, "propose: allow label values no recorded run carries yet such as a new tenant")
 	fs.StringVar(&f.id, "id", "", "knowledge id. propose generates one when empty")
 	fs.IntVar(&f.version, "version", 0, "version for approve and retire")
