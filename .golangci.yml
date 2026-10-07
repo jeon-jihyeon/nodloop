@@ -85,6 +85,8 @@ linters:
               desc: application code never touches the jsonl format
             - pkg: github.com/jeon-jihyeon/nodloop/internal/pg
               desc: application code takes stores through its own interfaces and never the Postgres store
+            - pkg: github.com/jeon-jihyeon/nodloop/internal/otel
+              desc: application code never sends telemetry
             - pkg: github.com/jeon-jihyeon/nodloop/internal/guard
               desc: application packages do not import guard
             - pkg: github.com/jeon-jihyeon/nodloop/internal/mcp

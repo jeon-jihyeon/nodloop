@@ -10,6 +10,7 @@ var (
 	// A run label is key=value and an applied item is id:version
 	errLabelFlag   = errors.New("bad --label")
 	errAppliedFlag = errors.New("bad --applied")
+	errHeaderFlag  = errors.New("bad --header")
 	// A proposal from a run teaches what a person corrected
 	errConfigInvalid    = errors.New(configFile + " is not valid JSON")
 	errUnexpectedOutput = errors.New("unexpected output")
