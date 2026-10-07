@@ -2,9 +2,11 @@ package jsonl_test
 
 import (
 	"encoding/json"
+	"errors"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"syscall"
@@ -542,4 +544,24 @@ func TestFileRepair(t *testing.T) {
 			assert.NoError(t, err)
 		})
 	}
+}
+
+// Newest over any content finds the records All finds in the reverse order and agrees on corrupt lines
+func FuzzFileNewest(f *testing.F) {
+	for _, seed := range []string{
+		"", "{\"id\":\"a\"}\n", "{\"id\":\"a\"}\nnot json\n{\"id\":\"b\"}", "\uFEFF{\"id\":\"a\"}", "{\"id\":\"a\"}\n{\"id", "\n\n  \n[1]\n",
+	} {
+		f.Add(seed)
+	}
+	f.Fuzz(func(t *testing.T, content string) {
+		dir := t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "rows.jsonl"), []byte(content), 0o600))
+		file, err := jsonl.Open[row](dir, "rows.jsonl")
+		require.NoError(t, err)
+		all, allErr := file.All()
+		newest, newestErr := file.Newest(func(row) bool { return true }, nil, 0)
+		slices.Reverse(all)
+		assert.Equal(t, all, newest)
+		assert.Equal(t, errors.Is(allErr, jsonl.ErrCorrupt), errors.Is(newestErr, jsonl.ErrCorrupt))
+	})
 }

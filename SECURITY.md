@@ -33,6 +33,8 @@ The Python and TypeScript SDKs start a local `nodloop` binary or fetch the relea
 
 The `plugin/bin/nodloop` launcher downloads a release archive from this repository over HTTPS into `~/.nodloop/bin` and checks it against `checksums.txt`. A way to make it fetch or run something else is in scope.
 
+`checksums.txt` comes from the same release, so it shows an archive arrived whole, not who built it. Every archive also carries a build provenance attestation signed through GitHub Actions and an SPDX SBOM. `gh attestation verify nodloop_darwin_arm64.tar.gz --repo jeon-jihyeon/nodloop` checks that the archive was built by the release workflow of this repository from its tag.
+
 Model output is untrusted. Every proposed knowledge item waits for a named approval before a prompt receives it. That gate is a design property, not a security boundary. Do not rely on it to contain hostile model output.
 
 ## Supported versions
