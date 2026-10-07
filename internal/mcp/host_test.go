@@ -31,6 +31,7 @@ func TestHostOpenFails(t *testing.T) {
 		"propose_extraction": {"from": "t", "relation": "add", "kind": "judgment", "content": "x", "critique": map[string]any{"states": true, "holds": true, "fits": true, "why": "ok"}},
 		"queue":              {}, "knowledge_health": {}, "reaffirm": {"id": "k", "version": 1, "approver": "jed"},
 		"check_call": {"tool": "Bash", "input": map[string]any{"command": "ls"}},
+		"report":     {"name": "loop"},
 	}
 	tools := c.Tools(t)
 	require.ElementsMatch(t, mcp.Tools(), tools)

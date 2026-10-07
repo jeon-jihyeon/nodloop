@@ -132,6 +132,18 @@ func TestServerQueueAndHealth(t *testing.T) {
 	require.NoError(t, c.Call(t, "knowledge_health", map[string]any{}, &health))
 	assert.Empty(t, health.Items)
 	assert.Empty(t, health.Issues)
+	var loopReport struct {
+		Name   string `json:"name"`
+		Report struct {
+			Totals struct {
+				Runs int `json:"runs"`
+			} `json:"totals"`
+		} `json:"report"`
+	}
+	require.NoError(t, c.Call(t, "report", map[string]any{"name": "loop"}, &loopReport))
+	assert.Equal(t, "loop", loopReport.Name)
+	assert.Equal(t, 1, loopReport.Report.Totals.Runs)
+	assert.ErrorContains(t, c.Run(t, "report", map[string]any{"name": "nope"}), "nope")
 }
 
 // A compaction of two items of one place: folder, draft, the conversation's coverage check and approval

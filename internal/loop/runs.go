@@ -29,7 +29,7 @@ type RunItem struct {
 	InferredRepeat   int `json:"inferred_repeat"`
 	// From the first correction the item cites to its approval
 	// Zero when it cites none
-	Settle time.Duration `json:"settle"`
+	Settle time.Duration `json:"settle_ns"`
 }
 
 // How far the runs went through the loop so the stage where it stalls reads at a glance
