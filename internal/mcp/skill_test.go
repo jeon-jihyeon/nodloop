@@ -44,7 +44,7 @@ func TestSkillTools(t *testing.T) {
 			want{
 				tools: []string{"feedback", "propose", "extraction", "propose_extraction", "approve", "run", "compaction", "propose_compaction", "check_compaction", "approve_compaction"},
 				commands: []string{"nodloop trace list --name run", "nodloop trace show", "nodloop knowledge for --producer session",
-					"nodloop knowledge waiting --producer session", "nodloop feedback list --trace", "nodloop knowledge retire"},
+					"nodloop knowledge waiting --producer session", "nodloop feedback list --trace", "nodloop knowledge retire", "nodloop knowledge replay"},
 				phrases: []string{"not a correction", "verdict `withdraw`", "the first line of the answer they corrected", "session mode `deferred`"},
 			},
 		},

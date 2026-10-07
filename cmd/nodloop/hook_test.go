@@ -700,7 +700,7 @@ func TestRunKnowledgeWaiting(t *testing.T) {
 		want string
 	}{
 		{"the repo waits for the candidate", []string{"waiting", "--producer", "session", "--label", "repo=nodloop"},
-			"short-msg\tv1\tjudgment\tkeep commit messages to one line\tscope runs of session. repo=nodloop\tfrom " + runs[0].ID + "\n"},
+			"short-msg\tv1\tjudgment\tkeep commit messages to one line\tscope runs of session. repo=nodloop\tfrom " + runs[0].ID + "\treplay none\n"},
 		{"another repo waits for nothing", []string{"waiting", "--producer", "session", "--label", "repo=other"}, ""},
 	}
 	for _, tc := range tcs {

@@ -52,6 +52,11 @@ commands:
                             Draft through claude -p what a correction of the run taught, check it against the items the run
                             reaches with the critic, a second claude call or the classifiers set up for the critic point, and
                             propose an add or an update. A duplicate or a conflict names the item
+  knowledge replay <id> [--version <n>] [--model <m>]
+                            Judge the version through claude -p against the outputs it should change, the corrected runs it
+                            cites, and those it should leave alone, the newest ten approved runs its scope reaches. A lesson
+                            that would change an approved output reaches too far. Recorded as a replay trace and shown by
+                            knowledge waiting. It never blocks an approval
   knowledge for --producer <p> [--label <key=value>]
                             The approved items a run of the producer with these labels applies, and their size
   knowledge waiting --producer <p> [--label <key=value>]
@@ -106,7 +111,9 @@ commands:
                             ended, refused drafts by what refused them, and the critic questions answered false
   report critic             Per critic: drafts judged and how often a pass or a refusal matched what a person later
                             decided on candidates of the same run, with the runs nobody decided yet.
-                            --json on loop, effect, extract and critic prints the report as one JSON value
+  report replay             Per knowledge version its newest replay: passed or failed, corrected outputs it missed and
+                            approved outputs it would have changed.
+                            --json on loop, effect, extract, critic and replay prints the report as one JSON value
   trace list [--name <n>] [--session <id>] [--subject <s>] [--limit <n>]
                             List traces newest first
   trace show <id>           Print one trace as JSON
@@ -157,7 +164,7 @@ commands:
                             Serve the MCP tools over streamable HTTP at /mcp for the keys, each tenant on its own records
                             under tenants of the record directory, or in one PostgreSQL database with --postgres or
                             NODLOOP_POSTGRES. 127.0.0.1:8787 by default. GET /v1/reports/<name> answers loop, extract,
-                            critic, effect or health as JSON to a reviewer or approver key and GET /healthz answers without one
+                            critic, effect, replay or health as JSON to a reviewer or approver key and GET /healthz answers without one
   export otel [--endpoint <url>] [--header <Name=value>] [--since <RFC3339>] [--with-output]
                             Send every run as an OpenTelemetry GenAI span and every verdict as a gen_ai.evaluation.result
                             event on it, in OTLP JSON over HTTP, so a collector, Langfuse or Phoenix shows them. The ids derive

@@ -215,6 +215,7 @@ var recordReports = map[string]func(c loopCommand, e loop.Evidence){
 	"extract": loopCommand.extractions,
 	"critic":  loopCommand.critics,
 	"effect":  loopCommand.effect,
+	"replay":  loopCommand.replays,
 }
 
 // A report as text lines or with --json as the value a dashboard or the HTTP API reads
@@ -303,6 +304,18 @@ func (c loopCommand) effect(e loop.Evidence) {
 	for _, row := range e.Effect() {
 		fmt.Fprintf(c.out, "effect\t%s\truns %d\tjudged %d\tcorrected %d\tsame reason %d\n",
 			row.Arm, row.Runs, row.Judged, row.Corrected, row.SameReason)
+	}
+}
+
+// One line per version from its newest replay: passed or failed, corrected outputs missed and approved outputs it would change
+func (c loopCommand) replays(e loop.Evidence) {
+	for _, row := range e.Replays() {
+		status := "failed"
+		if row.Passed {
+			status = "passed"
+		}
+		fmt.Fprintf(c.out, "replay\t%s\tv%d\t%s\tmissed %d of %d\toverreach %d of %d\t%s\n",
+			row.ID, row.Version, status, row.Missed, row.Corrected, row.Overreach, row.Approved, row.Time.Format(time.RFC3339))
 	}
 }
 

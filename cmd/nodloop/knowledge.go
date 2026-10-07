@@ -63,7 +63,7 @@ func (f *knowledgeFlags) bind(fs *flag.FlagSet) {
 		`propose: a tool_input JSON object the veto must block such as {"command":"sed -i s/a/b/ f"}`)
 	fs.StringVar(&f.from, "from", "",
 		"propose and extract: a run a person corrected by edit or reject. propose fills producer, labels and evidence from it unless given")
-	fs.StringVar(&f.model, "model", "", "compact, check and extract: model alias or name. Empty means the llm default")
+	fs.StringVar(&f.model, "model", "", "compact, check, extract and replay: model alias or name. Empty means the llm default")
 }
 
 // The candidate the propose flags describe
@@ -152,6 +152,8 @@ func runKnowledge(
 		err = flags.runPropose(ctx, a, stdout)
 	case args[0] == "extract":
 		err = flags.runExtract(ctx, a, client, getenv, stdout)
+	case args[0] == "replay":
+		err = flags.runReplay(ctx, id, a, client, stdout)
 	default:
 		err = flags.runRecords(ctx, args[0], id, a, stdout)
 	}
@@ -339,8 +341,12 @@ func (c knowledgeCommand) waiting(ctx context.Context, producer string, labels t
 		return err
 	}
 	for _, k := range all.Waiting(producer, labels) {
-		fmt.Fprintf(c.out, "%s\tv%d\t%s\t%s\tscope %s\tfrom %s\n",
-			k.ID, k.Version, k.Kind, k.Content, k.Run, strings.Join(k.Evidence.FeedbackTraceIDs, " "))
+		replayed, err := c.lastReplay(ctx, k.ID, k.Version)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(c.out, "%s\tv%d\t%s\t%s\tscope %s\tfrom %s\treplay %s\n",
+			k.ID, k.Version, k.Kind, k.Content, k.Run, strings.Join(k.Evidence.FeedbackTraceIDs, " "), replayed)
 	}
 	return nil
 }

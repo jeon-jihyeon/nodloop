@@ -52,11 +52,12 @@ const (
 	NameCheck    Name = "check"    // coverage check of a compaction
 	NameClassify Name = "classify" // answers of the classifiers a decision point asked
 	NameExtract  Name = "extract"  // one extraction of a lesson from a corrected run with its drafts and conclusion
+	NameReplay   Name = "replay"   // a lesson judged against the recorded outputs it should and should not catch
 )
 
 // Every name in a fixed order for messages
 func Names() []Name {
-	return []Name{NameRun, NameCheck, NameClassify, NameExtract}
+	return []Name{NameRun, NameCheck, NameClassify, NameExtract, NameReplay}
 }
 
 func (n Name) Valid() bool {

@@ -55,7 +55,7 @@ Tests that talk to a model are opt in:
 NODLOOP_LLM_LIVE=1 go test ./internal/llm/... -run Live
 ```
 
-Use haiku while iterating with `--model haiku` on the commands that call a model, such as `nodloop knowledge compact`, `nodloop knowledge check` and `nodloop knowledge extract`.
+Use haiku while iterating with `--model haiku` on the commands that call a model, such as `nodloop knowledge compact`, `nodloop knowledge check`, `nodloop knowledge extract` and `nodloop knowledge replay`.
 
 ## Layout
 
@@ -63,8 +63,8 @@ Use haiku while iterating with `--model haiku` on the commands that call a model
 |---|---|---|
 | Domain | `feedback`, `trace`, `llm`, `classify`, `veto`, `settings`, `jsonl`, `atomicfile` | No imports from the layers above |
 | Core | `knowledge` | The ledger of items, their scopes and their history. Never a file store |
-| Application | `compact`, `extract`, `loop` | Build on the core. They never import each other and only `mcp` and `cmd/nodloop` import them |
-| Infra | the `file` subpackages and `pg` | Implements the stores in files or PostgreSQL and the veto and settings files. Application code never imports one outside its tests |
+| Application | `compact`, `extract`, `loop`, `replay` | Build on the core. They never import each other and only `mcp` and `cmd/nodloop` import them |
+| Infra | the `file` subpackages, `pg` and `otel` | Implements the stores in files or PostgreSQL, the veto and settings files and the OTLP export. Application code never imports one outside its tests |
 | Controllers | `cmd/nodloop`, `mcp`, `guard` | `cmd/nodloop` is the composition root and the only reader of the process environment |
 | Library | `nodloop` at the module root | A second composition root that other Go code imports |
 | SDKs | `sdk/python`, `sdk/typescript` | Clients of the MCP tools over a local `nodloop mcp` or a server. They never reach the records directly |

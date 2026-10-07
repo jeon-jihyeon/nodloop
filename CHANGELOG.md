@@ -11,6 +11,7 @@ Every release tag publishes the plugin, the darwin and linux binaries and both S
 - `nodloop help [<command>]`, `-h` and `--help`, printing the usage of one command or action
 - `nodloop config` with no action lists every setting with its value and source
 - `nodloop doctor` names corrupt record lines and `--repair` moves them to `<file>.corrupt`
+- `nodloop knowledge replay` judges a lesson in one model call against the corrected answers it cites and the newest ten approved answers of its scope recorded before it, and flags a lesson that reaches too far. `knowledge waiting` shows the latest replay, `report replay` lists them, and the nod skill runs it before asking for approval
 - `nodloop export otel` sends runs as OpenTelemetry GenAI spans and verdicts as `gen_ai.evaluation.result` events in OTLP JSON over HTTP, with no new dependency
 - Reports for other tools to draw: `--json` on `report loop`, `extract`, `critic` and `effect`, the MCP tool `report`, and `GET /v1/reports/{name}` and `GET /healthz` on `nodloop server serve`
 
