@@ -141,3 +141,93 @@ func TestExporterExportBatchesAndFails(t *testing.T) {
 		})
 	}
 }
+
+func TestExporterExportSpan(t *testing.T) {
+	at := time.Date(2026, 10, 7, 9, 0, 0, 0, time.UTC)
+	type args struct {
+		run      trace.Trace
+		verdicts []feedback.Feedback
+	}
+	type want struct {
+		// Attributes of the span checked by key
+		attrs map[string]any
+		// Score labels of the events in order
+		events []string
+	}
+	reject := feedback.Feedback{TraceID: "r1", Time: at, Verdict: feedback.VerdictReject, Reviewer: "ann"}
+	tcs := []struct {
+		name string
+		args args
+		want want
+	}{
+		{
+			"the subject goes along as an attribute",
+			args{run: trace.Trace{ID: "r1", Producer: "bot", Subject: "ticket 7"}},
+			want{attrs: map[string]any{"nodloop.subject": "ticket 7"}},
+		},
+		{
+			"an output that is no JSON string goes along as written",
+			args{run: trace.Trace{ID: "r1", Producer: "bot", Output: json.RawMessage(`{"steps":2}`)}},
+			want{attrs: map[string]any{"output.value": `{"steps":2}`}},
+		},
+		{
+			"a withdrawn verdict sends no event",
+			args{trace.Trace{ID: "r1", Producer: "bot"}, []feedback.Feedback{
+				{TraceID: "r1", Time: at.Add(time.Minute), Verdict: feedback.VerdictWithdraw, Reviewer: "ann"}, reject,
+			}},
+			want{attrs: map[string]any{"nodloop.run.id": "r1"}},
+		},
+		{
+			"only the newest verdict of a run is sent",
+			args{trace.Trace{ID: "r1", Producer: "bot"}, []feedback.Feedback{
+				{TraceID: "r1", Time: at.Add(time.Minute), Verdict: feedback.VerdictApprove, Reviewer: "ann"}, reject,
+			}},
+			want{attrs: map[string]any{"nodloop.run.id": "r1"}, events: []string{"approve"}},
+		},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			c := &collector{status: http.StatusOK}
+			srv := httptest.NewServer(c)
+			t.Cleanup(srv.Close)
+
+			err := otel.New(srv.URL, nil, "", srv.Client()).Export(context.Background(), trace.Traces{tc.args.run}, tc.args.verdicts, true)
+
+			require.NoError(t, err)
+			spans := c.spans()
+			require.Len(t, spans, 1)
+			got := attrs(spans[0])
+			for k, v := range tc.want.attrs {
+				assert.Equal(t, v, got[k], k)
+			}
+			var labels []string
+			events, _ := spans[0]["events"].([]any)
+			for _, e := range events {
+				labels = append(labels, attrs(e.(map[string]any))["gen_ai.evaluation.score.label"].(string))
+			}
+			assert.Equal(t, tc.want.events, labels)
+		})
+	}
+}
+
+func TestExporterExportFailsToSend(t *testing.T) {
+	closed := httptest.NewServer(http.NotFoundHandler())
+	closed.Close()
+	tcs := []struct {
+		name string
+		// The endpoint of the exporter
+		args string
+		want string
+	}{
+		{"a URL no request can be built from fails", "http://bad host/v1/traces", "invalid character"},
+		{"a collector that is gone fails", closed.URL, "connection refused"},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			err := otel.New(tc.args, nil, "", http.DefaultClient).Export(context.Background(), trace.Traces{{ID: "r1"}}, nil, false)
+			assert.ErrorContains(t, err, tc.want)
+		})
+	}
+}

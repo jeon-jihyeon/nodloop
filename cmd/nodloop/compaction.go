@@ -41,7 +41,11 @@ func (f knowledgeFlags) runCompaction(
 		if err := cmd.check(ctx, id, f.model); err != nil || !f.replay {
 			return err
 		}
-		return cmd.replay(ctx, a, id, f.model)
+		r, err := a.replayer(ledger, client, f.model)
+		if err != nil {
+			return err
+		}
+		return cmd.replay(ctx, r, id)
 	default:
 		return cmd.approve(ctx, id, f.approver)
 	}
@@ -82,24 +86,28 @@ func (c compactionCommand) check(ctx context.Context, id, model string) error {
 	return nil
 }
 
-// Replays every new item of the compaction, whose evidence joins the corrected runs of the items it replaces
-// One line per item and a total, read beside the coverage check and never a condition of the approval
-func (c compactionCommand) replay(ctx context.Context, a app, id, model string) error {
+// Replays every new item of the compaction and totals what they miss and where they reach too far
+// 1. the evidence of a new item joins the corrected runs of the items it replaces
+// 2. one line per item and a total read beside the coverage check and never a condition of the approval
+func (c compactionCommand) replay(ctx context.Context, r *replay.Replayer, id string) error {
 	compaction, err := c.ledger.Compaction(ctx, id)
 	if err != nil {
 		return err
 	}
-	traces, err := a.traces()
+	missed, overreach, err := c.replayItems(ctx, r, compaction.Items)
 	if err != nil {
 		return err
 	}
-	verdicts, err := a.feedback()
-	if err != nil {
-		return err
-	}
-	r := replay.New(c.ledger, traces, verdicts, c.client, model, a.now)
+	fmt.Fprintf(c.out, "replay\tcompaction %s\tmissed %d\toverreach %d\n", id, missed, overreach)
+	return nil
+}
+
+// One line per item replayed with the corrected outputs missed and the approved outputs changed summed over them
+// 1. a judgment with a veto is skipped since it acts through the guard and reaches no run output a replay could judge
+// 2. an item with no recorded output to judge gets a line saying so and the rest go on
+func (c compactionCommand) replayItems(ctx context.Context, r *replay.Replayer, items knowledge.Set) (int, int, error) {
 	missed, overreach := 0, 0
-	for _, k := range compaction.Items {
+	for _, k := range items {
 		if k.Veto != nil {
 			continue
 		}
@@ -109,13 +117,12 @@ func (c compactionCommand) replay(ctx context.Context, a app, id, model string) 
 			continue
 		}
 		if err != nil {
-			return err
+			return 0, 0, err
 		}
 		missed, overreach = missed+res.Missed, overreach+res.Overreach
-		fmt.Fprintf(c.out, "replay\t%s\tv%d\t%s\tmissed %d\toverreach %d\n", k.ID, k.Version, outcome(res), res.Missed, res.Overreach)
+		fmt.Fprintf(c.out, "replay\t%s\tv%d\t%s\tmissed %d\toverreach %d\n", k.ID, k.Version, res.Outcome(), res.Missed, res.Overreach)
 	}
-	fmt.Fprintf(c.out, "replay\tcompaction %s\tmissed %d\toverreach %d\n", id, missed, overreach)
-	return nil
+	return missed, overreach, nil
 }
 
 func (c compactionCommand) printCoverage(cov knowledge.Coverage) {

@@ -6,7 +6,7 @@ Record what your agent answered, take a person's verdict on it, and hand the cor
 npm install nodloop
 ```
 
-The client starts a local `nodloop mcp` over stdio, so no server runs. It uses `NODLOOP_BIN`, then the binary the Claude Code plugin keeps under `~/.nodloop/bin`, then `nodloop` on PATH, and otherwise downloads the release of its own version from GitHub and checks it against the release checksums. Tested on Node 24 on macOS and Linux.
+The client starts a local `nodloop mcp` over stdio, so no server runs. It uses `NODLOOP_BIN`, then the binary the Claude Code plugin keeps under `~/.nodloop/bin`, then `nodloop` on PATH, and otherwise downloads the release of its own version from GitHub and checks it against the release checksums. Tested on Linux with Node 24.
 
 ## The loop
 
@@ -34,8 +34,8 @@ From then on every `knowledge("support-bot", acme)` carries the item, and a run 
 | `knowledge(producer, labels)` | `Knowledge` with `items` and the `text` to put in the prompt |
 | `record({ producer, output, labels, applied, subject })` | the run id a verdict cites |
 | `judge(run, verdict, { reason, reasonCode, edited, reviewer })` | nothing |
-| `propose({ kind, content, from, producer, labels, newLabels, id, veto })` | `Candidate` with `id`, `version`, `status` and `overlaps` |
-| `approve(id, version, approver)` | `Approval` with `id`, `version`, `status` and `approver` |
+| `propose({ kind, content, from, producer, labels, newLabels, id, veto })` | `Candidate` with `id`, `version`, `status` and `overlaps`, the current items of the same kind one run may carry with it |
+| `approve(id, version, approver)` | `Approval` with `id`, `version`, `status`, `approver`, `veto`, `compactionDue` when one run would carry more than five items, and `exportError` and `folderError` when a step after the approval failed |
 | `checkCall(tool, input, producer)` | `Decision` with `action` of allow, block or ask, `veto` and `reason` |
 
 A tool that refuses, such as a proposal from a run nobody corrected, throws `ToolError` with the reason.
@@ -44,7 +44,7 @@ A tool that refuses, such as a proposal from a run nobody corrected, throws `Too
 
 Each adapter is its own entry point, and the framework it wraps is an optional peer dependency.
 
-LangChain `createAgent` middleware puts the items in the system message, records the final answer and refuses a vetoed tool call:
+LangChain `createAgent` middleware fetches the items once per run and adds them to the system message, records the final answer and refuses a vetoed tool call:
 
 ```ts
 import { NodloopMiddleware } from "nodloop/langchain";

@@ -210,7 +210,7 @@ func runReport(args []string, getenv func(string) string, now func() time.Time, 
 }
 
 // The reports read from the records alone with their flags parsed the same way
-var recordReports = map[string]func(c loopCommand, e loop.Evidence){
+var recordReports = map[string]func(c loopCommand, e loop.Snapshot){
 	"loop":    loopCommand.runs,
 	"extract": loopCommand.extractions,
 	"critic":  loopCommand.critics,
@@ -219,7 +219,7 @@ var recordReports = map[string]func(c loopCommand, e loop.Evidence){
 }
 
 // A report as text lines or with --json as the value a dashboard or the HTTP API reads
-func runRecordReport(args []string, show func(loopCommand, loop.Evidence), getenv func(string) string, now func() time.Time, stdout, stderr io.Writer) int {
+func runRecordReport(args []string, show func(loopCommand, loop.Snapshot), getenv func(string) string, now func() time.Time, stdout, stderr io.Writer) int {
 	fs := newFlagSet("report "+args[0], stderr)
 	var records recordFlags
 	records.bind(fs)
@@ -246,7 +246,7 @@ func runRecordReport(args []string, show func(loopCommand, loop.Evidence), geten
 		}
 		return 0
 	}
-	e, err := loop.LoadEvidence(ctx, stores.Traces, stores.Verdicts, stores.Items)
+	e, err := stores.Snapshot(ctx, loop.ReportName(args[0]))
 	if err != nil {
 		return fail(stderr, "report", err)
 	}
@@ -276,7 +276,7 @@ func (a app) reportStores() (loop.Stores, error) {
 }
 
 // One line per plugin version and path: extractions by conclusion, drafts by refusal and the critic questions answered false
-func (c loopCommand) extractions(e loop.Evidence) {
+func (c loopCommand) extractions(e loop.Snapshot) {
 	for _, row := range e.Extractions() {
 		fmt.Fprintf(c.out, "extract\t%s\t%s\textractions %d\t%s\trefused drafts %s\tquestions false %s\n",
 			row.Version, row.Path, row.Extractions, counts(row.Conclusions), counts(row.Refusals), counts(row.Questions))
@@ -292,7 +292,7 @@ func seconds(d time.Duration) string {
 }
 
 // One line per critic: drafts it judged and how its judgments matched what a person later decided on the run
-func (c loopCommand) critics(e loop.Evidence) {
+func (c loopCommand) critics(e loop.Snapshot) {
 	for _, row := range e.Critics() {
 		fmt.Fprintf(c.out, "critic\t%s\tjudged %d\tagree %d\tfalse pass %d\tfalse refuse %d\topen %d\n",
 			row.Critic, row.Judged, row.Agree, row.FalsePass, row.FalseRefuse, row.Open)
@@ -300,22 +300,19 @@ func (c loopCommand) critics(e loop.Evidence) {
 }
 
 // One line per arm: runs that applied items and runs a holdout kept them from, judged, corrected and corrected for an item's reason
-func (c loopCommand) effect(e loop.Evidence) {
+func (c loopCommand) effect(e loop.Snapshot) {
 	for _, row := range e.Effect() {
 		fmt.Fprintf(c.out, "effect\t%s\truns %d\tjudged %d\tcorrected %d\tsame reason %d\n",
 			row.Arm, row.Runs, row.Judged, row.Corrected, row.SameReason)
 	}
 }
 
-// One line per version from its newest replay: passed or failed, corrected outputs missed and approved outputs it would change
-func (c loopCommand) replays(e loop.Evidence) {
+// One line per version from its newest replay
+// passed or failed with the corrected outputs it missed and the approved outputs it would change
+func (c loopCommand) replays(e loop.Snapshot) {
 	for _, row := range e.Replays() {
-		status := "failed"
-		if row.Passed {
-			status = "passed"
-		}
 		fmt.Fprintf(c.out, "replay\t%s\tv%d\t%s\tmissed %d of %d\toverreach %d of %d\t%s\n",
-			row.ID, row.Version, status, row.Missed, row.Corrected, row.Overreach, row.Approved, row.Time.Format(time.RFC3339))
+			row.ID, row.Version, row.Outcome(), row.Missed, row.Corrected, row.Overreach, row.Approved, row.Time.Format(time.RFC3339))
 	}
 }
 
@@ -334,7 +331,7 @@ func counts(m map[string]int) string {
 // A first line of totals, then one scope line per plugin version and one drafts line per plugin version and drafting path
 // One line per approved run item after them: applied, followed of judged and repeat by people then by a session, and settle
 // A last line says misapplied is not measured
-func (c loopCommand) runs(e loop.Evidence) {
+func (c loopCommand) runs(e loop.Snapshot) {
 	report := e.Loop()
 	t := report.Totals
 	fmt.Fprintf(c.out, "loop\truns %d\tjudged %d\tinferred %d\tcorrected %d\twaiting %d\tapproved %d\n",

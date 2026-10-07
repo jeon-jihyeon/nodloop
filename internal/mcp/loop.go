@@ -56,18 +56,12 @@ type reportInput struct {
 
 // The report under its name so the answer is an object whatever shape the report has
 func (s *Server) report(ctx context.Context, _ *sdk.CallToolRequest, in reportInput) (*sdk.CallToolResult, any, error) {
-	report, err := s.Report(ctx, in.Name)
+	stores := loop.Stores{Traces: s.traces, Verdicts: s.verdicts, Outcomes: s.outcomes, Items: s.ledger}
+	report, err := stores.Report(ctx, in.Name, s.now())
 	if err != nil {
 		return nil, nil, err
 	}
 	return nil, map[string]any{"name": in.Name, "report": report}, nil
-}
-
-// The report of the name over the records of the server as a value that encodes to JSON
-// The HTTP API of nodloop server serve answers it outside MCP
-func (s *Server) Report(ctx context.Context, name loop.ReportName) (any, error) {
-	stores := loop.Stores{Traces: s.traces, Verdicts: s.verdicts, Outcomes: s.outcomes, Items: s.ledger}
-	return stores.Report(ctx, name, s.now())
 }
 
 type reaffirmInput struct {

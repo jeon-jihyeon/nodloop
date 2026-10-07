@@ -336,7 +336,7 @@ func TestRunHookSessionMode(t *testing.T) {
 			hookPromptSetup(t, func(k string) string { return map[string]string{"HOME": home, envRecordDir: records}[k] }, repo, true, false, false)
 			if tc.args.saved != "" {
 				require.NoError(t, os.MkdirAll(homeDir(home).dir(), 0o755))
-				require.NoError(t, os.WriteFile(homeDir(home).configPath(), []byte(tc.args.saved), 0o600))
+				require.NoError(t, os.WriteFile(homeDir(home).config().ConfigPath(), []byte(tc.args.saved), 0o600))
 			}
 			stdin := `{"session_id":"s1","cwd":"` + repo + `"}`
 			var stdout, stderr bytes.Buffer
@@ -536,6 +536,61 @@ func TestRunHookStopExtract(t *testing.T) {
 				return
 			}
 			assert.Equal(t, [][]string{{"knowledge", "extract", "--from", first[0].ID}}, started)
+		})
+	}
+}
+
+// The stop hook looks for the previous run of the session within sessionWindow and reads its verdicts from the run on
+func TestRunHookStopWindow(t *testing.T) {
+	first := time.Date(2026, 10, 3, 0, 0, 0, 0, time.UTC)
+	type args struct {
+		// From the first answer to the inferred reject of it
+		verdict time.Duration
+		// From the first answer to the next one
+		next time.Duration
+	}
+	type want struct {
+		extracts bool
+	}
+	tcs := []struct {
+		name string
+		args args
+		want want
+	}{
+		{"a previous run within the window is extracted", args{time.Minute, 24 * time.Hour}, want{true}},
+		{"a previous run older than the window is no previous run", args{time.Minute, 8 * 24 * time.Hour}, want{false}},
+		{"a verdict stamped before the run is not read", args{-time.Minute, 24 * time.Hour}, want{false}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			home, records, repo := hookHome(t, "use git -C")
+			getenv := func(k string) string { return map[string]string{"HOME": home, envRecordDir: records}[k] }
+			at := first
+			now := func() time.Time { return at }
+			var started [][]string
+			start := func(args []string) error {
+				started = append(started, args)
+				return nil
+			}
+			stdin := `{"session_id":"s1","cwd":"` + repo + `","last_assistant_message":"done"}`
+			require.Equal(t, 0, runHook([]string{"stop"}, getenv, start, now, strings.NewReader(stdin), &bytes.Buffer{}, &bytes.Buffer{}))
+			store, err := tracefile.New(records)
+			require.NoError(t, err)
+			runs, err := store.List(context.Background(), trace.Filter{Name: trace.NameRun, SessionID: "s1"})
+			require.NoError(t, err)
+			require.Len(t, runs, 1)
+			at = first.Add(tc.args.verdict)
+			var stderr bytes.Buffer
+			require.Equal(t, 0, runFeedback([]string{"add", "--trace", runs[0].ID, "--verdict", "reject", "--reason", "too long", "--reviewer", "session"},
+				getenv, now, &bytes.Buffer{}, &stderr), stderr.String())
+			at = first.Add(tc.args.next)
+
+			code := runHook([]string{"stop"}, getenv, start, now, strings.NewReader(stdin), &bytes.Buffer{}, &stderr)
+
+			assert.Equal(t, 0, code)
+			assert.Empty(t, stderr.String())
+			assert.Equal(t, tc.want.extracts, len(started) == 1, "started %v", started)
 		})
 	}
 }
@@ -869,11 +924,12 @@ func TestRunHookCorruptLine(t *testing.T) {
 		require.NoError(t, f.Close())
 	}
 	getenv := func(k string) string { return map[string]string{"HOME": home, envRecordDir: records}[k] }
+	now := func() time.Time { return time.Date(2026, 10, 2, 1, 0, 0, 0, time.UTC) }
 	stdin := `{"session_id":"s1","cwd":"` + repo + `","last_assistant_message":"done"}`
 	var prompt, promptErr, stopErr bytes.Buffer
 
-	require.Equal(t, 0, runHook([]string{"prompt"}, getenv, nil, time.Now, strings.NewReader(stdin), &prompt, &promptErr))
-	require.Equal(t, 0, runHook([]string{"stop"}, getenv, nil, time.Now, strings.NewReader(stdin), &bytes.Buffer{}, &stopErr))
+	require.Equal(t, 0, runHook([]string{"prompt"}, getenv, nil, now, strings.NewReader(stdin), &prompt, &promptErr))
+	require.Equal(t, 0, runHook([]string{"stop"}, getenv, nil, now, strings.NewReader(stdin), &bytes.Buffer{}, &stopErr))
 
 	assert.Contains(t, prompt.String(), "use git -C")
 	assert.Contains(t, promptErr.String(), "knowledge.jsonl has corrupt lines")

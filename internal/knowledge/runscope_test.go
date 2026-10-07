@@ -34,8 +34,6 @@ func runItem(id string, run *knowledge.RunScope) knowledge.Knowledge {
 	}
 }
 
-// Only approved run items whose labels the run carries and whose exceptions it does not reach a run
-// A record of the data review without a run scope never reaches a run
 // The items of one run in the order a prompt carries them
 func TestSetForOrder(t *testing.T) {
 	at := time.Date(2026, 10, 7, 0, 0, 0, 0, time.UTC)
@@ -84,6 +82,8 @@ func TestSetForOrder(t *testing.T) {
 	}
 }
 
+// Only approved run items whose labels the run carries and whose exceptions it does not reach a run
+// A record of the data review without a run scope never reaches a run
 func TestSetFor(t *testing.T) {
 	approved := func(k knowledge.Knowledge) knowledge.Knowledge {
 		k.Version, k.Status, k.Approver = 1, knowledge.StatusApproved, "ann"

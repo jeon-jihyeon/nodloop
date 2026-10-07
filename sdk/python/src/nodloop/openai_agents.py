@@ -44,7 +44,7 @@ class NodloopHooks(RunHooks):
 
     async def on_agent_end(self, context: Any, agent: Any, output: Any) -> None:
         text = output if isinstance(output, str) else json.dumps(output, default=str)
-        self.run = await self.client.record(self.producer, text, self.labels, self.applied)
+        self.run = await self.client.record(self.producer, text, labels=self.labels, applied=self.applied)
 
 
 def veto_guardrail(client: Client, producer: str = "") -> Any:

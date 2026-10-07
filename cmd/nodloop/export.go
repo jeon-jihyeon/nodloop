@@ -16,10 +16,13 @@ import (
 )
 
 const (
-	// The endpoint and headers of the OpenTelemetry exporter environment, read when the flags leave them out
+	// The endpoint and headers of the OpenTelemetry exporter environment
+	// Read when the flags leave them out
 	envOTLPTracesEndpoint = "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"
 	envOTLPEndpoint       = "OTEL_EXPORTER_OTLP_ENDPOINT"
 	envOTLPHeaders        = "OTEL_EXPORTER_OTLP_HEADERS"
+	// Time one export request may take before the collector counts as down
+	exportTimeout = 30 * time.Second
 )
 
 // Repeatable Name=value flag of HTTP headers
@@ -104,7 +107,7 @@ func runExport(args []string, getenv func(string) string, now func() time.Time, 
 	if err != nil {
 		return fail(stderr, "export", err)
 	}
-	exporter := otel.New(target, headers, buildVersion(), &http.Client{Timeout: 30 * time.Second})
+	exporter := otel.New(target, headers, buildVersion(), &http.Client{Timeout: exportTimeout})
 	if err := (exportCommand{app: a, out: stdout}).otel(context.Background(), exporter, start, *output); err != nil {
 		return fail(stderr, "export", err)
 	}
@@ -116,7 +119,8 @@ type exportCommand struct {
 	out io.Writer
 }
 
-// Sends every run since the time with the verdicts given since then, which are all the verdicts those runs have
+// Sends every run since the time with the verdicts given since then
+// No verdict on such a run comes before the run so these are all of its verdicts
 func (c exportCommand) otel(ctx context.Context, exporter *otel.Exporter, since time.Time, output bool) error {
 	traces, err := c.app.traces()
 	if err != nil {

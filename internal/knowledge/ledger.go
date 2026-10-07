@@ -2,6 +2,7 @@ package knowledge
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"slices"
@@ -61,6 +62,17 @@ func NewLedger(
 	return &Ledger{store: store, vetoes: vetoes, now: now, newID: newID}
 }
 
+// The id generator of a ledger
+// The prefix and the clock milliseconds in hex and two random bytes so two ids in one millisecond differ
+func NewIDs(now func() time.Time) func(prefix string) string {
+	return func(prefix string) string {
+		var suffix [2]byte
+		// crypto rand Read never returns an error
+		_, _ = rand.Read(suffix[:])
+		return fmt.Sprintf("%s%x%x", prefix, now().UnixMilli(), suffix)
+	}
+}
+
 // The anchor and the approved items one run may carry with it
 func (l *Ledger) Compactable(ctx context.Context, anchor string) (Compactable, error) {
 	all, err := l.All(ctx)
@@ -98,7 +110,7 @@ func (l *Ledger) Folder(ctx context.Context, id string, version int) (Folder, er
 	if err != nil {
 		return Folder{}, err
 	}
-	k, err := all.latest(id, version)
+	k, err := all.Version(id, version)
 	if err != nil {
 		return Folder{}, err
 	}

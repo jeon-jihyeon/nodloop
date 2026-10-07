@@ -141,10 +141,11 @@ func carriesAny(labels trace.Labels, key string, values []string) bool {
 	return slices.ContainsFunc(values, func(v string) bool { return labels.Has(key, v) })
 }
 
-// The approved items that apply to a run of the producer with the labels, in the order a prompt carries them
+// The approved items that apply to a run of the producer with the labels
+// They come in the order a prompt carries them
 // 1. a judgment with a veto acts through the guard and never reaches a run
 // 2. an item that names more label keys comes first since it was taught for a narrower place than a general one
-// 3. then the one approved or reaffirmed last, so a cap on the prompt leaves out stale items before fresh ones
+// 3. then the one approved or reaffirmed last so a cap on the prompt leaves out stale items before fresh ones
 // 4. then the id so the order is the same in every hook of a turn
 func (s Set) For(producer string, labels trace.Labels) Set {
 	out := Set{}
@@ -161,7 +162,7 @@ func (s Set) For(producer string, labels trace.Labels) Set {
 func (a Knowledge) rank(b Knowledge) int {
 	return cmp.Or(
 		cmp.Compare(b.Run.specificity(), a.Run.specificity()),
-		b.fresh().Compare(a.fresh()),
+		b.vouchedAt().Compare(a.vouchedAt()),
 		strings.Compare(a.ID, b.ID),
 	)
 }
@@ -172,7 +173,7 @@ func (r RunScope) specificity() int {
 }
 
 // When a person last stood behind the version: its approval or its last reaffirm
-func (k Knowledge) fresh() time.Time {
+func (k Knowledge) vouchedAt() time.Time {
 	if k.ReviewedAt.After(k.ApprovedAt) {
 		return k.ReviewedAt
 	}

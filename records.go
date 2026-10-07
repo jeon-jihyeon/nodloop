@@ -145,7 +145,8 @@ func (i Item) Ref() Ref {
 	return Ref{ID: i.ID, Version: i.Version}
 }
 
-// Items in the order the ledger keeps them
+// Items in the order a run receives them
+// The most specific come first and among those the latest approved or reaffirmed
 type Items []Item
 
 // The versions to pass in Applied for a run that received the items

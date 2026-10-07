@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -25,6 +24,7 @@ import (
 	"github.com/jeon-jihyeon/nodloop/internal/loop"
 	"github.com/jeon-jihyeon/nodloop/internal/mcp"
 	tracefile "github.com/jeon-jihyeon/nodloop/internal/trace/file"
+	"github.com/jeon-jihyeon/nodloop/internal/userconfig"
 	vetofile "github.com/jeon-jihyeon/nodloop/internal/veto/file"
 	"github.com/jeon-jihyeon/nodloop/server/internal/pg"
 )
@@ -38,12 +38,12 @@ func runServe(args []string, getenv func(string) string, now func() time.Time, s
 	if err := fs.Parse(args); err != nil {
 		return parseFailed(err)
 	}
-	h := homeDir(getenv("HOME"))
+	h := userconfig.Home(getenv("HOME"))
 	if h == "" {
 		return fail(stderr, "serve", errHomeUnknown)
 	}
-	uc, err := h.readConfig()
-	if err != nil {
+	var uc fileConfig
+	if err := h.Read(&uc); err != nil {
 		return fail(stderr, "serve", err)
 	}
 	if len(uc.Server.Keys) == 0 {
@@ -59,7 +59,7 @@ func runServe(args []string, getenv func(string) string, now func() time.Time, s
 		defer db.Close()
 		stores, where = pgTenants{db: db}, "records in PostgreSQL"
 	} else {
-		dir, err := h.recordDir(*recordDir, getenv(envRecordDir), uc.RecordDir)
+		dir, err := h.RecordDir(*recordDir, getenv(envRecordDir), uc.RecordDir)
 		if err != nil {
 			return fail(stderr, "serve", err)
 		}
@@ -92,7 +92,8 @@ type serveHandler struct {
 
 type keyContext struct{}
 
-// Every other path is the MCP endpoint, as before the reports came, so a client that names no path keeps working
+// Every other path is the MCP endpoint as it was before the reports came
+// A client that names no path keeps working
 func newServeHandler(stores tenantStores, config serverConfig, now func() time.Time, log io.Writer) http.Handler {
 	h := &serveHandler{stores: stores, config: config, now: now, log: log, hosts: map[string]*sdk.Server{}}
 	h.mcp = sdk.NewStreamableHTTPHandler(h.server, &sdk.StreamableHTTPOptions{Stateless: true})
@@ -125,12 +126,12 @@ func (h *serveHandler) report(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("the role %s may not read reports", key.Role), http.StatusForbidden)
 		return
 	}
-	srv, err := h.stores.open(key, h.now, mcp.NewSession(h.now()))(r.Context())
+	stores, err := h.stores.reports(key, h.now)
 	if err != nil {
 		h.internal(w, key, err)
 		return
 	}
-	report, err := srv.Report(r.Context(), loop.ReportName(r.PathValue("name")))
+	report, err := stores.Report(r.Context(), loop.ReportName(r.PathValue("name")), h.now())
 	switch {
 	case errors.Is(err, loop.ErrReportUnknown):
 		http.Error(w, err.Error(), http.StatusNotFound)
@@ -166,6 +167,8 @@ func (h *serveHandler) server(r *http.Request) *sdk.Server {
 // Where the server keeps the records of a tenant
 type tenantStores interface {
 	open(key serverKey, now func() time.Time, session string) mcp.Open
+	// The stores the reports of the tenant read without the tools of a host
+	reports(key serverKey, now func() time.Time) (loop.Stores, error)
 }
 
 // The record directory of each tenant under tenants of the base directory
@@ -173,34 +176,59 @@ type fileTenants struct {
 	base string
 }
 
+// The record stores of one tenant directory
+type tenantFiles struct {
+	traces   *tracefile.Store
+	verdicts *feedbackfile.Store
+	outcomes *feedbackfile.OutcomeStore
+	ledger   *knowledge.Ledger
+}
+
 // No home so the config of the server user is not read for a tenant and no veto file is written under it
-func (f fileTenants) open(key serverKey, now func() time.Time, session string) mcp.Open {
-	dir := filepath.Join(f.base, "tenants", key.Tenant)
-	return func(context.Context) (*mcp.Server, error) {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return nil, fmt.Errorf("record dir: %w", err)
-		}
-		traces, err := tracefile.New(dir)
-		if err != nil {
-			return nil, err
-		}
-		verdicts, err := feedbackfile.New(dir)
-		if err != nil {
-			return nil, err
-		}
-		outcomes, err := feedbackfile.NewOutcomeStore(dir)
-		if err != nil {
-			return nil, err
-		}
-		items, err := knowledgefile.New(dir)
-		if err != nil {
-			return nil, err
-		}
-		ledger := knowledge.NewLedger(items, vetofile.NewApprovedFile("", ""), now, idsAt(now))
-		compactor := compact.New(ledger, traces, verdicts, traces, now)
-		extractor := extract.New(ledger, traces, verdicts, now)
-		return mcp.New(traces, verdicts, outcomes, ledger, compactor, extractor, now, session, cliName, "", key.Name), nil
+func (f fileTenants) files(tenant string, now func() time.Time) (tenantFiles, error) {
+	dir := filepath.Join(f.base, "tenants", tenant)
+	// The records of a tenant are private to the server user so no other account on the host reads them
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return tenantFiles{}, fmt.Errorf("record dir: %w", err)
 	}
+	traces, err := tracefile.New(dir)
+	if err != nil {
+		return tenantFiles{}, err
+	}
+	verdicts, err := feedbackfile.New(dir)
+	if err != nil {
+		return tenantFiles{}, err
+	}
+	outcomes, err := feedbackfile.NewOutcomeStore(dir)
+	if err != nil {
+		return tenantFiles{}, err
+	}
+	items, err := knowledgefile.New(dir)
+	if err != nil {
+		return tenantFiles{}, err
+	}
+	ledger := knowledge.NewLedger(items, vetofile.NewApprovedFile("", ""), now, knowledge.NewIDs(now))
+	return tenantFiles{traces: traces, verdicts: verdicts, outcomes: outcomes, ledger: ledger}, nil
+}
+
+func (f fileTenants) open(key serverKey, now func() time.Time, session string) mcp.Open {
+	return func(context.Context) (*mcp.Server, error) {
+		t, err := f.files(key.Tenant, now)
+		if err != nil {
+			return nil, err
+		}
+		compactor := compact.New(t.ledger, t.traces, t.verdicts, t.traces, now)
+		extractor := extract.New(t.ledger, t.traces, t.verdicts, now)
+		return mcp.New(t.traces, t.verdicts, t.outcomes, t.ledger, compactor, extractor, now, session, cliName, "", key.Name), nil
+	}
+}
+
+func (f fileTenants) reports(key serverKey, now func() time.Time) (loop.Stores, error) {
+	t, err := f.files(key.Tenant, now)
+	if err != nil {
+		return loop.Stores{}, err
+	}
+	return loop.Stores{Traces: t.traces, Verdicts: t.verdicts, Outcomes: t.outcomes, Items: t.ledger}, nil
 }
 
 // The rows of each tenant in one database
@@ -208,27 +236,26 @@ type pgTenants struct {
 	db *pg.DB
 }
 
-// The stores of the tenant of the key
 // No veto file is written since the tool calls of a server's producers are checked through check_call
+func (p pgTenants) ledger(tenant string, now func() time.Time) *knowledge.Ledger {
+	return knowledge.NewLedger(p.db.Knowledge(tenant), vetofile.NewApprovedFile("", ""), now, knowledge.NewIDs(now))
+}
+
 func (p pgTenants) open(key serverKey, now func() time.Time, session string) mcp.Open {
 	return func(context.Context) (*mcp.Server, error) {
 		traces, verdicts := p.db.Traces(key.Tenant), p.db.Feedback(key.Tenant)
-		ledger := knowledge.NewLedger(p.db.Knowledge(key.Tenant), vetofile.NewApprovedFile("", ""), now, idsAt(now))
+		ledger := p.ledger(key.Tenant, now)
 		compactor := compact.New(ledger, traces, verdicts, traces, now)
 		extractor := extract.New(ledger, traces, verdicts, now)
 		return mcp.New(traces, verdicts, p.db.Outcomes(key.Tenant), ledger, compactor, extractor, now, session, cliName, "", key.Name), nil
 	}
 }
 
-// The CLI a tool answer names for a check that runs a model, such as knowledge check
-const cliName = "nodloop"
-
-// Knowledge ids as the nodloop CLI makes them: the prefix, the clock milliseconds in hex and two random bytes
-func idsAt(now func() time.Time) func(prefix string) string {
-	return func(prefix string) string {
-		var suffix [2]byte
-		// crypto rand Read never returns an error
-		_, _ = rand.Read(suffix[:])
-		return fmt.Sprintf("%s%x%x", prefix, now().UnixMilli(), suffix)
-	}
+func (p pgTenants) reports(key serverKey, now func() time.Time) (loop.Stores, error) {
+	return loop.Stores{
+		Traces: p.db.Traces(key.Tenant), Verdicts: p.db.Feedback(key.Tenant), Outcomes: p.db.Outcomes(key.Tenant), Items: p.ledger(key.Tenant, now),
+	}, nil
 }
+
+// The CLI a tool answer names for a check that runs a model such as knowledge check
+const cliName = "nodloop"

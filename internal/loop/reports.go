@@ -2,6 +2,7 @@ package loop
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"slices"
 	"time"
@@ -39,52 +40,32 @@ type LoopReport struct {
 	Items  []RunItem  `json:"items"`
 }
 
-// Every trace, verdict and knowledge record the reports read, joined once
-type Evidence struct {
+// The traces a report reads with every verdict and knowledge record joined once
+type Snapshot struct {
 	traces trace.Traces
 	runs   Runs
 	items  knowledge.Set
 }
 
-func LoadEvidence(ctx context.Context, traces TraceStore, verdicts FeedbackStore, items KnowledgeStore) (Evidence, error) {
-	all, err := traces.List(ctx, trace.Filter{})
-	if err != nil {
-		return Evidence{}, err
-	}
-	records, err := verdicts.List(ctx, feedback.Filter{})
-	if err != nil {
-		return Evidence{}, err
-	}
-	set, err := items.All(ctx)
-	if err != nil {
-		return Evidence{}, err
-	}
-	return Evidence{traces: all, runs: NewRuns(all, records), items: set}, nil
-}
-
-func (e Evidence) Loop() LoopReport {
+func (s Snapshot) Loop() LoopReport {
 	return LoopReport{
-		Totals: e.runs.Totals(e.items),
-		Scopes: e.runs.Scopes(e.items, e.traces),
-		Drafts: e.runs.Drafts(e.items, e.traces),
-		Items:  e.runs.Report(e.items),
+		Totals: s.runs.Totals(s.items),
+		Scopes: s.runs.Scopes(s.items, s.traces),
+		Drafts: s.runs.Drafts(s.items, s.traces),
+		Items:  s.runs.Report(s.items),
 	}
 }
 
-func (e Evidence) Extractions() []ExtractRow {
-	return e.runs.Extractions(e.traces)
+func (s Snapshot) Extractions() []ExtractRow {
+	return s.runs.Extractions(s.traces)
 }
 
-func (e Evidence) Critics() []CriticRow {
-	return e.runs.Critics(e.items, e.traces)
+func (s Snapshot) Critics() []CriticRow {
+	return s.runs.Critics(s.items, s.traces)
 }
 
-func (e Evidence) Effect() []EffectRow {
-	return e.runs.Effect(e.items)
-}
-
-func (e Evidence) Replays() []ReplayRow {
-	return Replays(e.traces)
+func (s Snapshot) Effect() []EffectRow {
+	return s.runs.Effect(s.items)
 }
 
 // The stores every report reads from
@@ -95,11 +76,63 @@ type Stores struct {
 	Items    KnowledgeStore
 }
 
-// The report of the name as a value that encodes to JSON, for a reader that picks it at run time
-func (s Stores) Report(ctx context.Context, name ReportName, now time.Time) (any, error) {
-	if !name.Valid() {
-		return nil, fmt.Errorf("%w: %q. Ask for one of %v", ErrReportUnknown, name, ReportNames())
+// The trace names the report of the name reads
+// Health loads its own history so it reads none here
+func (n ReportName) traces() []trace.Name {
+	switch n {
+	case ReportLoop, ReportExtract:
+		return []trace.Name{trace.NameRun, trace.NameExtract}
+	case ReportCritic:
+		return []trace.Name{trace.NameExtract, trace.NameClassify}
+	case ReportEffect:
+		return []trace.Name{trace.NameRun}
+	case ReportReplay:
+		return []trace.Name{trace.NameReplay}
 	}
+	return nil
+}
+
+// The snapshot holding the traces the report of the name reads
+func (s Stores) Snapshot(ctx context.Context, name ReportName) (Snapshot, error) {
+	if !name.Valid() {
+		return Snapshot{}, fmt.Errorf("%w: %q. Ask for one of %v", ErrReportUnknown, name, ReportNames())
+	}
+	return s.snapshot(ctx, name.traces())
+}
+
+// Reads the traces of each name in turn so no report reads a trace it never looks at
+// Each name keeps the newest first order of the store
+func (s Stores) snapshot(ctx context.Context, names []trace.Name) (Snapshot, error) {
+	var all trace.Traces
+	for _, name := range names {
+		found, err := s.Traces.List(ctx, trace.Filter{Name: name})
+		if err != nil {
+			return Snapshot{}, err
+		}
+		all = append(all, found...)
+	}
+	records, err := s.Verdicts.List(ctx, feedback.Filter{})
+	if err != nil {
+		return Snapshot{}, err
+	}
+	set, err := s.Items.All(ctx)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	return Snapshot{traces: all, runs: NewRuns(all, records), items: set}, nil
+}
+
+// The report of the name as JSON for a reader that picks it at run time
+// Every reader only encodes a report so it leaves here encoded and its shape stays with the report types
+func (s Stores) Report(ctx context.Context, name ReportName, now time.Time) (json.RawMessage, error) {
+	report, err := s.report(ctx, name, now)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(report)
+}
+
+func (s Stores) report(ctx context.Context, name ReportName, now time.Time) (any, error) {
 	if name == ReportHealth {
 		h, err := Load(ctx, s.Traces, s.Verdicts, s.Outcomes, s.Items)
 		if err != nil {
@@ -107,19 +140,19 @@ func (s Stores) Report(ctx context.Context, name ReportName, now time.Time) (any
 		}
 		return h.Health(now), nil
 	}
-	e, err := LoadEvidence(ctx, s.Traces, s.Verdicts, s.Items)
+	snap, err := s.Snapshot(ctx, name)
 	if err != nil {
 		return nil, err
 	}
 	switch name {
 	case ReportExtract:
-		return e.Extractions(), nil
+		return snap.Extractions(), nil
 	case ReportCritic:
-		return e.Critics(), nil
+		return snap.Critics(), nil
 	case ReportEffect:
-		return e.Effect(), nil
+		return snap.Effect(), nil
 	case ReportReplay:
-		return e.Replays(), nil
+		return snap.Replays(), nil
 	}
-	return e.Loop(), nil
+	return snap.Loop(), nil
 }

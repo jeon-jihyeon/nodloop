@@ -5,6 +5,7 @@ import (
 	"maps"
 	"net/url"
 	"slices"
+	"strings"
 	"time"
 )
 
@@ -51,13 +52,14 @@ func (e Endpoint) check() error {
 	return nil
 }
 
-// The host of the URL as records and reports name the endpoint
+// The host and path of the URL as records and reports name the endpoint
+// The path tells apart two endpoints on one host
 func (e Endpoint) Name() string {
 	u, err := url.Parse(e.URL)
 	if err != nil || u.Host == "" {
 		return e.URL
 	}
-	return u.Host
+	return strings.TrimSuffix(u.Host+u.Path, "/")
 }
 
 // The client of the endpoint with the key its env holds now

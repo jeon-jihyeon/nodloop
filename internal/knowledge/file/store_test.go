@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeon-jihyeon/nodloop/internal/jsonl"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge/file"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge/knowledgetest"
@@ -248,4 +249,37 @@ func TestStoreReplaceRulesFails(t *testing.T) {
 	err = store.ReplaceRules(context.Background(), func(knowledge.Set) string { return "\n- k\n" })
 
 	assert.ErrorIs(t, err, file.ErrWrite)
+}
+
+// A line that is not JSON leaves the other records readable
+// Its error wraps ErrRead and ErrCorrupt and the jsonl cause until Repair moves it aside
+func TestStoreCorruptLine(t *testing.T) {
+	dir := t.TempDir()
+	store, err := file.New(dir)
+	require.NoError(t, err)
+	ctx := context.Background()
+	a, c := knowledge.Knowledge{ID: "a", Version: 1}, knowledge.Knowledge{ID: "c", Version: 1}
+	require.NoError(t, store.Append(ctx, a))
+	f, err := os.OpenFile(filepath.Join(dir, "knowledge.jsonl"), os.O_APPEND|os.O_WRONLY, 0o600)
+	require.NoError(t, err)
+	_, err = f.WriteString("not json\n")
+	require.NoError(t, errors.Join(err, f.Close()))
+	require.NoError(t, store.Append(ctx, c))
+
+	listed, listErr := store.List(ctx)
+	n, checkErr := store.Check()
+
+	for _, err := range []error{listErr, checkErr} {
+		assert.ErrorIs(t, err, file.ErrRead)
+		assert.ErrorIs(t, err, file.ErrCorrupt)
+		assert.ErrorIs(t, err, jsonl.ErrCorrupt)
+	}
+	assert.Equal(t, []knowledge.Knowledge{c, a}, listed)
+	assert.Equal(t, 2, n)
+	moved, err := store.Repair()
+	require.NoError(t, err)
+	assert.Equal(t, 1, moved)
+	_, err = store.Check()
+	assert.NoError(t, err)
+	assert.Equal(t, "knowledge.jsonl", store.Name())
 }

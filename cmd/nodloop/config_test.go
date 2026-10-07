@@ -10,20 +10,22 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeon-jihyeon/nodloop/internal/userconfig"
 )
 
 func TestResolveConfig(t *testing.T) {
 	saved := homeDir(t.TempDir())
 	records := filepath.Join(t.TempDir(), "records")
 	require.NoError(t, os.MkdirAll(saved.dir(), 0o755))
-	require.NoError(t, os.WriteFile(saved.configPath(), []byte(`{"file_dir":"/old/data","record_dir":"`+records+`"}`), 0o600))
+	require.NoError(t, os.WriteFile(saved.config().ConfigPath(), []byte(`{"file_dir":"/old/data","record_dir":"`+records+`"}`), 0o600))
 	bare := homeDir(t.TempDir())
 	broken := homeDir(t.TempDir())
 	require.NoError(t, os.MkdirAll(broken.dir(), 0o755))
-	require.NoError(t, os.WriteFile(broken.configPath(), []byte("{broken"), 0o600))
+	require.NoError(t, os.WriteFile(broken.config().ConfigPath(), []byte("{broken"), 0o600))
 	relative := homeDir(t.TempDir())
 	require.NoError(t, os.MkdirAll(relative.dir(), 0o755))
-	require.NoError(t, os.WriteFile(relative.configPath(), []byte(`{"record_dir":"records"}`), 0o600))
+	require.NoError(t, os.WriteFile(relative.config().ConfigPath(), []byte(`{"record_dir":"records"}`), 0o600))
 	wd, err := os.Getwd()
 	require.NoError(t, err)
 	type args struct {
@@ -51,9 +53,9 @@ func TestResolveConfig(t *testing.T) {
 			args{env: map[string]string{"HOME": string(saved), envRecordDir: "/records"}},
 			want{config{recordDir: "/records", home: saved}, nil},
 		},
-		{"a home without a config defaults records under home", args{env: map[string]string{"HOME": string(bare)}}, want{config{recordDir: bare.recordDir(), home: bare}, nil}},
+		{"a home without a config defaults records under home", args{env: map[string]string{"HOME": string(bare)}}, want{config{recordDir: bare.config().Records(), home: bare}, nil}},
 		{"no home and no record dir stay unset", args{}, want{config{}, nil}},
-		{"a broken saved config fails", args{env: map[string]string{"HOME": string(broken)}}, want{config{}, errConfigInvalid}},
+		{"a broken saved config fails", args{env: map[string]string{"HOME": string(broken)}}, want{config{}, userconfig.ErrInvalid}},
 		{
 			"a relative flag resolves against the working directory",
 			args{recordDir: "rec"},
@@ -68,9 +70,9 @@ func TestResolveConfig(t *testing.T) {
 		{
 			"a relative variable fails because a server started elsewhere would read other records",
 			args{env: map[string]string{envRecordDir: "records"}},
-			want{config{}, errRecordDirRelative},
+			want{config{}, userconfig.ErrRecordDirRelative},
 		},
-		{"a relative record dir in the saved config fails", args{env: map[string]string{"HOME": string(relative)}}, want{config{}, errRecordDirRelative}},
+		{"a relative record dir in the saved config fails", args{env: map[string]string{"HOME": string(relative)}}, want{config{}, userconfig.ErrRecordDirRelative}},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
@@ -142,7 +144,7 @@ func TestRunConfig(t *testing.T) {
 			home := homeDir(t.TempDir())
 			require.NoError(t, os.MkdirAll(home.dir(), 0o755))
 			if tc.args.saved != "" {
-				require.NoError(t, os.WriteFile(home.configPath(), []byte(tc.args.saved), 0o600))
+				require.NoError(t, os.WriteFile(home.config().ConfigPath(), []byte(tc.args.saved), 0o600))
 			}
 			env := map[string]string{"HOME": string(home)}
 			if tc.args.homeless {
@@ -155,7 +157,7 @@ func TestRunConfig(t *testing.T) {
 			assert.Equal(t, tc.want.code, code)
 			assert.Equal(t, tc.want.stdout, stdout.String())
 			assert.Contains(t, stderr.String(), tc.want.stderr)
-			saved, _ := os.ReadFile(home.configPath())
+			saved, _ := os.ReadFile(home.config().ConfigPath())
 			assert.Equal(t, tc.want.saved, string(saved))
 		})
 	}
@@ -175,7 +177,7 @@ func TestRunConfigList(t *testing.T) {
 			"nothing saved lists the defaults",
 			args{"", nil},
 			"record_dir\t<home>/.nodloop/records\tdefault\nsession_mode\tdeferred\tdefault\napprover\t-\tdefault\nholdout\t0\tdefault\n" +
-				"classifiers\t-\tdefault\nclaude binary\tclaude\tdefault\nmodel\tsonnet\tdefault\n",
+				"decision_points\t-\tdefault\nclaude binary\tclaude\tdefault\nmodel\tsonnet\tdefault\n",
 		},
 		{
 			"config.json and the environment name their source and the environment wins",
@@ -185,8 +187,23 @@ func TestRunConfigList(t *testing.T) {
 				map[string]string{envRecordDir: "/env", envSession: "off", envLLMModel: "opus"},
 			},
 			"record_dir\t/env\tNODLOOP_RECORD_DIR\nsession_mode\toff\tNODLOOP_SESSION\napprover\tann\tconfig.json\nholdout\t0.1\tconfig.json\n" +
-				"classifiers\tcritic\tconfig.json\nclaude binary\tclaude\tdefault\n" +
+				"decision_points\tcritic\tconfig.json\nclaude binary\tclaude\tdefault\n" +
 				"model\topus\tNODLOOP_LLM_MODEL\n",
+		},
+		{
+			"an unreadable classifier setup shows its error in its row",
+			args{`{"classifiers":{"a":{"url":"http://a"},"b":{"url":"http://b"}},"decisions":{"critic":{"mode":"parallel","members":["a","b"]}}}`, nil},
+			"record_dir\t<home>/.nodloop/records\tdefault\nsession_mode\tdeferred\tdefault\napprover\t-\tdefault\nholdout\t0\tdefault\n" +
+				"decision_points\tclassifier setup no longer run: decisions.critic in config.json asks [a b]. " +
+				"Run nodloop classifier set critic --url <url> to ask one endpoint before claude\tconfig.json\n" +
+				"claude binary\tclaude\tdefault\nmodel\tsonnet\tdefault\n",
+		},
+		{
+			"an invalid NODLOOP_SESSION shows its error in its row",
+			args{"", map[string]string{envSession: "later"}},
+			"record_dir\t<home>/.nodloop/records\tdefault\n" +
+				"session_mode\tunknown session mode: NODLOOP_SESSION is \"later\". Use deferred, immediate, manual or off\tNODLOOP_SESSION\n" +
+				"approver\t-\tdefault\nholdout\t0\tdefault\ndecision_points\t-\tdefault\nclaude binary\tclaude\tdefault\nmodel\tsonnet\tdefault\n",
 		},
 	}
 	for _, tc := range tcs {
@@ -195,7 +212,7 @@ func TestRunConfigList(t *testing.T) {
 			home := homeDir(t.TempDir())
 			require.NoError(t, os.MkdirAll(home.dir(), 0o755))
 			if tc.args.saved != "" {
-				require.NoError(t, os.WriteFile(home.configPath(), []byte(tc.args.saved), 0o600))
+				require.NoError(t, os.WriteFile(home.config().ConfigPath(), []byte(tc.args.saved), 0o600))
 			}
 			env := map[string]string{"HOME": string(home)}
 			maps.Copy(env, tc.args.env)

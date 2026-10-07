@@ -3,14 +3,17 @@ package jsonl
 import (
 	"bytes"
 	"os"
+	"slices"
 )
 
-// The lines of a file from the last to the first, each with its newline when it has one
+// The lines of a file from the last to the first
+// Each line keeps its newline when it has one
 type backward struct {
 	file *os.File
 	// Where the bytes not read yet end
 	pos int64
-	// Bytes read and not returned yet, starting at pos
+	// Bytes read and not returned yet
+	// They start at pos
 	buf []byte
 }
 
@@ -22,7 +25,8 @@ func newBackward(file *os.File) (*backward, error) {
 	return &backward{file: file, pos: info.Size()}, nil
 }
 
-// The last line not returned yet and the offset it starts at, or nil once the first line was returned
+// The last line not returned yet and the offset it starts at
+// nil once the first line was returned
 func (b *backward) next() ([]byte, int64, error) {
 	for {
 		if len(b.buf) == 0 && b.pos == 0 {
@@ -45,14 +49,33 @@ func (b *backward) next() ([]byte, int64, error) {
 	}
 }
 
-// Puts the chunk before the bytes read so far in front of them
+// Puts the bytes before those read so far in front of them
+// 1. it reads chunk after chunk until one holds a newline or the file starts
+// 2. the chunks are joined once so a line longer than a chunk is copied once and not once per chunk
 func (b *backward) read() error {
-	n := min(chunk, b.pos)
-	b.pos -= n
-	buf := make([]byte, n, int(n)+len(b.buf))
-	if _, err := b.file.ReadAt(buf, b.pos); err != nil {
-		return err
+	parts := chunks{b.buf}
+	for b.pos > 0 {
+		n := min(chunk, b.pos)
+		b.pos -= n
+		buf := make([]byte, n)
+		if _, err := b.file.ReadAt(buf, b.pos); err != nil {
+			return err
+		}
+		parts = append(parts, buf)
+		if bytes.IndexByte(buf, '\n') >= 0 {
+			break
+		}
 	}
-	b.buf = append(buf, b.buf...)
+	b.buf = parts.join()
 	return nil
+}
+
+// Pieces of a file read from its end with the last piece first
+type chunks [][]byte
+
+// The pieces in file order as one slice
+func (c chunks) join() []byte {
+	ordered := slices.Clone(c)
+	slices.Reverse(ordered)
+	return bytes.Join(ordered, nil)
 }

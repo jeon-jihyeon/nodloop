@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/rand"
 	"flag"
 	"fmt"
 	"os"
@@ -15,6 +14,8 @@ import (
 	feedbackfile "github.com/jeon-jihyeon/nodloop/internal/feedback/file"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	knowledgefile "github.com/jeon-jihyeon/nodloop/internal/knowledge/file"
+	"github.com/jeon-jihyeon/nodloop/internal/llm"
+	"github.com/jeon-jihyeon/nodloop/internal/replay"
 	tracefile "github.com/jeon-jihyeon/nodloop/internal/trace/file"
 	vetofile "github.com/jeon-jihyeon/nodloop/internal/veto/file"
 )
@@ -91,7 +92,7 @@ func (a app) ledger() (*knowledge.Ledger, error) {
 	if err != nil {
 		return nil, err
 	}
-	return knowledge.NewLedger(store, a.vetoFile(dir), a.now, a.newID), nil
+	return knowledge.NewLedger(store, a.vetoFile(dir), a.now, knowledge.NewIDs(a.now)), nil
 }
 
 // Approved vetoes of the record directory under home
@@ -147,12 +148,17 @@ func (a app) plan(point classify.Point, builtin classify.Classifier, getenv func
 	return classify.NewPlan(point, endpoint, classify.Member{Name: builtinMember, Classifier: builtin}, traces, a.now), nil
 }
 
-// The prefix and the clock milliseconds in hex and two random bytes so two ids in one millisecond differ
-func (a app) newID(prefix string) string {
-	var suffix [2]byte
-	// crypto rand Read never returns an error
-	_, _ = rand.Read(suffix[:])
-	return fmt.Sprintf("%s%x%x", prefix, a.now().UnixMilli(), suffix)
+// The replayer of the ledger over the runs and verdicts of the record directory
+func (a app) replayer(ledger *knowledge.Ledger, client llm.Client, model string) (*replay.Replayer, error) {
+	traces, err := a.traces()
+	if err != nil {
+		return nil, err
+	}
+	verdicts, err := a.feedback()
+	if err != nil {
+		return nil, err
+	}
+	return replay.New(ledger, traces, verdicts, client, model, a.now), nil
 }
 
 // Feedback and outcomes and knowledge may cite only recorded runs

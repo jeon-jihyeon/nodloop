@@ -23,7 +23,7 @@ type feedbackFlags struct {
 }
 
 func (f *feedbackFlags) bind(fs *flag.FlagSet) {
-	fs.StringVar(&f.traceID, "trace", "", "trace id")
+	fs.StringVar(&f.traceID, "trace", "", "the run id")
 	fs.StringVar(&f.verdict, "verdict", "", "approve or edit or reject or withdraw")
 	fs.StringVar(&f.reviewer, "reviewer", "", "reviewer such as author")
 	fs.IntVar(&f.limit, "limit", 0, "newest n records. 0 means all")

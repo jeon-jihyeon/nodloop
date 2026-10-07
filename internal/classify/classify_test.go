@@ -12,8 +12,10 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/mock/gomock"
 
 	"github.com/jeon-jihyeon/nodloop/internal/classify"
+	"github.com/jeon-jihyeon/nodloop/internal/classify/classifymock"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
 	tracefile "github.com/jeon-jihyeon/nodloop/internal/trace/file"
 )
@@ -112,28 +114,29 @@ func TestHTTPClassify(t *testing.T) {
 }
 
 // The built in member a point falls back to with fixed answers or a failure
-type builtin struct {
-	answers classify.Answers
-	err     error
-}
-
-func (b builtin) Classify(context.Context, classify.Request) (classify.Answers, error) {
-	return b.answers, b.err
+func builtin(t *testing.T, answers classify.Answers, err error) classify.Member {
+	t.Helper()
+	m := classifymock.NewMockClassifier(gomock.NewController(t))
+	m.EXPECT().Classify(gomock.Any(), gomock.Any()).Return(answers, err).AnyTimes()
+	return classify.Member{Name: "claude", Classifier: m}
 }
 
 func TestPlanClassify(t *testing.T) {
 	sure := endpoint{yes: map[string]float64{"holds": 0.95, "states": 0.9}}
 	unsure := endpoint{yes: map[string]float64{"holds": 0.6, "states": 0.1}}
 	down := endpoint{status: http.StatusInternalServerError}
-	claude := builtin{answers: classify.Answers{"holds": {Yes: 1}, "states": {Yes: 0}}}
+	claude := classify.Answers{"holds": {Yes: 1}, "states": {Yes: 0}}
 	type args struct {
 		endpoint endpoint
-		builtin  builtin
+		// What the built in member answers
+		answers classify.Answers
+		err     error
 	}
 	type want struct {
 		answers classify.Answers
 		asked   []string
-		err     error
+		// Every error the plan returns joined
+		errs []error
 	}
 	tcs := []struct {
 		name string
@@ -141,17 +144,20 @@ func TestPlanClassify(t *testing.T) {
 		want want
 	}{
 		{"a sure endpoint answers alone",
-			args{sure, claude},
+			args{sure, claude, nil},
 			want{answers: classify.Answers{"holds": {Yes: 0.95}, "states": {Yes: 0.9}}, asked: []string{"laya"}}},
 		{"an unsure endpoint falls back to claude",
-			args{unsure, claude},
-			want{answers: classify.Answers{"holds": {Yes: 1}, "states": {Yes: 0}}, asked: []string{"laya", "claude"}}},
+			args{unsure, claude, nil},
+			want{answers: claude, asked: []string{"laya", "claude"}}},
 		{"a failing endpoint falls back to claude",
-			args{down, claude},
-			want{answers: classify.Answers{"holds": {Yes: 1}, "states": {Yes: 0}}, asked: []string{"laya", "claude"}}},
-		{"a failing claude fails the plan",
-			args{down, builtin{err: classify.ErrStatus}},
-			want{asked: []string{"laya", "claude"}, err: classify.ErrStatus}},
+			args{down, claude, nil},
+			want{answers: claude, asked: []string{"laya", "claude"}}},
+		{"an unsure endpoint and a failing claude fail with the error of claude",
+			args{unsure, nil, assert.AnError},
+			want{asked: []string{"laya", "claude"}, errs: []error{assert.AnError}}},
+		{"a failing endpoint and a failing claude fail with both errors",
+			args{down, nil, assert.AnError},
+			want{asked: []string{"laya", "claude"}, errs: []error{classify.ErrStatus, assert.AnError}}},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
@@ -160,18 +166,21 @@ func TestPlanClassify(t *testing.T) {
 			traces, err := tracefile.New(t.TempDir())
 			require.NoError(t, err)
 			plan := classify.NewPlan(classify.PointCritic, tc.args.endpoint.member(t, "laya"),
-				classify.Member{Name: "claude", Classifier: tc.args.builtin}, traces, func() time.Time { return fixed })
+				builtin(t, tc.args.answers, tc.args.err), traces, func() time.Time { return fixed })
 
 			got, err := plan.Classify(ctx, classify.Request{Ref: "run-1", State: "the draft", Questions: questions})
 
-			require.ErrorIs(t, err, tc.want.err)
+			assert.Equal(t, len(tc.want.errs) > 0, err != nil, err)
+			for _, want := range tc.want.errs {
+				assert.ErrorIs(t, err, want)
+			}
 			assert.Equal(t, tc.want.answers, got)
 			recorded, err := traces.List(ctx, trace.Filter{Name: trace.NameClassify})
 			require.NoError(t, err)
 			require.Len(t, recorded, 1)
 			assert.Equal(t, "critic", recorded[0].Subject)
 			assert.Equal(t, "run-1", recorded[0].Ref)
-			assert.Equal(t, tc.want.err != nil, recorded[0].Error != "")
+			assert.Equal(t, len(tc.want.errs) > 0, recorded[0].Error != "")
 			var out struct {
 				Members []struct {
 					Name string `json:"name"`
@@ -199,7 +208,7 @@ func TestPlanClassifyTimes(t *testing.T) {
 		at = at.Add(time.Second)
 		return at
 	}
-	claude := classify.Member{Name: "claude", Classifier: builtin{answers: classify.Answers{"holds": {Yes: 1}, "states": {Yes: 1}}}}
+	claude := builtin(t, classify.Answers{"holds": {Yes: 1}, "states": {Yes: 1}}, nil)
 
 	_, err = classify.NewPlan(classify.PointCritic, unsure.member(t, "laya"), claude, traces, tick).
 		Classify(ctx, classify.Request{State: "the draft", Questions: questions})
@@ -255,15 +264,31 @@ func TestEndpointsWith(t *testing.T) {
 }
 
 func TestEndpointsWithout(t *testing.T) {
-	endpoints := classify.Endpoints{classify.PointCritic: {URL: "http://localhost:8000"}}
+	type want struct {
+		endpoints classify.Endpoints
+		err       error
+	}
+	tcs := []struct {
+		name string
+		args classify.Point
+		want want
+	}{
+		{"the endpoint of the point is removed", classify.PointCritic, want{endpoints: classify.Endpoints{}}},
+		{"another point leaves the endpoints", classify.PointReaction, want{endpoints: classify.Endpoints{classify.PointCritic: {URL: "http://localhost:8000"}}}},
+		{"an unknown point fails", "review", want{err: classify.ErrPointUnknown}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			endpoints := classify.Endpoints{classify.PointCritic: {URL: "http://localhost:8000"}}
 
-	got, err := endpoints.Without(classify.PointCritic)
+			got, err := endpoints.Without(tc.args)
 
-	require.NoError(t, err)
-	assert.Empty(t, got)
-	assert.Len(t, endpoints, 1, "the endpoints it was called on stay as they were")
-	_, err = endpoints.Without("review")
-	assert.ErrorIs(t, err, classify.ErrPointUnknown)
+			assert.ErrorIs(t, err, tc.want.err)
+			assert.Equal(t, tc.want.endpoints, got)
+			assert.Len(t, endpoints, 1, "the endpoints it was called on stay as they were")
+		})
+	}
 }
 
 func TestEndpointsCheck(t *testing.T) {
@@ -288,5 +313,46 @@ func TestEndpointsCheck(t *testing.T) {
 }
 
 func TestEndpointName(t *testing.T) {
-	assert.Equal(t, "localhost:8000", classify.Endpoint{URL: "http://localhost:8000/v1/systemone"}.Name())
+	tcs := []struct {
+		name string
+		args string
+		want string
+	}{
+		{"host and path name the endpoint", "http://localhost:8000/v1/systemone", "localhost:8000/v1/systemone"},
+		{"another path on the same host differs", "http://localhost:8000/v1/systemtwo", "localhost:8000/v1/systemtwo"},
+		{"a URL without a path is its host", "https://openrouter.ai/", "openrouter.ai"},
+		{"a URL that does not parse is named as written", "http://local host:8000", "http://local host:8000"},
+		{"a URL without a host is named as written", "localhost", "localhost"},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.want, classify.Endpoint{URL: tc.args}.Name())
+		})
+	}
+}
+
+func TestEndpointClassifier(t *testing.T) {
+	tcs := []struct {
+		name string
+		// The env variable the endpoint names for its key
+		args string
+		want string
+	}{
+		{"the key the env holds is sent as a bearer token", "LAYA_KEY", "Bearer secret"},
+		{"no env variable sends no key", "", ""},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			srv, _, auth := endpoint{yes: map[string]float64{"holds": 1, "states": 1}}.serve(t)
+			getenv := func(k string) string { return map[string]string{"LAYA_KEY": "secret"}[k] }
+
+			_, err := classify.Endpoint{URL: srv.URL, KeyEnv: tc.args}.Classifier(getenv, time.Second).
+				Classify(context.Background(), classify.Request{State: "the draft", Questions: questions})
+
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, *auth)
+		})
+	}
 }

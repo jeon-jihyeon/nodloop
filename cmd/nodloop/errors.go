@@ -11,19 +11,17 @@ var (
 	errLabelFlag   = errors.New("bad --label")
 	errAppliedFlag = errors.New("bad --applied")
 	errHeaderFlag  = errors.New("bad --header")
-	// A proposal from a run teaches what a person corrected
-	errConfigInvalid = errors.New(configFile + " is not valid JSON")
-	errServerMoved   = errors.New("moved to its own binary in 0.7.0. Install nodloop-server from the release archives or with " +
+	errServerMoved = errors.New("moved to its own binary in 0.7.0. Install nodloop-server from the release archives or with " +
 		"go install github.com/jeon-jihyeon/nodloop/server/cmd/nodloop-server@latest")
 	// A classifier setup of a config before 0.7.0 that no single endpoint answers like
 	errSetupRetired     = errors.New("classifier setup no longer run")
 	errUnexpectedOutput = errors.New("unexpected output")
 	errWrongAnswer      = errors.New("wrong answer")
 	errVetoExample      = errors.New("veto example is not a JSON object")
+	// A replay trace holds a result the replay package wrote so one that does not decode was edited or cut
+	errReplayUndecodable = errors.New("replay trace does not decode")
 	// go deletes a go run build on exit so a hook on it would fail open
 	errExecutableTemporary = errors.New("the executable is a temporary go build. Install from a built binary such as one from go install")
-	// A relative path names other records and another approved veto file in every working directory
-	errRecordDirRelative = errors.New("the record directory must be an absolute path")
 )
 
 // A command that cannot run as asked

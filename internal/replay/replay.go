@@ -18,7 +18,8 @@ import (
 )
 
 const (
-	// Approved runs of the scope judged at most, newest first
+	// Approved runs of the scope judged at most
+	// The newest come first
 	// Enough to show a lesson that reaches too far while one model call holds them
 	approvedCases = 10
 	// Runes of an output the judge reads
@@ -68,12 +69,21 @@ type Result struct {
 	Cases   []Case `json:"cases"`
 	// Corrected outputs the lesson does not catch
 	Missed int `json:"missed"`
-	// Approved outputs the lesson would have changed, the mark of a lesson that reaches too far
+	// Approved outputs the lesson would have changed
+	// The mark of a lesson that reaches too far
 	Overreach int `json:"overreach"`
 }
 
 func (r Result) Passed() bool {
 	return r.Missed == 0 && r.Overreach == 0
+}
+
+// passed or failed as a report line shows the judgment
+func (r Result) Outcome() string {
+	if r.Passed() {
+		return "passed"
+	}
+	return "failed"
 }
 
 // Gathers the cases of a lesson, asks the judge in one call and records a replay trace
@@ -93,6 +103,7 @@ func New(ledger KnowledgeStore, traces TraceStore, verdicts FeedbackStore, clien
 
 // Judges the version against its cases and records the judgment as a replay trace
 // Version zero means the current version of id
+// A judgment that fails after the model answered is recorded with its error so the cost of the call stays in the records
 func (r *Replayer) Replay(ctx context.Context, id string, version int) (Result, error) {
 	item, err := r.item(ctx, id, version)
 	if err != nil {
@@ -108,13 +119,20 @@ func (r *Replayer) Replay(ctx context.Context, id string, version int) (Result, 
 	}
 	var answer judgment
 	if err := json.Unmarshal(res.Output, &answer); err != nil {
-		return Result{}, fmt.Errorf("%w: %w", ErrJudgment, err)
+		return Result{}, r.failed(ctx, item, res, fmt.Errorf("%w: %w", ErrJudgment, err))
 	}
 	result, err := answer.result(item, g.cases)
 	if err != nil {
+		return Result{}, r.failed(ctx, item, res, err)
+	}
+	output, err := json.Marshal(result)
+	if err != nil {
 		return Result{}, err
 	}
-	return result, r.record(ctx, item, result, res)
+	if err := r.record(ctx, item, res, output, ""); err != nil {
+		return Result{}, err
+	}
+	return result, nil
 }
 
 func (r *Replayer) item(ctx context.Context, id string, version int) (knowledge.Knowledge, error) {
@@ -129,6 +147,9 @@ func (r *Replayer) item(ctx context.Context, id string, version int) (knowledge.
 			}
 		}
 	}
+	if version == 0 {
+		return knowledge.Knowledge{}, fmt.Errorf("%w: %s", ErrNoCurrent, id)
+	}
 	item, err := all.Version(id, version)
 	if err != nil {
 		return knowledge.Knowledge{}, err
@@ -139,8 +160,9 @@ func (r *Replayer) item(ctx context.Context, id string, version int) (knowledge.
 	return item, nil
 }
 
-// The cases of a lesson in the order the judge reads them and the output of each run
-// The outputs stay out of the cases since the trace keeps the cases and the runs already hold the outputs
+// The cases of a lesson ordered by run id and the output of each run
+// 1. the order by run id keeps the corrected runs from standing at a place the judge could read
+// 2. the outputs stay out of the cases since the trace keeps the cases and the runs already hold the outputs
 type gathered struct {
 	cases   []Case
 	outputs map[string]string
@@ -171,7 +193,12 @@ func (r *Replayer) cases(ctx context.Context, item knowledge.Knowledge) (gathere
 	if len(g.cases) == 0 {
 		return gathered{}, fmt.Errorf("%w: %s v%d cites no corrected run and its scope holds no approved one", ErrNoCases, item.ID, item.Version)
 	}
+	slices.SortFunc(g.cases, Case.byRun)
 	return g, nil
+}
+
+func (c Case) byRun(other Case) int {
+	return strings.Compare(c.Run, other.Run)
 }
 
 // A cited run counts only while its latest verdict still corrects it
@@ -191,18 +218,20 @@ func (r *Replayer) corrected(ctx context.Context, item knowledge.Knowledge, late
 	return nil
 }
 
-// The newest approvedCases runs the item never reached whose latest verdict approves them, a person's or one a session inferred
+// The newest approvedCases runs the item never reached whose latest verdict approves them
+// The verdict is a person's or one a session inferred
 func (r *Replayer) approved(ctx context.Context, item knowledge.Knowledge, latest map[string]feedback.Feedback, g *gathered) error {
 	runs, err := r.traces.List(ctx, trace.Filter{Name: trace.NameRun})
 	if err != nil {
 		return err
 	}
+	reach := reach{since: item.ReachedSince(), cited: item.Evidence.FeedbackTraceIDs, scope: *item.Run}
 	kept := 0
 	for _, run := range runs {
 		if kept == approvedCases {
 			break
 		}
-		if v, ok := latest[run.ID]; ok && v.Verdict == feedback.VerdictApprove && unseen(item, run) {
+		if v, ok := latest[run.ID]; ok && v.Verdict == feedback.VerdictApprove && reach.unseen(run.ID, run.Time, run.Producer, run.Labels) {
 			g.add(run, ExpectKeeps)
 			kept++
 		}
@@ -210,25 +239,39 @@ func (r *Replayer) approved(ctx context.Context, item knowledge.Knowledge, lates
 	return nil
 }
 
-// Whether the run lies in the scope of the item and was recorded before runs began to receive it
-// 1. a run recorded later may have followed the item and would pass whatever it says
-// 2. a cited run is a case of its own
-func unseen(item knowledge.Knowledge, run trace.Trace) bool {
-	return run.Time.Before(item.ReachedSince()) && !slices.Contains(item.Evidence.FeedbackTraceIDs, run.ID) && item.Run.Admits(run.Producer, run.Labels)
+// What of a version decides which approved runs may judge it
+type reach struct {
+	// When runs began to receive the version
+	since time.Time
+	// The runs the version cites
+	cited []string
+	scope knowledge.RunScope
 }
 
-func (r *Replayer) record(ctx context.Context, item knowledge.Knowledge, result Result, res llm.Response) error {
-	input, err := json.Marshal(map[string]any{"id": item.ID, "version": item.Version, "content": item.Content})
-	if err != nil {
-		return err
+// Whether the run lies in the scope and was recorded before runs began to receive the version
+// 1. a run recorded later may have followed the version and would pass whatever it says
+// 2. a cited run is a case of its own
+func (r reach) unseen(runID string, at time.Time, producer string, labels trace.Labels) bool {
+	return at.Before(r.since) && !slices.Contains(r.cited, runID) && r.scope.Admits(producer, labels)
+}
+
+// Records the failed judgment with the usage of the call and answers its error
+func (r *Replayer) failed(ctx context.Context, item knowledge.Knowledge, res llm.Response, err error) error {
+	if recErr := r.record(ctx, item, res, nil, err.Error()); recErr != nil {
+		return errors.Join(err, recErr)
 	}
-	output, err := json.Marshal(result)
+	return err
+}
+
+// The output is the judgment or empty when failure names why there is none
+func (r *Replayer) record(ctx context.Context, item knowledge.Knowledge, res llm.Response, output json.RawMessage, failure string) error {
+	input, err := json.Marshal(map[string]any{"id": item.ID, "version": item.Version, "content": item.Content})
 	if err != nil {
 		return err
 	}
 	now := r.now()
 	return r.traces.Append(ctx, trace.Trace{
-		ID: trace.NewID(now), Name: trace.NameReplay, Subject: item.ID, Time: now, Input: input, Output: output,
+		ID: trace.NewID(now), Name: trace.NameReplay, Subject: item.ID, Time: now, Input: input, Output: output, Error: failure,
 		Usage: trace.Usage{
 			InputTokens: res.InputTokens, OutputTokens: res.OutputTokens, CacheReadTokens: res.CacheRead, CacheCreateTokens: res.CacheCreate,
 			CostUSD: res.CostUSD,
@@ -258,7 +301,8 @@ type answer struct {
 	Why    string `json:"why"`
 }
 
-// The cases with the answers of the judge, refused when it left one out
+// The cases with the answers of the judge
+// Refused when it left a case out
 func (j judgment) result(item knowledge.Knowledge, cases []Case) (Result, error) {
 	byRun := map[string]answer{}
 	for _, a := range j.Cases {
@@ -293,7 +337,8 @@ func (g gathered) prompt(item knowledge.Knowledge) string {
 	return b.String()
 }
 
-// A JSON string output as its text and any other JSON as written, cut at outputRunes
+// A JSON string output as its text and any other JSON as written
+// Cut at outputRunes
 func text(raw json.RawMessage) string {
 	var s string
 	if json.Unmarshal(raw, &s) != nil {

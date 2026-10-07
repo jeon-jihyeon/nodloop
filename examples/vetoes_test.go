@@ -209,7 +209,7 @@ func TestVetoes(t *testing.T) {
 		{"plus inside a sed script before the flag is blocked", args{"no-sed-inplace", "Bash", "sed -E 's/a+/b/' -i f"}, true},
 		{
 			"word inside a quoted grep argument passes",
-			args{"no-eval", "Bash", `grep -n "Items 1 and 2 change a shared contract\|eval rerun" tmp/docs/SPEC-generalize.md`},
+			args{"no-eval", "Bash", `grep -n "Items 1 and 2 change a shared contract\|eval rerun" docs/spec.md`},
 			false,
 		},
 		{"python heredoc text holding the word passes", args{"no-eval", "Bash", "python3 - <<'EOF'\nprint('run eval now')\neval\nEOF"}, false},

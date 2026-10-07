@@ -16,7 +16,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 
-	"github.com/jeon-jihyeon/nodloop/internal/classify"
 	"github.com/jeon-jihyeon/nodloop/internal/llm"
 	"github.com/jeon-jihyeon/nodloop/internal/llm/llmmock"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
@@ -103,8 +102,21 @@ func TestRunClassifierLegacyConfig(t *testing.T) {
 		want   want
 	}{
 		{"a cascade of an endpoint and claude asks that endpoint",
-			`{` + named + `"decisions":{"critic":{"mode":"cascade","members":["laya","claude"],"threshold":0.9}}}`, []string{"list"},
+			`{` + named + `"decisions":{"critic":{"mode":"cascade","members":["laya","claude"],"threshold":0.8}}}`, []string{"list"},
 			want{0, "point\tcritic\t" + layaURL + "\npoint\treaction\tclaude (default)\n", ""}},
+		{"a cascade without a threshold stopped at the default and asks that endpoint",
+			`{` + named + `"decisions":{"critic":{"mode":"cascade","members":["laya","claude"]}}}`, []string{"list"},
+			want{0, "point\tcritic\t" + layaURL + "\npoint\treaction\tclaude (default)\n", ""}},
+		{"a cascade of another threshold is refused and names it",
+			`{` + named + `"decisions":{"critic":{"mode":"cascade","members":["laya","claude"],"threshold":0.9}}}`, []string{"list"},
+			want{1, "", "nodloop classifier: classifier setup no longer run: decisions.critic in config.json asks [laya claude] " +
+				"with threshold 0.9 while a point now falls back below 0.8. Run nodloop classifier set critic --url <url> to ask one endpoint before claude"}},
+		{"endpoints named like a point without decisions ran claude alone and still do",
+			`{"classifiers":{"critic":{"url":"` + layaURL + `"}}}`, []string{"list"},
+			want{0, "point\tcritic\tclaude (default)\npoint\treaction\tclaude (default)\n", ""}},
+		{"decision_points wins over the keys of a config before 0.7.0",
+			`{"decision_points":{"reaction":{"url":"` + layaURL + `"}},` + named + `"decisions":{"critic":{"mode":"single","members":["laya"]}}}`, []string{"list"},
+			want{0, "point\tcritic\tclaude (default)\npoint\treaction\t" + layaURL + "\n", ""}},
 		{"a single endpoint asks that endpoint",
 			`{` + named + `"decisions":{"reaction":{"mode":"single","members":["laya"]}}}`, []string{"list"},
 			want{0, "point\tcritic\tclaude (default)\npoint\treaction\t" + layaURL + "\n", ""}},
@@ -127,7 +139,7 @@ func TestRunClassifierLegacyConfig(t *testing.T) {
 			t.Parallel()
 			home := homeDir(t.TempDir())
 			require.NoError(t, os.MkdirAll(home.dir(), 0o700))
-			require.NoError(t, os.WriteFile(home.configPath(), []byte(tc.config), 0o600))
+			require.NoError(t, os.WriteFile(home.config().ConfigPath(), []byte(tc.config), 0o600))
 			getenv := func(k string) string { return map[string]string{"HOME": string(home)}[k] }
 			var stdout, stderr bytes.Buffer
 
@@ -141,25 +153,39 @@ func TestRunClassifierLegacyConfig(t *testing.T) {
 	}
 }
 
-// set keeps the other keys of config.json and drops the decisions of a config before 0.7.0
+// set and unset keep the other keys of config.json and write decision_points in place of the keys of a config before 0.7.0
 func TestRunClassifierKeepsConfig(t *testing.T) {
-	home := homeDir(t.TempDir())
-	require.NoError(t, os.MkdirAll(home.dir(), 0o700))
 	legacy := `{"approver":"ann","record_dir":"/records","classifiers":{"laya":{"url":"` + layaURL + `"}},` +
 		`"decisions":{"reaction":{"mode":"single","members":["laya"]}}}`
-	require.NoError(t, os.WriteFile(home.configPath(), []byte(legacy), 0o600))
-	getenv := func(k string) string { return map[string]string{"HOME": string(home)}[k] }
+	tcs := []struct {
+		name string
+		args []string
+		// config.json after the call
+		want string
+	}{
+		{"set carries the endpoint of the other point over", []string{"set", "critic", "--url", layaURL},
+			"{\n  \"approver\": \"ann\",\n  \"decision_points\": {\n    \"critic\": {\n      \"url\": \"" + layaURL + "\"\n    },\n" +
+				"    \"reaction\": {\n      \"url\": \"" + layaURL + "\"\n    }\n  },\n  \"record_dir\": \"/records\"\n}\n"},
+		{"unset of the last point leaves decision_points empty", []string{"unset", "reaction"},
+			"{\n  \"approver\": \"ann\",\n  \"decision_points\": {},\n  \"record_dir\": \"/records\"\n}\n"},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			home := homeDir(t.TempDir())
+			require.NoError(t, os.MkdirAll(home.dir(), 0o700))
+			require.NoError(t, os.WriteFile(home.config().ConfigPath(), []byte(legacy), 0o600))
+			getenv := func(k string) string { return map[string]string{"HOME": string(home)}[k] }
+			var stderr bytes.Buffer
 
-	require.Equal(t, 0, runClassifier([]string{"set", "critic", "--url", layaURL}, getenv, time.Now, &bytes.Buffer{}, &bytes.Buffer{}))
+			code := runClassifier(tc.args, getenv, time.Now, &bytes.Buffer{}, &stderr)
 
-	uc, err := home.readConfig()
-	require.NoError(t, err)
-	assert.Equal(t, "ann", uc.Approver)
-	assert.Equal(t, "/records", uc.RecordDir)
-	assert.Nil(t, uc.Decisions)
-	endpoints, err := uc.endpoints()
-	require.NoError(t, err)
-	assert.Equal(t, classify.Endpoints{classify.PointCritic: {URL: layaURL}, classify.PointReaction: {URL: layaURL}}, endpoints)
+			require.Equal(t, 0, code, stderr.String())
+			saved, err := os.ReadFile(home.config().ConfigPath())
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, string(saved))
+		})
+	}
 }
 
 // A probe prints the answer of the endpoint and sends the key its env holds
@@ -249,7 +275,7 @@ func TestRunKnowledgeExtractClassifier(t *testing.T) {
 func TestRunKnowledgeExtractInvalidEndpoint(t *testing.T) {
 	home, records := homeDir(t.TempDir()), t.TempDir()
 	require.NoError(t, os.MkdirAll(home.dir(), 0o700))
-	require.NoError(t, os.WriteFile(home.configPath(), []byte(`{"classifiers":{"critic":{"url":"localhost:8000"}}}`), 0o600))
+	require.NoError(t, os.WriteFile(home.config().ConfigPath(), []byte(`{"decision_points":{"critic":{"url":"localhost:8000"}}}`), 0o600))
 	getenv := func(k string) string { return map[string]string{"HOME": string(home), envRecordDir: records}[k] }
 	out := filepath.Join(string(home), "out.txt")
 	require.NoError(t, os.WriteFile(out, []byte("cd repo && git status"), 0o600))

@@ -11,6 +11,7 @@ import (
 	"slices"
 
 	"github.com/jeon-jihyeon/nodloop/internal/mcp"
+	"github.com/jeon-jihyeon/nodloop/internal/userconfig"
 )
 
 // One key a service calls the server with
@@ -44,12 +45,32 @@ func (c serverConfig) match(token string) (serverKey, bool) {
 	return serverKey{}, false
 }
 
+func (c serverConfig) has(name string) bool {
+	for _, k := range c.Keys {
+		if k.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+func (c serverConfig) without(name string) serverConfig {
+	keys := make([]serverKey, 0, len(c.Keys))
+	for _, k := range c.Keys {
+		if k.Name != name {
+			keys = append(keys, k)
+		}
+	}
+	c.Keys = keys
+	return c
+}
+
 // key add, list and remove manage the keys serve accepts
 func runKey(args []string, getenv func(string) string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		return fail(stderr, "key", fmt.Errorf("%w %q", errUnknownAction, ""))
 	}
-	h := homeDir(getenv("HOME"))
+	h := userconfig.Home(getenv("HOME"))
 	if h == "" {
 		return fail(stderr, "key", errHomeUnknown)
 	}
@@ -60,8 +81,8 @@ func runKey(args []string, getenv func(string) string, stdout, stderr io.Writer)
 	if err != nil {
 		return parseFailed(err)
 	}
-	uc, err := h.readConfig()
-	if err != nil {
+	var uc fileConfig
+	if err := h.Read(&uc); err != nil {
 		return fail(stderr, "key", err)
 	}
 	cmd := serverCommand{home: h, keys: uc.Server, out: stdout}
@@ -82,18 +103,17 @@ func runKey(args []string, getenv func(string) string, stdout, stderr io.Writer)
 }
 
 type serverCommand struct {
-	home homeDir
+	home userconfig.Home
 	keys serverConfig
 	out  io.Writer
 }
 
 // Prints the new key once and saves its hash
+// The name is checked against the keys read under the config lock so two adds of one name never both land
 func (c serverCommand) add(k serverKey) error {
 	switch {
 	case k.Name == "":
 		return fmt.Errorf("add: a key name %w", errRequired)
-	case slices.ContainsFunc(c.keys.Keys, func(o serverKey) bool { return o.Name == k.Name }):
-		return fmt.Errorf("%w: %s", errKeyExists, k.Name)
 	case !tenantName.MatchString(k.Tenant):
 		return fmt.Errorf("%w: %q. Use lower case letters, digits, - and _", errTenantInvalid, k.Tenant)
 	case !k.Role.Valid():
@@ -105,9 +125,14 @@ func (c serverCommand) add(k serverKey) error {
 	key := "nl_" + hex.EncodeToString(secret[:])
 	sum := sha256.Sum256([]byte(key))
 	k.SHA256 = hex.EncodeToString(sum[:])
-	keys := c.keys
-	keys.Keys = append(slices.Clone(keys.Keys), k)
-	if err := c.home.saveKeys(keys); err != nil {
+	err := c.update(func(keys serverConfig) (serverConfig, error) {
+		if keys.has(k.Name) {
+			return keys, fmt.Errorf("%w: %s", errKeyExists, k.Name)
+		}
+		keys.Keys = append(slices.Clone(keys.Keys), k)
+		return keys, nil
+	})
+	if err != nil {
 		return err
 	}
 	fmt.Fprintln(c.out, key)
@@ -121,10 +146,25 @@ func (c serverCommand) list() {
 }
 
 func (c serverCommand) remove(name string) error {
-	keys := c.keys
-	keys.Keys = slices.DeleteFunc(slices.Clone(keys.Keys), func(k serverKey) bool { return k.Name == name })
-	if len(keys.Keys) == len(c.keys.Keys) {
-		return fmt.Errorf("%w: %s", errKeyUnknown, name)
-	}
-	return c.home.saveKeys(keys)
+	return c.update(func(keys serverConfig) (serverConfig, error) {
+		if !keys.has(name) {
+			return keys, fmt.Errorf("%w: %s", errKeyUnknown, name)
+		}
+		return keys.without(name), nil
+	})
+}
+
+// Rewrites the server key of config.json from the keys read under the config lock and keeps every other key
+func (c serverCommand) update(change func(serverConfig) (serverConfig, error)) error {
+	return c.home.Update(func(read func(string, any) error) (map[string]any, error) {
+		var keys serverConfig
+		if err := read("server", &keys); err != nil {
+			return nil, err
+		}
+		keys, err := change(keys)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"server": keys}, nil
+	})
 }

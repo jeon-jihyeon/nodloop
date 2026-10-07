@@ -41,8 +41,8 @@ export interface Candidate {
   id: string;
   version: number;
   status: string;
-  /** Approved items the candidate says the same as */
-  overlaps?: { id: string; version: number }[];
+  /** The current items of the same kind that one run may carry with the candidate, each as the ledger records it */
+  overlaps?: { id: string; version: number; [field: string]: unknown }[];
 }
 
 /** An approved knowledge version */
@@ -52,8 +52,14 @@ export interface Approval {
   status: string;
   /** The approver the records keep, which a server sets to the key's name */
   approver: string;
+  /** Whether the approved version carries a veto the guard now applies */
+  veto: boolean;
+  /** Whether one run would carry more than five items so a compaction is due */
+  compactionDue: boolean;
   /** Why approved.md or the veto file could not be written, while the approval itself stands */
-  export_error?: string;
+  exportError: string;
+  /** Why the items one run carries with it could not be read, while the approval itself stands */
+  folderError: string;
 }
 
 /** One output to record */
@@ -169,7 +175,17 @@ export class Client {
 
   /** Approves a candidate on behalf of the named person */
   async approve(id: string, version: number, approver: string): Promise<Approval> {
-    return this.call("approve", { id, version, approver });
+    const answer = await this.call("approve", { id, version, approver });
+    return {
+      id: answer.id,
+      version: answer.version,
+      status: answer.status,
+      approver: answer.approver,
+      veto: Boolean(answer.veto),
+      compactionDue: Boolean(answer.folder?.compaction_due),
+      exportError: answer.export_error ?? "",
+      folderError: answer.folder_error ?? "",
+    };
   }
 
   /**

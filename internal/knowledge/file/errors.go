@@ -7,5 +7,24 @@ var (
 	ErrOpen   = errors.New("knowledge file: record directory unusable")
 	ErrAppend = errors.New("knowledge file: append failed")
 	ErrRead   = errors.New("knowledge file: read failed")
-	ErrWrite  = errors.New("knowledge file: rules write failed")
+	// Lines that fail to decode
+	// The read returns the records of the other lines with it
+	ErrCorrupt = errors.New("knowledge file: corrupt lines")
+	ErrRepair  = errors.New("knowledge file: repair failed")
+	ErrWrite   = errors.New("knowledge file: rules write failed")
 )
+
+// A read that left out corrupt lines
+// 1. it reads as the jsonl error alone since that names the file and each line once
+// 2. errors.Is still matches ErrRead and ErrCorrupt and the jsonl error behind them
+type corruptError struct {
+	err error
+}
+
+func (e corruptError) Error() string {
+	return e.err.Error()
+}
+
+func (e corruptError) Unwrap() []error {
+	return []error{ErrRead, ErrCorrupt, e.err}
+}

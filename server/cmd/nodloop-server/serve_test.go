@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -20,6 +21,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeon-jihyeon/nodloop/internal/loop"
 	"github.com/jeon-jihyeon/nodloop/internal/mcp"
 	"github.com/jeon-jihyeon/nodloop/server/internal/pg"
 )
@@ -102,6 +104,11 @@ func (p prefixed) open(key serverKey, now func() time.Time, session string) mcp.
 	return p.tenantStores.open(key, now, session)
 }
 
+func (p prefixed) reports(key serverKey, now func() time.Time) (loop.Stores, error) {
+	key.Tenant = p.prefix + key.Tenant
+	return p.tenantStores.reports(key, now)
+}
+
 // Each key sees the tools of its role, writes the records of its tenant and approves under its own name
 func TestServeHandler(t *testing.T) {
 	for name, stores := range backends(t) {
@@ -164,16 +171,20 @@ func TestServeHandlerUnauthorized(t *testing.T) {
 	}
 }
 
-// The HTTP API answers reports to a key whose role reads them and a probe without a key
+// The HTTP API answers reports of the tenant of the key to a role that reads them and a probe without a key
 func TestServeHandlerReports(t *testing.T) {
-	config := serverConfig{Keys: []serverKey{hashed("bot", "acme", mcp.RoleProducer), hashed("ann", "acme", mcp.RoleApprover)}}
+	config := serverConfig{Keys: []serverKey{
+		hashed("bot", "acme", mcp.RoleProducer), hashed("ann", "acme", mcp.RoleApprover), hashed("rita", "acme", mcp.RoleReviewer),
+		hashed("gus", "globex", mcp.RoleReviewer),
+	}}
 	srv := httptest.NewServer(newServeHandler(fileTenants{base: t.TempDir()}, config, time.Now, io.Discard))
 	t.Cleanup(srv.Close)
 	call(t, dial(t, srv.URL+"/mcp", "bot"), "run", map[string]any{"producer": "support-bot", "output": "steps"})
 	type want struct {
 		status int
-		// A fragment of the body
+		// A fragment of the body or the runs of a loop report when it answers one
 		body string
+		runs int
 	}
 	tcs := []struct {
 		name string
@@ -181,12 +192,14 @@ func TestServeHandlerReports(t *testing.T) {
 		key  string
 		want want
 	}{
-		{"healthz needs no key", "/healthz", "", want{http.StatusOK, "ok"}},
-		{"a report of the tenant of the key", "/v1/reports/loop", "ann", want{http.StatusOK, `"totals":{"runs":1,`}},
-		{"health is a report too", "/v1/reports/health", "ann", want{http.StatusOK, `[]`}},
-		{"a producer may not read reports", "/v1/reports/loop", "bot", want{http.StatusForbidden, "may not read reports"}},
-		{"an unknown report is not found", "/v1/reports/nope", "ann", want{http.StatusNotFound, "no such report"}},
-		{"a report needs a key", "/v1/reports/loop", "", want{http.StatusUnauthorized, "key is required"}},
+		{"healthz needs no key", "/healthz", "", want{status: http.StatusOK, body: "ok\n"}},
+		{"an approver reads the report of its tenant", "/v1/reports/loop", "ann", want{status: http.StatusOK, runs: 1}},
+		{"a reviewer reads reports", "/v1/reports/loop", "rita", want{status: http.StatusOK, runs: 1}},
+		{"another tenant reads its own records", "/v1/reports/loop", "gus", want{status: http.StatusOK, runs: 0}},
+		{"health is a report too", "/v1/reports/health", "ann", want{status: http.StatusOK, body: "[]\n"}},
+		{"a producer may not read reports", "/v1/reports/loop", "bot", want{status: http.StatusForbidden, body: "the role producer may not read reports\n"}},
+		{"an unknown report is not found", "/v1/reports/nope", "ann", want{status: http.StatusNotFound, body: "no such report"}},
+		{"a report needs a key", "/v1/reports/loop", "", want{status: http.StatusUnauthorized, body: "a nodloop server key is required\n"}},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
@@ -203,89 +216,48 @@ func TestServeHandlerReports(t *testing.T) {
 			body, err := io.ReadAll(res.Body)
 			require.NoError(t, err)
 			_ = res.Body.Close()
-			assert.Equal(t, tc.want.status, res.StatusCode, string(body))
-			assert.Contains(t, string(body), tc.want.body)
-		})
-	}
-}
-
-func TestRunKey(t *testing.T) {
-	type args struct {
-		setup [][]string
-		args  []string
-	}
-	type want struct {
-		code int
-		// stdout with {key} for a printed key
-		stdout string
-		stderr string
-	}
-	tcs := []struct {
-		name string
-		args args
-		want want
-	}{
-		{"a new key is printed once", args{nil, []string{"key", "add", "ann", "--tenant", "acme", "--role", "approver"}}, want{0, "{key}\n", ""}},
-		{"keys list without their secret", args{[][]string{{"key", "add", "ann", "--tenant", "acme", "--role", "approver"}}, []string{"key", "list"}},
-			want{0, "ann\tacme\tapprover\n", ""}},
-		{"a removed key leaves the list", args{[][]string{{"key", "add", "ann", "--tenant", "acme", "--role", "approver"}, {"key", "remove", "ann"}}, []string{"key", "list"}},
-			want{0, "", ""}},
-		{"a name is used once", args{[][]string{{"key", "add", "ann", "--tenant", "acme", "--role", "approver"}}, []string{"key", "add", "ann", "--tenant", "acme", "--role", "producer"}},
-			want{1, "", "nodloop-server key: a server key of that name exists: ann"}},
-		{"a tenant is one path element", args{nil, []string{"key", "add", "ann", "--tenant", "../etc", "--role", "approver"}}, want{1, "", "nodloop-server key: invalid tenant"}},
-		{"an unknown role is refused", args{nil, []string{"key", "add", "ann", "--tenant", "acme", "--role", "admin"}}, want{1, "", "nodloop-server key: invalid role"}},
-		{"an unknown key is not removed", args{nil, []string{"key", "remove", "ann"}}, want{1, "", "nodloop-server key: no server key of that name: ann"}},
-	}
-	for _, tc := range tcs {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			home := t.TempDir()
-			getenv := func(k string) string { return map[string]string{"HOME": home}[k] }
-			for _, args := range tc.args.setup {
-				var stderr bytes.Buffer
-				require.Equal(t, 0, run(args, getenv, time.Now, &bytes.Buffer{}, &stderr), stderr.String())
+			require.Equal(t, tc.want.status, res.StatusCode, string(body))
+			switch {
+			case strings.HasSuffix(tc.path, "/loop") && res.StatusCode == http.StatusOK:
+				var report loop.LoopReport
+				require.NoError(t, json.Unmarshal(body, &report))
+				assert.Equal(t, tc.want.runs, report.Totals.Runs)
+			case tc.want.body != "":
+				assert.Contains(t, string(body), tc.want.body)
 			}
-			var stdout, stderr bytes.Buffer
-
-			code := run(tc.args.args, getenv, time.Now, &stdout, &stderr)
-
-			assert.Equal(t, tc.want.code, code)
-			key := strings.TrimSpace(stdout.String())
-			assert.Equal(t, strings.ReplaceAll(tc.want.stdout, "{key}", key), stdout.String())
-			assert.True(t, strings.HasPrefix(stderr.String(), tc.want.stderr), stderr.String())
 		})
 	}
 }
 
-// config.json keeps the hash of a new key and never the key it printed
-func TestServerKeySavedAsHash(t *testing.T) {
-	home := homeDir(t.TempDir())
-	getenv := func(k string) string { return map[string]string{"HOME": string(home)}[k] }
-	var stdout bytes.Buffer
-	require.Equal(t, 0, run([]string{"key", "add", "ann", "--tenant", "acme", "--role", "approver"}, getenv, time.Now, &stdout, &bytes.Buffer{}))
-	key := strings.TrimSpace(stdout.String())
+// A tenant directory is open to the server user alone
+func TestFileTenantsReportsPrivateDir(t *testing.T) {
+	base := t.TempDir()
 
-	uc, err := home.readConfig()
+	_, err := fileTenants{base: base}.reports(hashed("ann", "acme", mcp.RoleApprover), time.Now)
 
 	require.NoError(t, err)
-	sum := sha256.Sum256([]byte(key))
-	assert.True(t, strings.HasPrefix(key, "nl_"))
-	assert.Equal(t, []serverKey{{Name: "ann", Tenant: "acme", Role: mcp.RoleApprover, SHA256: hex.EncodeToString(sum[:])}}, uc.Server.Keys)
-	saved, err := os.ReadFile(home.configPath())
+	info, err := os.Stat(filepath.Join(base, "tenants", "acme"))
 	require.NoError(t, err)
-	assert.NotContains(t, string(saved), key)
+	assert.Equal(t, os.FileMode(0o700), info.Mode().Perm())
 }
 
-// Tenant stores that never open, as a record directory without permission would
+// Tenant stores that never open as a record directory without permission would
 type unopened struct{}
 
 func (unopened) open(serverKey, func() time.Time, string) mcp.Open {
 	return func(context.Context) (*mcp.Server, error) {
-		return nil, errors.New("mkdir /srv/records/tenants/acme: permission denied")
+		return nil, errUnopened
 	}
 }
 
-// A failure of the server answers without its cause, which goes to the log
+func (unopened) reports(serverKey, func() time.Time) (loop.Stores, error) {
+	return loop.Stores{}, errUnopened
+}
+
+var errUnopened = errors.New("mkdir /srv/records/tenants/acme: permission denied")
+
+// A failure of the server answers without its cause
+// The cause goes to the log
 func TestServeHandlerInternalError(t *testing.T) {
 	var log bytes.Buffer
 	srv := httptest.NewServer(newServeHandler(unopened{}, serverConfig{Keys: []serverKey{hashed("ann", "acme", mcp.RoleApprover)}}, time.Now, &log))

@@ -4,15 +4,15 @@ import (
 	"cmp"
 	"fmt"
 	"io"
-	"path/filepath"
 	"strconv"
 	"strings"
 
-	"github.com/jeon-jihyeon/nodloop/internal/classify"
+	"github.com/jeon-jihyeon/nodloop/internal/llm"
+	"github.com/jeon-jihyeon/nodloop/internal/userconfig"
 )
 
 const (
-	envRecordDir = "NODLOOP_RECORD_DIR"
+	envRecordDir = userconfig.EnvRecordDir
 	envClaudeBin = "NODLOOP_CLAUDE_BIN"
 	envLLMModel  = "NODLOOP_LLM_MODEL"
 	// Set by the plugin launcher to the version it runs this binary for
@@ -32,16 +32,14 @@ type config struct {
 // The record directory as the flag, then NODLOOP_RECORD_DIR, then config.json, then the default under home
 func resolveConfig(getenv func(string) string, recordDir string) (config, error) {
 	var uc userConfig
-	var homeRecords string
 	h := homeDir(getenv("HOME"))
 	if h != "" {
 		var err error
 		if uc, err = h.readConfig(); err != nil {
 			return config{}, err
 		}
-		homeRecords = h.recordDir()
 	}
-	records, err := recordDirOf(recordDir, getenv(envRecordDir), uc.RecordDir, homeRecords)
+	records, err := h.config().RecordDir(recordDir, getenv(envRecordDir), uc.RecordDir)
 	if err != nil {
 		return config{}, err
 	}
@@ -54,26 +52,6 @@ func (c config) recordArgs() string {
 		return ""
 	}
 	return "--record-dir " + shellWord(c.recordDir)
-}
-
-// The record directory
-// 1. the flag wins, then the env, then the saved config, then the default under home
-// 2. a relative env or config value names other records in every working directory so it is refused
-// 3. empty when nothing names one and no home is known
-func recordDirOf(flag, env, configured, fallback string) (string, error) {
-	if flag != "" {
-		return filepath.Abs(flag)
-	}
-	if env != "" && !filepath.IsAbs(env) {
-		return "", fmt.Errorf("%w: %s is %q. Set it to an absolute path or unset it", errRecordDirRelative, envRecordDir, env)
-	}
-	if env == "" && configured != "" && !filepath.IsAbs(configured) {
-		return "", fmt.Errorf("%w: record_dir in %s is %q. Set it to an absolute path", errRecordDirRelative, configFile, configured)
-	}
-	if dir := cmp.Or(env, configured, fallback); dir != "" {
-		return filepath.Clean(dir), nil
-	}
-	return "", nil
 }
 
 // config approver, holdout and session_mode print the saved value and save the value given after them
@@ -113,44 +91,36 @@ type configCommand struct {
 	out  io.Writer
 }
 
-// One line per setting: its name, its value and where the value came from
+// One line per setting with its name and value and where the value came from
 // 1. an environment variable wins over config.json and config.json over the default
-// 2. classifiers show the points they are set for
+// 2. decision_points shows the points an endpoint is set for
+// 3. a setting that cannot be read shows its error as its value so the other rows still print
 func (c configCommand) list(getenv func(string) string) error {
 	uc, err := c.home.readConfig()
 	if err != nil {
 		return err
 	}
-	records, err := recordDirOf("", getenv(envRecordDir), uc.RecordDir, c.home.recordDir())
+	records, err := c.home.config().RecordDir("", getenv(envRecordDir), uc.RecordDir)
 	if err != nil {
 		return err
 	}
 	mode, err := sessionModeOf(getenv(envSession), uc.SessionMode)
+	session := string(mode)
 	if err != nil {
-		return err
+		session = err.Error()
 	}
-	holdout := ""
+	share := ""
 	if uc.Holdout != 0 {
-		holdout = strconv.FormatFloat(uc.Holdout, 'g', -1, 64)
-	}
-	points := "unreadable, run nodloop classifier list"
-	if endpoints, err := uc.endpoints(); err == nil {
-		var set []string
-		for _, p := range classify.Points() {
-			if _, ok := endpoints[p]; ok {
-				set = append(set, string(p))
-			}
-		}
-		points = strings.Join(set, ",")
+		share = strconv.FormatFloat(uc.Holdout, 'g', -1, 64)
 	}
 	rows := []struct{ name, env, configured, value string }{
 		{"record_dir", envRecordDir, uc.RecordDir, records},
-		{"session_mode", envSession, uc.SessionMode, string(mode)},
+		{"session_mode", envSession, uc.SessionMode, session},
 		{"approver", "", uc.Approver, uc.Approver},
-		{"holdout", "", holdout, cmp.Or(holdout, "0")},
-		{"classifiers", "", points, ""},
-		{"claude binary", envClaudeBin, "", cmp.Or(getenv(envClaudeBin), "claude")},
-		{"model", envLLMModel, "", cmp.Or(getenv(envLLMModel), "sonnet")},
+		{"holdout", "", share, cmp.Or(share, "0")},
+		{"decision_points", "", uc.pointsText(), ""},
+		{"claude binary", envClaudeBin, "", cmp.Or(getenv(envClaudeBin), llm.DefaultBin)},
+		{"model", envLLMModel, "", cmp.Or(getenv(envLLMModel), llm.DefaultModel)},
 	}
 	for _, r := range rows {
 		from := "default"
@@ -168,7 +138,7 @@ func (c configCommand) list(getenv func(string) string) error {
 // Prints the saved name or saves the one given
 func (c configCommand) approver(name string) error {
 	if name != "" {
-		if err := c.home.save("approver", name); err != nil {
+		if err := c.home.config().Save(map[string]any{"approver": name}); err != nil {
 			return err
 		}
 		fmt.Fprintln(c.out, name)
@@ -199,7 +169,7 @@ func (c configCommand) holdout(value string) error {
 	if err != nil || share < 0 || share >= 1 {
 		return fmt.Errorf("%w: %q. Give a share from 0 up to but not including 1, such as 0.1", errHoldoutInvalid, value)
 	}
-	if err := c.home.save("holdout", share); err != nil {
+	if err := c.home.config().Save(map[string]any{"holdout": share}); err != nil {
 		return err
 	}
 	fmt.Fprintln(c.out, strconv.FormatFloat(share, 'g', -1, 64))
@@ -223,7 +193,7 @@ func (c configCommand) sessionMode(value string) error {
 	if !sessionMode(value).valid() {
 		return fmt.Errorf("%w: %q. %s", errSessionModeUnknown, value, sessionModeHint)
 	}
-	if err := c.home.save("session_mode", value); err != nil {
+	if err := c.home.config().Save(map[string]any{"session_mode": value}); err != nil {
 		return err
 	}
 	fmt.Fprintln(c.out, value)

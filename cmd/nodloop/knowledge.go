@@ -40,7 +40,7 @@ func (f *knowledgeFlags) bind(fs *flag.FlagSet) {
 	fs.BoolVar(&f.replay, "replay", false, "check: also replay every new item of the compaction against its outputs")
 	fs.BoolVar(&f.newLabels, "new-labels", false, "propose: allow label values no recorded run carries yet such as a new tenant")
 	fs.StringVar(&f.id, "id", "", "knowledge id. propose generates one when empty")
-	fs.IntVar(&f.version, "version", 0, "version for approve and retire")
+	fs.IntVar(&f.version, "version", 0, "the version to act on. 0 means the approved one for reaffirm and the current one for replay")
 	fs.StringVar(&f.kind, "kind", "", "meaning or judgment")
 	fs.StringVar(&f.content, "content", "", "the knowledge in one or a few sentences")
 	fs.StringVar(&f.basis, "basis", string(knowledge.BasisStated), "stated or verified")
@@ -341,13 +341,17 @@ func (c knowledgeCommand) waiting(ctx context.Context, producer string, labels t
 	if err != nil {
 		return err
 	}
-	for _, k := range all.Waiting(producer, labels) {
-		replayed, err := c.lastReplay(ctx, k.ID, k.Version)
-		if err != nil {
-			return err
-		}
+	waiting := all.Waiting(producer, labels)
+	if len(waiting) == 0 {
+		return nil
+	}
+	replays, err := c.lastReplays(ctx)
+	if err != nil {
+		return err
+	}
+	for _, k := range waiting {
 		fmt.Fprintf(c.out, "%s\tv%d\t%s\t%s\tscope %s\tfrom %s\treplay %s\n",
-			k.ID, k.Version, k.Kind, k.Content, k.Run, strings.Join(k.Evidence.FeedbackTraceIDs, " "), replayed)
+			k.ID, k.Version, k.Kind, k.Content, k.Run, strings.Join(k.Evidence.FeedbackTraceIDs, " "), replays.of(k.ID, k.Version))
 	}
 	return nil
 }

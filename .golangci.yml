@@ -45,6 +45,7 @@ linters:
             - "**/internal/jsonl/**"
             - "**/internal/atomicfile/**"
             - "**/internal/classify/**"
+            - "**/internal/userconfig/**"
           deny:
             - pkg: github.com/jeon-jihyeon/nodloop/internal/knowledge
               desc: domain packages do not import knowledge
@@ -99,19 +100,19 @@ linters:
             - "**/internal/knowledge/**"
           deny:
             - pkg: github.com/jeon-jihyeon/nodloop/internal/compact
-              desc: only mcp and cmd import compact
+              desc: only mcp, cmd and the server import compact
             - pkg: github.com/jeon-jihyeon/nodloop/internal/extract
-              desc: only mcp and cmd import extract
+              desc: only mcp, cmd and the server import extract
             - pkg: github.com/jeon-jihyeon/nodloop/internal/loop
-              desc: only mcp and cmd import loop
+              desc: only mcp, cmd and the server import loop
         compact:
           files:
             - "**/internal/compact/**"
           deny:
             - pkg: github.com/jeon-jihyeon/nodloop/internal/loop
-              desc: only mcp and cmd import loop
+              desc: only mcp, cmd and the server import loop
             - pkg: github.com/jeon-jihyeon/nodloop/internal/extract
-              desc: only mcp and cmd import extract
+              desc: only mcp, cmd and the server import extract
             - pkg: github.com/jeon-jihyeon/nodloop/internal/replay
               desc: only cmd imports replay
         extract:
@@ -121,7 +122,7 @@ linters:
             - pkg: github.com/jeon-jihyeon/nodloop/internal/compact
               desc: extract and compact share only the ledger
             - pkg: github.com/jeon-jihyeon/nodloop/internal/loop
-              desc: only mcp and cmd import loop
+              desc: only mcp, cmd and the server import loop
             - pkg: github.com/jeon-jihyeon/nodloop/internal/replay
               desc: only cmd imports replay
         loop:
@@ -145,7 +146,7 @@ linters:
             - pkg: github.com/jeon-jihyeon/nodloop/internal/extract
               desc: replay reads the ledger only
             - pkg: github.com/jeon-jihyeon/nodloop/internal/loop
-              desc: only mcp and cmd import loop
+              desc: only mcp, cmd and the server import loop
         guard:
           files:
             - "**/internal/guard/**"

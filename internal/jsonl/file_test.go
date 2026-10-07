@@ -212,6 +212,11 @@ func TestFileAppendDecided(t *testing.T) {
 			args{"{\"id\":\"a\",\"n\":0}\n{", nil, nil},
 			want{[]row{{"a", 0}}, "{\"id\":\"a\",\"n\":0}\n{", nil},
 		},
+		{
+			"a corrupt line leaves decide uncalled and writes nothing",
+			args{"{\"id\":\"a\"}\nnot json\n", b, nil},
+			want{nil, "{\"id\":\"a\"}\nnot json\n", jsonl.ErrCorrupt},
+		},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
@@ -317,7 +322,7 @@ func TestFileAll(t *testing.T) {
 
 // The file was never written in both rows
 // A directory renamed after Open must not read as an empty store
-func TestFileAllWithoutFile(t *testing.T) {
+func TestFileReadsWithoutFile(t *testing.T) {
 	type want struct {
 		rows []row
 		err  error
@@ -341,76 +346,56 @@ func TestFileAllWithoutFile(t *testing.T) {
 			f, err := jsonl.Open[row](filepath.Join(root, "records"), "rows.jsonl")
 			require.NoError(t, err)
 			require.NoError(t, os.Rename(filepath.Join(root, tc.args), filepath.Join(root, "moved")))
-			got, err := f.All()
-			assert.ErrorIs(t, err, tc.want.err)
-			assert.Equal(t, tc.want.rows, got)
+
+			all, allErr := f.All()
+			newest, newestErr := f.Newest(func(row) bool { return true }, nil, 0)
+			moved, repairErr := f.Repair()
+
+			assert.ErrorIs(t, allErr, tc.want.err)
+			assert.Equal(t, tc.want.rows, all)
+			assert.ErrorIs(t, newestErr, tc.want.err)
+			assert.Equal(t, tc.want.rows, newest)
+			assert.ErrorIs(t, repairErr, tc.want.err)
+			assert.Zero(t, moved)
 		})
 	}
 }
 
 func TestFileAllSkipsCorruptLines(t *testing.T) {
-	type args struct {
-		content string
-		check   func(row) error
-	}
 	type want struct {
 		rows []row
 		// A fragment of the message naming the file and line and the cause
 		err string
 	}
-	refuseB := func(r row) error {
-		return map[string]error{"b": assert.AnError}[r.ID]
-	}
 	tcs := []struct {
 		name string
-		args args
+		args string
 		want want
 	}{
 		{
 			"a line that is not JSON is named and the others are read",
-			args{"{\"id\":\"a\"}\n\nnot json\n{\"id\":\"c\"}\n", refuseB},
+			"{\"id\":\"a\"}\n\nnot json\n{\"id\":\"c\"}\n",
 			want{[]row{{"a", 0}, {"c", 0}}, "rows.jsonl has corrupt lines: line 3: invalid"},
 		},
 		{
-			"a record the check refuses is named",
-			args{"{\"id\":\"a\"}\n\n{\"id\":\"b\"}\n", refuseB},
-			want{[]row{{"a", 0}}, "rows.jsonl has corrupt lines: line 3: " + assert.AnError.Error()},
+			"a line that is JSON but no record is named",
+			"{\"id\":\"a\"}\n\n[1]\n{\"id\":\"c\"}\n",
+			want{[]row{{"a", 0}, {"c", 0}}, "rows.jsonl has corrupt lines: line 3: json"},
 		},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			dir := t.TempDir()
-			require.NoError(t, os.WriteFile(filepath.Join(dir, "rows.jsonl"), []byte(tc.args.content), 0o600))
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "rows.jsonl"), []byte(tc.args), 0o600))
 			f, err := jsonl.Open[row](dir, "rows.jsonl")
 			require.NoError(t, err)
-			got, err := f.All(tc.args.check)
+			got, err := f.All()
 			assert.ErrorIs(t, err, jsonl.ErrCorrupt)
 			assert.ErrorContains(t, err, tc.want.err)
 			assert.Equal(t, tc.want.rows, got)
 		})
 	}
-}
-
-// A corrupt line leaves AppendDecided without a decision
-func TestFileAppendDecidedRefusesCorruptLines(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "rows.jsonl")
-	require.NoError(t, os.WriteFile(path, []byte("{\"id\":\"a\"}\nnot json\n"), 0o600))
-	f, err := jsonl.Open[row](dir, "rows.jsonl")
-	require.NoError(t, err)
-	called := false
-
-	err = f.AppendDecided(func([]row) ([]row, error) {
-		called = true
-		return []row{{"b", 1}}, nil
-	})
-
-	assert.ErrorIs(t, err, jsonl.ErrCorrupt)
-	assert.False(t, called)
-	got, err := os.ReadFile(path)
-	require.NoError(t, err)
-	assert.Equal(t, "{\"id\":\"a\"}\nnot json\n", string(got))
 }
 
 func TestFileNewest(t *testing.T) {
@@ -450,20 +435,34 @@ func TestFileNewest(t *testing.T) {
 // Newest reads the file from its end in chunks and finds the records All does in the reverse order
 func TestFileNewestReadsLikeAll(t *testing.T) {
 	long := strings.Repeat("x", 100<<10)
+	type want struct {
+		rows []row
+		// A fragment of the message naming the corrupt lines
+		err string
+	}
 	tcs := []struct {
 		name string
 		args string
-		want []row
+		want want
 	}{
-		{"empty file reads as empty", "", nil},
-		{"blank lines are skipped", "{\"id\":\"a\"}\n\n  \n{\"id\":\"b\",\"n\":1}\n", []row{{"b", 1}, {"a", 0}}},
-		{"torn last line is skipped", "{\"id\":\"a\"}\n{\"id\":\"b\",\"n", []row{{"a", 0}}},
-		{"last line missing only its newline is read", "{\"id\":\"a\"}\n{\"id\":\"b\",\"n\":1}", []row{{"b", 1}, {"a", 0}}},
-		{"a byte order mark before the first record is dropped", "\uFEFF{\"id\":\"a\"}\n{\"id\":\"b\"}\n", []row{{"b", 0}, {"a", 0}}},
+		{"empty file reads as empty", "", want{}},
+		{"blank lines are skipped", "{\"id\":\"a\"}\n\n  \n{\"id\":\"b\",\"n\":1}\n", want{rows: []row{{"b", 1}, {"a", 0}}}},
+		{"torn last line is skipped", "{\"id\":\"a\"}\n{\"id\":\"b\",\"n", want{rows: []row{{"a", 0}}}},
+		{"last line missing only its newline is read", "{\"id\":\"a\"}\n{\"id\":\"b\",\"n\":1}", want{rows: []row{{"b", 1}, {"a", 0}}}},
+		{
+			"a byte order mark before the first record is dropped",
+			"\uFEFF{\"id\":\"a\"}\n{\"id\":\"b\"}\n",
+			want{rows: []row{{"b", 0}, {"a", 0}}},
+		},
 		{
 			"lines across several chunks are read whole",
 			"{\"id\":\"" + long + "\"}\n{\"id\":\"b\"}\n{\"id\":\"" + long + "\",\"n\":2}\n",
-			[]row{{long, 2}, {"b", 0}, {long, 0}},
+			want{rows: []row{{long, 2}, {"b", 0}, {long, 0}}},
+		},
+		{
+			"a corrupt line is named by its offset and the others are read",
+			"{\"id\":\"a\"}\nnot json\n{\"id\":\"c\"}\n",
+			want{[]row{{"c", 0}, {"a", 0}}, "rows.jsonl has corrupt lines: byte 11: invalid"},
 		},
 	}
 	for _, tc := range tcs {
@@ -474,23 +473,15 @@ func TestFileNewestReadsLikeAll(t *testing.T) {
 			f, err := jsonl.Open[row](dir, "rows.jsonl")
 			require.NoError(t, err)
 			got, err := f.Newest(func(row) bool { return true }, nil, 0)
-			assert.NoError(t, err)
-			assert.Equal(t, tc.want, got)
+			if tc.want.err == "" {
+				assert.NoError(t, err)
+			} else {
+				assert.ErrorIs(t, err, jsonl.ErrCorrupt)
+				assert.ErrorContains(t, err, tc.want.err)
+			}
+			assert.Equal(t, tc.want.rows, got)
 		})
 	}
-}
-
-func TestFileNewestSkipsCorruptLines(t *testing.T) {
-	dir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "rows.jsonl"), []byte("{\"id\":\"a\"}\nnot json\n{\"id\":\"c\"}\n"), 0o600))
-	f, err := jsonl.Open[row](dir, "rows.jsonl")
-	require.NoError(t, err)
-
-	got, err := f.Newest(func(row) bool { return true }, nil, 0)
-
-	assert.ErrorIs(t, err, jsonl.ErrCorrupt)
-	assert.ErrorContains(t, err, "rows.jsonl has corrupt lines: byte 11: invalid")
-	assert.Equal(t, []row{{"c", 0}, {"a", 0}}, got)
 }
 
 func TestFileNewestFailsOnUnreadableFile(t *testing.T) {
