@@ -147,6 +147,15 @@ A veto names the tool the way the agent calls it, such as `bash` for a LangChain
 
 Several services or people can share one set of records through `nodloop server serve`, which offers the same MCP tools over streamable HTTP at `/mcp`. Each key names a tenant, whose records live apart from every other tenant's, and a role: a `producer` records runs and verdicts, a `reviewer` also drafts and proposes knowledge, and an `approver` also approves. An approval through a key is recorded under the key's name whatever the call says. `nodloop server key add ann --tenant acme --role approver` prints a key once and keeps only its hash in `~/.nodloop/config.json`, and the SDKs connect with `Client(url=..., key=...)` in Python or `Client.open({ url, key })` in TypeScript. With `--postgres <url>` or `NODLOOP_POSTGRES` the server keeps every tenant in one PostgreSQL database instead of files, so several server processes can share it.
 
+nodloop draws no charts. Every report is data another tool can draw instead: `nodloop report loop --json` prints one report, the MCP tool `report` answers it to an agent, and the server answers `GET /v1/reports/{name}` for `loop`, `extract`, `critic`, `effect` or `health` to a reviewer or approver key. A dashboard such as Grafana with a JSON data source polls it:
+
+```
+curl -H "Authorization: Bearer $NODLOOP_KEY" http://127.0.0.1:8787/v1/reports/loop
+→ {"totals":{"runs":…,"judged":…,"inferred":…,"corrected":…,"waiting":…,"approved":…},"scopes":[…],"drafts":[…],"items":[…]}
+```
+
+Durations in a report are nanoseconds and `GET /healthz` answers without a key for a load balancer.
+
 An agent outside Claude Code checks a tool call before running it with `nodloop guard call --tool Bash --input '{"command":"rm -rf /data"}'`, the MCP tool `check_call` or `CheckCall` in Go, and gets back allow, block or ask with the veto and its reason.
 
 ## Guard
