@@ -149,7 +149,7 @@ for await (const m of query({ prompt, options: { hooks: hooks.hooks() } })) {}
 
 A veto names the tool the way the agent calls it, such as `bash` for a LangChain tool, and `guard check` points out a name no Claude Code tool carries.
 
-Several services or people can share one set of records through `nodloop server serve`, which offers the same MCP tools over streamable HTTP at `/mcp`. Each key names a tenant, whose records live apart from every other tenant's, and a role: a `producer` records runs and verdicts, a `reviewer` also drafts and proposes knowledge, and an `approver` also approves. An approval through a key is recorded under the key's name whatever the call says. `nodloop server key add ann --tenant acme --role approver` prints a key once and keeps only its hash in `~/.nodloop/config.json`, and the SDKs connect with `Client(url=..., key=...)` in Python or `Client.open({ url, key })` in TypeScript. With `--postgres <url>` or `NODLOOP_POSTGRES` the server keeps every tenant in one PostgreSQL database instead of files, so several server processes can share it.
+Several services or people can share one set of records through `nodloop-server serve`, a binary of its own that offers the same MCP tools over streamable HTTP at `/mcp`. It ships in the same release as `nodloop_<os>_<arch>.tar.gz` under `nodloop-server_<os>_<arch>.tar.gz`, or installs with `go install github.com/jeon-jihyeon/nodloop/server/cmd/nodloop-server@latest`, so the CLI and the plugin carry no server or database code. Each key names a tenant, whose records live apart from every other tenant's, and a role: a `producer` records runs and verdicts, a `reviewer` also drafts and proposes knowledge, and an `approver` also approves. An approval through a key is recorded under the key's name whatever the call says. `nodloop-server key add ann --tenant acme --role approver` prints a key once and keeps only its hash in `~/.nodloop/config.json`, and the SDKs connect with `Client(url=..., key=...)` in Python or `Client.open({ url, key })` in TypeScript. With `--postgres <url>` or `NODLOOP_POSTGRES` the server keeps every tenant in one PostgreSQL database instead of files, so several server processes can share it.
 
 nodloop draws no charts. Every report is data another tool can draw instead: `nodloop report loop --json` prints one report, the MCP tool `report` answers it to an agent, and the server answers `GET /v1/reports/{name}` for `loop`, `extract`, `critic`, `effect` or `health` to a reviewer or approver key. A dashboard such as Grafana with a JSON data source polls it:
 
@@ -196,7 +196,7 @@ A correction can become a veto too. Propose it as a judgment with a veto, and on
 | Approved items as rules a CLAUDE.md may import | `approved.md` in the record directory, which `nodloop knowledge export` prints the import line for |
 | Guard decisions | `~/.nodloop/guard.jsonl` |
 | Output of the drafts the stop hook starts | `~/.nodloop/hook.log` |
-| Records of each tenant of `nodloop server serve` | `tenants/<tenant>` in the record directory, or the PostgreSQL database of `--postgres` |
+| Records of each tenant of `nodloop-server serve` | `tenants/<tenant>` in the record directory, or the PostgreSQL database of `--postgres` |
 
 Every record file is append only JSON lines. A status change of an item is a new record, so the history of every version stays. The hooks read the runs from the end of the file back one week at most, so their time stays flat as the records grow. A line a crash or an editor broke is skipped and named on every read, and `nodloop doctor --repair` moves it aside.
 
@@ -209,9 +209,9 @@ Every record file is append only JSON lines. A status change of an item is a new
 | Approver | `approver` | the name a review approves under, asked once |
 | Holdout | `holdout` | the share of turns whose prompt gets no item, for `report effect` |
 | Classifiers | `classifiers` | the endpoint each decision point asks before claude, written by `nodloop classifier` |
-| Server keys | `server` | key names, tenants, roles and hashes, written by `nodloop server key` |
+| Server keys | `server` | key names, tenants, roles and hashes, written by `nodloop-server key` |
 | Model calls | `NODLOOP_CLAUDE_BIN`, `NODLOOP_LLM_MODEL` | the claude binary and the model drafts and checks use, `sonnet` by default |
-| PostgreSQL | `--postgres`, `NODLOOP_POSTGRES` | the database of `nodloop server serve` |
+| PostgreSQL | `--postgres`, `NODLOOP_POSTGRES` | the database of `nodloop-server serve` |
 | Binary | `NODLOOP_ALLOW_PATH`, `NODLOOP_BIN` | lets the plugin run a PATH build of another version, and points an SDK at a binary |
 | Export | `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`, `OTEL_EXPORTER_OTLP_HEADERS` | where `nodloop export otel` sends when `--endpoint` and `--header` leave it out |
 

@@ -1,8 +1,24 @@
 version: 2
 
 builds:
-  - main: ./cmd/nodloop
+  - id: nodloop
+    main: ./cmd/nodloop
     binary: nodloop
+    env:
+      - CGO_ENABLED=0
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+  # The server module builds from its own directory, against the core of the same commit through go.work
+  - id: nodloop-server
+    dir: server
+    main: ./cmd/nodloop-server
+    binary: nodloop-server
     env:
       - CGO_ENABLED=0
     ldflags:
@@ -17,8 +33,16 @@ builds:
 # The plugin launcher downloads nodloop_{os}_{arch}.tar.gz and checksums.txt from the release tagged v<plugin.json version>
 # The v* tag must equal the version in plugin/.claude-plugin/plugin.json
 archives:
-  - formats: [tar.gz]
+  - id: nodloop
+    ids: [nodloop]
+    formats: [tar.gz]
     name_template: "nodloop_{{ .Os }}_{{ .Arch }}"
+    files:
+      - LICENSE
+  - id: nodloop-server
+    ids: [nodloop-server]
+    formats: [tar.gz]
+    name_template: "nodloop-server_{{ .Os }}_{{ .Arch }}"
     files:
       - LICENSE
 

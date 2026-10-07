@@ -17,6 +17,14 @@ def binary(tmp_path_factory: pytest.TempPathFactory) -> str:
     return str(out)
 
 
+@pytest.fixture(scope="session")
+def server_binary(tmp_path_factory: pytest.TempPathFactory) -> str:
+    """The nodloop-server of this checkout built once for the session"""
+    out = tmp_path_factory.mktemp("bin") / "nodloop-server"
+    subprocess.run(["go", "build", "-o", str(out), "./cmd/nodloop-server"], cwd=ROOT / "server", check=True)
+    return str(out)
+
+
 @pytest.fixture(autouse=True)
 def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """A home of the test so an approval never writes a veto file under the real one"""
@@ -32,15 +40,15 @@ def records(tmp_path: Path) -> str:
 
 
 @pytest.fixture
-def server(binary: str, tmp_path: Path):
+def server(server_binary: str, tmp_path: Path):
     """A nodloop server on a free port with an approver key of tenant acme, yielding its url and key"""
     env = dict(os.environ)
-    add = [binary, "server", "key", "add", "ann", "--tenant", "acme", "--role", "approver"]
+    add = [server_binary, "key", "add", "ann", "--tenant", "acme", "--role", "approver"]
     key = subprocess.run(add, env=env, check=True, capture_output=True, text=True).stdout.strip()
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
         port = s.getsockname()[1]
-    serve = [binary, "server", "serve", "--addr", f"127.0.0.1:{port}", "--record-dir", str(tmp_path / "records")]
+    serve = [server_binary, "serve", "--addr", f"127.0.0.1:{port}", "--record-dir", str(tmp_path / "records")]
     proc = subprocess.Popen(serve, env=env, stderr=subprocess.DEVNULL)
     for _ in range(100):
         try:

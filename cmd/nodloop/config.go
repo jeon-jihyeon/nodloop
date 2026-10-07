@@ -17,8 +17,6 @@ const (
 	envLLMModel  = "NODLOOP_LLM_MODEL"
 	// Set by the plugin launcher to the version it runs this binary for
 	envPluginVersion = "NODLOOP_PLUGIN_VERSION"
-	// A PostgreSQL URL nodloop server serve keeps the records of every tenant in
-	envPostgres = "NODLOOP_POSTGRES"
 )
 
 // What every command reads and writes
@@ -117,8 +115,7 @@ type configCommand struct {
 
 // One line per setting: its name, its value and where the value came from
 // 1. an environment variable wins over config.json and config.json over the default
-// 2. a PostgreSQL URL is shown as set since it may hold a password
-// 3. classifiers, decision points and server keys show their names
+// 2. classifiers show the points they are set for
 func (c configCommand) list(getenv func(string) string) error {
 	uc, err := c.home.readConfig()
 	if err != nil {
@@ -146,24 +143,14 @@ func (c configCommand) list(getenv func(string) string) error {
 		}
 		points = strings.Join(set, ",")
 	}
-	keys := make([]string, 0, len(uc.Server.Keys))
-	for _, k := range uc.Server.Keys {
-		keys = append(keys, k.Name)
-	}
-	postgres := ""
-	if getenv(envPostgres) != "" {
-		postgres = "set"
-	}
 	rows := []struct{ name, env, configured, value string }{
 		{"record_dir", envRecordDir, uc.RecordDir, records},
 		{"session_mode", envSession, uc.SessionMode, string(mode)},
 		{"approver", "", uc.Approver, uc.Approver},
 		{"holdout", "", holdout, cmp.Or(holdout, "0")},
 		{"classifiers", "", points, ""},
-		{"server keys", "", strings.Join(keys, ","), ""},
 		{"claude binary", envClaudeBin, "", cmp.Or(getenv(envClaudeBin), "claude")},
 		{"model", envLLMModel, "", cmp.Or(getenv(envLLMModel), "sonnet")},
-		{"postgres", envPostgres, "", postgres},
 	}
 	for _, r := range rows {
 		from := "default"

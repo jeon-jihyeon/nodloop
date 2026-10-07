@@ -175,18 +175,18 @@ func TestRunConfigList(t *testing.T) {
 			"nothing saved lists the defaults",
 			args{"", nil},
 			"record_dir\t<home>/.nodloop/records\tdefault\nsession_mode\tdeferred\tdefault\napprover\t-\tdefault\nholdout\t0\tdefault\n" +
-				"classifiers\t-\tdefault\nserver keys\t-\tdefault\nclaude binary\tclaude\tdefault\nmodel\tsonnet\tdefault\npostgres\t-\tdefault\n",
+				"classifiers\t-\tdefault\nclaude binary\tclaude\tdefault\nmodel\tsonnet\tdefault\n",
 		},
 		{
 			"config.json and the environment name their source and the environment wins",
 			args{
 				`{"record_dir":"/saved","approver":"ann","holdout":0.1,"session_mode":"manual","classifiers":{"local":{"url":"http://x"}},` +
 					`"decisions":{"critic":{"mode":"single","members":["local"]}},"server":{"keys":[{"name":"ci","tenant":"acme","role":"producer","sha256":"x"}]}}`,
-				map[string]string{envRecordDir: "/env", envSession: "off", envLLMModel: "opus", envPostgres: "postgres://u:secret@db/n"},
+				map[string]string{envRecordDir: "/env", envSession: "off", envLLMModel: "opus"},
 			},
 			"record_dir\t/env\tNODLOOP_RECORD_DIR\nsession_mode\toff\tNODLOOP_SESSION\napprover\tann\tconfig.json\nholdout\t0.1\tconfig.json\n" +
-				"classifiers\tcritic\tconfig.json\nserver keys\tci\tconfig.json\nclaude binary\tclaude\tdefault\n" +
-				"model\topus\tNODLOOP_LLM_MODEL\npostgres\tset\tNODLOOP_POSTGRES\n",
+				"classifiers\tcritic\tconfig.json\nclaude binary\tclaude\tdefault\n" +
+				"model\topus\tNODLOOP_LLM_MODEL\n",
 		},
 	}
 	for _, tc := range tcs {

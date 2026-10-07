@@ -3,16 +3,13 @@ package main
 import (
 	"context"
 	"crypto/rand"
-	"crypto/sha256"
-	"crypto/subtle"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -22,170 +19,53 @@ import (
 
 	"github.com/jeon-jihyeon/nodloop/internal/compact"
 	"github.com/jeon-jihyeon/nodloop/internal/extract"
+	feedbackfile "github.com/jeon-jihyeon/nodloop/internal/feedback/file"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
+	knowledgefile "github.com/jeon-jihyeon/nodloop/internal/knowledge/file"
 	"github.com/jeon-jihyeon/nodloop/internal/loop"
 	"github.com/jeon-jihyeon/nodloop/internal/mcp"
-	"github.com/jeon-jihyeon/nodloop/internal/pg"
+	tracefile "github.com/jeon-jihyeon/nodloop/internal/trace/file"
 	vetofile "github.com/jeon-jihyeon/nodloop/internal/veto/file"
+	"github.com/jeon-jihyeon/nodloop/server/internal/pg"
 )
-
-// One key a service calls the server with
-// Only the SHA-256 of the key is saved so config.json never holds a key
-type serverKey struct {
-	// The person or service the key names
-	// Approvals through the key are recorded under it
-	Name   string   `json:"name"`
-	Tenant string   `json:"tenant"`
-	Role   mcp.Role `json:"role"`
-	SHA256 string   `json:"sha256"`
-}
-
-// What the server section of config.json holds
-type serverConfig struct {
-	Keys []serverKey `json:"keys,omitempty"`
-}
-
-// A tenant names a directory under the record directory so it is one path element
-var tenantName = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,62}$`)
-
-// The key whose hash matches the token compared in constant time
-func (c serverConfig) match(token string) (serverKey, bool) {
-	sum := sha256.Sum256([]byte(token))
-	got := hex.EncodeToString(sum[:])
-	for _, k := range c.Keys {
-		if subtle.ConstantTimeCompare([]byte(k.SHA256), []byte(got)) == 1 {
-			return k, true
-		}
-	}
-	return serverKey{}, false
-}
-
-// server key add, list and remove manage the keys and serve runs the tools over HTTP
-func runServer(args []string, getenv func(string) string, now func() time.Time, stdout, stderr io.Writer) int {
-	if len(args) == 0 {
-		return fail(stderr, "server", errNoAction)
-	}
-	h := homeDir(getenv("HOME"))
-	if h == "" {
-		return fail(stderr, "server", errHomeUnknown)
-	}
-	if args[0] == "serve" {
-		return runServe(args[1:], getenv, now, stderr)
-	}
-	if args[0] != "key" || len(args) < 2 {
-		return fail(stderr, "server", fmt.Errorf("%w %q", errUnknownAction, strings.Join(args, " ")))
-	}
-	fs := newFlagSet("server key "+args[1], stderr)
-	tenant := fs.String("tenant", "", "add: the tenant whose records the key reads and writes")
-	role := fs.String("role", "", "add: producer, reviewer or approver")
-	name, err := parseID(fs, args[2:])
-	if err != nil {
-		return parseFailed(err)
-	}
-	uc, err := h.readConfig()
-	if err != nil {
-		return fail(stderr, "server", err)
-	}
-	cmd := serverCommand{home: h, keys: uc.Server, out: stdout}
-	switch args[1] {
-	case "add":
-		err = cmd.add(serverKey{Name: name, Tenant: *tenant, Role: mcp.Role(*role)})
-	case "list":
-		cmd.list()
-	case "remove":
-		err = cmd.remove(name)
-	default:
-		err = fmt.Errorf("%w %q", errUnknownAction, args[1])
-	}
-	if err != nil {
-		return fail(stderr, "server", err)
-	}
-	return 0
-}
-
-type serverCommand struct {
-	home homeDir
-	keys serverConfig
-	out  io.Writer
-}
-
-// Prints the new key once and saves its hash
-func (c serverCommand) add(k serverKey) error {
-	switch {
-	case k.Name == "":
-		return fmt.Errorf("add: a key name %w", errRequired)
-	case slices.ContainsFunc(c.keys.Keys, func(o serverKey) bool { return o.Name == k.Name }):
-		return fmt.Errorf("%w: %s", errKeyExists, k.Name)
-	case !tenantName.MatchString(k.Tenant):
-		return fmt.Errorf("%w: %q. Use lower case letters, digits, - and _", errTenantInvalid, k.Tenant)
-	case !k.Role.Valid():
-		return fmt.Errorf("%w: %q. Use one of %v", errRoleInvalid, k.Role, mcp.Roles())
-	}
-	var secret [32]byte
-	// crypto rand Read never returns an error
-	_, _ = rand.Read(secret[:])
-	key := "nl_" + hex.EncodeToString(secret[:])
-	sum := sha256.Sum256([]byte(key))
-	k.SHA256 = hex.EncodeToString(sum[:])
-	keys := c.keys
-	keys.Keys = append(slices.Clone(keys.Keys), k)
-	if err := c.home.save("server", keys); err != nil {
-		return err
-	}
-	fmt.Fprintln(c.out, key)
-	return nil
-}
-
-func (c serverCommand) list() {
-	for _, k := range c.keys.Keys {
-		fmt.Fprintf(c.out, "%s\t%s\t%s\n", k.Name, k.Tenant, k.Role)
-	}
-}
-
-func (c serverCommand) remove(name string) error {
-	keys := c.keys
-	keys.Keys = slices.DeleteFunc(slices.Clone(keys.Keys), func(k serverKey) bool { return k.Name == name })
-	if len(keys.Keys) == len(c.keys.Keys) {
-		return fmt.Errorf("%w: %s", errKeyUnknown, name)
-	}
-	return c.home.save("server", keys)
-}
 
 // Serves the MCP tools over streamable HTTP until the process ends
 func runServe(args []string, getenv func(string) string, now func() time.Time, stderr io.Writer) int {
-	fs := newFlagSet("server serve", stderr)
-	var records recordFlags
-	records.bind(fs)
+	fs := newFlagSet("serve", stderr)
+	recordDir := fs.String("record-dir", "", "record directory. Overrides "+envRecordDir)
 	addr := fs.String("addr", "127.0.0.1:8787", "the address to listen on")
 	dsn := fs.String("postgres", getenv(envPostgres), "a PostgreSQL URL to keep the records of every tenant in. "+envPostgres+" when empty")
 	if err := fs.Parse(args); err != nil {
 		return parseFailed(err)
 	}
-	a, err := records.app(getenv, now)
+	h := homeDir(getenv("HOME"))
+	uc, err := h.readConfig()
 	if err != nil {
-		return fail(stderr, "server", err)
-	}
-	uc, err := a.cfg.home.readConfig()
-	if err != nil {
-		return fail(stderr, "server", err)
+		return fail(stderr, "serve", err)
 	}
 	if len(uc.Server.Keys) == 0 {
-		return fail(stderr, "server", fmt.Errorf("%w. Add one with nodloop server key add", errNoKeys))
+		return fail(stderr, "serve", fmt.Errorf("%w. Add one with nodloop-server key add", errNoKeys))
 	}
-	stores := tenantStores(fileTenants{base: a.cfg.recordDir})
-	where := "records under " + a.cfg.recordDir
+	var stores tenantStores
+	var where string
 	if *dsn != "" {
 		db, err := pg.Open(context.Background(), *dsn)
 		if err != nil {
-			return fail(stderr, "server", err)
+			return fail(stderr, "serve", err)
 		}
 		defer db.Close()
 		stores, where = pgTenants{db: db}, "records in PostgreSQL"
+	} else {
+		dir, err := h.recordDir(*recordDir, getenv(envRecordDir), uc.RecordDir)
+		if err != nil {
+			return fail(stderr, "serve", err)
+		}
+		stores, where = fileTenants{base: dir}, "records under "+dir
 	}
-	fmt.Fprintf(stderr, "nodloop server: %d keys, %s, listening on http://%s/mcp with reports at /v1/reports/{name}\n", len(uc.Server.Keys), where, *addr)
+	fmt.Fprintf(stderr, "nodloop-server: %d keys, %s, listening on http://%s/mcp with reports at /v1/reports/{name}\n", len(uc.Server.Keys), where, *addr)
 	srv := &http.Server{Addr: *addr, Handler: newServeHandler(stores, uc.Server, now), ReadHeaderTimeout: 10 * time.Second}
 	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		return fail(stderr, "server", err)
+		return fail(stderr, "serve", err)
 	}
 	return 0
 }
@@ -283,10 +163,32 @@ type fileTenants struct {
 
 // No home so the config of the server user is not read for a tenant and no veto file is written under it
 func (f fileTenants) open(key serverKey, now func() time.Time, session string) mcp.Open {
-	return mcpOpen{
-		flags:  recordFlags{recordDir: filepath.Join(f.base, "tenants", key.Tenant)},
-		getenv: func(string) string { return "" }, now: now, session: session, person: key.Name,
-	}.open
+	dir := filepath.Join(f.base, "tenants", key.Tenant)
+	return func(context.Context) (*mcp.Server, error) {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return nil, fmt.Errorf("record dir: %w", err)
+		}
+		traces, err := tracefile.New(dir)
+		if err != nil {
+			return nil, err
+		}
+		verdicts, err := feedbackfile.New(dir)
+		if err != nil {
+			return nil, err
+		}
+		outcomes, err := feedbackfile.NewOutcomeStore(dir)
+		if err != nil {
+			return nil, err
+		}
+		items, err := knowledgefile.New(dir)
+		if err != nil {
+			return nil, err
+		}
+		ledger := knowledge.NewLedger(items, vetofile.NewApprovedFile("", ""), now, idsAt(now))
+		compactor := compact.New(ledger, traces, verdicts, traces, now)
+		extractor := extract.New(ledger, traces, verdicts, now)
+		return mcp.New(traces, verdicts, outcomes, ledger, compactor, extractor, now, session, cliName, "", key.Name), nil
+	}
 }
 
 // The rows of each tenant in one database
@@ -299,9 +201,22 @@ type pgTenants struct {
 func (p pgTenants) open(key serverKey, now func() time.Time, session string) mcp.Open {
 	return func(context.Context) (*mcp.Server, error) {
 		traces, verdicts := p.db.Traces(key.Tenant), p.db.Feedback(key.Tenant)
-		ledger := knowledge.NewLedger(p.db.Knowledge(key.Tenant), vetofile.NewApprovedFile("", ""), now, app{now: now}.newID)
+		ledger := knowledge.NewLedger(p.db.Knowledge(key.Tenant), vetofile.NewApprovedFile("", ""), now, idsAt(now))
 		compactor := compact.New(ledger, traces, verdicts, traces, now)
 		extractor := extract.New(ledger, traces, verdicts, now)
-		return mcp.New(traces, verdicts, p.db.Outcomes(key.Tenant), ledger, compactor, extractor, now, session, executable(), "", key.Name), nil
+		return mcp.New(traces, verdicts, p.db.Outcomes(key.Tenant), ledger, compactor, extractor, now, session, cliName, "", key.Name), nil
+	}
+}
+
+// The CLI a tool answer names for a check that runs a model, such as knowledge check
+const cliName = "nodloop"
+
+// Knowledge ids as the nodloop CLI makes them: the prefix, the clock milliseconds in hex and two random bytes
+func idsAt(now func() time.Time) func(prefix string) string {
+	return func(prefix string) string {
+		var suffix [2]byte
+		// crypto rand Read never returns an error
+		_, _ = rand.Read(suffix[:])
+		return fmt.Sprintf("%s%x%x", prefix, now().UnixMilli(), suffix)
 	}
 }

@@ -4,21 +4,23 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"os"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeon-jihyeon/nodloop/internal/feedback/feedbacktest"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge/knowledgetest"
-	"github.com/jeon-jihyeon/nodloop/internal/pg"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
 	"github.com/jeon-jihyeon/nodloop/internal/trace/tracetest"
+	"github.com/jeon-jihyeon/nodloop/server/internal/pg"
 )
 
 // The database the suites run against and a tenant no other test uses
@@ -98,4 +100,34 @@ func TestKnowledgeDecisionsSerialize(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1, count)
 	assert.Len(t, all, 1)
+}
+
+// Servers that open one empty database at once all create or find the tables
+// Each run uses a schema of its own so the tables are missing when the opens race
+func TestOpenConcurrent(t *testing.T) {
+	_, tenant := open(t)
+	schema := "s" + strings.ToLower(strings.ReplaceAll(tenant, "-", "_"))
+	dsn := os.Getenv("NODLOOP_TEST_POSTGRES")
+	conn, err := pgx.Connect(context.Background(), dsn)
+	require.NoError(t, err)
+	_, err = conn.Exec(context.Background(), "CREATE SCHEMA "+schema)
+	require.NoError(t, errors.Join(err, conn.Close(context.Background())))
+	sep := "?"
+	if strings.Contains(dsn, "?") {
+		sep = "&"
+	}
+	errs := make([]error, 8)
+	var wg sync.WaitGroup
+	for i := range errs {
+		wg.Go(func() {
+			opened, err := pg.Open(context.Background(), dsn+sep+"search_path="+schema)
+			if err == nil {
+				opened.Close()
+			}
+			errs[i] = err
+		})
+	}
+	wg.Wait()
+
+	assert.NoError(t, errors.Join(errs...))
 }

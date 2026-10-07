@@ -90,7 +90,7 @@ class Client:
 
     1. by default it starts `nodloop mcp` over stdio, so nothing runs as a server
     2. record_dir names the records and else NODLOOP_RECORD_DIR, config.json or ~/.nodloop/records decide as in the CLI
-    3. url and key connect to `nodloop server serve` instead, where the key decides the tenant and the role
+    3. url and key connect to `nodloop-server serve` instead, where the key decides the tenant and the role
     4. use it as an async context manager so the process or the connection ends with the block
     """
 

@@ -12,6 +12,7 @@ const root = resolve(import.meta.dirname, "..", "..", "..");
 const realHome = process.env.HOME;
 process.env.HOME = mkdtempSync(join(tmpdir(), "nodloop-home-"));
 let built: string | undefined;
+let builtServer: string | undefined;
 
 // The nodloop of this checkout built once per test process
 export function binary(): string {
@@ -20,6 +21,15 @@ export function binary(): string {
     execFileSync("go", ["build", "-o", built, "./cmd/nodloop"], { cwd: root, env: { ...process.env, HOME: realHome } });
   }
   return built;
+}
+
+// The nodloop-server of this checkout built once per test process
+function serverBinary(): string {
+  if (!builtServer) {
+    builtServer = join(mkdtempSync(join(tmpdir(), "nodloop-bin-")), "nodloop-server");
+    execFileSync("go", ["build", "-o", builtServer, "./cmd/nodloop-server"], { cwd: join(root, "server"), env: { ...process.env, HOME: realHome } });
+  }
+  return builtServer;
 }
 
 export async function open(): Promise<Client> {
@@ -58,10 +68,10 @@ async function freePort(): Promise<number> {
 export async function server(): Promise<{ url: string; key: string; proc: ChildProcess }> {
   // A home of its own so its keys never meet those of another server
   const env = { ...process.env, HOME: mkdtempSync(join(tmpdir(), "nodloop-home-")) };
-  const key = execFileSync(binary(), ["server", "key", "add", "ann", "--tenant", "acme", "--role", "approver"], { env }).toString().trim();
+  const key = execFileSync(serverBinary(), ["key", "add", "ann", "--tenant", "acme", "--role", "approver"], { env }).toString().trim();
   const port = await freePort();
   const records = join(mkdtempSync(join(tmpdir(), "nodloop-rec-")), "records");
-  const proc = spawn(binary(), ["server", "serve", "--addr", `127.0.0.1:${port}`, "--record-dir", records], { env, stdio: "ignore" });
+  const proc = spawn(serverBinary(), ["serve", "--addr", `127.0.0.1:${port}`, "--record-dir", records], { env, stdio: "ignore" });
   for (let i = 0; i < 100; i++) {
     try {
       await fetch(`http://127.0.0.1:${port}/mcp`);
