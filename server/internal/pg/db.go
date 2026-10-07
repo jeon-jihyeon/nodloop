@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -33,6 +34,10 @@ CREATE TABLE IF NOT EXISTS nodloop_rules (
 );
 `
 
+// The advisory lock key that serializes the schema of every process opening one database
+// Two CREATE TABLE IF NOT EXISTS at once can both miss the table and one fails on a duplicate type
+const schemaLock int64 = 0x6e6f646c6f6f70
+
 // A pool over one database whose tables Open creates when they are missing
 type DB struct {
 	pool *pgxpool.Pool
@@ -43,7 +48,14 @@ func Open(ctx context.Context, dsn string) (*DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrOpen, err)
 	}
-	if _, err := pool.Exec(ctx, schema); err != nil {
+	err = pgx.BeginFunc(ctx, pool, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock($1)", schemaLock); err != nil {
+			return err
+		}
+		_, err := tx.Exec(ctx, schema)
+		return err
+	})
+	if err != nil {
 		pool.Close()
 		return nil, fmt.Errorf("%w: %w", ErrOpen, err)
 	}

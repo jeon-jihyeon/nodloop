@@ -13,6 +13,8 @@ var (
 	errHeaderFlag  = errors.New("bad --header")
 	// A proposal from a run teaches what a person corrected
 	errConfigInvalid = errors.New(configFile + " is not valid JSON")
+	errServerMoved   = errors.New("moved to its own binary in 0.7.0. Install nodloop-server from the release archives or with " +
+		"go install github.com/jeon-jihyeon/nodloop/server/cmd/nodloop-server@latest")
 	// A classifier setup of a config before 0.7.0 that no single endpoint answers like
 	errSetupRetired     = errors.New("classifier setup no longer run")
 	errUnexpectedOutput = errors.New("unexpected output")
@@ -33,11 +35,6 @@ var (
 	errSessionModeUnknown = errors.New("unknown session mode")
 	errDeferred           = errors.New("deferred to the conversation")
 	errCallInput          = errors.New("call input is not a JSON object")
-	errKeyExists          = errors.New("a server key of that name exists")
-	errKeyUnknown         = errors.New("no server key of that name")
-	errTenantInvalid      = errors.New("invalid tenant")
-	errRoleInvalid        = errors.New("invalid role")
-	errNoKeys             = errors.New("no server key")
 	errRequired           = errors.New("is required")
 	errUnknownTraceName   = errors.New("unknown trace name")
 	errNoAction           = fmt.Errorf("an action %w", errRequired)

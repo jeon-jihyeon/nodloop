@@ -20,7 +20,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeon-jihyeon/nodloop/internal/mcp"
-	"github.com/jeon-jihyeon/nodloop/internal/pg"
+	"github.com/jeon-jihyeon/nodloop/server/internal/pg"
 )
 
 // Adds the bearer key to every request of the client
@@ -208,7 +208,7 @@ func TestServeHandlerReports(t *testing.T) {
 	}
 }
 
-func TestRunServerKey(t *testing.T) {
+func TestRunKey(t *testing.T) {
 	type args struct {
 		setup [][]string
 		args  []string
@@ -230,10 +230,10 @@ func TestRunServerKey(t *testing.T) {
 		{"a removed key leaves the list", args{[][]string{{"key", "add", "ann", "--tenant", "acme", "--role", "approver"}, {"key", "remove", "ann"}}, []string{"key", "list"}},
 			want{0, "", ""}},
 		{"a name is used once", args{[][]string{{"key", "add", "ann", "--tenant", "acme", "--role", "approver"}}, []string{"key", "add", "ann", "--tenant", "acme", "--role", "producer"}},
-			want{1, "", "nodloop server: a server key of that name exists: ann"}},
-		{"a tenant is one path element", args{nil, []string{"key", "add", "ann", "--tenant", "../etc", "--role", "approver"}}, want{1, "", "nodloop server: invalid tenant"}},
-		{"an unknown role is refused", args{nil, []string{"key", "add", "ann", "--tenant", "acme", "--role", "admin"}}, want{1, "", "nodloop server: invalid role"}},
-		{"an unknown key is not removed", args{nil, []string{"key", "remove", "ann"}}, want{1, "", "nodloop server: no server key of that name: ann"}},
+			want{1, "", "nodloop-server key: a server key of that name exists: ann"}},
+		{"a tenant is one path element", args{nil, []string{"key", "add", "ann", "--tenant", "../etc", "--role", "approver"}}, want{1, "", "nodloop-server key: invalid tenant"}},
+		{"an unknown role is refused", args{nil, []string{"key", "add", "ann", "--tenant", "acme", "--role", "admin"}}, want{1, "", "nodloop-server key: invalid role"}},
+		{"an unknown key is not removed", args{nil, []string{"key", "remove", "ann"}}, want{1, "", "nodloop-server key: no server key of that name: ann"}},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
@@ -242,11 +242,11 @@ func TestRunServerKey(t *testing.T) {
 			getenv := func(k string) string { return map[string]string{"HOME": home}[k] }
 			for _, args := range tc.args.setup {
 				var stderr bytes.Buffer
-				require.Equal(t, 0, runServer(args, getenv, time.Now, &bytes.Buffer{}, &stderr), stderr.String())
+				require.Equal(t, 0, run(args, getenv, time.Now, &bytes.Buffer{}, &stderr), stderr.String())
 			}
 			var stdout, stderr bytes.Buffer
 
-			code := runServer(tc.args.args, getenv, time.Now, &stdout, &stderr)
+			code := run(tc.args.args, getenv, time.Now, &stdout, &stderr)
 
 			assert.Equal(t, tc.want.code, code)
 			key := strings.TrimSpace(stdout.String())
@@ -261,7 +261,7 @@ func TestServerKeySavedAsHash(t *testing.T) {
 	home := homeDir(t.TempDir())
 	getenv := func(k string) string { return map[string]string{"HOME": string(home)}[k] }
 	var stdout bytes.Buffer
-	require.Equal(t, 0, runServer([]string{"key", "add", "ann", "--tenant", "acme", "--role", "approver"}, getenv, time.Now, &stdout, &bytes.Buffer{}))
+	require.Equal(t, 0, run([]string{"key", "add", "ann", "--tenant", "acme", "--role", "approver"}, getenv, time.Now, &stdout, &bytes.Buffer{}))
 	key := strings.TrimSpace(stdout.String())
 
 	uc, err := home.readConfig()
