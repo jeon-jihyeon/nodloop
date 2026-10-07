@@ -31,7 +31,7 @@ const noRm = { tool: "Bash", when: [{ field: "commands", match: "(?m)^rm " }], e
 
 // An approved item for acme and an approved veto on rm
 export async function seed(c: Client): Promise<void> {
-  const run = await c.record("bot", "answer", acme);
+  const run = await c.record({ producer: "bot", output: "answer", labels: acme });
   await c.judge(run, "reject", { reason: "missing the window" });
   for (const [id, content, veto] of [["window", "Quote the refund window", undefined], ["no-rm", "Never run rm", noRm]] as const) {
     const p = await c.propose({ kind: "judgment", content, from: run, id, veto });

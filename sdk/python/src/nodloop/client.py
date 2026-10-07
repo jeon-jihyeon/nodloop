@@ -14,7 +14,7 @@ from mcp.client.streamable_http import create_mcp_http_client, streamable_http_c
 
 from . import binary
 
-__all__ = ["Client", "Decision", "Item", "Knowledge", "ToolError"]
+__all__ = ["Approval", "Candidate", "Client", "Decision", "Item", "Knowledge", "ToolError"]
 
 # The binary release the client fetches when no nodloop is installed
 VERSION = "0.6.6"
@@ -50,6 +50,30 @@ class Decision:
     @property
     def allowed(self) -> bool:
         return self.action == "allow"
+
+
+@dataclass(frozen=True)
+class Candidate:
+    """A proposed knowledge version that waits for a person to approve it"""
+
+    id: str
+    version: int
+    status: str
+    # Approved items the candidate says the same as, each with its id and version
+    overlaps: list[dict[str, Any]] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class Approval:
+    """An approved knowledge version"""
+
+    id: str
+    version: int
+    status: str
+    # The approver the records keep, which a server sets to the key's name
+    approver: str
+    # Why approved.md or the veto file could not be written, while the approval itself stands
+    export_error: str = ""
 
 
 @dataclass(frozen=True)
@@ -176,7 +200,7 @@ class Client:
         new_labels: bool = False,
         item_id: str = "",
         veto: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
+    ) -> Candidate:
         """Proposes a candidate a person approves later, from a corrected run or for a producer and labels
 
         veto names a tool call the judgment forbids as tool, when and example, as the MCP tool propose takes it
@@ -191,11 +215,13 @@ class Client:
             args["labels"] = labels
         if new_labels:
             args["new_labels"] = True
-        return await self.call("propose", args)
+        answer = await self.call("propose", args)
+        return Candidate(answer["id"], answer["version"], answer["status"], answer.get("overlaps") or [])
 
-    async def approve(self, item_id: str, version: int, approver: str) -> dict[str, Any]:
+    async def approve(self, item_id: str, version: int, approver: str) -> Approval:
         """Approves a candidate on behalf of the named person"""
-        return await self.call("approve", {"id": item_id, "version": version, "approver": approver})
+        answer = await self.call("approve", {"id": item_id, "version": version, "approver": approver})
+        return Approval(answer["id"], answer["version"], answer["status"], answer["approver"], answer.get("export_error", ""))
 
     async def check_call(self, tool: str, arguments: dict[str, Any], producer: str = "") -> Decision:
         """Whether a veto approved for the producer blocks or asks about a tool call before the agent runs it
