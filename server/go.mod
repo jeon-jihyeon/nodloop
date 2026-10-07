@@ -4,7 +4,7 @@ go 1.25.0
 
 require (
 	github.com/jackc/pgx/v5 v5.11.0
-	github.com/jeon-jihyeon/nodloop v0.6.6
+	github.com/jeon-jihyeon/nodloop v0.7.0
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/stretchr/testify v1.12.1
 )
