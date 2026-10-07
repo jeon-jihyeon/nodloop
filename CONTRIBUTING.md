@@ -22,10 +22,13 @@ Every pull request runs these in CI and they must be green.
 
 ```
 gofmt -l .
-go vet ./...
-go test -race -cover ./...
+go vet ./... ./server/...
+go test -race -cover ./... ./server/...
 golangci-lint run ./...
+cd server && golangci-lint run --config ../.golangci.yml ./...
 ```
+
+`server/` is a Go module of its own for `nodloop-server`, joined to the root module by `go.work`, so its packages need `./server/...` beside `./...`.
 
 CI runs the Go tests on Linux with the Go version of go.mod and the newest stable one, and on macOS without the PostgreSQL suites. The fuzz tests run their seeds as plain tests. Fuzz a parser you change for a minute and commit any input it finds under `testdata/fuzz`:
 
@@ -46,7 +49,7 @@ cd sdk/typescript && npm ci && npm run typecheck && npm test
 The PostgreSQL store suites run when `NODLOOP_TEST_POSTGRES` holds a database URL and are skipped otherwise. CI runs them against a postgres 17 service:
 
 ```
-NODLOOP_TEST_POSTGRES=postgres://postgres:nodloop@localhost:5432/nodloop?sslmode=disable go test ./internal/pg/...
+NODLOOP_TEST_POSTGRES=postgres://postgres:nodloop@localhost:5432/nodloop?sslmode=disable go test ./server/internal/pg/...
 ```
 
 Tests that talk to a model are opt in:
@@ -64,9 +67,10 @@ Use haiku while iterating with `--model haiku` on the commands that call a model
 | Domain | `feedback`, `trace`, `llm`, `classify`, `veto`, `settings`, `jsonl`, `atomicfile` | No imports from the layers above |
 | Core | `knowledge` | The ledger of items, their scopes and their history. Never a file store |
 | Application | `compact`, `extract`, `loop`, `replay` | Build on the core. They never import each other and only `mcp` and `cmd/nodloop` import them |
-| Infra | the `file` subpackages, `pg` and `otel` | Implements the stores in files or PostgreSQL, the veto and settings files and the OTLP export. Application code never imports one outside its tests |
+| Infra | the `file` subpackages and `otel` | Implements the stores in files, the veto and settings files and the OTLP export. Application code never imports one outside its tests |
 | Controllers | `cmd/nodloop`, `mcp`, `guard` | `cmd/nodloop` is the composition root and the only reader of the process environment |
 | Library | `nodloop` at the module root | A second composition root that other Go code imports |
+| Server | `server/cmd/nodloop-server`, `server/internal/pg` | A module of its own: the HTTP server, its keys and the PostgreSQL stores. It composes the core packages itself and the root module never imports it |
 | SDKs | `sdk/python`, `sdk/typescript` | Clients of the MCP tools over a local `nodloop mcp` or a server. They never reach the records directly |
 | Test harness | `testkit` | File stores in a temp directory and a fake clock |
 

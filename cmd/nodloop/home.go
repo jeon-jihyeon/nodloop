@@ -24,8 +24,6 @@ type userConfig struct {
 	// NODLOOP_SESSION overrides it per process
 	SessionMode string `json:"session_mode,omitempty"`
 	classifierConfig
-	// The keys nodloop server serve accepts
-	Server serverConfig `json:"server,omitzero"`
 }
 
 // nodloop keeps the config and the default records under `.nodloop` there

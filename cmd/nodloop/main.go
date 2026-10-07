@@ -152,17 +152,7 @@ commands:
   classifier unset <point>  The point asks claude alone again
   classifier list           Every point with its endpoint or claude alone
   classifier probe <point>  Ask the endpoint of the point one question and print its answer and time
-  server key add <name> --tenant <t> --role producer|reviewer|approver
-                            Print a new key for nodloop server serve once and save only its SHA-256 in config.json.
-                            A producer records runs and verdicts, a reviewer also drafts and proposes knowledge and an
-                            approver also approves under the key name
-  server key list           Names, tenants and roles of the keys
-  server key remove <name>  Remove a key
-  server serve [--addr <host:port>] [--postgres <url>]
-                            Serve the MCP tools over streamable HTTP at /mcp for the keys, each tenant on its own records
-                            under tenants of the record directory, or in one PostgreSQL database with --postgres or
-                            NODLOOP_POSTGRES. 127.0.0.1:8787 by default. GET /v1/reports/<name> answers loop, extract,
-                            critic, effect, replay or health as JSON to a reviewer or approver key and GET /healthz answers without one
+  server                    Moved to its own binary nodloop-server in 0.7.0
   export otel [--endpoint <url>] [--header <Name=value>] [--since <RFC3339>] [--with-output]
                             Send every run as an OpenTelemetry GenAI span and every verdict as a gen_ai.evaluation.result
                             event on it, in OTLP JSON over HTTP, so a collector, Langfuse or Phoenix shows them. The ids derive
@@ -245,7 +235,7 @@ func run(args []string, getenv func(string) string, stdin io.Reader, stdout io.W
 		"mcp":        func(args []string) int { return runMCP(args, getenv, time.Now, stdin, stdout, stderr) },
 		"config":     func(args []string) int { return runConfig(args, getenv, stdout, stderr) },
 		"classifier": func(args []string) int { return runClassifier(args, getenv, time.Now, stdout, stderr) },
-		"server":     func(args []string) int { return runServer(args, getenv, time.Now, stdout, stderr) },
+		"server":     func([]string) int { return fail(stderr, "server", errServerMoved) },
 		"doctor":     func(args []string) int { return runDoctor(args, getenv, time.Now, stdout, stderr) },
 		"export":     func(args []string) int { return runExport(args, getenv, time.Now, stdout, stderr) },
 		"version": func([]string) int {

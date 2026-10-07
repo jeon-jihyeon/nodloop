@@ -14,7 +14,7 @@ Every release tag publishes the plugin, the darwin and linux binaries and both S
 - `nodloop knowledge replay` judges a lesson in one model call against the corrected answers it cites and the newest ten approved answers of its scope recorded before it, and flags a lesson that reaches too far. `knowledge waiting` shows the latest replay, `report replay` lists them, and the nod skill runs it before asking for approval
 - `nodloop knowledge check <compaction> --replay` replays every new item of a compaction and totals what it misses and where it reaches too far
 - `nodloop export otel` sends runs as OpenTelemetry GenAI spans and verdicts as `gen_ai.evaluation.result` events in OTLP JSON over HTTP, with no new dependency
-- Reports for other tools to draw: `--json` on `report loop`, `extract`, `critic` and `effect`, the MCP tool `report`, and `GET /v1/reports/{name}` and `GET /healthz` on `nodloop server serve`
+- Reports for other tools to draw: `--json` on `report loop`, `extract`, `critic` and `effect`, the MCP tool `report`, and `GET /v1/reports/{name}` and `GET /healthz` on `nodloop-server serve`
 
 ### Changed
 - `Client.Items` and `Client.Waiting` return `Items`
@@ -28,6 +28,7 @@ Every release tag publishes the plugin, the darwin and linux binaries and both S
 - The holdout draws a turn by the session and its previous run instead of the count of its runs
 - A run receives its items most specific first, then the ones a person approved or reaffirmed last, instead of by id, so a cut at the size limit drops the general and stale ones
 - Release archives carry a build provenance attestation and an SPDX SBOM. CI tests on macOS too, with the race detector on every package and actions pinned by commit
+- The server is a binary of its own, `nodloop-server`, in a Go module of its own under `server/`, so the CLI, the plugin and the Go package carry no server code and no PostgreSQL driver. `nodloop server key` and `nodloop server serve` become `nodloop-server key` and `nodloop-server serve` with the same flags, keys in config.json and records. `nodloop server` names the new binary. The release ships `nodloop-server_<os>_<arch>.tar.gz` beside the CLI
 - A decision point asks one endpoint and falls back to claude when the endpoint fails or any answer is below 0.8. `nodloop classifier set`, `unset`, `list` and `probe <point>` replace `add`, `use`, `reset` and `remove`, and cascades of several endpoints and parallel setups are gone. A config before 0.7.0 is read as the endpoint each point asked first, and one that asked another way fails with how to set it again
 
 ### Fixed

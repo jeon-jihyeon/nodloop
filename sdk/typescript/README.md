@@ -82,7 +82,7 @@ Use one adapter instance per run or conversation, since it keeps the items it ha
 
 ## A shared server
 
-`Client.open({ url: "https://nodloop.example/mcp", key: "nl_..." })` connects to `nodloop server serve` instead of a local binary. The key decides the tenant and what the client may do, and an approval through it is recorded under the key's name.
+`Client.open({ url: "https://nodloop.example/mcp", key: "nl_..." })` connects to `nodloop-server serve` instead of a local binary. The key decides the tenant and what the client may do, and an approval through it is recorded under the key's name.
 
 ## More
 
