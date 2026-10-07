@@ -105,6 +105,30 @@ func TestReplayerReplay(t *testing.T) {
 	assert.Equal(t, got, recorded)
 }
 
+// A reaffirm writes a newer record of the version and never moves the time runs began to receive it
+func TestReplayerReplayAfterReaffirm(t *testing.T) {
+	s := seed(t)
+	ctx := context.Background()
+	_, err := s.st.Ledger.Approve(ctx, "idv", 1, "ann")
+	require.NoError(t, err)
+	record(t, s.st, "plant", "an answer that received the lesson", feedback.VerdictApprove)
+	_, err = s.st.Ledger.Reaffirm(ctx, "idv", 1, "ann")
+	require.NoError(t, err)
+	client := llmmock.NewMockClient(gomock.NewController(t))
+	var prompt string
+	client.EXPECT().Complete(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, req llm.Request) (llm.Response, error) {
+		prompt = req.Prompt
+		return llm.Response{Output: json.RawMessage(fmt.Sprintf(`{"cases":[`+
+			`{"run":%q,"breaks":true,"why":"x"},{"run":%q,"breaks":false,"why":"x"},{"run":%q,"breaks":false,"why":"x"}]}`, s.corrected, s.near, s.far))}, nil
+	})
+
+	_, err = replay.New(s.st.Ledger, s.st.Traces, s.st.Feedback, client, "", s.st.Clock.Now).Replay(ctx, "idv", 0)
+
+	require.NoError(t, err)
+	assert.NotContains(t, prompt, "received the lesson", "a run after the approval may have followed the lesson")
+	assert.Contains(t, prompt, "IDV 11 is a temperature drift")
+}
+
 func TestReplayerReplayFails(t *testing.T) {
 	type args struct {
 		id string

@@ -259,6 +259,16 @@ func (k Knowledge) changed(status Status, approver string, now time.Time) Knowle
 	return k
 }
 
+// When runs began to receive the version
+// 1. an approved version reaches runs from its approval and a reaffirm or retirement later keeps that time
+// 2. a version never approved reached no run so its newest record stands in
+func (k Knowledge) ReachedSince() time.Time {
+	if k.ApprovedAt.IsZero() {
+		return k.Time
+	}
+	return k.ApprovedAt
+}
+
 // The scope in one line so a refusal can quote what a new version must keep
 func (k Knowledge) reachText() string {
 	if k.Run == nil {

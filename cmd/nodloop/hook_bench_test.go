@@ -17,7 +17,8 @@ import (
 
 // The prompt and stop hooks over records of many sessions
 // 1. s-last answered among the newest runs
-// 2. s-new has no run yet so its hook reads back to the start of sessionWindow, the slowest case
+// 2. s-new has no run yet so its hook reads back to the start of sessionWindow
+// A stop hook records a run so s-new takes a session id of its own on every iteration and stays the slowest case
 // A run holds about 2 KB of output like a recorded answer
 func BenchmarkHook(b *testing.B) {
 	for _, runs := range []int{1_000, 50_000} {
@@ -27,9 +28,15 @@ func BenchmarkHook(b *testing.B) {
 					home, records, repo := hookHome(b, "use git -C")
 					appendRuns(b, records, repo, runs)
 					getenv := func(k string) string { return map[string]string{"HOME": home, envRecordDir: records}[k] }
-					stdin := fmt.Sprintf(`{"session_id":%q,"cwd":%q,"prompt":"next","last_assistant_message":"done"}`, session, repo)
+					iteration := 0
 					for b.Loop() {
-						runHook([]string{hook}, getenv, nil, time.Now, strings.NewReader(stdin), io.Discard, io.Discard)
+						id := session
+						if session == "s-new" {
+							id = fmt.Sprintf("s-new-%d", iteration)
+						}
+						iteration++
+						stdin := fmt.Sprintf(`{"session_id":%q,"cwd":%q,"prompt":"next","last_assistant_message":"done"}`, id, repo)
+						require.Equal(b, 0, runHook([]string{hook}, getenv, nil, time.Now, strings.NewReader(stdin), io.Discard, io.Discard))
 					}
 				})
 			}

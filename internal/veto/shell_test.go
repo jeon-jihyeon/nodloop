@@ -1,7 +1,6 @@
 package veto_test
 
 import (
-	"slices"
 	"strings"
 	"testing"
 
@@ -101,10 +100,8 @@ func FuzzCommandLines(f *testing.F) {
 		if rendered == command {
 			return
 		}
-		lines := strings.Split(rendered, "\n")
-		assert.Equal(t, slices.Index(lines, "(") >= 0, slices.Index(lines, ")") >= 0)
 		depth := 0
-		for _, line := range lines {
+		for _, line := range strings.Split(rendered, "\n") {
 			switch line {
 			case "(":
 				depth++
@@ -113,5 +110,6 @@ func FuzzCommandLines(f *testing.F) {
 			}
 			require.GreaterOrEqual(t, depth, 0, "a scope closes before it opens")
 		}
+		assert.Zero(t, depth, "every scope closes")
 	})
 }

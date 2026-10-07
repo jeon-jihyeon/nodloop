@@ -164,8 +164,9 @@ func (c classifierCommand) set(cfg classifierConfig, point classify.Point, e cla
 }
 
 // The point asks claude alone again
+// A config before 0.7.0 is read without the decision of the point so unset also clears a setup nodloop no longer runs
 func (c classifierCommand) unset(cfg classifierConfig, point classify.Point) error {
-	current, err := cfg.endpoints()
+	current, err := cfg.without(point).endpoints()
 	if err != nil {
 		return err
 	}
