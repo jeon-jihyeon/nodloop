@@ -21,13 +21,12 @@ func runClassifier(args []string, getenv func(string) string, now func() time.Ti
 	if len(args) == 0 {
 		return fail(stderr, "classifier", errNoAction)
 	}
-	fs := flag.NewFlagSet("classifier "+args[0], flag.ContinueOnError)
-	fs.SetOutput(stderr)
+	fs := newFlagSet("classifier "+args[0], stderr)
 	var f classifierFlags
 	f.bind(fs)
 	name, err := parseID(fs, args[1:])
 	if err != nil {
-		return 1
+		return parseFailed(err)
 	}
 	h := homeDir(getenv("HOME"))
 	if h == "" {

@@ -4,7 +4,6 @@ import (
 	"cmp"
 	"encoding/json"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -42,29 +41,26 @@ func runGuard(
 	case "uninstall":
 		err = cmd.uninstall()
 	case "call":
-		fs := flag.NewFlagSet("guard call", flag.ContinueOnError)
-		fs.SetOutput(stderr)
+		fs := newFlagSet("guard call", stderr)
 		tool := fs.String("tool", "", "the tool an agent is about to call such as Bash")
 		input := fs.String("input", "{}", "the arguments of the call as JSON. A shell command goes under command")
 		dir := fs.String("dir", "", "the directory whose project vetoes apply. The working directory when empty")
 		if err := fs.Parse(args[1:]); err != nil {
-			return 1
+			return parseFailed(err)
 		}
 		err = cmd.call(cmp.Or(*dir, currentDir(stderr)), *tool, *input)
 	case "log":
-		fs := flag.NewFlagSet("guard log", flag.ContinueOnError)
-		fs.SetOutput(stderr)
+		fs := newFlagSet("guard log", stderr)
 		limit := fs.Int("limit", decisionLimit, "newest n decisions. 0 prints every one")
 		if err := fs.Parse(args[1:]); err != nil {
-			return 1
+			return parseFailed(err)
 		}
 		err = cmd.log(*limit)
 	default:
-		fs := flag.NewFlagSet("guard", flag.ContinueOnError)
-		fs.SetOutput(stderr)
+		fs := newFlagSet("guard", stderr)
 		vetoesPath := fs.String("vetoes", "", "path to a veto yaml file. Skips discovery")
 		if err := fs.Parse(args); err != nil {
-			return 1
+			return parseFailed(err)
 		}
 		return int(cmd.hook(*vetoesPath))
 	}

@@ -4,7 +4,9 @@ import (
 	"cmp"
 	"fmt"
 	"io"
+	"maps"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -80,15 +82,19 @@ func recordDirOf(flag, env, configured, fallback string) (string, error) {
 }
 
 // config approver, holdout and session_mode print the saved value and save the value given after them
+// config alone lists every setting with its value and where the value came from
 func runConfig(args []string, getenv func(string) string, stdout, stderr io.Writer) int {
-	if len(args) == 0 {
-		return fail(stderr, "config", errNoAction)
-	}
 	h := homeDir(getenv("HOME"))
 	if h == "" {
 		return fail(stderr, "config", errHomeUnknown)
 	}
 	cmd := configCommand{home: h, out: stdout}
+	if len(args) == 0 {
+		if err := cmd.list(getenv); err != nil {
+			return fail(stderr, "config", err)
+		}
+		return 0
+	}
 	value := strings.TrimSpace(strings.Join(args[1:], " "))
 	var err error
 	switch args[0] {
@@ -110,6 +116,64 @@ func runConfig(args []string, getenv func(string) string, stdout, stderr io.Writ
 type configCommand struct {
 	home homeDir
 	out  io.Writer
+}
+
+// One line per setting: its name, its value and where the value came from
+// 1. an environment variable wins over config.json and config.json over the default
+// 2. a PostgreSQL URL is shown as set since it may hold a password
+// 3. classifiers, decision points and server keys show their names
+func (c configCommand) list(getenv func(string) string) error {
+	uc, err := c.home.readConfig()
+	if err != nil {
+		return err
+	}
+	records, err := recordDirOf("", getenv(envRecordDir), uc.RecordDir, c.home.recordDir())
+	if err != nil {
+		return err
+	}
+	mode, err := sessionModeOf(getenv(envSession), uc.SessionMode)
+	if err != nil {
+		return err
+	}
+	holdout := ""
+	if uc.Holdout != 0 {
+		holdout = strconv.FormatFloat(uc.Holdout, 'g', -1, 64)
+	}
+	decisions := make([]string, 0, len(uc.Decisions))
+	for _, p := range slices.Sorted(maps.Keys(uc.Decisions)) {
+		decisions = append(decisions, string(p))
+	}
+	keys := make([]string, 0, len(uc.Server.Keys))
+	for _, k := range uc.Server.Keys {
+		keys = append(keys, k.Name)
+	}
+	postgres := ""
+	if getenv(envPostgres) != "" {
+		postgres = "set"
+	}
+	rows := []struct{ name, env, configured, value string }{
+		{"record_dir", envRecordDir, uc.RecordDir, records},
+		{"session_mode", envSession, uc.SessionMode, string(mode)},
+		{"approver", "", uc.Approver, uc.Approver},
+		{"holdout", "", holdout, cmp.Or(holdout, "0")},
+		{"classifiers", "", strings.Join(slices.Sorted(maps.Keys(uc.Classifiers)), ","), ""},
+		{"decisions", "", strings.Join(decisions, ","), ""},
+		{"server keys", "", strings.Join(keys, ","), ""},
+		{"claude binary", envClaudeBin, "", cmp.Or(getenv(envClaudeBin), "claude")},
+		{"model", envLLMModel, "", cmp.Or(getenv(envLLMModel), "sonnet")},
+		{"postgres", envPostgres, "", postgres},
+	}
+	for _, r := range rows {
+		from := "default"
+		switch {
+		case r.env != "" && getenv(r.env) != "":
+			from = r.env
+		case r.configured != "":
+			from = configFile
+		}
+		fmt.Fprintf(c.out, "%s\t%s\t%s\n", r.name, cmp.Or(r.value, r.configured, "-"), from)
+	}
+	return nil
 }
 
 // Prints the saved name or saves the one given

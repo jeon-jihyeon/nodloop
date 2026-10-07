@@ -80,7 +80,7 @@ func TestRunTrace(t *testing.T) {
 		{
 			"show of an unknown id fails",
 			args{[]string{"show", "nope"}, withDir},
-			want{1, "", `^nodloop trace: trace "nope": `},
+			want{1, "", `^nodloop trace: not found: "nope"\n$`},
 		},
 		{
 			"show without an id fails",

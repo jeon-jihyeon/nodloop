@@ -131,15 +131,14 @@ func runKnowledge(
 	if len(args) == 0 {
 		return fail(stderr, "knowledge", errNoAction)
 	}
-	fs := flag.NewFlagSet("knowledge "+args[0], flag.ContinueOnError)
-	fs.SetOutput(stderr)
+	fs := newFlagSet("knowledge "+args[0], stderr)
 	var records recordFlags
 	records.bind(fs)
 	var flags knowledgeFlags
 	flags.bind(fs)
 	id, err := parseID(fs, args[1:])
 	if err != nil {
-		return 1
+		return parseFailed(err)
 	}
 	a, err := records.app(getenv, now)
 	if err != nil {

@@ -125,6 +125,8 @@ commands:
   guard uninstall           Remove the hook registered by guard install
   mcp                       Serve the MCP tools on stdio. --list prints the tool names
   llm probe [--model <m>]   Send a minimal structured-output request through claude -p and print cost
+  config                    Every setting with its value and where it came from: an environment variable, config.json
+                            or the default
   config approver [<name>]  Print the name saved in ~/.nodloop/config.json to approve under, or save one
   config holdout [<share>]  Print or save the share of conversation turns whose prompt gets no item so report effect
                             can compare. 0 by default
@@ -132,8 +134,8 @@ commands:
                             Print or save how a conversation records the verdicts it infers: deferred, immediate, manual
                             or off. deferred by default and NODLOOP_SESSION overrides it
   classifier add <name> --url <u> [--model <m>] [--key-env <ENV>]
-                            Add an endpoint of the Jev wire format, such as laya-serve at
-                            http://localhost:8000/v1/systemone. The key is read from the env at call time and never saved
+                            Add an endpoint of the Jev wire format the README shows, such as
+                            http://localhost:8000/v1/classify. The key is read from the env at call time and never saved
   classifier use <point> --members <a,b> [--mode single|cascade|parallel] [--threshold <t>] [--combine all|any]
                             Set which classifiers answer a decision point and how. claude is the built in member.
                             Points: critic, the second reader of a drafted lesson, where claude is the claude critic, and
@@ -155,6 +157,7 @@ commands:
                             under tenants of the record directory, or in one PostgreSQL database with --postgres or
                             NODLOOP_POSTGRES. 127.0.0.1:8787 by default
   version                   Print the build version
+  help [<command>]          Print this text or the part of one command. -h and --help after a command or an action do the same
 
 Every command that reads records accepts --record-dir, which overrides NODLOOP_RECORD_DIR, then record_dir of
 ~/.nodloop/config.json, then ~/.nodloop/records
@@ -204,7 +207,14 @@ func run(args []string, getenv func(string) string, stdin io.Reader, stdout io.W
 		fmt.Fprint(stderr, usage)
 		return 1
 	}
+	if helps(args[0]) {
+		return runHelp(args[1:], stdout)
+	}
+	if len(args) > 1 && helps(args[1]) {
+		return runHelp(args[:1], stdout)
+	}
 	commands := map[string]func(args []string) int{
+		"help":  func(args []string) int { return runHelp(args, stdout) },
 		"trace": func(args []string) int { return runTrace(args, getenv, time.Now, stdout, stderr) },
 		"run":   func(args []string) int { return runRun(args, getenv, time.Now, stdout, stderr) },
 		"hook": func(args []string) int {
@@ -254,12 +264,18 @@ func parseID(fs *flag.FlagSet, args []string) (string, error) {
 	return fs.Arg(0), nil
 }
 
+// Whether the argument asks for the usage instead of naming a command or an action
+func helps(arg string) bool {
+	return arg == "-h" || arg == "--help"
+}
+
 // One line on stderr per failed command
-// A usage error adds the usage text
+// 1. the command names the line once even when the error starts with it, as a sentinel of the package of that name does
+// 2. a usage error adds the usage of the command
 func fail(stderr io.Writer, command string, err error) int {
-	fmt.Fprintf(stderr, "nodloop %s: %v\n", command, err)
+	fmt.Fprintf(stderr, "nodloop %s: %s\n", command, strings.TrimPrefix(err.Error(), command+": "))
 	if errors.Is(err, errUnknownAction) || errors.Is(err, errRequired) || errors.Is(err, errUnknownTraceName) {
-		fmt.Fprintf(stderr, "\n%s", usage)
+		fmt.Fprintf(stderr, "\n%s", usageText(usage).of(command))
 	}
 	return 1
 }

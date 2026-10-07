@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -21,13 +20,12 @@ func runMCP(
 	args []string, getenv func(string) string, now func() time.Time,
 	stdin io.Reader, stdout io.WriteCloser, stderr io.Writer,
 ) int {
-	fs := flag.NewFlagSet("mcp", flag.ContinueOnError)
-	fs.SetOutput(stderr)
+	fs := newFlagSet("mcp", stderr)
 	var records recordFlags
 	records.bind(fs)
 	list := fs.Bool("list", false, "print the tool names and exit")
 	if err := fs.Parse(args); err != nil {
-		return 1
+		return parseFailed(err)
 	}
 	cmd := mcpCommand{stdin: stdin, out: stdout, log: stderr}
 	if *list {

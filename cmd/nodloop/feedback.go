@@ -49,14 +49,13 @@ func runFeedback(args []string, getenv func(string) string, now func() time.Time
 	if len(args) == 0 {
 		return fail(stderr, "feedback", errNoAction)
 	}
-	fs := flag.NewFlagSet("feedback "+args[0], flag.ContinueOnError)
-	fs.SetOutput(stderr)
+	fs := newFlagSet("feedback "+args[0], stderr)
 	var records recordFlags
 	records.bind(fs)
 	var flags feedbackFlags
 	flags.bind(fs)
 	if err := fs.Parse(args[1:]); err != nil {
-		return 1
+		return parseFailed(err)
 	}
 	a, err := records.app(getenv, now)
 	if err != nil {
