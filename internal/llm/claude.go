@@ -15,8 +15,9 @@ import (
 )
 
 const (
-	defaultBin   = "claude"
-	defaultModel = "sonnet"
+	// What an empty binary and an empty model of NewClaudeCLI take
+	DefaultBin   = "claude"
+	DefaultModel = "sonnet"
 	// Structured output is an internal tool call so at least 2 is needed
 	defaultMaxTurns = 3
 	defaultBudget   = 0.5
@@ -36,8 +37,8 @@ type ClaudeCLI struct {
 // An empty argument takes the package default
 func NewClaudeCLI(bin, model, workParent string, timeout time.Duration) *ClaudeCLI {
 	return &ClaudeCLI{
-		bin:        cmp.Or(bin, defaultBin),
-		model:      cmp.Or(model, defaultModel),
+		bin:        cmp.Or(bin, DefaultBin),
+		model:      cmp.Or(model, DefaultModel),
 		workParent: cmp.Or(workParent, os.TempDir()),
 		timeout:    cmp.Or(timeout, defaultTimeout),
 	}

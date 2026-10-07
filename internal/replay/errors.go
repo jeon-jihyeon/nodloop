@@ -6,6 +6,8 @@ var (
 	// A judgment with a veto acts through the guard and an item without a run scope reaches no output
 	ErrNoScope = errors.New("replay: the version reaches no run output")
 	ErrNoCases = errors.New("replay: no recorded output to judge")
+	// Version zero asks for the current version and the id has none
+	ErrNoCurrent = errors.New("replay: the id has no current version")
 	// The judge answered something other than one answer per output
 	ErrJudgment = errors.New("replay: the judgment is incomplete")
 )

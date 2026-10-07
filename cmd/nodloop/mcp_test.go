@@ -84,7 +84,7 @@ func TestRunMCP(t *testing.T) {
 			out, err := os.ReadFile(stdout.Name())
 			require.NoError(t, err)
 			assert.Equal(t, tc.want.stdout, string(out))
-			_, err = os.Stat(homeDir(home).recordDir())
+			_, err = os.Stat(homeDir(home).config().Records())
 			assert.ErrorIs(t, err, os.ErrNotExist, "serving opens no record before a call")
 		})
 	}
@@ -149,11 +149,11 @@ func TestHostOpensPerCall(t *testing.T) {
 	}
 
 	run()
-	require.NoError(t, os.WriteFile(home.configPath(), []byte(`{"record_dir":"`+moved+`"}`), 0o600))
+	require.NoError(t, os.WriteFile(home.config().ConfigPath(), []byte(`{"record_dir":"`+moved+`"}`), 0o600))
 	run()
 
 	sessions := map[string]bool{}
-	for _, dir := range []string{home.recordDir(), moved} {
+	for _, dir := range []string{home.config().Records(), moved} {
 		traces, err := tracefile.New(dir)
 		require.NoError(t, err)
 		got, err := traces.List(t.Context(), trace.Filter{Name: trace.NameRun})

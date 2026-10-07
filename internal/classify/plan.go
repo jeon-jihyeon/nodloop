@@ -48,13 +48,18 @@ type asked struct {
 // Answers the request and records every member asked in one classify trace
 // 1. the endpoint answers alone when every answer reaches the threshold
 // 2. the built in member answers when the endpoint fails or is unsure
+// 3. a failure of both members returns both errors
 func (p *Plan) Classify(ctx context.Context, req Request) (Answers, error) {
 	start := p.now()
 	answers, all, err := p.ask(ctx, req, p.endpoint)
 	if err != nil || !answers.confident(threshold) {
+		endpointErr := err
 		var more []asked
 		answers, more, err = p.ask(ctx, req, p.builtin)
 		all = append(all, more...)
+		if err != nil {
+			err = errors.Join(endpointErr, err)
+		}
 	}
 	return answers, errors.Join(err, p.record(ctx, req, all, answers, err, start))
 }

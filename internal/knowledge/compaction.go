@@ -336,7 +336,7 @@ func (s Set) compaction(id string) (Compaction, error) {
 		return Compaction{}, fmt.Errorf("%w: %s has %d candidates against its declared size", ErrCompactionIncomplete, id, len(candidates))
 	}
 	for _, candidate := range candidates {
-		k, err := s.latest(candidate.ID, candidate.Version)
+		k, err := s.Version(candidate.ID, candidate.Version)
 		if err != nil {
 			return Compaction{}, err
 		}
@@ -345,7 +345,7 @@ func (s Set) compaction(id string) (Compaction, error) {
 			if slices.ContainsFunc(c.Replaced, ref.names) {
 				continue
 			}
-			old, err := s.latest(ref.ID, ref.Version)
+			old, err := s.Version(ref.ID, ref.Version)
 			if err != nil {
 				return Compaction{}, err
 			}
@@ -381,7 +381,7 @@ func (s Set) pending(id string) bool {
 	}
 	open := false
 	for _, candidate := range candidates {
-		latest, err := s.latest(candidate.ID, candidate.Version)
+		latest, err := s.Version(candidate.ID, candidate.Version)
 		if err != nil || latest.Status == StatusRetired {
 			return false
 		}
@@ -438,7 +438,7 @@ func (s Set) approveCompaction(c Compaction, approver string, now time.Time) ([]
 		working = append(Set{k}, working...)
 	}
 	for _, item := range c.Items {
-		latest, err := working.latest(item.ID, item.Version)
+		latest, err := working.Version(item.ID, item.Version)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -455,7 +455,7 @@ func (s Set) approveCompaction(c Compaction, approver string, now time.Time) ([]
 		}
 	}
 	for _, old := range c.Replaced {
-		latest, err := working.latest(old.ID, old.Version)
+		latest, err := working.Version(old.ID, old.Version)
 		if err != nil {
 			return nil, nil, err
 		}

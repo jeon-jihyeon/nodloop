@@ -42,7 +42,7 @@ func (s Set) Version(id string, version int) (Knowledge, error) {
 			return k, nil
 		}
 	}
-	return Knowledge{}, fmt.Errorf("%w: %s v%d", ErrNotFound, id, version)
+	return Knowledge{}, fmt.Errorf("%w: %s version %d", ErrNotFound, id, version)
 }
 
 // Active record per id
@@ -283,7 +283,7 @@ func (s Set) approval(id string, version int, approver string, now time.Time) ([
 	if err != nil {
 		return nil, err
 	}
-	from, err := history.latest(id, version)
+	from, err := history.Version(id, version)
 	if err != nil {
 		return nil, err
 	}
@@ -332,7 +332,7 @@ func (k Knowledge) replaces(old Knowledge) error {
 // 3. a candidate whose bases never reach the approved version is refused because it was built without that version
 // Approving it would drop whatever the approved version added such as the facts a compaction merged
 func (s Set) approve(id string, version int, approver string, now time.Time) (Knowledge, *Knowledge, error) {
-	from, err := s.latest(id, version)
+	from, err := s.Version(id, version)
 	if err != nil {
 		return Knowledge{}, nil, err
 	}
@@ -373,7 +373,7 @@ func (s Set) builtOn(k Knowledge, version int) bool {
 		if base == version {
 			return true
 		}
-		b, err := s.latest(k.ID, base)
+		b, err := s.Version(k.ID, base)
 		if err != nil {
 			return false
 		}
@@ -389,7 +389,7 @@ func (s Set) builtOn(k Knowledge, version int) bool {
 // so only the names of the candidates tell the two apart
 func (s Set) compactedBase(k Knowledge) (Knowledge, bool) {
 	for base := k.Base; base > 0; {
-		b, err := s.latest(k.ID, base)
+		b, err := s.Version(k.ID, base)
 		if err != nil {
 			return Knowledge{}, false
 		}
@@ -415,7 +415,7 @@ func (s Set) importable(records []Knowledge) (Set, error) {
 		if slices.ContainsFunc(s, k.same) {
 			continue
 		}
-		if newest, err := s.latest(k.ID, k.Version); err == nil && k.Time.Before(newest.Time) {
+		if newest, err := s.Version(k.ID, k.Version); err == nil && k.Time.Before(newest.Time) {
 			return nil, fmt.Errorf("record %d: %w: %s v%d %s at %s and the recorded %s at %s",
 				i+1, ErrImportStale, k.ID, k.Version, k.Status, k.Time.Format(time.RFC3339),
 				newest.Status, newest.Time.Format(time.RFC3339))
@@ -426,7 +426,7 @@ func (s Set) importable(records []Knowledge) (Set, error) {
 }
 
 func (s Set) retire(id string, version int, approver string, now time.Time) (Knowledge, error) {
-	from, err := s.latest(id, version)
+	from, err := s.Version(id, version)
 	if err != nil {
 		return Knowledge{}, err
 	}
@@ -434,7 +434,7 @@ func (s Set) retire(id string, version int, approver string, now time.Time) (Kno
 }
 
 func (s Set) checkApproved(id string, version int) (Knowledge, error) {
-	k, err := s.latest(id, version)
+	k, err := s.Version(id, version)
 	if err != nil {
 		return Knowledge{}, err
 	}
@@ -465,15 +465,6 @@ func (s Set) Find(id string) (Knowledge, bool) {
 	return Knowledge{}, false
 }
 
-func (s Set) latest(id string, version int) (Knowledge, error) {
-	for _, k := range s {
-		if k.ID == id && k.Version == version {
-			return k, nil
-		}
-	}
-	return Knowledge{}, fmt.Errorf("%w: %s version %d", ErrNotFound, id, version)
-}
-
 // Whether ref takes over the outcome of a run of the producer with the labels that applied the versions in applied
 // 1. the run applied a version a compaction merged into ref and never ref itself
 // 2. ref still reaches the run by its producer and labels
@@ -481,7 +472,7 @@ func (s Set) latest(id string, version int) (Knowledge, error) {
 // A narrowing cites the refuted runs it answers so they stop counting against the version
 // A compaction restates the facts of the versions it merged so their open outcomes stay with the fact
 func (s Set) Inherits(ref Ref, traceID string, applied []Ref, producer string, labels trace.Labels) bool {
-	k, err := s.latest(ref.ID, ref.Version)
+	k, err := s.Version(ref.ID, ref.Version)
 	if err != nil || slices.Contains(applied, ref) || k.Run == nil || !k.Run.Admits(producer, labels) {
 		return false
 	}
@@ -490,7 +481,7 @@ func (s Set) Inherits(ref Ref, traceID string, applied []Ref, producer string, l
 		return false
 	}
 	for _, r := range append(merged, ref) {
-		if cited, err := s.latest(r.ID, r.Version); err == nil && slices.Contains(cited.Evidence.OutcomeTraceIDs, traceID) {
+		if cited, err := s.Version(r.ID, r.Version); err == nil && slices.Contains(cited.Evidence.OutcomeTraceIDs, traceID) {
 			return false
 		}
 	}
@@ -504,7 +495,7 @@ func (s Set) merged(ref Ref) []Ref {
 	var out []Ref
 	next := []Ref{ref}
 	for len(next) > 0 {
-		k, err := s.latest(next[0].ID, next[0].Version)
+		k, err := s.Version(next[0].ID, next[0].Version)
 		next = next[1:]
 		if err != nil || k.Compaction == "" {
 			continue

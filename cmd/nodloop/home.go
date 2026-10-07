@@ -1,16 +1,12 @@
 package main
 
 import (
-	"encoding/json"
-	"errors"
-	"fmt"
-	"os"
 	"path/filepath"
 
-	"github.com/jeon-jihyeon/nodloop/internal/atomicfile"
+	"github.com/jeon-jihyeon/nodloop/internal/userconfig"
 )
 
-const configFile = "config.json"
+const configFile = userconfig.File
 
 // What `~/.nodloop/config.json` holds
 // A file_dir an older setup saved is read and ignored so its config still loads
@@ -29,12 +25,12 @@ type userConfig struct {
 // nodloop keeps the config and the default records under `.nodloop` there
 type homeDir string
 
-func (h homeDir) dir() string {
-	return filepath.Join(string(h), ".nodloop")
+func (h homeDir) config() userconfig.Home {
+	return userconfig.Home(h)
 }
 
-func (h homeDir) recordDir() string {
-	return filepath.Join(h.dir(), "records")
+func (h homeDir) dir() string {
+	return h.config().Dir()
 }
 
 // The link the plugin launcher points at the binary it runs before every run
@@ -52,51 +48,10 @@ func (h homeDir) settingsPath() string {
 	return filepath.Join(string(h), ".claude", "settings.json")
 }
 
-func (h homeDir) configPath() string {
-	return filepath.Join(h.dir(), configFile)
-}
-
 func (h homeDir) readConfig() (userConfig, error) {
-	b, err := os.ReadFile(h.configPath())
-	if errors.Is(err, os.ErrNotExist) {
-		return userConfig{}, nil
-	}
-	if err != nil {
+	var c userConfig
+	if err := h.config().Read(&c); err != nil {
 		return userConfig{}, err
 	}
-	var c userConfig
-	if err := json.Unmarshal(b, &c); err != nil {
-		return userConfig{}, fmt.Errorf("%w: %s: %w", errConfigInvalid, h.configPath(), err)
-	}
 	return c, nil
-}
-
-// Writes one key of config.json and keeps the value of every other key
-// 1. a nil value removes the key
-// 2. the file is written again indented with its keys sorted
-func (h homeDir) save(key string, value any) error {
-	doc := map[string]json.RawMessage{}
-	b, err := os.ReadFile(h.configPath())
-	switch {
-	case errors.Is(err, os.ErrNotExist):
-	case err != nil:
-		return err
-	default:
-		if err := json.Unmarshal(b, &doc); err != nil {
-			return fmt.Errorf("%w: %s: %w", errConfigInvalid, h.configPath(), err)
-		}
-	}
-	if value == nil {
-		delete(doc, key)
-	} else if doc[key], err = json.Marshal(value); err != nil {
-		return err
-	}
-	out, err := json.MarshalIndent(doc, "", "  ")
-	if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(h.dir(), 0o700); err != nil {
-		return err
-	}
-	return atomicfile.Replace(h.configPath(), append(out, '\n'))
 }

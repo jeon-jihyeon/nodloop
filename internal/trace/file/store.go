@@ -3,6 +3,7 @@ package file
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/jeon-jihyeon/nodloop/internal/jsonl"
@@ -34,13 +35,16 @@ func (s *Store) Append(_ context.Context, t trace.Trace) error {
 	return nil
 }
 
+// A corrupt line returns the trace found with the error as List does
 func (s *Store) Get(_ context.Context, id string) (trace.Trace, error) {
 	found, err := s.file.Newest(trace.Filter{ID: id}.Matches, nil, 1)
-	if len(found) == 0 && err != nil {
-		return trace.Trace{}, fmt.Errorf("%w: %w", ErrRead, err)
-	}
-	if len(found) == 0 {
+	switch {
+	case len(found) == 0 && err != nil:
+		return trace.Trace{}, readFailed(err)
+	case len(found) == 0:
 		return trace.Trace{}, fmt.Errorf("%w: %q", trace.ErrNotFound, id)
+	case err != nil:
+		return found[0], readFailed(err)
 	}
 	return found[0], nil
 }
@@ -50,7 +54,37 @@ func (s *Store) Get(_ context.Context, id string) (trace.Trace, error) {
 func (s *Store) List(_ context.Context, f trace.Filter) (trace.Traces, error) {
 	found, err := s.file.Newest(f.Matches, f.Older, f.Limit)
 	if err != nil {
-		return found, fmt.Errorf("%w: %w", ErrRead, err)
+		return found, readFailed(err)
 	}
 	return found, nil
+}
+
+// How many records the file holds and the error naming its corrupt lines
+func (s *Store) Check() (int, error) {
+	n, err := s.file.Check()
+	if err != nil {
+		return n, readFailed(err)
+	}
+	return n, nil
+}
+
+// Moves the corrupt lines to a file beside it and returns how many
+func (s *Store) Repair() (int, error) {
+	n, err := s.file.Repair()
+	if err != nil {
+		return n, fmt.Errorf("%w: %w", ErrRepair, err)
+	}
+	return n, nil
+}
+
+func (s *Store) Name() string {
+	return s.file.Name()
+}
+
+// A corrupt line also matches ErrCorrupt so a caller tells it from a file it cannot read
+func readFailed(err error) error {
+	if errors.Is(err, jsonl.ErrCorrupt) {
+		return corruptError{err}
+	}
+	return fmt.Errorf("%w: %w", ErrRead, err)
 }

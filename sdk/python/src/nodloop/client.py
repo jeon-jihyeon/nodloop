@@ -59,7 +59,7 @@ class Candidate:
     id: str
     version: int
     status: str
-    # Approved items the candidate says the same as, each with its id and version
+    # The current items of the same kind that one run may carry with the candidate, each as the ledger records it
     overlaps: list[dict[str, Any]] = field(default_factory=list)
 
 
@@ -72,8 +72,14 @@ class Approval:
     status: str
     # The approver the records keep, which a server sets to the key's name
     approver: str
+    # Whether the approved version carries a veto the guard now applies
+    veto: bool = False
+    # Whether one run would carry more than five items so a compaction is due
+    compaction_due: bool = False
     # Why approved.md or the veto file could not be written, while the approval itself stands
     export_error: str = ""
+    # Why the items one run carries with it could not be read, while the approval itself stands
+    folder_error: str = ""
 
 
 @dataclass(frozen=True)
@@ -160,6 +166,7 @@ class Client:
         self,
         producer: str,
         output: Any,
+        *,
         labels: dict[str, list[str]] | None = None,
         applied: list[Item] | None = None,
         subject: str = "",
@@ -221,7 +228,16 @@ class Client:
     async def approve(self, item_id: str, version: int, approver: str) -> Approval:
         """Approves a candidate on behalf of the named person"""
         answer = await self.call("approve", {"id": item_id, "version": version, "approver": approver})
-        return Approval(answer["id"], answer["version"], answer["status"], answer["approver"], answer.get("export_error", ""))
+        return Approval(
+            answer["id"],
+            answer["version"],
+            answer["status"],
+            answer["approver"],
+            veto=bool(answer.get("veto")),
+            compaction_due=bool((answer.get("folder") or {}).get("compaction_due")),
+            export_error=answer.get("export_error", ""),
+            folder_error=answer.get("folder_error", ""),
+        )
 
     async def check_call(self, tool: str, arguments: dict[str, Any], producer: str = "") -> Decision:
         """Whether a veto approved for the producer blocks or asks about a tool call before the agent runs it

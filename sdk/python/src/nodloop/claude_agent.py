@@ -49,7 +49,7 @@ class NodloopHooks:
         # A turn without one records nothing
         answer = input_data.get("last_assistant_message") or ""
         if answer.strip():
-            self.run = await self.client.record(self.producer, answer, self.labels, self.applied)
+            self.run = await self.client.record(self.producer, answer, labels=self.labels, applied=self.applied)
         return {}
 
     async def pre_tool_use(self, input_data: dict[str, Any], tool_use_id: str | None, context: Any) -> dict[str, Any]:

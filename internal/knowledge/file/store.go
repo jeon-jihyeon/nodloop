@@ -93,9 +93,39 @@ func (s *Store) ReplaceRules(_ context.Context, render func(all knowledge.Set) s
 func (s *Store) List(_ context.Context) ([]knowledge.Knowledge, error) {
 	records, err := s.file.All()
 	if err != nil {
-		return newestFirst(records), fmt.Errorf("%w: %w", ErrRead, err)
+		return newestFirst(records), readFailed(err)
 	}
 	return newestFirst(records), nil
+}
+
+// How many records the file holds and the error naming its corrupt lines
+func (s *Store) Check() (int, error) {
+	n, err := s.file.Check()
+	if err != nil {
+		return n, readFailed(err)
+	}
+	return n, nil
+}
+
+// Moves the corrupt lines to a file beside it and returns how many
+func (s *Store) Repair() (int, error) {
+	n, err := s.file.Repair()
+	if err != nil {
+		return n, fmt.Errorf("%w: %w", ErrRepair, err)
+	}
+	return n, nil
+}
+
+func (s *Store) Name() string {
+	return s.file.Name()
+}
+
+// A corrupt line also matches ErrCorrupt so a caller tells it from a file it cannot read
+func readFailed(err error) error {
+	if errors.Is(err, jsonl.ErrCorrupt) {
+		return corruptError{err}
+	}
+	return fmt.Errorf("%w: %w", ErrRead, err)
 }
 
 // The records of the file in the reverse of file order

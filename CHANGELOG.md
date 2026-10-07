@@ -1,6 +1,6 @@
 # Changelog
 
-Every release tag publishes the plugin, the darwin and linux binaries and both SDKs under one version. Versions before 0.6.0 reviewed incident data, which left this repository in 0.6.0.
+Every release tag publishes the plugin, the darwin and linux binaries of `nodloop` and, from 0.7.0, `nodloop-server`, and both SDKs under one version. Versions before 0.6.0 reviewed incident data, which left this repository in 0.6.0.
 
 ## Unreleased
 
@@ -9,29 +9,36 @@ Every release tag publishes the plugin, the darwin and linux binaries and both S
 - The LangChain middleware in the TypeScript SDK as `nodloop/langchain`
 - READMEs for the PyPI and npm pages
 - `nodloop help [<command>]`, `-h` and `--help`, printing the usage of one command or action
-- `nodloop config` with no action lists every setting with its value and source
-- `nodloop doctor` names corrupt record lines and `--repair` moves them to `<file>.corrupt`
+- `nodloop config` with no action lists every setting with its value and source, and shows a setting it cannot read, such as an invalid `NODLOOP_SESSION`, as an error in its own row
+- `nodloop doctor` names corrupt record lines and `--repair` moves them to `<file>.corrupt`, keeping the whole file as `<file>.bak` only until the rewrite is synced
 - `nodloop knowledge replay` judges a lesson in one model call against the corrected answers it cites and the newest ten approved answers of its scope recorded before it, and flags a lesson that reaches too far. `knowledge waiting` shows the latest replay, `report replay` lists them, and the nod skill runs it before asking for approval
 - `nodloop knowledge check <compaction> --replay` replays every new item of a compaction and totals what it misses and where it reaches too far
-- `nodloop export otel` sends runs as OpenTelemetry GenAI spans and verdicts as `gen_ai.evaluation.result` events in OTLP JSON over HTTP, with no new dependency
-- Reports for other tools to draw: `--json` on `report loop`, `extract`, `critic` and `effect`, the MCP tool `report`, and `GET /v1/reports/{name}` and `GET /healthz` on `nodloop-server serve`
+- `nodloop export otel` sends runs as OpenTelemetry GenAI spans and the newest verdict of each run as a `gen_ai.evaluation.result` event in OTLP JSON over HTTP, with no new dependency. A run whose newest verdict is a withdraw gets no event
+- Reports for other tools to draw: `--json` on `report loop`, `extract`, `critic`, `effect` and `replay`, the MCP tool `report`, and on `nodloop-server serve` `GET /v1/reports/{name}` for these and `health` to a reviewer or approver key, and `GET /healthz` without a key
 
 ### Changed
-- `Client.Items` and `Client.Waiting` return `Items`
+- `Client.Items` and `Client.Waiting` of the Go package return `Items` instead of `[]Item`
 - The TypeScript `record` takes one object: `record({ producer, output, labels, applied, subject })`
-- `propose` and `approve` return `Candidate` and `Approval` in both SDKs instead of untyped objects
+- `propose` and `approve` return `Candidate` and `Approval` in both SDKs instead of untyped objects. `Approval` carries whether the item holds a veto, whether a compaction is due and the export and folder errors the approve tool answers, as `compaction_due` in Python and `compactionDue` in TypeScript
+- The Python `record` takes `labels`, `applied` and `subject` as keywords only: `record(producer, output, labels=..., applied=...)`
+- The LangChain middleware of both SDKs fetches the items once per run and keeps them until the run is recorded, and adds them to the system message without dropping its content blocks
 - The durations of the loop report are `decide_ns` and `settle_ns` in JSON
 - A CLI error names its command once, and a usage error prints the usage of that command alone
-- The hooks read only the newest run of their session, from the end of the file and back one week at most. With 50,000 runs the prompt hook went from 503 ms to 0.8 ms and the stop hook from 539 ms to 2.4 ms
+- The hooks read only the newest run of their session, from the end of the file and back one week at most, so a session resumed after a week starts without a previous run. With 50,000 runs on an Apple M1 Pro the prompt hook went from 505 ms to 0.7 ms and the stop hook from 528 ms to 1.4 ms, while the first turn of a new session reads the whole week and takes 115 ms in either hook
 - An append reads only the last line of the file instead of the whole file
 - A corrupt record line is skipped and named instead of failing every read, so a hook still adds the other items
 - The holdout draws a turn by the session and its previous run instead of the count of its runs
 - A run receives its items most specific first, then the ones a person approved or reaffirmed last, instead of by id, so a cut at the size limit drops the general and stale ones
 - Release archives carry a build provenance attestation and an SPDX SBOM. CI tests on macOS too, with the race detector on every package and actions pinned by commit
-- The server is a binary of its own, `nodloop-server`, in a Go module of its own under `server/`, so the CLI, the plugin and the Go package carry no server code and no PostgreSQL driver. `nodloop server key` and `nodloop server serve` become `nodloop-server key` and `nodloop-server serve` with the same flags, keys in config.json and records. `nodloop server` names the new binary. The release ships `nodloop-server_<os>_<arch>.tar.gz` beside the CLI
-- A decision point asks one endpoint and falls back to claude when the endpoint fails or any answer is below 0.8. `nodloop classifier set`, `unset`, `list` and `probe <point>` replace `add`, `use`, `reset` and `remove`, and cascades of several endpoints and parallel setups are gone. A config before 0.7.0 is read as the endpoint each point asked first, and one that asked another way fails with how to set it again
+- The server is a binary of its own, `nodloop-server`, in a Go module of its own under `server/`, so the CLI, the plugin and the Go package carry no server code and no PostgreSQL driver. `nodloop-server key` and `nodloop-server serve` take the flags, keys in config.json and records of the old commands. The release ships `nodloop-server_<os>_<arch>.tar.gz` beside the CLI
+- A decision point asks one endpoint and falls back to claude when the endpoint fails or is less than 0.8 sure of any answer. `nodloop classifier set`, `unset`, `list` and `probe <point>` manage it under the config key `decision_points`. A config before 0.7.0 is read as the endpoint each point asked first, an endpoint no decision used stays off, and a parallel setup or a cascade with a threshold other than 0.8 fails with how to set it again. The first `set` or `unset` writes `decision_points` and drops `classifiers` and `decisions` in one write
+
+### Removed
+- `nodloop server key` and `nodloop server serve`, now in `nodloop-server`. `nodloop server` prints where they moved
+- `nodloop classifier add`, `use`, `reset` and `remove`, with cascades of several endpoints and parallel setups
 
 ### Fixed
+- The CLI and `nodloop-server` write config.json under the lock file `config.json.lock` beside it, so a key one saves never drops a key the other saved at the same time
 - A command named `(` or `)` alone renders quoted for the guard, so it can never read as the start or end of a subshell. Found by fuzzing
 
 ## 0.6.6 - 2026-10-07

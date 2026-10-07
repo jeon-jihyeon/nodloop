@@ -17,7 +17,7 @@ NO_RM = {"tool": "Bash", "when": [{"field": "commands", "match": "(?m)^rm "}], "
 
 async def seed(c: Client) -> None:
     """An approved item for acme and an approved veto on rm"""
-    run = await c.record("bot", "answer", ACME)
+    run = await c.record("bot", "answer", labels=ACME)
     await c.judge(run, "reject", reason="missing the window")
     for item_id, content, veto in (("window", "Quote the refund window", None), ("no-rm", "Never run rm", NO_RM)):
         p = await c.propose("judgment", content, from_run=run, item_id=item_id, veto=veto)
@@ -54,6 +54,10 @@ async def test_langchain_middleware(binary: str, records: str) -> None:
             return ToolMessage("ran", tool_call_id=request.tool_call["id"])
 
         await mw.awrap_model_call(ModelRequest(system_message=SystemMessage("You help with refunds")), model)
+        first = mw.applied
+        blocks = [{"type": "text", "text": "You help"}, {"type": "text", "text": "with refunds"}]
+        await mw.awrap_model_call(ModelRequest(system_message=SystemMessage(content=blocks)), model)
+        fetched_once = mw.applied is first
         blocked = await mw.awrap_tool_call(SimpleNamespace(tool_call={"id": "t1", "name": "Bash", "args": {"command": "rm -rf /x"}}), tool)
         allowed = await mw.awrap_tool_call(SimpleNamespace(tool_call={"id": "t2", "name": "Bash", "args": {"command": "ls"}}), tool)
         await mw.aafter_agent({"messages": [HumanMessage("refund?"), AIMessage("The window is 30 days")]}, None)
@@ -61,6 +65,9 @@ async def test_langchain_middleware(binary: str, records: str) -> None:
 
     assert seen[0].system_message.content.startswith("You help with refunds\n\nnodloop: corrections")
     assert "[window v1 judgment] Quote the refund window" in seen[0].system_message.content
+    assert fetched_once and [i.id for i in first] == ["window"]
+    assert seen[1].system_message.content[:2] == blocks
+    assert seen[1].system_message.content[2]["text"].startswith("\n\nnodloop: corrections")
     assert blocked.status == "error" and "no-rm" in blocked.content
     assert allowed.content == "ran"
     assert mw.run in recorded
@@ -111,9 +118,15 @@ async def test_langchain_create_agent(binary: str, records: str) -> None:
     from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
     from langchain_core.tools import tool
 
+    prompts: list[str] = []
+
     class Scripted(GenericFakeChatModel):
         def bind_tools(self, tools: Any, **kwargs: Any) -> "Scripted":
             return self
+
+        async def _agenerate(self, messages: Any, *args: Any, **kwargs: Any) -> Any:
+            prompts.append(messages[0].text)
+            return await super()._agenerate(messages, *args, **kwargs)
 
     ran: list[str] = []
 
@@ -129,7 +142,7 @@ async def test_langchain_create_agent(binary: str, records: str) -> None:
     async with Client(records, binary) as c:
         await seed(c)
         # A veto names the tool as this agent calls it
-        run = await c.record("bot", "ran rm", ACME)
+        run = await c.record("bot", "ran rm", labels=ACME)
         await c.judge(run, "reject", reason="never rm")
         veto = {"tool": "bash", "when": [{"field": "commands", "match": "(?m)^rm "}], "example": {"command": "rm -rf /data"}}
         p = await c.propose("judgment", "Never run rm through bash", from_run=run, item_id="no-rm-bash", veto=veto)
@@ -144,3 +157,5 @@ async def test_langchain_create_agent(binary: str, records: str) -> None:
     assert ran == []
     assert tool_messages and "nodloop veto" in tool_messages[0].content
     assert mw.run in recorded
+    assert len(prompts) == 2 and all(p.startswith("You help\n\nnodloop: corrections") for p in prompts)
+    assert [i.id for i in mw.applied] == ["window"]

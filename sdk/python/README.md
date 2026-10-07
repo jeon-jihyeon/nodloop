@@ -7,7 +7,7 @@ pip install nodloop
 pip install "nodloop[langchain]"      # or openai-agents, claude-agent
 ```
 
-The client starts a local `nodloop mcp` over stdio, so no server runs. It uses `NODLOOP_BIN`, then the binary the Claude Code plugin keeps under `~/.nodloop/bin`, then `nodloop` on PATH, and otherwise downloads the release of its own version from GitHub and checks it against the release checksums. Python 3.10 or newer on macOS or Linux.
+The client starts a local `nodloop mcp` over stdio, so no server runs. It uses `NODLOOP_BIN`, then the binary the Claude Code plugin keeps under `~/.nodloop/bin`, then `nodloop` on PATH, and otherwise downloads the release of its own version from GitHub and checks it against the release checksums. It requires Python 3.10 or newer and is tested on Linux with Python 3.12.
 
 ## The loop
 
@@ -20,7 +20,7 @@ async with Client() as c:
     knowledge = await c.knowledge("support-bot", acme)
     prompt = f"{system_prompt}\n\n{knowledge.text}"  # empty text when nothing is approved
     answer = await my_agent(prompt)
-    run = await c.record("support-bot", answer, acme, knowledge.items)
+    run = await c.record("support-bot", answer, labels=acme, applied=knowledge.items)
 
     # later, when a person reads the answer
     await c.judge(run, "reject", reason="the refund window was missing", reason_code="scope")
@@ -33,17 +33,17 @@ From then on every `knowledge("support-bot", acme)` carries the item, and a run 
 | Method | Returns |
 |---|---|
 | `knowledge(producer, labels)` | `Knowledge` with `items` and the `text` to put in the prompt |
-| `record(producer, output, labels, applied, subject)` | the run id a verdict cites |
+| `record(producer, output, *, labels, applied, subject)` | the run id a verdict cites |
 | `judge(run, verdict, reason, reason_code, edited, reviewer)` | nothing |
-| `propose(kind, content, from_run, producer, labels, new_labels, item_id, veto)` | `Candidate` with `id`, `version`, `status` and `overlaps` |
-| `approve(item_id, version, approver)` | `Approval` with `id`, `version`, `status` and `approver` |
+| `propose(kind, content, from_run, producer, labels, new_labels, item_id, veto)` | `Candidate` with `id`, `version`, `status` and `overlaps`, the current items of the same kind one run may carry with it |
+| `approve(item_id, version, approver)` | `Approval` with `id`, `version`, `status`, `approver`, `veto`, `compaction_due` when one run would carry more than five items, and `export_error` and `folder_error` when a step after the approval failed |
 | `check_call(tool, arguments, producer)` | `Decision` with `action` of allow, block or ask, `veto` and `reason` |
 
 A tool that refuses, such as a proposal from a run nobody corrected, raises `ToolError` with the reason.
 
 ## Adapters
 
-LangChain `create_agent` middleware puts the items in the system message, records the final answer and refuses a vetoed tool call:
+LangChain `create_agent` middleware fetches the items once per run and puts them in the system message, records the final answer and refuses a vetoed tool call:
 
 ```python
 from nodloop.langchain import NodloopMiddleware

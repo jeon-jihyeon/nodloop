@@ -31,10 +31,33 @@ func (s *OutcomeStore) Append(_ context.Context, o feedback.Outcome) error {
 }
 
 // Newest first
+// A corrupt line returns the outcomes of the other lines with the error
 func (s *OutcomeStore) List(_ context.Context, traceID string) ([]feedback.Outcome, error) {
 	outcomes, err := s.file.Newest(feedback.OutcomeFilter{TraceID: traceID}.Matches, nil, 0)
 	if err != nil {
-		return outcomes, fmt.Errorf("%w: %w", ErrRead, err)
+		return outcomes, readFailed(err)
 	}
 	return outcomes, nil
+}
+
+// How many records the file holds and the error naming its corrupt lines
+func (s *OutcomeStore) Check() (int, error) {
+	n, err := s.file.Check()
+	if err != nil {
+		return n, readFailed(err)
+	}
+	return n, nil
+}
+
+// Moves the corrupt lines to a file beside it and returns how many
+func (s *OutcomeStore) Repair() (int, error) {
+	n, err := s.file.Repair()
+	if err != nil {
+		return n, fmt.Errorf("%w: %w", ErrRepair, err)
+	}
+	return n, nil
+}
+
+func (s *OutcomeStore) Name() string {
+	return s.file.Name()
 }

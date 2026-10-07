@@ -10,9 +10,11 @@ import (
 	"runtime/debug"
 	"strings"
 	"time"
+
+	"github.com/jeon-jihyeon/nodloop/internal/userconfig"
 )
 
-const usage = `Usage: nodloop-server <command> [flags]
+const usage = `usage: nodloop-server <command> [flags]
 
   key add <name> --tenant <t> --role producer|reviewer|approver
                             Print a new key once and save only its SHA-256 under server in ~/.nodloop/config.json.
@@ -32,7 +34,7 @@ The record directory is --record-dir, then NODLOOP_RECORD_DIR, then record_dir o
 `
 
 const (
-	envRecordDir = "NODLOOP_RECORD_DIR"
+	envRecordDir = userconfig.EnvRecordDir
 	// A PostgreSQL URL serve keeps the records of every tenant in
 	envPostgres = "NODLOOP_POSTGRES"
 )

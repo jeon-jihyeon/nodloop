@@ -20,7 +20,8 @@ import (
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
 )
 
-// Records a run of the repo with the output and the verdict, or none when verdict is empty
+// Records a run of the repo with the output and the verdict
+// An empty verdict records none
 func record(t *testing.T, st testkit.Stores, repo, output string, verdict feedback.Verdict) string {
 	t.Helper()
 	ctx := context.Background()
@@ -43,7 +44,8 @@ func record(t *testing.T, st testkit.Stores, repo, output string, verdict feedba
 }
 
 // A corrected run, two approved runs of the repo, one of another repo and one without a verdict
-// The lesson cites the corrected run
+// The lesson idv cites the corrected run and a run the records no longer hold
+// The lesson guard acts through a veto
 type seeded struct {
 	st                        testkit.Stores
 	corrected, near, far, off string
@@ -58,13 +60,35 @@ func seed(t *testing.T) seeded {
 	s.far = record(t, st, "plant", "IDV 11 is a temperature drift", feedback.VerdictApprove)
 	s.off = record(t, st, "other", "IDV 14 there is a pump", feedback.VerdictApprove)
 	record(t, st, "plant", "no verdict yet", "")
-	_, _, err := st.Ledger.Propose(context.Background(), knowledge.Knowledge{
-		ID: "idv", Kind: knowledge.KindMeaning, Content: "Every IDV fault is a valve fault", Author: "author",
-		Run:      &knowledge.RunScope{Producer: "session", Labels: trace.Labels{"repo": {"plant"}}},
-		Evidence: knowledge.Evidence{FeedbackTraceIDs: []string{s.corrected}},
-	})
-	require.NoError(t, err)
+	scope := &knowledge.RunScope{Producer: "session", Labels: trace.Labels{"repo": {"plant"}}}
+	for _, k := range []knowledge.Knowledge{
+		{
+			ID: "idv", Kind: knowledge.KindMeaning, Content: "Every IDV fault is a valve fault", Author: "author", Run: scope,
+			Evidence: knowledge.Evidence{FeedbackTraceIDs: []string{s.corrected, "gone"}},
+		},
+		{
+			ID: "guard", Kind: knowledge.KindJudgment, Content: "never run cmd", Author: "author", Run: scope,
+			Evidence: knowledge.Evidence{FeedbackTraceIDs: []string{s.corrected}},
+			Veto: &knowledge.Veto{
+				Tool: "Bash", When: []knowledge.VetoCondition{{Field: "command", Match: `^cmd\b`}}, Example: map[string]any{"command": "cmd now"},
+			},
+		},
+	} {
+		_, _, err := st.Ledger.Propose(context.Background(), k)
+		require.NoError(t, err)
+	}
 	return s
+}
+
+// Answers every run the prompt shows with breaks false
+func answerAll(_ context.Context, req llm.Request) (llm.Response, error) {
+	var answers []string
+	for _, line := range strings.Split(req.Prompt, "\n") {
+		if id, ok := strings.CutPrefix(line, "### run "); ok {
+			answers = append(answers, fmt.Sprintf(`{"run":%q,"breaks":false,"why":"x"}`, id))
+		}
+	}
+	return llm.Response{CostUSD: 0.01, Output: json.RawMessage(`{"cases":[` + strings.Join(answers, ",") + `]}`)}, nil
 }
 
 func TestReplayerReplay(t *testing.T) {
@@ -87,14 +111,16 @@ func TestReplayerReplay(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, replay.Result{ID: "idv", Version: 1, Missed: 0, Overreach: 1, Cases: []replay.Case{
 		{Run: s.corrected, Expect: replay.ExpectBreaks, Breaks: true, Why: "it called the valve a sensor"},
-		{Run: s.far, Expect: replay.ExpectKeeps, Breaks: true, Why: "IDV 11 would become a valve"},
 		{Run: s.near, Expect: replay.ExpectKeeps, Breaks: false, Why: "it already says valve"},
-	}}, got)
+		{Run: s.far, Expect: replay.ExpectKeeps, Breaks: true, Why: "IDV 11 would become a valve"},
+	}}, got, "cases come in the order of their run ids")
 	assert.False(t, got.Passed(), "a lesson that would change an approved output reaches too far")
 	assert.Contains(t, prompt, "[idv v1 meaning] Every IDV fault is a valve fault")
 	assert.NotContains(t, prompt, "IDV 14 there is a pump", "a run outside the scope is no case")
 	assert.NotContains(t, prompt, "a later answer", "a run after the version may have followed it so it is no case")
 	assert.NotContains(t, prompt, "keeps", "the judge never sees what a case expects")
+	assert.NotContains(t, prompt, "gone", "a cited run the records no longer hold is no case")
+	assert.Less(t, strings.Index(prompt, s.near), strings.Index(prompt, s.far), "the outputs come in the order of their run ids")
 	traces, err := s.st.Traces.List(context.Background(), trace.Filter{Name: trace.NameReplay})
 	require.NoError(t, err)
 	require.Len(t, traces, 1)
@@ -116,10 +142,9 @@ func TestReplayerReplayAfterReaffirm(t *testing.T) {
 	require.NoError(t, err)
 	client := llmmock.NewMockClient(gomock.NewController(t))
 	var prompt string
-	client.EXPECT().Complete(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, req llm.Request) (llm.Response, error) {
+	client.EXPECT().Complete(gomock.Any(), gomock.Any()).DoAndReturn(func(ctx context.Context, req llm.Request) (llm.Response, error) {
 		prompt = req.Prompt
-		return llm.Response{Output: json.RawMessage(fmt.Sprintf(`{"cases":[`+
-			`{"run":%q,"breaks":true,"why":"x"},{"run":%q,"breaks":false,"why":"x"},{"run":%q,"breaks":false,"why":"x"}]}`, s.corrected, s.near, s.far))}, nil
+		return answerAll(ctx, req)
 	})
 
 	_, err = replay.New(s.st.Ledger, s.st.Traces, s.st.Feedback, client, "", s.st.Clock.Now).Replay(ctx, "idv", 0)
@@ -129,39 +154,117 @@ func TestReplayerReplayAfterReaffirm(t *testing.T) {
 	assert.Contains(t, prompt, "IDV 11 is a temperature drift")
 }
 
+// Only the newest approved runs of the scope are judged so one model call holds them
+func TestReplayerReplayCapsApprovedRuns(t *testing.T) {
+	st := testkit.Open(t)
+	corrected := record(t, st, "plant", "wrong", feedback.VerdictReject)
+	var approved []string
+	for i := range 12 {
+		approved = append(approved, record(t, st, "plant", fmt.Sprintf("answer %d", i), feedback.VerdictApprove))
+	}
+	_, _, err := st.Ledger.Propose(context.Background(), knowledge.Knowledge{
+		ID: "wide", Kind: knowledge.KindMeaning, Content: "x", Author: "author",
+		Run:      &knowledge.RunScope{Producer: "session", Labels: trace.Labels{"repo": {"plant"}}},
+		Evidence: knowledge.Evidence{FeedbackTraceIDs: []string{corrected}},
+	})
+	require.NoError(t, err)
+	client := llmmock.NewMockClient(gomock.NewController(t))
+	client.EXPECT().Complete(gomock.Any(), gomock.Any()).DoAndReturn(answerAll)
+
+	got, err := replay.New(st.Ledger, st.Traces, st.Feedback, client, "", st.Clock.Now).Replay(context.Background(), "wide", 0)
+
+	require.NoError(t, err)
+	var runs []string
+	for _, c := range got.Cases {
+		runs = append(runs, c.Run)
+	}
+	assert.Equal(t, append([]string{corrected}, approved[2:]...), runs, "the two oldest approved runs are left out")
+}
+
+// Fails every append so a test sees the error of recording the judgment
+type unrecorded struct {
+	replay.TraceStore
+}
+
+func (unrecorded) Append(context.Context, trace.Trace) error {
+	return assert.AnError
+}
+
+// Adds the record loose without a run scope as a ledger written before 0.6.0 may hold
+type withLoose struct {
+	replay.KnowledgeStore
+}
+
+func (w withLoose) All(ctx context.Context) (knowledge.Set, error) {
+	all, err := w.KnowledgeStore.All(ctx)
+	return append(all, knowledge.Knowledge{ID: "loose", Version: 1, Kind: knowledge.KindMeaning, Status: knowledge.StatusCandidate}), err
+}
+
 func TestReplayerReplayFails(t *testing.T) {
 	type args struct {
-		id string
-		// The judge answers every case but this run
-		omit string
+		id      string
+		version int
+		// Answers the request of the judge
+		judge func(ctx context.Context, req llm.Request) (llm.Response, error)
+		// The stores the replayer reads and records through
+		stores func(testkit.Stores) (replay.KnowledgeStore, replay.TraceStore)
+	}
+	type want struct {
+		err error
+		// Replay traces recorded with the failure
+		failed int
+	}
+	omit := func(context.Context, llm.Request) (llm.Response, error) {
+		return llm.Response{CostUSD: 0.01, Output: json.RawMessage(`{"cases":[]}`)}, nil
+	}
+	undecodable := func(context.Context, llm.Request) (llm.Response, error) {
+		return llm.Response{CostUSD: 0.01, Output: json.RawMessage(`[`)}, nil
+	}
+	refused := func(context.Context, llm.Request) (llm.Response, error) {
+		return llm.Response{}, assert.AnError
+	}
+	same := func(st testkit.Stores) (replay.KnowledgeStore, replay.TraceStore) { return st.Ledger, st.Traces }
+	broken := func(st testkit.Stores) (replay.KnowledgeStore, replay.TraceStore) {
+		return st.Ledger, unrecorded{st.Traces}
+	}
+	loose := func(st testkit.Stores) (replay.KnowledgeStore, replay.TraceStore) {
+		return withLoose{st.Ledger}, st.Traces
 	}
 	tcs := []struct {
 		name string
 		args args
-		want error
+		want want
 	}{
-		{"an unknown id is not found", args{id: "nope"}, knowledge.ErrNotFound},
-		{"an answer left out refuses the judgment", args{id: "idv", omit: "corrected"}, replay.ErrJudgment},
+		{"an unknown id has no current version", args{"nope", 0, answerAll, same}, want{replay.ErrNoCurrent, 0}},
+		{"an unknown version is not found", args{"idv", 2, answerAll, same}, want{knowledge.ErrNotFound, 0}},
+		{"an item without a run scope reaches no output", args{"loose", 0, answerAll, loose}, want{replay.ErrNoScope, 0}},
+		{"a veto acts through the guard", args{"guard", 0, answerAll, same}, want{replay.ErrNoScope, 0}},
+		{"a failed model call answers its error", args{"idv", 0, refused, same}, want{assert.AnError, 0}},
+		{"an answer left out refuses the judgment", args{"idv", 0, omit, same}, want{replay.ErrJudgment, 1}},
+		{"an answer that does not decode refuses the judgment", args{"idv", 0, undecodable, same}, want{replay.ErrJudgment, 1}},
+		{"a judgment that is not recorded fails", args{"idv", 0, answerAll, broken}, want{assert.AnError, 0}},
+		{"a refused judgment that is not recorded fails with both errors", args{"idv", 0, undecodable, broken}, want{replay.ErrJudgment, 0}},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			s := seed(t)
 			client := llmmock.NewMockClient(gomock.NewController(t))
-			client.EXPECT().Complete(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, req llm.Request) (llm.Response, error) {
-				var answers []string
-				for name, id := range map[string]string{"corrected": s.corrected, "near": s.near, "far": s.far} {
-					if name != tc.args.omit && strings.Contains(req.Prompt, id) {
-						answers = append(answers, fmt.Sprintf(`{"run":%q,"breaks":false,"why":"x"}`, id))
-					}
-				}
-				return llm.Response{Output: json.RawMessage(`{"cases":[` + strings.Join(answers, ",") + `]}`)}, nil
-			}).AnyTimes()
-			r := replay.New(s.st.Ledger, s.st.Traces, s.st.Feedback, client, "", s.st.Clock.Now)
+			client.EXPECT().Complete(gomock.Any(), gomock.Any()).DoAndReturn(tc.args.judge).AnyTimes()
+			ledger, traces := tc.args.stores(s.st)
+			r := replay.New(ledger, traces, s.st.Feedback, client, "", s.st.Clock.Now)
 
-			_, err := r.Replay(context.Background(), tc.args.id, 0)
+			got, err := r.Replay(context.Background(), tc.args.id, tc.args.version)
 
-			assert.ErrorIs(t, err, tc.want)
+			assert.ErrorIs(t, err, tc.want.err)
+			assert.Equal(t, replay.Result{}, got)
+			recorded, err := s.st.Traces.List(context.Background(), trace.Filter{Name: trace.NameReplay})
+			require.NoError(t, err)
+			require.Len(t, recorded, tc.want.failed)
+			for _, tr := range recorded {
+				assert.NotEmpty(t, tr.Error, "the trace names why the judgment failed")
+				assert.InDelta(t, 0.01, tr.Usage.CostUSD, 1e-9, "the cost of the model call stays in the records")
+			}
 		})
 	}
 }
