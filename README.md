@@ -22,7 +22,9 @@
 
 <br>
 
-You correct an AI answer, the session ends, and next week in the same repository the same mistake comes back. nodloop closes that loop. Each answer is recorded as a run with where it was made, your verdict on it is recorded as a nod, and a correction you approve by name becomes an item that the next prompt in that place receives. Nothing reaches a prompt that a person did not approve, and nothing reaches a place its scope does not cover.
+You correct an AI answer. The session ends. Next week, in the same repo, the same mistake is back.
+
+nodloop closes that loop. It records every answer along with where it was made, records your verdict on it, and turns the corrections you approve into lessons that the next prompt in that place receives. Nothing reaches a prompt until a person approves it, and a lesson only shows up where its scope says it belongs.
 
 ## Quickstart
 
@@ -31,28 +33,34 @@ You correct an AI answer, the session ends, and next week in the same repository
 /plugin install nodloop@nodloop
 ```
 
-On first run the plugin downloads its binary. From then on it records every answer of the conversation as a run labeled with the repository and directory you work in. Work as usual. When you tell Claude an answer was wrong or right, the conversation records that as a verdict on the answer's run without interrupting you. A correction is drafted as a lesson after the turn in the background, and the next time you start or resume Claude Code in that repository it asks about the drafts waiting, quoting your words and the answer you corrected. Mark one not a correction and its verdict is withdrawn with the draft, so a redirect in a discussion never counts as a correction. `/nodloop:nod` with nothing after it walks you through them at any time. The name you approve under is asked once and saved, and `~/.nodloop/bin/nodloop config approver <name>` changes it. To record a correction at once, nod on it:
+That's it. Keep working the way you do now.
+
+- **Tell Claude when it's wrong.** Plain words work. The conversation records your verdict quietly, without interrupting you.
+- **Review when you come back.** Each correction is drafted into a one-line lesson in the background. The next time you start or resume Claude Code in that repo, it walks you through the waiting drafts, quoting what you said.
+- **Approve by name.** Approved lessons are added to every later prompt in that repo, so you don't have to say it twice.
+
+Want it recorded right now? Nod on it:
 
 ```
 > /nodloop:nod you ran cd before git again. Use git -C <dir> instead
 > approve it, approver <your name>
 ```
 
-The nod records an edit on that answer's run, drafts one sentence of what it taught, has it checked against the items this repository already has, and approves it only when you name yourself. Before every later prompt in this repository a hook adds the approved items as context, so the next answer follows the correction without being told again. `~/.nodloop/bin/nodloop knowledge for --producer session --label repo=<repo> --label dir=<dir>` lists what a prompt in that directory receives.
+`/nodloop:nod` on its own reviews the waiting drafts at any time. If a draft came from something that wasn't really a correction, mark it that way and both the verdict and the draft go away.
 
 > [!TIP]
-> `~/.nodloop/bin/nodloop config session_mode <mode>` picks how a conversation is recorded, and `NODLOOP_SESSION` set where Claude Code starts overrides it. `deferred`, the default, works as above. `immediate` drafts a correction in the same turn and asks about it at the end of the answer. `manual` records answers and leaves every verdict to an explicit nod. `off` keeps the plugin without recording conversations. Answers are stored on your machine under `~/.nodloop/records` with keys, tokens and passwords redacted.
+> `~/.nodloop/bin/nodloop config session_mode <mode>` changes how much happens on its own. `deferred` (the default) works as described above. `immediate` drafts the lesson and asks you in the same turn. `manual` waits for an explicit nod. `off` stops recording. Everything stays on your machine under `~/.nodloop/records`, with keys, tokens and passwords redacted.
 
-## Why nodloop
+## Why not just CLAUDE.md?
 
-A CLAUDE.md or a memory file you edit by hand carries corrections too. nodloop adds four things to them.
+A CLAUDE.md or a memory file works too. nodloop adds four things:
 
-| | Hand kept notes | nodloop |
+| | Hand-kept notes | nodloop |
 |---|---|---|
-| Approval | whatever was written | only versions a named person approved, with their history |
-| Scope | every session reads every line | an item reaches only runs whose labels it matches |
-| Measurement | none | for each item, the runs that received it, how many you approved, how many you corrected again for the same reason |
-| Enforcement | a request in text | a forbidden tool call is blocked by the guard hook before it runs |
+| Approval | whatever got written | only versions a named person approved, with full history |
+| Scope | every session reads every line | a lesson reaches only the runs its labels match |
+| Measurement | none | for each lesson: the runs that got it, how many you approved, how many you had to correct again |
+| Enforcement | a polite request | the guard hook blocks a forbidden tool call before it runs |
 
 ## How it works
 
@@ -62,30 +70,27 @@ answer → run with labels → your nod → proposed item → approved by name
    ← ← ← the next prompt in the same place receives it ← ← ←
 ```
 
-A run is one output of a producer with the labels of its situation. The built in producer is the Claude Code session, whose labels are `repo`, the directory holding `.git` above where you work, and `dir`, the path below it. Where you work is the directory Claude Code started in, or the working directory while it lies inside it, so a `cd` into a scratchpad or a clone elsewhere never labels a run. A nod is approve, edit with the corrected output, or reject with what was wrong, and withdraw takes back a verdict so the run has none. An item is a `meaning`, how to read something in this place, or a `judgment`, what to do or not do, and its scope names a producer, labels a run must carry and labels it must not. A label must be one a recorded run already carries, so a misspelled label fails instead of making an item that matches nothing.
+- **Run**: one output of a producer, tagged with labels for its situation. For Claude Code sessions the labels are `repo` and `dir`, taken from where Claude Code started, so a `cd` into a scratch directory never mislabels a run.
+- **Nod**: your verdict on a run. `approve`, `edit` with the corrected output, `reject` with what was wrong, or `withdraw` to take a verdict back.
+- **Item**: an approved lesson. A `meaning` says how to read something here; a `judgment` says what to do or avoid. Its scope names the producer and the labels it applies to. A label has to match one a real run already carries, so a typo fails loudly instead of matching nothing.
+
+Before you see a draft, a second model call checks it. It rejects drafts that just copy the answer, that only fit this one answer, or that get their relation to existing items wrong. A draft that repeats or contradicts an existing item shows you that item instead.
+
+| Command | What it does |
+|---|---|
+| `knowledge replay <id>` | Tests a draft against past answers: it should change the ones you corrected and leave the newest ten approved ones alone. Advisory only |
+| `knowledge compact`, `knowledge check` | When a run would carry more than five items, drafts a shorter set and checks that it loses no fact before you approve it |
+| `knowledge health`, `narrow`, `promote` | Flags items that keep getting corrected or haven't been used in 30 days, and proposes narrower or verified versions |
+| `report loop` | Shows where the loop stalls: runs, verdicts, corrections, drafts waiting and items approved, then per-item results |
+| `report effect` | With `config holdout 0.1`, one turn in ten gets no items, so you can compare correction rates with and without them |
+| `classifier set <point> --url <url>` | Lets your own HTTP classifier answer a decision point first, with claude as the fallback |
+
+Items are kept within a size budget per run, and an approved version goes stale after 90 days unless someone reaffirms it. `nodloop help <command>` has the details for each command.
 
 <details>
-<summary>How items are approved, kept within budget and kept fresh</summary>
+<summary>Classifier wire format</summary>
 
-A lesson is drafted from the correction and read by a second check before you see it. That check refuses a sentence that copies the answer instead of stating a lesson, one that holds only for this answer, and a wrong relation to the items the run already reaches. The relation decides what happens: a new lesson becomes a candidate, one that sharpens an item becomes its next version, and one an item already says or contradicts proposes nothing and shows that item, so you reaffirm it or narrow or retire it. `nodloop knowledge extract --from <run id>` does the same outside a conversation.
-
-Before you approve, `nodloop knowledge replay <id>` reads the lesson against answers recorded before it existed: the corrected answers it cites, which it must change, and the newest ten approved answers its scope reaches, which it must leave alone. A lesson that would change an approved answer reaches too far: one that reads a symptom two faults share as the first fault would change the approved answers that named the second. The replay is recorded, `knowledge waiting` shows how it went, `report replay` lists the latest one per version, and it never blocks an approval.
-
-A prompt receives its items most specific first, the ones naming more labels, then the ones approved or reaffirmed last, so when the hook cuts the list at its size limit the general and stale items are the ones left out.
-
-An item is a candidate until a named person approves it. A new version may not reach runs the approved one never reached, and one that drops a veto is refused. All approved items one run may carry together are held to a size cap, and approval is refused when it would push them past it.
-
-When one run would carry more than five items, `approve` says a compaction is due. A compaction drafts fewer items that say each fact once and lose none, and the ledger refuses a draft that reaches runs an old item never reached, two new items of one kind for the same runs, or an old item no new item names. Before approval a coverage check reads each old item against the new ones and lists any fact they lose, through `nodloop knowledge check` with a separate model call or through the MCP tool `check_compaction`. Nothing is approved until the check passes and a person names themselves. `knowledge check <compaction> --replay` also replays every new item against the corrections of the items it replaces and the approved answers of its scope, so you see whether the shorter set still catches what the old one caught and reaches no further.
-
-When you record what a real check found with `outcome`, `nodloop knowledge health` shows the items whose runs were refuted as retire candidates and the stated items whose runs were confirmed as promotion candidates. `knowledge narrow <id> --version <n> --key dir` proposes a version that stops reaching the directories where it was refuted, and `knowledge promote` proposes one with basis verified. An approved version is stale 90 days after its approval or last reaffirm.
-
-`nodloop report loop` starts with one line of how many runs were recorded, judged by you, judged by the conversation, corrected, waiting for approval and approved, so the stage where the loop stalls shows at once. Then it shows per approved item how many runs received it, how many of those you approved, how many you corrected again for the reason that taught it, and how long the correction took to become an item. Verdicts you gave and verdicts the conversation inferred from your words are counted apart, and yours wins where a run has both. `nodloop queue` lists the runs that wait for a verdict, with a random audit share.
-
-To see whether approved items help, set `nodloop config holdout 0.1`. One turn in ten then gets no item in its prompt and its run records what it would have received, and `nodloop report effect` compares how often those turns were corrected against the turns that got the items. `nodloop report extract` shows how drafting ended per plugin version, with the drafts refused and the critic questions they failed, and `nodloop report critic` shows how often the critic agreed with what you later decided on the same run. `knowledge health` marks approved items no run applied for 30 days as idle, and items whose runs were corrected again for the same reason as contested, with the items to compact them with.
-
-The second check is a claude call by default. A classifier served over HTTP can answer its questions first: `nodloop classifier set critic --url <url>` asks that endpoint, and claude answers only when the endpoint fails or is less than 0.8 sure of any answer, yes or no. The point `reaction` lets a classifier judge whether your message corrects the previous answer before the conversation does, and records only a sure verdict. Every answer is recorded as a `classify` trace with the time each one took, and `nodloop classifier probe <point>` shows what the endpoint of a point answers.
-
-An endpoint takes a POST of the text to judge and named yes or no questions, with `Authorization: Bearer` when the classifier has a key, and answers each question under its name with the probability of yes under the key `noul`, the question type of the Jev wire format. A body over 1 MiB, a status outside 2xx, a missing answer or a value outside 0 to 1 counts as a failure, and claude answers in its place.
+An endpoint gets a POST with the text and named yes/no questions, plus `Authorization: Bearer` when you set a key. It answers each question with the probability of yes under `noul`, the question type of the Jev wire format. claude takes over when the endpoint fails, returns a non-2xx status, sends more than 1 MiB, leaves a question out, or is less than 0.8 sure of any answer.
 
 ```
 → {"model": "<model>", "state": "<text>", "questions": {"copies": {"type": "noul", "instructions": "Does the lesson copy the answer?"}}}
@@ -94,83 +99,50 @@ An endpoint takes a POST of the text to judge and named yes or no questions, wit
 
 </details>
 
-## Any producer
+## Use it from any tool
 
-The loop is not tied to Claude Code. Any tool can record what it made as a run with the labels of its situation, take a nod on it and get back the approved items for its next run.
+The loop isn't tied to Claude Code. Any tool can record a run, take a nod on it and get the approved items back for its next run. The plugin keeps its binary at `~/.nodloop/bin/nodloop`.
 
 ```
-~/.nodloop/bin/nodloop run record --producer review-bot --label repo=api --label task=review --output review.json
-~/.nodloop/bin/nodloop feedback add --trace <run id> --verdict edit --edited corrected.json --reason "a nil map read is not a panic"
-~/.nodloop/bin/nodloop knowledge propose --from <run id> --kind meaning --content "Reading a nil map in Go returns the zero value"
-~/.nodloop/bin/nodloop knowledge approve <id> --version 1 --approver <your name>
-~/.nodloop/bin/nodloop knowledge for --producer review-bot --label repo=api --label task=review
+nodloop run record --producer review-bot --label repo=api --label task=review --output review.json
+nodloop feedback add --trace <run id> --verdict edit --edited corrected.json --reason "a nil map read is not a panic"
+nodloop knowledge propose --from <run id> --kind meaning --content "Reading a nil map in Go returns the zero value"
+nodloop knowledge approve <id> --version 1 --approver <your name>
+nodloop knowledge for --producer review-bot --label repo=api --label task=review
 ```
 
-The MCP server offers the same as tools: `run`, `knowledge_for`, `feedback`, `outcome`, `propose` with `from` set to a corrected run, `extraction` and `propose_extraction`, `approve`, the compaction tools, `queue`, `knowledge_health`, `report`, `reaffirm` and `check_call`. A producer never depends on nodloop and nodloop never depends on a producer.
+Labels are any keys and values. Name them the way your team thinks about the work: `tenant`, `agent`, `task`, `env`.
 
-A Go service can import the package instead:
+Python and TypeScript agents can use the SDKs, which run a local `nodloop mcp` over stdio and download the binary if it's missing. Both include adapters for LangChain, the OpenAI Agents SDK and the Claude Agent SDK.
 
-```go
-c := must(nodloop.Open("/var/lib/nodloop"))
-labels := nodloop.Labels{"tenant": {"acme"}, "task": {"refund"}}
-items := must(c.Items(ctx, "support-bot", labels)) // put them in the prompt
-id := must(c.Record(ctx, nodloop.Run{Producer: "support-bot", Labels: labels, Output: answer, Applied: items.Refs()}))
-if err := c.Judge(ctx, nodloop.Judgment{Run: id, Verdict: nodloop.VerdictReject, ReasonCode: nodloop.ReasonScope, Reason: "the refund window was missing"}); err != nil {
-	panic(err)
-}
-item := must(c.Propose(ctx, nodloop.Proposal{Kind: nodloop.KindJudgment, Content: "Quote the refund window before the steps", From: id}))
-must(c.Approve(ctx, item.ID, item.Version, "ann"))
-d := must(c.CheckCall(ctx, "support-bot", "Bash", map[string]any{"command": cmd})) // d.Action is allow, block or ask
 ```
-
-`must` stops on an error, and the whole loop runs with it as [example_test.go](example_test.go). A verdict of `edit` carries the corrected output in full instead of a reason alone, through `Edited` in Go, `--edited <file>` on the CLI or `edited` in the SDKs, and the drafter reads it next to the output it replaced.
-
-Labels are any keys and values. For a service, name the situation the way your team reads it: `tenant` and `customer` for who it served, `agent` for which agent ran, `task` for the kind of work and `env` for where it ran. A proposal may name only label values a recorded run carries, so a typo fails instead of making an item that matches nothing. To prepare an item for a tenant before its first run, pass `--new-labels` to `knowledge propose`, `new_labels` to the MCP tool or `NewLabels` to the Go client, and the item keeps that it was allowed.
-
-Python and TypeScript agents install `pip install nodloop` or `npm install nodloop`, built from `sdk/`. They start a local `nodloop mcp` over stdio, so no server runs, and fetch the release binary when none is installed. Each package carries adapters for LangChain, the OpenAI Agents SDK and the Claude Agent SDK, so a correction reaches the agent's next run without glue code. The [Python](sdk/python/README.md) and [TypeScript](sdk/typescript/README.md) READMEs list every method:
+pip install nodloop
+npm install nodloop
+```
 
 ```python
 from nodloop import Client
-from nodloop.langchain import NodloopMiddleware      # LangChain create_agent middleware
-from nodloop.openai_agents import NodloopHooks, veto_guardrail
-from nodloop.claude_agent import NodloopHooks as ClaudeHooks
+from nodloop.langchain import NodloopMiddleware
 
 async with Client() as c:
     mw = NodloopMiddleware(c, "support-bot", {"tenant": ["acme"]})
-    agent = create_agent(model, tools, middleware=[mw])  # items in the system message, the answer recorded, vetoed tool calls refused
+    agent = create_agent(model, tools, middleware=[mw])  # items in, answer recorded, vetoed tool calls refused
     await agent.ainvoke({"messages": [...]})
     await c.judge(mw.run, "reject", reason="the refund window was missing")
 ```
 
-```ts
-import { Client } from "nodloop";
-import { NodloopHooks } from "nodloop/claude-agent";
+See the [Python](sdk/python/README.md) and [TypeScript](sdk/typescript/README.md) READMEs for every method, and [example_test.go](example_test.go) for the Go package.
 
-const c = await Client.open();
-const hooks = new NodloopHooks(c, "support-bot", { tenant: ["acme"] });
-for await (const m of query({ prompt, options: { hooks: hooks.hooks() } })) {}
-```
-
-A veto names the tool the way the agent calls it, such as `bash` for a LangChain tool, and `guard check` points out a name no Claude Code tool carries.
-
-Several services or people can share one set of records through `nodloop-server serve`, a binary of its own that offers the same MCP tools over streamable HTTP at `/mcp`. It ships in every release as `nodloop-server_<os>_<arch>.tar.gz` beside `nodloop_<os>_<arch>.tar.gz`, or installs with `go install github.com/jeon-jihyeon/nodloop/server/cmd/nodloop-server@latest`, so the CLI and the plugin carry no server or database code. Each key names a tenant, whose records live apart from every other tenant's, and a role: a `producer` records runs and verdicts, a `reviewer` also drafts and proposes knowledge, and an `approver` also approves. An approval through a key is recorded under the key's name whatever the call says. `nodloop-server key add ann --tenant acme --role approver` prints a key once and keeps only its hash in `~/.nodloop/config.json`, and the SDKs connect with `Client(url=..., key=...)` in Python or `Client.open({ url, key })` in TypeScript. With `--postgres <url>` or `NODLOOP_POSTGRES` the server keeps every tenant in one PostgreSQL database instead of files, so several server processes can share it.
-
-nodloop draws no charts. Every report is data another tool can draw instead: `nodloop report loop --json` prints one report, the MCP tool `report` answers it to an agent, and the server answers `GET /v1/reports/{name}` for `loop`, `extract`, `critic`, `effect`, `replay` or `health` to a reviewer or approver key. A dashboard such as Grafana with a JSON data source polls it:
-
-```
-curl -H "Authorization: Bearer $NODLOOP_KEY" http://127.0.0.1:8787/v1/reports/loop
-→ {"totals":{"runs":…,"judged":…,"inferred":…,"corrected":…,"waiting":…,"approved":…},"scopes":[…],"drafts":[…],"items":[…]}
-```
-
-Durations in a report are nanoseconds and `GET /healthz` answers without a key for a load balancer.
-
-To see runs and verdicts in a tracing tool, `nodloop export otel --endpoint <url>` sends every run as an OpenTelemetry GenAI span and its newest verdict as a `gen_ai.evaluation.result` event on it, in OTLP JSON over HTTP. A run whose newest verdict is a withdraw gets no event. An OpenTelemetry Collector, Langfuse at `/api/public/otel/v1/traces` or another OTLP backend then shows them next to the rest of your traces. The ids derive from the run, so sending the same runs again replaces them, and `--since` sends only the newer ones. `--endpoint` is the full traces URL, such as `http://localhost:4318/v1/traces`. Without it `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` is used as such, and `OTEL_EXPORTER_OTLP_ENDPOINT` is a base that gets `/v1/traces` appended. `OTEL_EXPORTER_OTLP_HEADERS` adds headers `--header` leaves out. The output of a run goes along only with `--with-output`.
-
-An agent outside Claude Code checks a tool call before running it with `nodloop guard call --tool Bash --input '{"command":"rm -rf /data"}'`, the MCP tool `check_call` or `CheckCall` in Go, and gets back allow, block or ask with the veto and its reason.
+| Need | Use |
+|---|---|
+| Any MCP client | `nodloop mcp` serves the same loop as tools: `run`, `knowledge_for`, `feedback`, `propose`, `approve`, `check_call` and more |
+| A shared server for a team | `nodloop-server serve` offers the MCP tools over HTTP at `/mcp`, with per-tenant records, `producer`, `reviewer` and `approver` keys, and optional PostgreSQL |
+| Dashboards | `report <name> --json`, the MCP tool `report`, or `GET /v1/reports/{name}` on the server, for Grafana or any JSON data source |
+| Tracing tools | `nodloop export otel --endpoint <url>` sends runs as OpenTelemetry GenAI spans and verdicts as evaluation events, to a Collector, Langfuse or any OTLP backend |
 
 ## Guard
 
-`nodloop guard` blocks tool calls you have vetoed before they run. It is a PreToolUse hook, so the model cannot talk its way past it.
+`nodloop guard` blocks tool calls you've vetoed, before they run. It's a PreToolUse hook, so the model can't talk its way past it.
 
 ```
 ~/.nodloop/bin/nodloop guard install
@@ -178,86 +150,68 @@ curl -fsSL --create-dirs https://raw.githubusercontent.com/jeon-jihyeon/nodloop/
 ~/.nodloop/bin/nodloop guard check
 ```
 
-The seed vetoes for Bash read `commands`, which the guard derives from the Bash or Monitor `command` with a shell parser: one line per simple command, also inside loops, pipes and substitutions, without quotes, so a word inside a quoted argument or a heredoc never counts as a command. The header of [vetoes.yaml](examples/vetoes.yaml) states what it still cannot follow, such as variables and the string given to `bash -c`, which the seeds block outright.
+Bash vetoes match each simple command a shell parser finds, including ones inside loops, pipes and substitutions. Words inside quotes or heredocs don't count. The header of [vetoes.yaml](examples/vetoes.yaml) lists what the parser can't follow yet. A veto can `block` or `ask`, and every decision is logged to `~/.nodloop/guard.jsonl` without the command itself.
 
-A veto you write by hand can say `action: ask` to hand the call to you with its reason instead of blocking it, and a matching veto that blocks always wins over one that asks. Every block and ask is logged to `~/.nodloop/guard.jsonl` with the veto, the tool and the directory but never the command, and `nodloop guard log` prints the newest ones.
-
-A correction can become a veto too. Propose it as a judgment with a veto, and once someone approves it, nodloop writes it to an approved veto file under `~/.claude/nodloop` and the guard blocks that call from then on. Such a judgment acts only through the guard, so no prompt receives it as text and vetoes never use up the budget of a run. Retiring the knowledge removes the veto, a new version that drops it is refused, and a veto you write by hand wins over an approved one with the same id.
+A correction can become a veto too. Propose a judgment with a veto, and once someone approves it, the guard enforces it. Retire the item and the veto goes with it. Other agents can check a call with `nodloop guard call`, the MCP tool `check_call`, or `CheckCall` in Go.
 
 <details>
-<summary>Hook install, health check and where veto files are found</summary>
+<summary>Install details and where veto files are found</summary>
 
-`guard install` backs up `~/.claude/settings.json` before adding the hook, and `guard uninstall` removes it. It registers `~/.nodloop/bin/nodloop`, which the plugin points at the binary it ran last, a PATH build included. The plugin runs a PATH build of another version only when `NODLOOP_ALLOW_PATH` is 1, because an older one lacks tools the skills call. Running `guard install` again repairs a hook whose binary is gone. `guard check` lists the veto files it found and ends with whether the hook is installed, turned off by `disableAllHooks`, or stale because it still runs an older plugin binary after an update, which `guard install` repairs. A `.claude/nodloop/vetoes.yaml` applies anywhere below its directory. The guard looks for one from the working directory up to the nearest directory holding `.git`, or up to home when there is none and only in the working directory outside both, and the nearer file wins on the same id. While a veto file under home is not valid YAML, the guard blocks every call except reading and editing veto files, so one bad write cannot turn your vetoes off.
+`guard install` backs up `~/.claude/settings.json` before adding the hook, and `guard uninstall` removes it. Run `guard install` again to fix a hook whose binary is gone or out of date. `guard check` lists the veto files it found and whether the hook is installed, disabled by `disableAllHooks`, or stale.
+
+A `.claude/nodloop/vetoes.yaml` applies to its directory and everything below. The guard looks from the working directory up to the repo root, or up to home outside a repo, and the nearer file wins on the same id. If a veto file under home stops being valid YAML, the guard blocks everything except reading and editing veto files, so one bad save can't switch your vetoes off.
 
 </details>
 
-## Records
+## Records and settings
+
+Every record is an append-only JSON line, so the full history of every item stays. A line broken by a crash is skipped and reported, and `nodloop doctor --repair` moves it aside.
 
 | What | Where |
 |---|---|
-| Runs, verdicts, outcomes, knowledge | `~/.nodloop/records`, or `--record-dir`, `NODLOOP_RECORD_DIR` or `record_dir` in `~/.nodloop/config.json` |
+| Runs, verdicts, outcomes, items | `~/.nodloop/records`, or `--record-dir`, `NODLOOP_RECORD_DIR`, `record_dir` |
 | Approved vetoes | `~/.claude/nodloop/vetoes.approved.<hash>.yaml` |
-| Approved items as rules a CLAUDE.md may import | `approved.md` in the record directory, which `nodloop knowledge export` prints the import line for |
-| Guard decisions | `~/.nodloop/guard.jsonl` |
-| Output of the drafts the stop hook starts | `~/.nodloop/hook.log` |
-| Records of each tenant of `nodloop-server serve` | `tenants/<tenant>` in the record directory, or the PostgreSQL database of `--postgres` |
+| Approved items for a CLAUDE.md import | `approved.md` in the record directory (`nodloop knowledge export`) |
+| Guard decisions, background drafting log | `~/.nodloop/guard.jsonl`, `~/.nodloop/hook.log` |
 
-Every record file is append only JSON lines. A status change of an item is a new record, so the history of every version stays. The hooks read the runs from the end of the file back one week at most, so their time stays flat as the records grow. A line a crash or an editor broke is skipped and named on every read, and `nodloop doctor --repair` moves it aside.
-
-## Settings
-
-| Setting | Where | What |
-|---|---|---|
-| Record directory | `--record-dir`, `NODLOOP_RECORD_DIR`, `record_dir` | where the records live, in that order of precedence |
-| Session mode | `NODLOOP_SESSION`, `session_mode` | `deferred`, `immediate`, `manual` or `off`, as in the tip above |
-| Approver | `approver` | the name a review approves under, asked once |
-| Holdout | `holdout` | the share of turns whose prompt gets no item, for `report effect` |
-| Decision points | `decision_points` | the endpoint each decision point asks before claude, written by `nodloop classifier`. A config from before 0.7.0 keeps its `classifiers` and `decisions` until the next `classifier set` or `unset` |
-| Server keys | `server` | key names, tenants, roles and hashes, written by `nodloop-server key` |
-| Model calls | `NODLOOP_CLAUDE_BIN`, `NODLOOP_LLM_MODEL` | the claude binary and the model drafts and checks use, `sonnet` by default |
-| PostgreSQL | `--postgres`, `NODLOOP_POSTGRES` | the database of `nodloop-server serve` |
-| Binary | `NODLOOP_ALLOW_PATH`, `NODLOOP_BIN` | lets the plugin run a PATH build of another version, and points an SDK at a binary |
-| Export | `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`, `OTEL_EXPORTER_OTLP_HEADERS` | where `nodloop export otel` sends when `--endpoint` and `--header` leave it out |
-
-Keys without a prefix live in `~/.nodloop/config.json`. Environment variables are read where Claude Code or your process starts. `nodloop config` lists every setting with its value and where it came from, and `nodloop help <command>` prints the usage of one command.
+`nodloop config` lists every setting with its value and where it came from: session mode, approver, holdout, decision points, server keys, the claude binary and model (`sonnet` by default), PostgreSQL and the OTLP endpoint.
 
 ## Privacy
 
-nodloop sends no telemetry. Records stay in the record directory, or in your PostgreSQL database for the server, and leave the machine only in these cases:
+No telemetry. Your records leave your machine only when:
 
 | When | What goes where |
 |---|---|
-| A lesson is drafted or checked, a compaction drafted or checked | the run's output, the verdict and the items in its scope, to `claude -p` under your Claude Code login |
-| A lesson is replayed with `knowledge replay` or `knowledge check --replay` | the lesson, the outputs of the corrected runs it cites and of up to ten approved runs of its scope recorded before its approval, or before its proposal while it waits, to `claude -p` |
-| A decision point asks a classifier | the text to judge, to the endpoint `classifier set` names |
-| The plugin or an SDK has no binary | a download of the release archive and its checksums from GitHub |
-| You run `nodloop export otel` | runs with their labels and verdicts with their reasons, and the outputs with `--with-output`, to the endpoint you name |
+| A lesson or compaction is drafted, checked or replayed | the run outputs, verdicts and items involved, to `claude -p` under your Claude Code login |
+| A decision point asks your classifier | the text to judge, to the endpoint you set |
+| The plugin or an SDK needs its binary | a download of the release archive and checksums from GitHub |
+| You run `nodloop export otel` | runs and verdicts, plus outputs with `--with-output`, to the endpoint you name |
 
-Outputs are stored and sent with keys, tokens and passwords redacted, and the guard log never keeps a command.
+Outputs are redacted of keys, tokens and passwords before they're stored or sent.
 
 ## Supported
 
-macOS and Linux, or Windows through WSL. It runs as a Claude Code plugin. For Codex, Cursor or another MCP client, install it with `go install github.com/jeon-jihyeon/nodloop/cmd/nodloop@latest` and serve it with `nodloop mcp`. Such a client has no hooks from this plugin, so a producer there calls `run` and `knowledge_for` itself. The Python SDK needs Python 3.10 or newer, and CI tests the SDKs on Linux with Python 3.12 and Node 24.
+macOS and Linux, or Windows through WSL. Python 3.10+ for the Python SDK. For Codex, Cursor or another MCP client, `go install github.com/jeon-jihyeon/nodloop/cmd/nodloop@latest` and run `nodloop mcp`. Those clients don't get the plugin's hooks, so they call `run` and `knowledge_for` themselves.
 
 ## Limits
 
-The session labels are the repository and the directory, compared as exact strings. An item scoped to a repository reaches every prompt there, whatever the task. Whether an item reached a run it should not have is not measured yet. A verdict the conversation inferred can misread your words, so it only drafts a candidate and never approves one. Versions before 0.6.0 reviewed incident data from an events file. That data review left this repository for a plugin of its own, and its knowledge records still list but reach no prompt until you retire them.
+Session labels are the repo and directory, matched as exact strings, so an item scoped to a repo reaches every prompt there regardless of the task. We don't yet measure whether an item reached a run it shouldn't have. A verdict inferred from your words can be wrong, which is why it only ever drafts a candidate and never approves one.
 
 ## Versioning
 
-nodloop is at 0.x and follows these rules until 1.0:
+nodloop is 0.x. Until 1.0:
 
 | Surface | Promise |
 |---|---|
-| Record files | a new version reads every record an older one wrote |
-| MCP tools and CLI commands | a patch release only adds optional fields and flags, and a removal waits for a minor release |
+| Record files | newer versions read everything older versions wrote |
+| MCP tools and CLI | patch releases only add optional fields and flags; removals wait for a minor release |
 | Go package and SDKs | may change in a minor release, listed under Changed in the [changelog](CHANGELOG.md) |
 
-The plugin, `nodloop`, `nodloop-server` and both SDKs share one version number, and every release tag publishes all of them.
+The plugin, both binaries and both SDKs share one version number.
 
 ## License
 
-MIT. The nodloop name and logo are not part of the license. Please use your own name and logo for a fork.
+MIT. The nodloop name and logo aren't covered by the license, so please use your own for a fork.
 
 ---
 
@@ -268,5 +222,5 @@ MIT. The nodloop name and logo are not part of the license. Please use your own 
 - [Contributing](CONTRIBUTING.md): how to build, test and send changes
 - [Code of conduct](CODE_OF_CONDUCT.md): how we treat each other
 - [Security](SECURITY.md): how to report a vulnerability
-- [Releases](https://github.com/jeon-jihyeon/nodloop/releases): darwin and linux archives the plugin downloads
+- [Releases](https://github.com/jeon-jihyeon/nodloop/releases): the archives the plugin downloads
 - [Issues](https://github.com/jeon-jihyeon/nodloop/issues): bug reports and feature requests
