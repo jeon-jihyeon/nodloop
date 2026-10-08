@@ -277,6 +277,28 @@ func (c *Client) Approve(ctx context.Context, id string, version int, approver s
 	return newItems(knowledge.Set{k})[0], err
 }
 
+// Approves a candidate in the labels the person picked instead of the proposed ones
+// 1. empty labels reach every run of its producer
+// 2. every label value must be one a recorded run of the producer carries
+func (c *Client) ApproveIn(ctx context.Context, id string, version int, labels Labels, approver string) (Item, error) {
+	scope, err := c.ledger.ScopeIn(ctx, id, version, labels)
+	if err != nil {
+		return Item{}, err
+	}
+	runs, err := c.traces.List(ctx, trace.Filter{Name: trace.NameRun})
+	if err != nil {
+		return Item{}, err
+	}
+	if err := scope.Recorded(runs.Vocabulary(scope.Producer)); err != nil {
+		return Item{}, err
+	}
+	k, err := c.ledger.ApproveIn(ctx, id, version, labels, approver)
+	if err != nil && !errors.Is(err, knowledge.ErrExport) {
+		return Item{}, err
+	}
+	return newItems(knowledge.Set{k})[0], err
+}
+
 // Retires a version on behalf of the named person
 func (c *Client) Retire(ctx context.Context, id string, version int, approver string) (Item, error) {
 	k, err := c.ledger.Retire(ctx, id, version, approver)

@@ -92,3 +92,21 @@ test("the approval of a sixth item for the same runs says a compaction is due", 
     await c.close();
   }
 });
+
+test("approve takes the labels the person picked", async () => {
+  const c = await open();
+  try {
+    const run = await c.record({ producer: "support-bot", output: "Here are the refund steps", labels: acme });
+    await c.record({ producer: "support-bot", output: "ok", labels: { tenant: ["globex"] } });
+    await c.judge(run, "reject", { reason: "too long", reasonCode: "form" });
+    const p = await c.propose({ kind: "judgment", content: "Answer in three lines", from: run });
+
+    const approved = await c.approve(p.id, p.version, "ann", { labels: {} });
+
+    const other = await c.knowledge("support-bot", { tenant: ["globex"] });
+    assert.equal(approved.status, "approved");
+    assert.deepEqual(other.items.map((i) => i.id), [p.id]);
+  } finally {
+    await c.close();
+  }
+});

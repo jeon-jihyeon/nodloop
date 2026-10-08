@@ -34,6 +34,7 @@ var (
 	errDeferred           = errors.New("deferred to the conversation")
 	errCallInput          = errors.New("call input is not a JSON object")
 	errRequired           = errors.New("is required")
+	errScopeFlags         = errors.New("--label and --everywhere exclude each other")
 	errUnknownTraceName   = errors.New("unknown trace name")
 	errNoAction           = fmt.Errorf("an action %w", errRequired)
 )

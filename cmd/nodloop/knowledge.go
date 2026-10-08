@@ -32,12 +32,13 @@ type knowledgeFlags struct {
 	feedbackIDs, outcomeIDs                                           listFlag
 	labels, except                                                    labelFlag
 	vetoTool, vetoField, vetoMatch, vetoUnless, vetoExample           string
-	stale, newLabels, replay                                          bool
+	stale, newLabels, replay, everywhere                              bool
 }
 
 func (f *knowledgeFlags) bind(fs *flag.FlagSet) {
 	fs.BoolVar(&f.stale, "stale", false, "list: only the approved versions past their review deadline")
 	fs.BoolVar(&f.replay, "replay", false, "check: also replay every new item of the compaction against its outputs")
+	fs.BoolVar(&f.everywhere, "everywhere", false, "approve: approve a candidate for every run of its producer")
 	fs.BoolVar(&f.newLabels, "new-labels", false, "propose: allow label values no recorded run carries yet such as a new tenant")
 	fs.StringVar(&f.id, "id", "", "knowledge id. propose generates one when empty")
 	fs.IntVar(&f.version, "version", 0, "the version to act on. 0 means the approved one for reaffirm and the current one for replay")
@@ -50,7 +51,7 @@ func (f *knowledgeFlags) bind(fs *flag.FlagSet) {
 	fs.StringVar(&f.traceID, "trace", "", "propose: the run whose feedback is the evidence")
 	fs.StringVar(&f.file, "file", "", "import: a jsonl file of knowledge records")
 	fs.StringVar(&f.producer, "producer", "", "propose and for: the producer whose runs the item applies to")
-	fs.Var(&f.labels, "label", "propose and for: key=value a run must carry. Repeatable")
+	fs.Var(&f.labels, "label", "propose, for and approve: key=value a run must carry. Repeatable. approve uses them instead of the proposed ones")
 	fs.Var(&f.except, "except", "propose: key=value a run must not carry. Repeatable")
 	fs.StringVar(&f.key, "key", "", "narrow: the label key whose refuted values the item stops reaching")
 	fs.Var(&f.feedbackIDs, "evidence-feedback", "run id whose feedback supports it. Repeatable")
@@ -185,7 +186,11 @@ func (f knowledgeFlags) runRecords(ctx context.Context, action, id string, a app
 	case "waiting":
 		return cmd.waiting(ctx, f.producer, trace.Labels(f.labels))
 	case "approve":
-		if err := cmd.transition(ctx, "approve", ledger.Approve, id, f.version, f.approver); err != nil {
+		approve, err := f.approval(cmd)
+		if err != nil {
+			return err
+		}
+		if err := cmd.transition(ctx, "approve", approve, id, f.version, f.approver); err != nil {
 			return err
 		}
 		if err := cmd.folder(ctx, id, f.version); err != nil {
@@ -201,6 +206,21 @@ func (f knowledgeFlags) runRecords(ctx context.Context, action, id string, a app
 	default:
 		return fmt.Errorf("%w %q", errUnknownAction, action)
 	}
+}
+
+// The approval of the flags
+// 1. as proposed without --label and --everywhere
+// 2. in the labels or for every run of the producer when the person picked one
+func (f knowledgeFlags) approval(cmd knowledgeCommand) (func(context.Context, string, int, string) (knowledge.Knowledge, error), error) {
+	switch {
+	case f.everywhere && len(f.labels) > 0:
+		return nil, fmt.Errorf("approve: %w", errScopeFlags)
+	case f.everywhere:
+		return cmd.approveIn(trace.Labels{}), nil
+	case len(f.labels) > 0:
+		return cmd.approveIn(trace.Labels(f.labels)), nil
+	}
+	return cmd.ledger.Approve, nil
 }
 
 // The actions that read how the reviews of a version held up and the ones that act on it
@@ -311,6 +331,20 @@ func (c knowledgeCommand) recorded(ctx context.Context, run knowledge.RunScope) 
 		return err
 	}
 	return run.Recorded(trace.Traces(runs).Vocabulary(run.Producer))
+}
+
+// Approves in the labels once a recorded run of the producer of the version carries each of them
+func (c knowledgeCommand) approveIn(labels trace.Labels) func(context.Context, string, int, string) (knowledge.Knowledge, error) {
+	return func(ctx context.Context, id string, version int, approver string) (knowledge.Knowledge, error) {
+		scope, err := c.ledger.ScopeIn(ctx, id, version, labels)
+		if err != nil {
+			return knowledge.Knowledge{}, err
+		}
+		if err := c.recorded(ctx, scope); err != nil {
+			return knowledge.Knowledge{}, err
+		}
+		return c.ledger.ApproveIn(ctx, id, version, labels, approver)
+	}
 }
 
 // The approved items a run of the producer with the labels applies, then their size against the caps

@@ -68,19 +68,35 @@ func (r RunScope) Admits(producer string, labels trace.Labels) bool {
 }
 
 // Whether one run could carry both scopes
-// Each key both name must share a value
-// Exceptions are left open so a pair is listed for a person rather than missed
 func (r RunScope) overlaps(other RunScope) bool {
+	_, ok := r.meet(other)
+	return ok
+}
+
+// The labels a run carrying both scopes must hold and false when no run can
+// 1. each key both name keeps the values they share and must share one
+// 2. exceptions are left open so a pair is listed for a person rather than missed
+func (r RunScope) meet(other RunScope) (RunScope, bool) {
 	if r.Producer != other.Producer {
-		return false
+		return RunScope{}, false
 	}
-	for key, values := range r.Labels {
-		theirs, ok := other.Labels[key]
-		if ok && !slices.ContainsFunc(values, func(v string) bool { return slices.Contains(theirs, v) }) {
-			return false
+	labels := maps.Clone(r.Labels)
+	if labels == nil {
+		labels = trace.Labels{}
+	}
+	for key, theirs := range other.Labels {
+		mine, ok := labels[key]
+		if !ok {
+			labels[key] = theirs
+			continue
 		}
+		shared := slices.DeleteFunc(slices.Clone(mine), func(v string) bool { return !slices.Contains(theirs, v) })
+		if len(shared) == 0 {
+			return RunScope{}, false
+		}
+		labels[key] = shared
 	}
-	return true
+	return RunScope{Producer: r.Producer, Labels: labels}, true
 }
 
 // Whether r reaches a run that old never reached
@@ -193,19 +209,47 @@ func (s Set) Waiting(producer string, labels trace.Labels) Set {
 	return out
 }
 
-// The approved run items a run may carry together with the item
-// Every approved item of the producer whose scope overlaps the item may reach the same run
+// The approved run items the fullest run the item reaches carries with it
 func (s Set) runFolder(item Knowledge) Folder {
-	carried := s.runCarried(item.ID, *item.Run)
+	carried := s.fullestRun(item.ID, *item.Run)
 	return Folder{Chars: utf8.RuneCountInString(item.Text()) + carried.runes(), Carried: carried, Producer: item.Run.Producer}
 }
 
 // The approved run items other than id whose scope overlaps run
+// A compaction anchored at a general item covers all of them even when no one run carries them all
 func (s Set) runCarried(id string, run RunScope) Set {
 	out := Set{}
 	for _, other := range s.Approved() {
 		if other.ID != id && other.Veto == nil && other.Run != nil && other.Run.overlaps(run) {
 			out = append(out, other)
+		}
+	}
+	return out
+}
+
+// The approved run items other than id that the fullest run of run carries together, which the run caps hold
+// 1. items of two repositories never meet in one run so an item that reaches both counts the items of one of them
+// 2. each item starts one pass that adds every later item the labels gathered so far still admit
+// 3. the pass with the most items wins and the larger text breaks a tie
+func (s Set) fullestRun(id string, run RunScope) Set {
+	met := s.runCarried(id, run)
+	best := Set{}
+	for i := range met {
+		carried := slices.Concat(met[i:], met[:i]).meeting(run)
+		if len(carried) > len(best) || (len(carried) == len(best) && carried.runes() > best.runes()) {
+			best = carried
+		}
+	}
+	return best
+}
+
+// The items in order that one run of run can carry together, each kept while the labels gathered so far still admit it
+func (s Set) meeting(run RunScope) Set {
+	out := Set{}
+	for _, k := range s {
+		if joined, ok := run.meet(*k.Run); ok {
+			run = joined
+			out = append(out, k)
 		}
 	}
 	return out

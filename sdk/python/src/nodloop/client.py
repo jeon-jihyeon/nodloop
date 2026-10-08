@@ -225,9 +225,15 @@ class Client:
         answer = await self.call("propose", args)
         return Candidate(answer["id"], answer["version"], answer["status"], answer.get("overlaps") or [])
 
-    async def approve(self, item_id: str, version: int, approver: str) -> Approval:
-        """Approves a candidate on behalf of the named person"""
-        answer = await self.call("approve", {"id": item_id, "version": version, "approver": approver})
+    async def approve(self, item_id: str, version: int, approver: str, *, labels: dict[str, list[str]] | None = None) -> Approval:
+        """Approves a candidate on behalf of the named person
+
+        labels approves it for the runs carrying them instead of the proposed scope and an empty mapping for every run of its producer
+        """
+        args: dict[str, Any] = {"id": item_id, "version": version, "approver": approver}
+        if labels is not None:
+            args["scope"] = {"labels": labels}
+        answer = await self.call("approve", args)
         return Approval(
             answer["id"],
             answer["version"],

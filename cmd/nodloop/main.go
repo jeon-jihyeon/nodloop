@@ -78,9 +78,12 @@ commands:
   knowledge promote <id> --version <n> [--author <a>]
                             Propose the next version with basis verified and the runs whose outcome confirmed it
   knowledge overlaps <id>   Current items of the same kind that one run may carry together
-  knowledge approve <id> --version <n> --approver <name>
+  knowledge approve <id> --version <n> --approver <name> [--label <key=value> | --everywhere]
                             Refused when one run would carry more than the caps, when it would lift the veto of the
-                            approved version or reach runs it never reached, or when it was not built from that version
+                            approved version or reach runs it never reached, or when it was not built from that version.
+                            --label approves a candidate for the runs that carry these labels instead of the proposed
+                            ones and --everywhere for every run of its producer. Each label must be one a recorded run
+                            carries
   knowledge retire <id> --version <n> --approver <name>
   knowledge import --file <jsonl>
                             Append the records of a file not yet recorded

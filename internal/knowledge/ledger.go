@@ -8,6 +8,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/jeon-jihyeon/nodloop/internal/trace"
 	"github.com/jeon-jihyeon/nodloop/internal/veto"
 )
 
@@ -172,8 +173,44 @@ func (l *Ledger) appendCandidate(ctx context.Context, decide func(all Set, now t
 
 // The approved record and the superseded one land in one write
 func (l *Ledger) Approve(ctx context.Context, id string, version int, approver string) (Knowledge, error) {
+	return l.approve(ctx, id, version, approver, func(all Set) (Set, error) { return all, nil })
+}
+
+// Approves a candidate in the labels the person picked instead of the ones it was proposed with
+// 1. the producer and the exceptions stay and empty labels reach every run of the producer
+// 2. the approved record carries the scope while the candidate record keeps the suggested one
+// 3. the checks of any approval hold in the new scope
+func (l *Ledger) ApproveIn(ctx context.Context, id string, version int, labels trace.Labels, approver string) (Knowledge, error) {
+	return l.approve(ctx, id, version, approver, func(all Set) (Set, error) {
+		scoped, err := all.scoped(id, version, labels)
+		if err != nil {
+			return nil, err
+		}
+		return slices.Concat(Set{scoped}, all), nil
+	})
+}
+
+// The scope a candidate would take in the labels so a caller checks them against the recorded runs before ApproveIn
+func (l *Ledger) ScopeIn(ctx context.Context, id string, version int, labels trace.Labels) (RunScope, error) {
+	all, err := l.All(ctx)
+	if err != nil {
+		return RunScope{}, err
+	}
+	k, err := all.scoped(id, version, labels)
+	if err != nil {
+		return RunScope{}, err
+	}
+	return *k.Run, nil
+}
+
+// The approval decided on the records as seen recorded under the store lock
+func (l *Ledger) approve(ctx context.Context, id string, version int, approver string, seen func(all Set) (Set, error)) (Knowledge, error) {
 	var to Knowledge
 	err := l.store.AppendDecided(ctx, func(all Set) ([]Knowledge, error) {
+		all, err := seen(all)
+		if err != nil {
+			return nil, err
+		}
 		records, err := all.approval(id, version, approver, l.now().UTC())
 		if err != nil {
 			return nil, err

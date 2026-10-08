@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -835,6 +836,48 @@ func TestRunKnowledgeWaiting(t *testing.T) {
 
 			require.Equal(t, 0, code, stderr.String())
 			assert.Equal(t, tc.want, stdout.String())
+		})
+	}
+}
+
+// approve takes the scope the person picked over the proposed one
+func TestRunKnowledgeApproveIn(t *testing.T) {
+	type args struct {
+		flags []string
+	}
+	type want struct {
+		code   int
+		stderr string
+		// Whether a prompt in another repo receives the item afterwards
+		elsewhere bool
+	}
+	tcs := []struct {
+		name string
+		args args
+		want want
+	}{
+		{"as proposed it stays in the repo", args{}, want{}},
+		{"everywhere reaches another repo", args{[]string{"--everywhere"}}, want{elsewhere: true}},
+		{"a recorded label approves it there", args{[]string{"--label", "repo=nodloop"}}, want{}},
+		{"a label no run carries is refused", args{[]string{"--label", "repo=other"}}, want{code: 1, stderr: "no run of session carries repo=other"}},
+		{"both flags are refused", args{[]string{"--everywhere", "--label", "repo=nodloop"}}, want{code: 1, stderr: "--label and --everywhere exclude each other"}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			home, records, repo := hookHome(t, "use git -C")
+			getenv := func(k string) string { return map[string]string{"HOME": home, envRecordDir: records}[k] }
+			hookPromptSetup(t, getenv, repo, false, true, false)
+			var stdout, stderr bytes.Buffer
+
+			code := runKnowledge(slices.Concat([]string{"approve", "short-msg", "--version", "1", "--approver", "ann"}, tc.args.flags),
+				getenv, nil, time.Now, &stdout, &stderr)
+
+			assert.Equal(t, tc.want.code, code, stderr.String())
+			assert.Contains(t, stderr.String(), tc.want.stderr)
+			var items bytes.Buffer
+			require.Equal(t, 0, runKnowledge([]string{"for", "--producer", "session", "--label", "repo=other"}, getenv, nil, time.Now, &items, &stderr))
+			assert.Equal(t, tc.want.elsewhere, strings.Contains(items.String(), "short-msg"), items.String())
 		})
 	}
 }
