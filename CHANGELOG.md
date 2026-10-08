@@ -2,7 +2,7 @@
 
 Every release tag publishes the plugin, the darwin and linux binaries of `nodloop` and, from 0.7.0, `nodloop-server`, and both SDKs under one version. Versions before 0.6.0 reviewed incident data, which left this repository in 0.6.0.
 
-## Unreleased
+## 0.8.0 - 2026-10-08
 
 ### Added
 - You pick where a lesson applies when you approve it. The review asks it as a second question, offering every place and the labels of the run it came from, and typed words become the condition of the lesson. `knowledge approve --label` or `--everywhere`, `scope` on the MCP tool `approve`, `ApproveIn` in Go and a `labels` option on `approve` in both SDKs
