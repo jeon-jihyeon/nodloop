@@ -41,7 +41,7 @@ type proposeExtractionInput struct {
 	RelatesTo string           `json:"relates_to,omitempty" jsonschema:"the id of the approved item an update or a duplicate or a conflict names. Empty for add"`
 	Kind      knowledge.Kind   `json:"kind" jsonschema:"meaning or judgment"`
 	Content   string           `json:"content" jsonschema:"one sentence of what the correction taught. For an update the whole new text of the item"`
-	Keys      []string         `json:"keys,omitempty" jsonschema:"label keys of the run the lesson needs. Empty keeps every key"`
+	Keys      []string         `json:"keys,omitempty" jsonschema:"label keys of the run the lesson needs. Empty reaches every run of the producer such as a way the user wants answers written"`
 	Critique  extract.Critique `json:"critique" jsonschema:"your answers to the critic questions read as a second reader of the draft"`
 	Author    string           `json:"author,omitempty" jsonschema:"who drafted. claude by default because the conversation drafts"`
 }

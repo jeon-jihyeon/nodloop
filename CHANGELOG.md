@@ -4,8 +4,15 @@ Every release tag publishes the plugin, the darwin and linux binaries of `nodloo
 
 ## Unreleased
 
+### Added
+- You pick where a lesson applies when you approve it. The review asks it as a second question, offering every place and the labels of the run it came from, and typed words become the condition of the lesson. `knowledge approve --label` or `--everywhere`, `scope` on the MCP tool `approve`, `ApproveIn` in Go and a `labels` option on `approve` in both SDKs
+
 ### Changed
+- A drafted lesson with no label keys now reaches every run of its producer instead of keeping every label of the run, so a lesson about how you want answers written is no longer tied to one repository
 - The drafts waiting for approval are asked about when you start or resume Claude Code through a new SessionStart hook, `nodloop hook start`. The first prompt of a session id asked before, so a resumed session never asked. `/clear`, `/compact` and a fork ask nothing
+
+### Fixed
+- The run caps of an approval count the items the fullest run a lesson reaches carries, so a lesson for every repository no longer counts the lessons of all repositories together and is refused for runs that never carry them all
 
 ## 0.7.0 - 2026-10-07
 

@@ -174,8 +174,10 @@ export class Client {
   }
 
   /** Approves a candidate on behalf of the named person */
-  async approve(id: string, version: number, approver: string): Promise<Approval> {
-    const answer = await this.call("approve", { id, version, approver });
+  async approve(id: string, version: number, approver: string, options: { labels?: Labels } = {}): Promise<Approval> {
+    const args: Record<string, unknown> = { id, version, approver };
+    if (options.labels !== undefined) args.scope = { labels: options.labels };
+    const answer = await this.call("approve", args);
     return {
       id: answer.id,
       version: answer.version,

@@ -37,7 +37,7 @@ That's it. Keep working the way you do now.
 
 - **Tell Claude when it's wrong.** Plain words work. The conversation records your verdict quietly, without interrupting you.
 - **Review when you come back.** Each correction is drafted into a one-line lesson in the background. The next time you start or resume Claude Code in that repo, it walks you through the waiting drafts, quoting what you said.
-- **Approve by name.** Approved lessons are added to every later prompt in that repo, so you don't have to say it twice.
+- **Approve by name, and pick where.** Each draft asks whether to approve it and where it applies: everywhere, this repo or this directory. Approved lessons are added to every later prompt there, so you don't have to say it twice.
 
 Want it recorded right now? Nod on it:
 
@@ -72,7 +72,7 @@ answer → run with labels → your nod → proposed item → approved by name
 
 - **Run**: one output of a producer, tagged with labels for its situation. For Claude Code sessions the labels are `repo` and `dir`, taken from where Claude Code started, so a `cd` into a scratch directory never mislabels a run.
 - **Nod**: your verdict on a run. `approve`, `edit` with the corrected output, `reject` with what was wrong, or `withdraw` to take a verdict back.
-- **Item**: an approved lesson. A `meaning` says how to read something here; a `judgment` says what to do or avoid. Its scope names the producer and the labels it applies to. A label has to match one a real run already carries, so a typo fails loudly instead of matching nothing.
+- **Item**: an approved lesson. A `meaning` says how to read something here; a `judgment` says what to do or avoid. Its scope names the producer and the labels it applies to, and you confirm it when you approve: everywhere, or only where a run carries a label such as a repo, a domain or a file format. A label has to match one a real run already carries, so a typo fails loudly instead of matching nothing.
 
 Before you see a draft, a second model call checks it. It rejects drafts that just copy the answer, that only fit this one answer, or that get their relation to existing items wrong. A draft that repeats or contradicts an existing item shows you that item instead.
 

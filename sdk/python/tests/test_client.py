@@ -96,3 +96,16 @@ async def test_approval_says_a_compaction_is_due(binary: str, records: str) -> N
 
     assert [a.compaction_due for a in approvals] == [False] * 5 + [True]
     assert all(a.folder_error == "" for a in approvals)
+
+
+async def test_approve_in_picked_labels(binary: str, records: str) -> None:
+    async with Client(records, binary) as c:
+        run = await c.record("support-bot", "Here are the refund steps", labels=ACME)
+        await c.record("support-bot", "ok", labels={"tenant": ["globex"]})
+        await c.judge(run, "reject", reason="too long", reason_code="form")
+        proposed = await c.propose("judgment", "Answer in three lines", from_run=run)
+        approved = await c.approve(proposed.id, proposed.version, "ann", labels={})
+        globex = await c.knowledge("support-bot", {"tenant": ["globex"]})
+
+    assert approved.status == "approved"
+    assert [i.id for i in globex.items] == [proposed.id]

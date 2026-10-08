@@ -150,7 +150,7 @@ func (s Set) outgrows(before Set, item Knowledge) (Folder, bool) {
 		return Folder{}, false
 	}
 	f := s.runFolder(item)
-	was := before.runCarried("", *item.Run)
+	was := before.fullestRun("", *item.Run)
 	return f, (f.Chars > RunChars && f.Chars > was.runes()) || (f.Size() > RunItems && f.Size() > len(was))
 }
 
@@ -267,6 +267,25 @@ func (s Set) propose(draft Knowledge, now time.Time) (Knowledge, error) {
 		return Knowledge{}, err
 	}
 	return draft, nil
+}
+
+// The candidate as a record in the labels a person picked
+// Fails with ErrTransitionInvalid unless the version is a candidate
+// A stored version always has a run scope since validate requires one
+func (s Set) scoped(id string, version int, labels trace.Labels) (Knowledge, error) {
+	k, err := s.Version(id, version)
+	if err != nil {
+		return Knowledge{}, err
+	}
+	if k.Status != StatusCandidate {
+		return Knowledge{}, fmt.Errorf("%w: %s v%d is %s and only a candidate takes a scope at approval", ErrTransitionInvalid, id, version, k.Status)
+	}
+	run, err := RunScope{Producer: k.Run.Producer, Labels: labels, Except: k.Run.Except}.normalized()
+	if err != nil {
+		return Knowledge{}, err
+	}
+	k.Run = &run
+	return k, nil
 }
 
 // The records of an approval with the approved record first and the record it supersedes after it

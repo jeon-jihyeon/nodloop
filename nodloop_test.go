@@ -102,6 +102,49 @@ func TestClientPropose(t *testing.T) {
 	}
 }
 
+// ApproveIn approves a candidate where the person picked, every tenant or one a run carries
+func TestClientApproveIn(t *testing.T) {
+	type args struct {
+		labels nodloop.Labels
+	}
+	type want struct {
+		err error
+		// Whether a run of another tenant receives the item
+		globex bool
+	}
+	tcs := []struct {
+		name string
+		args args
+		want want
+	}{
+		{"empty labels reach every tenant", args{nodloop.Labels{}}, want{globex: true}},
+		{"a recorded tenant keeps it there", args{nodloop.Labels{"tenant": {"acme"}}}, want{}},
+		{"a tenant no run carries is refused", args{nodloop.Labels{"tenant": {"initech"}}}, want{err: nodloop.ErrScopeUnobserved}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ctx := context.Background()
+			c := open(t)
+			acme := nodloop.Labels{"tenant": {"acme"}, "task": {"refund"}}
+			run, err := c.Record(ctx, nodloop.Run{Producer: "support-bot", Labels: acme, Output: []byte("Here are the refund steps")})
+			require.NoError(t, err)
+			_, err = c.Record(ctx, nodloop.Run{Producer: "support-bot", Labels: nodloop.Labels{"tenant": {"globex"}}, Output: []byte("ok")})
+			require.NoError(t, err)
+			require.NoError(t, c.Judge(ctx, nodloop.Judgment{Run: run, Verdict: nodloop.VerdictReject, Reason: "too long"}))
+			proposed, err := c.Propose(ctx, nodloop.Proposal{Kind: nodloop.KindJudgment, Content: "Answer in three lines", From: run})
+			require.NoError(t, err)
+
+			_, err = c.ApproveIn(ctx, proposed.ID, proposed.Version, tc.args.labels, "ann")
+
+			require.ErrorIs(t, err, tc.want.err)
+			other, err := c.Items(ctx, "support-bot", nodloop.Labels{"tenant": {"globex"}})
+			require.NoError(t, err)
+			assert.Equal(t, tc.want.globex, len(other) == 1)
+		})
+	}
+}
+
 // An approved veto blocks the call it names and lets others through
 func TestClientCheckCall(t *testing.T) {
 	ctx := context.Background()

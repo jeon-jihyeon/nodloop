@@ -84,6 +84,62 @@ func TestServerLoop(t *testing.T) {
 	}
 }
 
+// approve takes the scope the user picked over the proposed one
+func TestServerApproveScope(t *testing.T) {
+	type args struct {
+		scope map[string]any
+	}
+	type want struct {
+		err string
+		// The repos whose runs get the item
+		repos []string
+	}
+	tcs := []struct {
+		name string
+		args args
+		want want
+	}{
+		{"no scope approves it as proposed", args{}, want{repos: []string{"nodloop"}}},
+		{"empty labels reach every repo", args{map[string]any{"labels": map[string]any{}}}, want{repos: []string{"nodloop", "other"}}},
+		{"a recorded label moves it there", args{map[string]any{"labels": map[string]any{"repo": []any{"other"}}}}, want{repos: []string{"other"}}},
+		{"a label no run carries is refused", args{map[string]any{"labels": map[string]any{"repo": []any{"nowhere"}}}},
+			want{err: knowledge.ErrScopeUnobserved.Error()}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			c := connect(t, testkit.Open(t))
+			runID := recordRun(t, c, "nodloop")
+			recordRun(t, c, "other")
+			require.NoError(t, c.Run(t, "feedback", map[string]any{"trace_id": runID, "verdict": "reject", "reason_code": "form", "reason": "too long"}))
+			require.NoError(t, c.Run(t, "propose", map[string]any{"id": "short", "kind": "judgment", "content": "give only the conclusion", "from": runID}))
+			in := map[string]any{"id": "short", "version": 1, "approver": "ann"}
+			if tc.args.scope != nil {
+				in["scope"] = tc.args.scope
+			}
+
+			err := c.Run(t, "approve", in)
+
+			if tc.want.err != "" {
+				assert.ErrorContains(t, err, tc.want.err)
+				return
+			}
+			require.NoError(t, err)
+			var reached []string
+			for _, repo := range []string{"nodloop", "other"} {
+				var got struct {
+					Items []any `json:"items"`
+				}
+				require.NoError(t, c.Call(t, "knowledge_for", map[string]any{"producer": "session", "labels": map[string]any{"repo": []any{repo}}}, &got))
+				if len(got.Items) > 0 {
+					reached = append(reached, repo)
+				}
+			}
+			assert.Equal(t, tc.want.repos, reached)
+		})
+	}
+}
+
 func TestServerRefusals(t *testing.T) {
 	st := testkit.Open(t)
 	c := connect(t, st)
@@ -212,7 +268,7 @@ func TestServerExtraction(t *testing.T) {
 		} `json:"candidate"`
 	}
 	require.NoError(t, c.Call(t, "propose_extraction", map[string]any{
-		"from": first, "relation": "add", "kind": "judgment", "content": lesson, "critique": pass,
+		"from": first, "relation": "add", "kind": "judgment", "content": lesson, "keys": []string{"repo"}, "critique": pass,
 	}, &added))
 	assert.Equal(t, extract.RelationAdd, added.Relation)
 	assert.Equal(t, knowledge.RunScope{Producer: "session", Labels: trace.Labels{"repo": {"nodloop"}}}, added.Candidate.Scope)
