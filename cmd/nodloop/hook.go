@@ -74,7 +74,7 @@ func runHook(args []string, getenv func(string) string, start starter, now func(
 		return 0
 	}
 	cmd := hookCommand{
-		app: a, start: start, out: stdout, mode: mode,
+		app: a, detach: start, out: stdout, mode: mode,
 		plugin: cmp.Or(getenv(envPluginVersion), buildVersion()), holdout: a.cfg.holdout,
 	}
 	if args[0] == "prompt" {
@@ -89,6 +89,8 @@ func runHook(args []string, getenv func(string) string, start starter, now func(
 		err = cmd.prompt(ctx, in.SessionID, in.Prompt, labels)
 	case "stop":
 		err = cmd.stop(ctx, in.SessionID, labels, reply(in.LastAssistantMessage))
+	case "start":
+		err = cmd.start(ctx, in.Source, labels)
 	default:
 		err = fmt.Errorf("%w %q", errUnknownAction, args[0])
 	}
@@ -98,20 +100,22 @@ func runHook(args []string, getenv func(string) string, start starter, now func(
 	return 0
 }
 
-// The fields of the Claude Code hook input the two hooks read
+// The fields of the Claude Code hook input the hooks read
 type hookInput struct {
 	SessionID string `json:"session_id"`
 	Cwd       string `json:"cwd"`
+	// How the session started, read by the start hook
+	Source string `json:"source"`
 	// Read only for the reaction point and never stored except as the reason of a reject it records
 	Prompt               string `json:"prompt"`
 	LastAssistantMessage string `json:"last_assistant_message"`
 }
 
 type hookCommand struct {
-	app   app
-	start starter
-	out   io.Writer
-	mode  sessionMode
+	app    app
+	detach starter
+	out    io.Writer
+	mode   sessionMode
 	// The version the launcher ran this binary for and else the build version
 	plugin  string
 	holdout holdout
@@ -141,32 +145,54 @@ func (c hookCommand) prompt(ctx context.Context, sessionID, message string, labe
 	if text == "" {
 		return runsErr
 	}
-	// Items quote commands such as a && b so the text stays as written
-	enc := json.NewEncoder(c.out)
-	enc.SetEscapeHTML(false)
-	return errors.Join(enc.Encode(map[string]any{"hookSpecificOutput": map[string]any{
-		"hookEventName": "UserPromptSubmit", "additionalContext": text,
-	}}), runsErr)
+	return errors.Join(c.addContext("UserPromptSubmit", text), runsErr)
 }
 
-// The previous run of the session and the candidates waiting in the place
-// 1. the first prompt counts every candidate waiting
-// 2. a later prompt in immediate mode counts the candidates drafted since the previous answer so each is asked about once in the session that corrected it
-// 3. a later prompt in deferred mode counts none so the review comes once per session
-// 4. a mode that infers nothing and a prompt without a session id get no note
+// The text as context the conversation receives on the hook event
+func (c hookCommand) addContext(event, text string) error {
+	enc := json.NewEncoder(c.out)
+	// Items quote commands such as a && b so the text stays as written
+	enc.SetEscapeHTML(false)
+	return enc.Encode(map[string]any{"hookSpecificOutput": map[string]any{
+		"hookEventName": event, "additionalContext": text,
+	}})
+}
+
+// The previous run of the session and the candidates drafted since its answer
+// 1. only immediate mode counts drafts in the turn so each is asked about once in the session that corrected it
+// 2. every candidate waiting is counted when Claude Code starts instead
+// 3. a mode that infers nothing and a prompt without a session id get no note
 func (c hookCommand) note(sessionID string, labels trace.Labels, all knowledge.Set, run trace.Trace) sessionNote {
 	if !c.mode.infers() || sessionID == "" {
 		return sessionNote{}
 	}
-	waiting := all.Waiting(sessionProducer, labels)
-	switch {
-	case run.ID == "":
-	case c.mode.inTurn():
-		waiting = waiting.Since(run.Time)
-	default:
-		waiting = nil
+	note := sessionNote{mode: c.mode, run: run.ID}
+	if c.mode.inTurn() && run.ID != "" {
+		note.waiting = len(all.Waiting(sessionProducer, labels).Since(run.Time))
 	}
-	return sessionNote{mode: c.mode, run: run.ID, waiting: len(waiting)}
+	return note
+}
+
+// The SessionStart sources that are the user starting Claude Code
+// clear and compact empty the context of a session at work and a fork copies one
+var startSources = []string{"startup", "resume"}
+
+// Every candidate waiting in the place as context when the user starts or resumes Claude Code
+// 1. other sources and a mode that infers nothing add nothing
+// 2. a corrupt line leaves out that record and the rest are still counted
+func (c hookCommand) start(ctx context.Context, source string, labels trace.Labels) error {
+	if !c.mode.infers() || !slices.Contains(startSources, source) {
+		return nil
+	}
+	all, err := c.all(ctx)
+	if err != nil && !errors.Is(err, knowledgefile.ErrCorrupt) {
+		return err
+	}
+	waiting := len(all.Waiting(sessionProducer, labels))
+	if waiting == 0 {
+		return err
+	}
+	return errors.Join(c.addContext("SessionStart", sessionNote{waiting: waiting}.text()), err)
 }
 
 // The newest run of the session within sessionWindow or none
@@ -259,7 +285,7 @@ func (c hookCommand) extract(ctx context.Context, runID string, at time.Time) er
 	if len(latest) == 0 || !latest[0].Corrects() {
 		return nil
 	}
-	return c.start([]string{"knowledge", "extract", "--from", runID})
+	return c.detach([]string{"knowledge", "extract", "--from", runID})
 }
 
 // Starts nodloop with the args in a process that outlives the caller
@@ -376,7 +402,7 @@ func (n sessionNote) text() string {
 type sessionMode string
 
 const (
-	sessionDeferred  sessionMode = "deferred"  // infers each verdict silently, drafts after the turn and asks once per session
+	sessionDeferred  sessionMode = "deferred"  // infers each verdict silently, drafts after the turn and asks when Claude Code starts
 	sessionImmediate sessionMode = "immediate" // drafts a correction and asks about it in the same turn
 	sessionManual    sessionMode = "manual"    // records answers and items and leaves every verdict to an explicit nod
 	sessionOff       sessionMode = "off"       // records nothing

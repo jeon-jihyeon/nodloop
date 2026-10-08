@@ -168,9 +168,9 @@ func TestRunHookPrompt(t *testing.T) {
 			want{context: []string{"is run {run}."}, absent: []string{knowledge.PromptLead}},
 		},
 		{
-			"the first prompt counts the lessons waiting in the place",
+			"the first prompt leaves the lessons waiting to the start of the session",
 			args{stdin: `{"session_id":"s1","cwd":"{repo}"}`, content: "use git -C", waiting: true},
-			want{context: []string{"nodloop: knowledge candidates for this place wait for approval: 1."}},
+			want{context: []string{"use git -C\n"}, absent: []string{"wait for approval"}},
 		},
 		{
 			"manual adds the items and no note",
@@ -249,10 +249,10 @@ func TestRunHookPromptModes(t *testing.T) {
 		args args
 		want want
 	}{
-		{"deferred asks about every waiting draft on the first prompt", args{"deferred", first}, want{[]string{waiting + "1."}, []string{reaction}}},
+		{"deferred adds items alone on the first prompt", args{"deferred", first}, want{[]string{"use git -C\n"}, []string{waiting, reaction}}},
 		{"deferred records silently later and asks nothing", args{"deferred", later}, want{[]string{reaction, silent}, []string{draft, waiting}}},
 		{"deferred drafts nothing in the turn of a recorded reject", args{"deferred", recorded}, want{[]string{rejected, "drafted after the turn"}, []string{draft, reaction}}},
-		{"immediate asks about every waiting draft on the first prompt", args{"immediate", first}, want{[]string{waiting + "1."}, []string{reaction}}},
+		{"immediate adds items alone on the first prompt", args{"immediate", first}, want{[]string{"use git -C\n"}, []string{waiting, reaction}}},
 		{"immediate drafts in the turn and asks about the new draft later", args{"immediate", later}, want{[]string{reaction, draft, waiting + "1."}, []string{silent}}},
 		{"immediate drafts the recorded reject in the turn", args{"immediate", recorded}, want{[]string{rejected, draft}, []string{reaction}}},
 		{"manual adds items alone on the first prompt", args{"manual", first}, want{[]string{"use git -C\n"}, []string{waiting}}},
@@ -346,6 +346,77 @@ func TestRunHookSessionMode(t *testing.T) {
 			assert.Equal(t, 0, code)
 			assert.True(t, strings.HasPrefix(stderr.String(), tc.want.stderr), stderr.String())
 			assert.Equal(t, tc.want.note, strings.Contains(stdout.String(), "your previous answer"), stdout.String())
+		})
+	}
+}
+
+// Starting or resuming Claude Code names every draft waiting in the place and nothing else starts a review
+func TestRunHookStart(t *testing.T) {
+	type args struct {
+		source string
+		mode   string
+		// The repo of the draft or another one
+		other bool
+		// A broken line follows the knowledge records
+		corrupt bool
+	}
+	type want struct {
+		// The event and context of the output, both empty for none
+		event, context string
+		stderr         string
+	}
+	named := want{event: "SessionStart", context: sessionNote{waiting: 1}.text()}
+	tcs := []struct {
+		name string
+		args args
+		want want
+	}{
+		{"a startup names the draft", args{source: "startup"}, named},
+		{"a resume names the draft", args{source: "resume"}, named},
+		{"immediate names the draft on a resume", args{source: "resume", mode: "immediate"}, named},
+		{"a corrupt line leaves the other records counted", args{source: "startup", corrupt: true},
+			want{event: named.event, context: named.context, stderr: "knowledge.jsonl has corrupt lines"}},
+		{"a clear names nothing", args{source: "clear"}, want{}},
+		{"a compact names nothing", args{source: "compact"}, want{}},
+		{"a fork names nothing", args{source: "fork"}, want{}},
+		{"another repo has nothing waiting", args{source: "startup", other: true}, want{}},
+		{"manual names nothing", args{source: "startup", mode: "manual"}, want{}},
+		{"off names nothing", args{source: "startup", mode: "off"}, want{}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			home, records, repo := hookHome(t, "use git -C")
+			getenv := func(k string) string {
+				return map[string]string{"HOME": home, envRecordDir: records, envSession: tc.args.mode}[k]
+			}
+			hookPromptSetup(t, getenv, repo, false, true, false)
+			if tc.args.corrupt {
+				f, err := os.OpenFile(filepath.Join(records, "knowledge.jsonl"), os.O_APPEND|os.O_WRONLY, 0o600)
+				require.NoError(t, err)
+				_, err = f.WriteString("not json\n")
+				require.NoError(t, err)
+				require.NoError(t, f.Close())
+			}
+			cwd := map[bool]string{false: repo, true: filepath.Join(t.TempDir(), "other")}[tc.args.other]
+			require.NoError(t, os.MkdirAll(filepath.Join(cwd, ".git"), 0o755))
+			stdin := `{"session_id":"s1","cwd":"` + cwd + `","source":"` + tc.args.source + `"}`
+			var stdout, stderr bytes.Buffer
+
+			code := runHook([]string{"start"}, getenv, nil, time.Now, strings.NewReader(stdin), &stdout, &stderr)
+
+			var got struct {
+				Out struct {
+					Event   string `json:"hookEventName"`
+					Context string `json:"additionalContext"`
+				} `json:"hookSpecificOutput"`
+			}
+			// No output decodes as nothing so every case reads the same way
+			_ = json.Unmarshal(stdout.Bytes(), &got)
+			assert.Equal(t, 0, code)
+			assert.Equal(t, tc.want.event, got.Out.Event)
+			assert.Equal(t, tc.want.context, got.Out.Context)
+			assert.Contains(t, stderr.String(), tc.want.stderr)
 		})
 	}
 }

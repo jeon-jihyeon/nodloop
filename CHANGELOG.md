@@ -2,6 +2,11 @@
 
 Every release tag publishes the plugin, the darwin and linux binaries of `nodloop` and, from 0.7.0, `nodloop-server`, and both SDKs under one version. Versions before 0.6.0 reviewed incident data, which left this repository in 0.6.0.
 
+## Unreleased
+
+### Changed
+- The drafts waiting for approval are asked about when you start or resume Claude Code through a new SessionStart hook, `nodloop hook start`. The first prompt of a session id asked before, so a resumed session never asked. `/clear`, `/compact` and a fork ask nothing
+
 ## 0.7.0 - 2026-10-07
 
 ### Added

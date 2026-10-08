@@ -232,6 +232,7 @@ func TestHooksJSON(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal(b, &got))
 	want := map[string]string{
+		"SessionStart":     `"${CLAUDE_PLUGIN_ROOT}/bin/nodloop" hook start`,
 		"UserPromptSubmit": `"${CLAUDE_PLUGIN_ROOT}/bin/nodloop" hook prompt`,
 		"Stop":             `"${CLAUDE_PLUGIN_ROOT}/bin/nodloop" hook stop`,
 	}
