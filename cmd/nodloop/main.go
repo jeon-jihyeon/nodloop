@@ -22,16 +22,18 @@ commands:
   run record --producer <p> --output <file> [--label <key=value>] [--subject <s>] [--applied <id:version>]
                             Record one output of any producer as a run and print its id for feedback.
                             Output that is not JSON is kept as text
-  hook prompt | hook stop   The Claude Code conversation hooks the plugin registers. prompt adds the approved items of
-                            producer session for the repo and dir of the place as context. The place is cwd while it lies
-                            inside CLAUDE_PROJECT_DIR and that directory otherwise. It then names the previous run of the
-                            session so the conversation records the user's verdict on it, and counts the candidates waiting
-                            for approval. stop records the answer as a run and in the background drafts the lesson of the
-                            previous run when the conversation recorded a correction no record cites. Both always exit 0.
-                            The session mode is NODLOOP_SESSION, then config session_mode, then deferred: deferred records
-                            verdicts silently and asks about every waiting draft once per session after the first answer,
-                            immediate drafts a correction and asks about it in the same turn, manual leaves out the note and
-                            off records nothing
+  hook start | hook prompt | hook stop
+                            The Claude Code conversation hooks the plugin registers. start counts the candidates waiting
+                            for approval in the place when Claude Code starts or resumes a session, not after clear or
+                            compact. prompt adds the approved items of producer session for the repo and dir of the place
+                            as context. The place is cwd while it lies inside CLAUDE_PROJECT_DIR and that directory
+                            otherwise. It then names the previous run of the session so the conversation records the
+                            user's verdict on it. stop records the answer as a run and in the background drafts the lesson
+                            of the previous run when the conversation recorded a correction no record cites. All always
+                            exit 0. The session mode is NODLOOP_SESSION, then config session_mode, then deferred: deferred
+                            records verdicts silently and asks about every waiting draft when Claude Code starts,
+                            immediate also drafts a correction and asks about it in the same turn, manual leaves out the
+                            note and off records nothing
   feedback list [--trace <id>] [--verdict <v>] [--reviewer <r>] [--limit <n>]
                             List feedback newest first with the reason code or a dash after the verdict
   feedback add --trace <id> --verdict <v> [--reason-code <c>] [--reason <r>] [--edited <file>] [--reviewer <r>] [--audit]
