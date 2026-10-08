@@ -68,9 +68,9 @@ func TestExtractorPropose(t *testing.T) {
 		{"an add proposes a new item scoped to the keys it kept", extract.Draft{
 			Relation: extract.RelationAdd, Kind: knowledge.KindJudgment, Content: lesson, Keys: []string{"repo"},
 		}, pass, want{candidate: "k-generated", version: 1, labels: trace.Labels{"repo": {"nodloop"}}}},
-		{"an add without keys keeps every label of the run", extract.Draft{
+		{"an add without keys reaches every run of the producer", extract.Draft{
 			Relation: extract.RelationAdd, Kind: knowledge.KindJudgment, Content: lesson,
-		}, pass, want{candidate: "k-generated", version: 1, labels: trace.Labels{"repo": {"nodloop"}, "dir": {"cmd"}}}},
+		}, pass, want{candidate: "k-generated", version: 1}},
 		{"an update proposes the next version with the scope of the item", extract.Draft{
 			Relation: extract.RelationUpdate, RelatesTo: "git-c", Kind: knowledge.KindJudgment, Content: lesson, Keys: []string{"dir"},
 		}, pass, want{candidate: "git-c", version: 2, labels: trace.Labels{"repo": {"nodloop"}}, related: "git-c"}},

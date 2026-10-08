@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -735,6 +736,97 @@ func TestLedgerApproveScopeWidened(t *testing.T) {
 	}
 }
 
+// A person approves a candidate in the labels they pick while the candidate record keeps the suggested ones
+func TestLedgerApproveIn(t *testing.T) {
+	repoDir := &knowledge.RunScope{Producer: "session", Labels: trace.Labels{"repo": {"nodloop"}, "dir": {"cmd"}}, Except: trace.Labels{"task": {"docs"}}}
+	type args struct {
+		labels trace.Labels
+		// The id has an approved v1 in the repo before the candidate v2
+		approvedRepo bool
+		// The version is approved before ApproveIn
+		approvedFirst bool
+	}
+	type want struct {
+		// What ScopeIn answers first
+		scopeErr error
+		scope    trace.Labels
+		err      error
+		// The newest record of the version afterwards
+		status   knowledge.Status
+		approver string
+		labels   trace.Labels
+		// Whether a run of another repo receives the item
+		elsewhere bool
+	}
+	repo := trace.Labels{"repo": {"nodloop"}}
+	tcs := []struct {
+		name string
+		args args
+		want want
+	}{
+		{"the suggested labels approve it as proposed", args{labels: repoDir.Labels},
+			want{scope: repoDir.Labels, status: knowledge.StatusApproved, approver: "jed", labels: repoDir.Labels}},
+		{"fewer labels widen the candidate", args{labels: repo},
+			want{scope: repo, status: knowledge.StatusApproved, approver: "jed", labels: repo}},
+		{"no labels reach every run of the producer", args{labels: trace.Labels{}},
+			want{status: knowledge.StatusApproved, approver: "jed", elsewhere: true}},
+		{"widening an approved version is refused", args{labels: trace.Labels{}, approvedRepo: true},
+			want{err: knowledge.ErrScopeWidened, status: knowledge.StatusCandidate, labels: repoDir.Labels}},
+		{"an approved version takes no scope", args{labels: trace.Labels{}, approvedFirst: true},
+			want{scopeErr: knowledge.ErrTransitionInvalid, err: knowledge.ErrTransitionInvalid, status: knowledge.StatusApproved, approver: "ann", labels: repoDir.Labels}},
+		{"an empty label value is refused", args{labels: trace.Labels{"repo": {""}}},
+			want{scopeErr: knowledge.ErrScopeInvalid, err: knowledge.ErrScopeInvalid, status: knowledge.StatusCandidate, labels: repoDir.Labels}},
+	}
+	ctx := context.Background()
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			store, err := file.New(t.TempDir())
+			require.NoError(t, err)
+			l := knowledge.NewLedger(store, vetofile.NewApprovedFile(t.TempDir(), "records"), time.Now, func(prefix string) string { return prefix + "new" })
+			draft := func(run *knowledge.RunScope) knowledge.Knowledge {
+				return knowledge.Knowledge{
+					ID: "k1", Kind: knowledge.KindJudgment, Content: "give only the conclusion", Run: run,
+					Evidence: knowledge.Evidence{FeedbackTraceIDs: []string{"t1"}}, Author: "author",
+				}
+			}
+			version := 1
+			if tc.args.approvedRepo {
+				_, _, err = l.Propose(ctx, draft(repoRun()))
+				require.NoError(t, err)
+				require.NoError(t, testkit.Err(l.Approve(ctx, "k1", 1, "ann")))
+				version = 2
+			}
+			_, _, err = l.Propose(ctx, draft(repoDir))
+			require.NoError(t, err)
+			if tc.args.approvedFirst {
+				require.NoError(t, testkit.Err(l.Approve(ctx, "k1", version, "ann")))
+			}
+
+			scope, scopeErr := l.ScopeIn(ctx, "k1", version, tc.args.labels)
+			_, err = l.ApproveIn(ctx, "k1", version, tc.args.labels, "jed")
+
+			assert.ErrorIs(t, scopeErr, tc.want.scopeErr)
+			assert.Equal(t, tc.want.scope, scope.Labels)
+			assert.ErrorIs(t, err, tc.want.err)
+			all, err := l.All(ctx)
+			require.NoError(t, err)
+			got, err := all.Version("k1", version)
+			require.NoError(t, err)
+			assert.Equal(t, tc.want.status, got.Status)
+			assert.Equal(t, tc.want.approver, got.Approver)
+			assert.Equal(t, tc.want.labels, got.Run.Labels)
+			assert.Equal(t, repoDir.Except, got.Run.Except)
+			history, err := l.History(ctx, "k1")
+			require.NoError(t, err)
+			assert.True(t, slices.ContainsFunc(history, func(k knowledge.Knowledge) bool {
+				return k.Version == version && k.Status == knowledge.StatusCandidate && reflect.DeepEqual(k.Run.Labels, repoDir.Labels)
+			}), "the candidate record keeps the suggested labels")
+			assert.Equal(t, tc.want.elsewhere, len(all.For("session", trace.Labels{"repo": {"meetproxy"}})) == 1)
+		})
+	}
+}
+
 // The item cap bounds the folder of a run whatever the size of its texts
 // A run carries every item whose scope overlaps so the cap counts the items of one label value and never those of a value apart
 func TestLedgerApproveItemCap(t *testing.T) {
@@ -1441,6 +1533,60 @@ func TestLedgerRefusedRetryExportsVetoes(t *testing.T) {
 				ids = append(ids, v.ID())
 			}
 			assert.Equal(t, tc.want, ids)
+		})
+	}
+}
+
+// The folder of an approval counts the items the fullest run it reaches carries, never items no one run carries together
+func TestLedgerFolderFullestRun(t *testing.T) {
+	session := func(labels trace.Labels) *knowledge.RunScope {
+		return &knowledge.RunScope{Producer: "session", Labels: labels}
+	}
+	repoA, repoB := trace.Labels{"repo": {"a"}}, trace.Labels{"repo": {"b"}}
+	type args struct {
+		// Scopes of the approved items before the candidate
+		approved []trace.Labels
+		// Scope of the candidate that is approved last
+		candidate trace.Labels
+	}
+	tcs := []struct {
+		name string
+		args args
+		// Items of the folder counting the candidate
+		want int
+	}{
+		{"a lesson for every repo counts the items of one repo", args{[]trace.Labels{repoA, repoA, repoA, repoB, repoB, repoB}, nil}, 4},
+		{"a lesson for one repo counts the lessons for every repo", args{[]trace.Labels{nil, nil, repoA, repoA, repoA, repoB}, repoA}, 6},
+		{
+			"a lesson for a dir meets its repo and every repo but not another dir",
+			args{[]trace.Labels{nil, repoA, {"repo": {"a"}, "dir": {"y"}}, repoB}, trace.Labels{"repo": {"a"}, "dir": {"x"}}},
+			3,
+		},
+	}
+	ctx := context.Background()
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			store, err := file.New(t.TempDir())
+			require.NoError(t, err)
+			l := knowledge.NewLedger(store, vetofile.NewApprovedFile(t.TempDir(), "records"), time.Now, func(prefix string) string { return prefix + "new" })
+			approve := func(id string, labels trace.Labels) {
+				_, _, err := l.Propose(ctx, knowledge.Knowledge{
+					ID: id, Kind: knowledge.KindJudgment, Content: "lesson " + id, Run: session(labels),
+					Evidence: knowledge.Evidence{FeedbackTraceIDs: []string{"t1"}}, Author: "author",
+				})
+				require.NoError(t, err)
+				require.NoError(t, testkit.Err(l.Approve(ctx, id, 1, "ann")))
+			}
+			for i, labels := range tc.args.approved {
+				approve("k"+strconv.Itoa(i), labels)
+			}
+			approve("new", tc.args.candidate)
+
+			f, err := l.Folder(ctx, "new", 1)
+
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, f.Size(), f.String())
 		})
 	}
 }

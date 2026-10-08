@@ -171,7 +171,7 @@ var tools = []tool{
 		"update one, or name a duplicate or a conflict, which propose nothing. Code refuses a draft that is not one sentence, "+
 		"copies the output, names an item the run never reached or fails a critic question", (*Server).proposeExtraction),
 	newTool("approve", "Approve a knowledge candidate on behalf of a named person. "+
-		"Only call it when the user says so and gives their name. A judgment with a veto becomes a guard veto. "+
+		"Only call it when the user says so and gives their name. Pass scope when the user picked where it applies. A judgment with a veto becomes a guard veto. "+
 		"A failure after the approval rides on the answer since the approval is recorded and approving again would fail", (*Server).approve),
 	newTool("compaction", "Read what a compaction of one knowledge folder is drafted from: the approved items one run carries with the anchor, "+
 		"the corrections behind them, a pending compaction of the same items, the rules and the schema. "+
@@ -370,13 +370,18 @@ func (s *Server) compactionDue(ctx context.Context, id string, f knowledge.Folde
 }
 
 type approveInput struct {
-	ID       string `json:"id" jsonschema:"knowledge id"`
-	Version  int    `json:"version" jsonschema:"version to approve"`
-	Approver string `json:"approver" jsonschema:"the name the user gave or saved with nodloop config approver. Never a default"`
+	ID       string      `json:"id" jsonschema:"knowledge id"`
+	Version  int         `json:"version" jsonschema:"version to approve"`
+	Approver string      `json:"approver" jsonschema:"the name the user gave or saved with nodloop config approver. Never a default"`
+	Scope    *scopeInput `json:"scope,omitempty" jsonschema:"where the user picked the candidate to apply when it differs from its proposed scope. Left out approves it as proposed"`
+}
+
+type scopeInput struct {
+	Labels map[string][]string `json:"labels" jsonschema:"key to values a run must carry one of, each a label a recorded run of the producer carries. An empty object reaches every run of the producer"`
 }
 
 func (s *Server) approve(ctx context.Context, _ *sdk.CallToolRequest, in approveInput) (*sdk.CallToolResult, any, error) {
-	k, err := s.ledger.Approve(ctx, in.ID, in.Version, s.approver(in.Approver))
+	k, err := s.approval(ctx, in)
 	if err != nil && !errors.Is(err, knowledge.ErrExport) {
 		return nil, nil, err
 	}
@@ -398,6 +403,27 @@ func (s *Server) approve(ctx context.Context, _ *sdk.CallToolRequest, in approve
 	}
 	answer["folder"] = newFolderAnswer(folder, due)
 	return nil, answer, nil
+}
+
+// The approval as proposed or in the scope the user picked
+// Every label of that scope must be one a recorded run of the producer carries
+func (s *Server) approval(ctx context.Context, in approveInput) (knowledge.Knowledge, error) {
+	approver := s.approver(in.Approver)
+	if in.Scope == nil {
+		return s.ledger.Approve(ctx, in.ID, in.Version, approver)
+	}
+	scope, err := s.ledger.ScopeIn(ctx, in.ID, in.Version, in.Scope.Labels)
+	if err != nil {
+		return knowledge.Knowledge{}, err
+	}
+	runs, err := s.traces.List(ctx, trace.Filter{Name: trace.NameRun})
+	if err != nil {
+		return knowledge.Knowledge{}, err
+	}
+	if err := scope.Recorded(runs.Vocabulary(scope.Producer)); err != nil {
+		return knowledge.Knowledge{}, err
+	}
+	return s.ledger.ApproveIn(ctx, in.ID, in.Version, in.Scope.Labels, approver)
 }
 
 type compactionInput struct {

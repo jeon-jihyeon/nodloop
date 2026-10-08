@@ -36,7 +36,7 @@ From then on every `knowledge("support-bot", acme)` carries the item, and a run 
 | `record(producer, output, *, labels, applied, subject)` | the run id a verdict cites |
 | `judge(run, verdict, reason, reason_code, edited, reviewer)` | nothing |
 | `propose(kind, content, from_run, producer, labels, new_labels, item_id, veto)` | `Candidate` with `id`, `version`, `status` and `overlaps`, the current items of the same kind one run may carry with it |
-| `approve(item_id, version, approver)` | `Approval` with `id`, `version`, `status`, `approver`, `veto`, `compaction_due` when one run would carry more than five items, and `export_error` and `folder_error` when a step after the approval failed |
+| `approve(item_id, version, approver, labels=)` | Approves as proposed, or for the runs carrying `labels` when given, and `{}` for every run of the producer. `Approval` with `id`, `version`, `status`, `approver`, `veto`, `compaction_due` when one run would carry more than five items, and `export_error` and `folder_error` when a step after the approval failed |
 | `check_call(tool, arguments, producer)` | `Decision` with `action` of allow, block or ask, `veto` and `reason` |
 
 A tool that refuses, such as a proposal from a run nobody corrected, raises `ToolError` with the reason.
