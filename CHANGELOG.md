@@ -6,6 +6,7 @@ Every release tag publishes the plugin, the darwin and linux binaries of `nodloo
 
 ### Added
 - You pick where a lesson applies when you approve it. The review asks it as a second question, offering every place and the labels of the run it came from, and typed words become the condition of the lesson. `knowledge approve --label` or `--everywhere`, `scope` on the MCP tool `approve`, `ApproveIn` in Go and a `labels` option on `approve` in both SDKs
+- `nodloop knowledge ask` prints the review questions of each waiting candidate as AskUserQuestion input, with its content, its scope and what you said on each run that taught it, and the nod skill asks them one candidate at a time
 
 ### Changed
 - A drafted lesson with no label keys now reaches every run of its producer instead of keeping every label of the run, so a lesson about how you want answers written is no longer tied to one repository
