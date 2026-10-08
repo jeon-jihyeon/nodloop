@@ -17,7 +17,7 @@ from . import binary
 __all__ = ["Approval", "Candidate", "Client", "Decision", "Item", "Knowledge", "ToolError"]
 
 # The binary release the client fetches when no nodloop is installed
-VERSION = "0.7.0"
+VERSION = "0.8.0"
 
 
 class ToolError(RuntimeError):
