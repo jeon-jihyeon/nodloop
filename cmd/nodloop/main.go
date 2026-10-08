@@ -64,6 +64,9 @@ commands:
   knowledge waiting --producer <p> [--label <key=value>]
                             The candidates a run of the producer with these labels would receive once approved, with the
                             runs whose verdicts taught them
+  knowledge ask --producer <p> [--label <key=value>]
+                            One JSON line per waiting candidate with the AskUserQuestion questions that decide it: the
+                            content, its scope and what the user said on each run that taught it
   knowledge list [--status <s>] [--kind <k>] [--stale]
                             Current version per id with a stale column. --status lists every version of that status
   knowledge show <id>       Every record of one id
