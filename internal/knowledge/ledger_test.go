@@ -37,7 +37,7 @@ func TestLedgerApproved(t *testing.T) {
 		Status: knowledge.StatusCandidate, Author: "author", Time: at,
 	}
 	approved := candidate
-	approved.Status, approved.Approver, approved.ApprovedAt = knowledge.StatusApproved, "ann", at
+	approved.Status, approved.Approver, approved.ApprovedAt = knowledge.StatusApproved, "sam", at
 	other := candidate
 	other.ID = "k2"
 	type args struct {
@@ -80,7 +80,7 @@ func TestLedgerApprovedVersion(t *testing.T) {
 	first := knowledge.Knowledge{
 		ID: "k1", Version: 1, Kind: knowledge.KindMeaning, Content: "one",
 		Run: repoRun(), Evidence: knowledge.Evidence{FeedbackTraceIDs: []string{"t1"}}, Basis: knowledge.BasisStated,
-		Status: knowledge.StatusApproved, Approver: "ann", ApprovedAt: at, Author: "author", Time: at,
+		Status: knowledge.StatusApproved, Approver: "sam", ApprovedAt: at, Author: "author", Time: at,
 	}
 	second := first
 	second.Version = 2
@@ -127,7 +127,7 @@ func TestLedgerHistory(t *testing.T) {
 		Status: knowledge.StatusCandidate, Author: "author", Time: at,
 	}
 	approved := candidate
-	approved.Status, approved.Approver, approved.ApprovedAt = knowledge.StatusApproved, "ann", at
+	approved.Status, approved.Approver, approved.ApprovedAt = knowledge.StatusApproved, "sam", at
 	other := candidate
 	other.ID = "k2"
 	type want struct {
@@ -180,7 +180,7 @@ func TestLedgerOverlaps(t *testing.T) {
 	judgment := item("j", knowledge.KindJudgment, repoRun())
 	ci := item("ci", knowledge.KindMeaning, &knowledge.RunScope{Producer: "ci", Labels: trace.Labels{"repo": {"nodloop"}}})
 	retired := item("k3", knowledge.KindMeaning, repoRun())
-	retired.Status, retired.Approver = knowledge.StatusRetired, "ann"
+	retired.Status, retired.Approver = knowledge.StatusRetired, "sam"
 	type want struct {
 		overlaps knowledge.Set
 		err      error
@@ -226,7 +226,7 @@ func TestLedgerPropose(t *testing.T) {
 	filled := draft
 	filled.Version, filled.Status, filled.Base = 7, knowledge.StatusApproved, 6
 	signed := draft
-	signed.Approver, signed.ApprovedAt, signed.Supersedes = "ann", at, 2
+	signed.Approver, signed.ApprovedAt, signed.Supersedes = "sam", at, 2
 	verified := draft
 	verified.Basis = knowledge.BasisVerified
 	proposedVerified := proposed
@@ -346,13 +346,13 @@ func TestLedgerApprove(t *testing.T) {
 	second := candidate
 	second.Version = 2
 	approvedNow := candidate
-	approvedNow.Status, approvedNow.Approver, approvedNow.ApprovedAt = knowledge.StatusApproved, "ann", now
+	approvedNow.Status, approvedNow.Approver, approvedNow.ApprovedAt = knowledge.StatusApproved, "sam", now
 	approvedNow.Time = now
 	secondApproved := second
-	secondApproved.Status, secondApproved.Approver, secondApproved.ApprovedAt = knowledge.StatusApproved, "ann", now
+	secondApproved.Status, secondApproved.Approver, secondApproved.ApprovedAt = knowledge.StatusApproved, "sam", now
 	secondApproved.Time, secondApproved.Supersedes = now, 1
 	supersededNow := approved
-	supersededNow.Status, supersededNow.Approver, supersededNow.Time = knowledge.StatusSuperseded, "ann", now
+	supersededNow.Status, supersededNow.Approver, supersededNow.Time = knowledge.StatusSuperseded, "sam", now
 	secondApprovedEarlier := second
 	secondApprovedEarlier.Status, secondApprovedEarlier.Approver = knowledge.StatusApproved, "ann"
 	secondApprovedEarlier.ApprovedAt = at
@@ -364,7 +364,7 @@ func TestLedgerApprove(t *testing.T) {
 		Example: map[string]any{"command": "sed -i s/a/b/ f"},
 	}
 	judgmentApproved := judgment
-	judgmentApproved.Status, judgmentApproved.Approver, judgmentApproved.ApprovedAt = knowledge.StatusApproved, "ann", now
+	judgmentApproved.Status, judgmentApproved.Approver, judgmentApproved.ApprovedAt = knowledge.StatusApproved, "sam", now
 	judgmentApproved.Time = now
 	drafted := candidate
 	drafted.Drafted = true
@@ -395,19 +395,19 @@ func TestLedgerApprove(t *testing.T) {
 	reaffirmed := approved
 	reaffirmed.ReviewedAt, reaffirmed.Time = v2ApprovedAt, v2ApprovedAt
 	v2Now := v2
-	v2Now.Status, v2Now.Approver, v2Now.ApprovedAt, v2Now.Time, v2Now.Supersedes = knowledge.StatusApproved, "ann", now, now, 1
+	v2Now.Status, v2Now.Approver, v2Now.ApprovedAt, v2Now.Time, v2Now.Supersedes = knowledge.StatusApproved, "sam", now, now, 1
 	reaffirmedSuperseded := reaffirmed
-	reaffirmedSuperseded.Status, reaffirmedSuperseded.Approver, reaffirmedSuperseded.Time = knowledge.StatusSuperseded, "ann", now
+	reaffirmedSuperseded.Status, reaffirmedSuperseded.Approver, reaffirmedSuperseded.Time = knowledge.StatusSuperseded, "sam", now
 	// v2 was proposed from the candidate v1 before v1 was approved
 	v1ApprovedLater := approved
 	v1ApprovedLater.ApprovedAt, v1ApprovedLater.Time = v2ApprovedAt, v2ApprovedAt
 	stacked := candidate
 	stacked.Version, stacked.Base = 2, 1
 	stackedNow := stacked
-	stackedNow.Status, stackedNow.Approver, stackedNow.ApprovedAt, stackedNow.Time = knowledge.StatusApproved, "ann", now, now
+	stackedNow.Status, stackedNow.Approver, stackedNow.ApprovedAt, stackedNow.Time = knowledge.StatusApproved, "sam", now, now
 	stackedNow.Supersedes = 1
 	v1LaterSuperseded := v1ApprovedLater
-	v1LaterSuperseded.Status, v1LaterSuperseded.Approver, v1LaterSuperseded.Time = knowledge.StatusSuperseded, "ann", now
+	v1LaterSuperseded.Status, v1LaterSuperseded.Approver, v1LaterSuperseded.Time = knowledge.StatusSuperseded, "sam", now
 	vetoApproved := judgment
 	vetoApproved.Status, vetoApproved.Approver, vetoApproved.ApprovedAt = knowledge.StatusApproved, "ann", at
 	noVeto := judgment
@@ -425,7 +425,7 @@ func TestLedgerApprove(t *testing.T) {
 		"          match: sed\\s+-i\n      reason: never edit files with sed -i\n" +
 		"      source: nodloop knowledge k1 v1 approved by ann\n"
 	noVetoNow := noVeto
-	noVetoNow.Status, noVetoNow.Approver, noVetoNow.ApprovedAt, noVetoNow.Time = knowledge.StatusApproved, "ann", now, now
+	noVetoNow.Status, noVetoNow.Approver, noVetoNow.ApprovedAt, noVetoNow.Time = knowledge.StatusApproved, "sam", now, now
 	type args struct {
 		seeds    []knowledge.Knowledge
 		version  int
@@ -445,17 +445,17 @@ func TestLedgerApprove(t *testing.T) {
 	}{
 		{
 			"candidate is approved under the approver's name",
-			args{[]knowledge.Knowledge{candidate}, 1, "ann"},
+			args{[]knowledge.Knowledge{candidate}, 1, "sam"},
 			want{approvedNow, knowledge.Set{approvedNow, candidate}, "", nil},
 		},
 		{
 			"an approved draft keeps its mark",
-			args{[]knowledge.Knowledge{drafted}, 1, "ann"},
+			args{[]knowledge.Knowledge{drafted}, 1, "sam"},
 			want{draftedApproved, knowledge.Set{draftedApproved, drafted}, "", nil},
 		},
 		{
 			"approving a judgment with a veto exports it for guard",
-			args{[]knowledge.Knowledge{judgment}, 1, "ann"},
+			args{[]knowledge.Knowledge{judgment}, 1, "sam"},
 			want{judgmentApproved, knowledge.Set{judgmentApproved, judgment},
 				"# Generated by nodloop from the approved judgment knowledge of records\n" +
 					"# Edits here are overwritten. Retire the knowledge to remove a veto\n" +
@@ -466,21 +466,21 @@ func TestLedgerApprove(t *testing.T) {
 					"        - field: command\n" +
 					"          match: sed\\s+-i\n" +
 					"      reason: never edit files with sed -i\n" +
-					"      source: nodloop knowledge k1 v1 approved by ann\n", nil},
+					"      source: nodloop knowledge k1 v1 approved by sam\n", nil},
 		},
 		{
 			"an item whose folder would pass the run caps is refused and nothing is appended",
-			args{[]knowledge.Knowledge{large, candidate}, 1, "ann"},
+			args{[]knowledge.Knowledge{large, candidate}, 1, "sam"},
 			want{history: knowledge.Set{candidate}, err: knowledge.ErrFolderFull},
 		},
 		{
 			"an item scoped by another label key still fills the folder because one run may carry both",
-			args{[]knowledge.Knowledge{largeTask, candidate}, 1, "ann"},
+			args{[]knowledge.Knowledge{largeTask, candidate}, 1, "sam"},
 			want{history: knowledge.Set{candidate}, err: knowledge.ErrFolderFull},
 		},
 		{
 			"a candidate built from a version the approved one replaced is refused",
-			args{[]knowledge.Knowledge{candidate, approved, v2, v3, v2Approved, v1Superseded}, 3, "ann"},
+			args{[]knowledge.Knowledge{candidate, approved, v2, v3, v2Approved, v1Superseded}, 3, "sam"},
 			want{
 				history: knowledge.Set{v1Superseded, v2Approved, v3, v2, approved, candidate},
 				err:     knowledge.ErrCandidateOutdated,
@@ -488,37 +488,37 @@ func TestLedgerApprove(t *testing.T) {
 		},
 		{
 			"a candidate built on a candidate approved after it replaces that version",
-			args{[]knowledge.Knowledge{candidate, stacked, v1ApprovedLater}, 2, "ann"},
+			args{[]knowledge.Knowledge{candidate, stacked, v1ApprovedLater}, 2, "sam"},
 			want{stackedNow, knowledge.Set{v1LaterSuperseded, stackedNow, v1ApprovedLater, stacked, candidate}, "", nil},
 		},
 		{
 			"a reaffirm after the candidate was proposed never makes it outdated",
-			args{[]knowledge.Knowledge{candidate, approved, v2, reaffirmed}, 2, "ann"},
+			args{[]knowledge.Knowledge{candidate, approved, v2, reaffirmed}, 2, "sam"},
 			want{v2Now, knowledge.Set{reaffirmedSuperseded, v2Now, reaffirmed, v2, approved, candidate}, "", nil},
 		},
 		{
 			"a new version that drops the veto is refused",
-			args{[]knowledge.Knowledge{judgment, vetoApproved, noVeto}, 2, "ann"},
+			args{[]knowledge.Knowledge{judgment, vetoApproved, noVeto}, 2, "sam"},
 			want{history: knowledge.Set{noVeto, vetoApproved, judgment}, vetoes: annVeto, err: knowledge.ErrVetoLifted},
 		},
 		{
 			"a new version whose veto lets the old example through is refused",
-			args{[]knowledge.Knowledge{judgment, vetoApproved, weaker}, 2, "ann"},
+			args{[]knowledge.Knowledge{judgment, vetoApproved, weaker}, 2, "sam"},
 			want{history: knowledge.Set{weaker, vetoApproved, judgment}, vetoes: annVeto, err: knowledge.ErrVetoLifted},
 		},
 		{
 			"a new version without the veto approves once a person retired the vetoed one",
-			args{[]knowledge.Knowledge{judgment, vetoApproved, noVeto, vetoRetired}, 2, "ann"},
+			args{[]knowledge.Knowledge{judgment, vetoApproved, noVeto, vetoRetired}, 2, "sam"},
 			want{noVetoNow, knowledge.Set{noVetoNow, vetoRetired, noVeto, vetoApproved, judgment}, "", nil},
 		},
 		{
 			"approving a second version appends it before superseding the first",
-			args{[]knowledge.Knowledge{candidate, approved, second}, 2, "ann"},
+			args{[]knowledge.Knowledge{candidate, approved, second}, 2, "sam"},
 			want{secondApproved, knowledge.Set{supersededNow, secondApproved, second, approved, candidate}, "", nil},
 		},
 		{
 			"older candidate cannot replace a newer approved version",
-			args{[]knowledge.Knowledge{candidate, second, secondApprovedEarlier}, 1, "ann"},
+			args{[]knowledge.Knowledge{candidate, second, secondApprovedEarlier}, 1, "sam"},
 			want{history: knowledge.Set{secondApprovedEarlier, second, candidate}, err: knowledge.ErrTransitionInvalid},
 		},
 		{
@@ -528,7 +528,7 @@ func TestLedgerApprove(t *testing.T) {
 		},
 		{
 			"unknown version is not found",
-			args{[]knowledge.Knowledge{candidate}, 9, "ann"},
+			args{[]knowledge.Knowledge{candidate}, 9, "sam"},
 			want{history: knowledge.Set{candidate}, err: knowledge.ErrNotFound},
 		},
 		{
@@ -538,22 +538,22 @@ func TestLedgerApprove(t *testing.T) {
 		},
 		{
 			"approved version cannot be approved again",
-			args{[]knowledge.Knowledge{candidate, approved}, 1, "ann"},
+			args{[]knowledge.Knowledge{candidate, approved}, 1, "sam"},
 			want{history: knowledge.Set{approved, candidate}, err: knowledge.ErrTransitionInvalid},
 		},
 		{
 			"retired version cannot be approved",
-			args{[]knowledge.Knowledge{candidate, retired}, 1, "ann"},
+			args{[]knowledge.Knowledge{candidate, retired}, 1, "sam"},
 			want{history: knowledge.Set{retired, candidate}, err: knowledge.ErrTransitionInvalid},
 		},
 		{
 			"superseded version cannot be approved",
-			args{[]knowledge.Knowledge{candidate, approved, superseded}, 1, "ann"},
+			args{[]knowledge.Knowledge{candidate, approved, superseded}, 1, "sam"},
 			want{history: knowledge.Set{superseded, approved, candidate}, err: knowledge.ErrTransitionInvalid},
 		},
 		{
 			"an approved item of a finished compaction cannot be approved again",
-			args{[]knowledge.Knowledge{compacted, compactedApproved}, 1, "ann"},
+			args{[]knowledge.Knowledge{compacted, compactedApproved}, 1, "sam"},
 			want{history: knowledge.Set{compactedApproved, compacted}, err: knowledge.ErrTransitionInvalid},
 		},
 	}
@@ -626,7 +626,7 @@ func TestLedgerApproveInProposalOrder(t *testing.T) {
 				}
 				version, err := strconv.Atoi(step)
 				require.NoError(t, err)
-				_, last = l.Approve(ctx, "k1", version, "ann")
+				_, last = l.Approve(ctx, "k1", version, "sam")
 			}
 
 			assert.ErrorIs(t, last, tc.want.err)
@@ -726,7 +726,7 @@ func TestLedgerApproveScopeWidened(t *testing.T) {
 				require.NoError(t, testkit.Err(l.Retire(ctx, "k1", 1, "ann")))
 			}
 
-			_, err = l.Approve(ctx, "k1", 2, "ann")
+			_, err = l.Approve(ctx, "k1", 2, "sam")
 
 			assert.ErrorIs(t, err, tc.want.err)
 			approved, err := l.ApprovedVersion(ctx, "k1")
@@ -765,11 +765,11 @@ func TestLedgerApproveIn(t *testing.T) {
 		want want
 	}{
 		{"the suggested labels approve it as proposed", args{labels: repoDir.Labels},
-			want{scope: repoDir.Labels, status: knowledge.StatusApproved, approver: "ann", labels: repoDir.Labels}},
+			want{scope: repoDir.Labels, status: knowledge.StatusApproved, approver: "sam", labels: repoDir.Labels}},
 		{"fewer labels widen the candidate", args{labels: repo},
-			want{scope: repo, status: knowledge.StatusApproved, approver: "ann", labels: repo}},
+			want{scope: repo, status: knowledge.StatusApproved, approver: "sam", labels: repo}},
 		{"no labels reach every run of the producer", args{labels: trace.Labels{}},
-			want{status: knowledge.StatusApproved, approver: "ann", elsewhere: true}},
+			want{status: knowledge.StatusApproved, approver: "sam", elsewhere: true}},
 		{"widening an approved version is refused", args{labels: trace.Labels{}, approvedRepo: true},
 			want{err: knowledge.ErrScopeWidened, status: knowledge.StatusCandidate, labels: repoDir.Labels}},
 		{"an approved version takes no scope", args{labels: trace.Labels{}, approvedFirst: true},
@@ -804,7 +804,7 @@ func TestLedgerApproveIn(t *testing.T) {
 			}
 
 			scope, scopeErr := l.ScopeIn(ctx, "k1", version, tc.args.labels)
-			_, err = l.ApproveIn(ctx, "k1", version, tc.args.labels, "ann")
+			_, err = l.ApproveIn(ctx, "k1", version, tc.args.labels, "sam")
 
 			assert.ErrorIs(t, scopeErr, tc.want.scopeErr)
 			assert.Equal(t, tc.want.scope, scope.Labels)
@@ -822,7 +822,7 @@ func TestLedgerApproveIn(t *testing.T) {
 			assert.True(t, slices.ContainsFunc(history, func(k knowledge.Knowledge) bool {
 				return k.Version == version && k.Status == knowledge.StatusCandidate && reflect.DeepEqual(k.Run.Labels, repoDir.Labels)
 			}), "the candidate record keeps the suggested labels")
-			assert.Equal(t, tc.want.elsewhere, len(all.For("session", trace.Labels{"repo": {"meetproxy"}})) == 1)
+			assert.Equal(t, tc.want.elsewhere, len(all.For("session", trace.Labels{"repo": {"another-repo"}})) == 1)
 		})
 	}
 }
@@ -928,7 +928,7 @@ func TestLedgerApproveItemCap(t *testing.T) {
 			candidate := item("k-new", knowledge.StatusCandidate, tc.args.labels, tc.args.vetoed)
 			require.NoError(t, testkit.Err(l.Import(ctx, append(records, candidate))))
 
-			_, err = l.Approve(ctx, "k-new", 1, "ann")
+			_, err = l.Approve(ctx, "k-new", 1, "sam")
 			got := want{}
 			if err != nil {
 				got.err = err.Error()
@@ -1036,7 +1036,7 @@ func TestLedgerApproveInOverfullFolder(t *testing.T) {
 			require.NoError(t, err)
 
 			v := latest[0].Version
-			_, err = l.Approve(ctx, tc.args.id, v, "ann")
+			_, err = l.Approve(ctx, tc.args.id, v, "sam")
 			history, herr := l.History(ctx, tc.args.id)
 			require.NoError(t, herr)
 			got := history[slices.IndexFunc(history, func(k knowledge.Knowledge) bool { return k.Version == v })]
@@ -1062,9 +1062,9 @@ func TestLedgerRetire(t *testing.T) {
 	superseded := approved
 	superseded.Status = knowledge.StatusSuperseded
 	candidateRetired := candidate
-	candidateRetired.Status, candidateRetired.Approver, candidateRetired.Time = knowledge.StatusRetired, "ann", now
+	candidateRetired.Status, candidateRetired.Approver, candidateRetired.Time = knowledge.StatusRetired, "sam", now
 	approvedRetired := approved
-	approvedRetired.Status, approvedRetired.Approver, approvedRetired.Time = knowledge.StatusRetired, "ann", now
+	approvedRetired.Status, approvedRetired.Approver, approvedRetired.Time = knowledge.StatusRetired, "sam", now
 	judgment := candidate
 	judgment.Kind, judgment.Content = knowledge.KindJudgment, "never edit files with sed -i"
 	judgment.Veto = &knowledge.Veto{
@@ -1075,7 +1075,7 @@ func TestLedgerRetire(t *testing.T) {
 	judgmentApproved := judgment
 	judgmentApproved.Status, judgmentApproved.Approver, judgmentApproved.ApprovedAt = knowledge.StatusApproved, "ann", at
 	judgmentRetired := judgmentApproved
-	judgmentRetired.Status, judgmentRetired.Approver, judgmentRetired.Time = knowledge.StatusRetired, "ann", now
+	judgmentRetired.Status, judgmentRetired.Approver, judgmentRetired.Time = knowledge.StatusRetired, "sam", now
 	type args struct {
 		seeds    []knowledge.Knowledge
 		version  int
@@ -1095,17 +1095,17 @@ func TestLedgerRetire(t *testing.T) {
 	}{
 		{
 			"candidate is retired under the approver's name",
-			args{[]knowledge.Knowledge{candidate}, 1, "ann"},
+			args{[]knowledge.Knowledge{candidate}, 1, "sam"},
 			want{candidateRetired, knowledge.Set{candidateRetired, candidate}, "", nil},
 		},
 		{
 			"retiring the only approved veto removes the generated file",
-			args{[]knowledge.Knowledge{judgment, judgmentApproved}, 1, "ann"},
+			args{[]knowledge.Knowledge{judgment, judgmentApproved}, 1, "sam"},
 			want{judgmentRetired, knowledge.Set{judgmentRetired, judgmentApproved, judgment}, "", nil},
 		},
 		{
 			"approved version is retired",
-			args{[]knowledge.Knowledge{candidate, approved}, 1, "ann"},
+			args{[]knowledge.Knowledge{candidate, approved}, 1, "sam"},
 			want{approvedRetired, knowledge.Set{approvedRetired, approved, candidate}, "", nil},
 		},
 		{
@@ -1115,7 +1115,7 @@ func TestLedgerRetire(t *testing.T) {
 		},
 		{
 			"unknown version is not found",
-			args{[]knowledge.Knowledge{candidate}, 9, "ann"},
+			args{[]knowledge.Knowledge{candidate}, 9, "sam"},
 			want{history: knowledge.Set{candidate}, err: knowledge.ErrNotFound},
 		},
 		{
@@ -1125,12 +1125,12 @@ func TestLedgerRetire(t *testing.T) {
 		},
 		{
 			"retired version cannot be retired again",
-			args{[]knowledge.Knowledge{candidate, retired}, 1, "ann"},
+			args{[]knowledge.Knowledge{candidate, retired}, 1, "sam"},
 			want{history: knowledge.Set{retired, candidate}, err: knowledge.ErrTransitionInvalid},
 		},
 		{
 			"superseded version cannot be retired",
-			args{[]knowledge.Knowledge{candidate, approved, superseded}, 1, "ann"},
+			args{[]knowledge.Knowledge{candidate, approved, superseded}, 1, "sam"},
 			want{history: knowledge.Set{superseded, approved, candidate}, err: knowledge.ErrTransitionInvalid},
 		},
 	}
@@ -1167,7 +1167,7 @@ func TestLedgerImport(t *testing.T) {
 		Status: knowledge.StatusCandidate, Author: "author", Time: at,
 	}
 	approved := candidate
-	approved.Status, approved.Approver, approved.ApprovedAt = knowledge.StatusApproved, "ann", at
+	approved.Status, approved.Approver, approved.ApprovedAt = knowledge.StatusApproved, "sam", at
 	empty := candidate
 	empty.Content = ""
 	judgment := approved
@@ -1216,7 +1216,7 @@ func TestLedgerImport(t *testing.T) {
 				"        - field: command\n" +
 				"          match: sed\\s+-i\n" +
 				"      reason: never edit files with sed -i\n" +
-				"      source: nodloop knowledge k1 v1 approved by ann\n", nil, "<nil>"},
+				"      source: nodloop knowledge k1 v1 approved by sam\n", nil, "<nil>"},
 		},
 		{
 			"invalid record stops the import before any record lands and is named by position",
@@ -1314,10 +1314,10 @@ func TestLedgerFailsOnBrokenStore(t *testing.T) {
 		return knowledge.NewLedger(store, vetofile.NewApprovedFile(blockedHome, "records"), now, newID)
 	}
 	approvedNow := candidate
-	approvedNow.Status, approvedNow.Approver = knowledge.StatusApproved, "ann"
+	approvedNow.Status, approvedNow.Approver = knowledge.StatusApproved, "sam"
 	approvedNow.ApprovedAt, approvedNow.Time = now(), now()
 	retiredNow := approved
-	retiredNow.Status, retiredNow.Approver, retiredNow.Time = knowledge.StatusRetired, "ann", now()
+	retiredNow.Status, retiredNow.Approver, retiredNow.Time = knowledge.StatusRetired, "sam", now()
 	third := candidate
 	third.ID = "k3"
 	type args struct {
@@ -1370,14 +1370,14 @@ func TestLedgerFailsOnBrokenStore(t *testing.T) {
 		{
 			"approve fails to read the records it decides on as a failed append",
 			args{unreadable, func(ctx context.Context, l *knowledge.Ledger) (any, error) {
-				return l.Approve(ctx, "k1", 1, "ann")
+				return l.Approve(ctx, "k1", 1, "sam")
 			}},
 			want{knowledge.Knowledge{}, file.ErrAppend},
 		},
 		{
 			"retire fails to read the records it decides on as a failed append",
 			args{unreadable, func(ctx context.Context, l *knowledge.Ledger) (any, error) {
-				return l.Retire(ctx, "k1", 1, "ann")
+				return l.Retire(ctx, "k1", 1, "sam")
 			}},
 			want{knowledge.Knowledge{}, file.ErrAppend},
 		},
@@ -1405,7 +1405,7 @@ func TestLedgerFailsOnBrokenStore(t *testing.T) {
 		{
 			"approve compaction fails to read the records it decides on as a failed append",
 			args{unreadable, func(ctx context.Context, l *knowledge.Ledger) (any, error) {
-				return l.ApproveCompaction(ctx, "c-x", "ann", knowledge.Coverage{Compaction: "c-x"})
+				return l.ApproveCompaction(ctx, "c-x", "sam", knowledge.Coverage{Compaction: "c-x"})
 			}},
 			want{knowledge.Compaction{}, file.ErrAppend},
 		},
@@ -1424,14 +1424,14 @@ func TestLedgerFailsOnBrokenStore(t *testing.T) {
 		{
 			"approve fails to export the vetoes and still returns the approved record",
 			args{blocked(), func(ctx context.Context, l *knowledge.Ledger) (any, error) {
-				return l.Approve(ctx, "k1", 1, "ann")
+				return l.Approve(ctx, "k1", 1, "sam")
 			}},
 			want{approvedNow, knowledge.ErrExport},
 		},
 		{
 			"retire fails to export the vetoes and still returns the retired record",
 			args{blocked(), func(ctx context.Context, l *knowledge.Ledger) (any, error) {
-				return l.Retire(ctx, "k2", 1, "ann")
+				return l.Retire(ctx, "k2", 1, "sam")
 			}},
 			want{retiredNow, knowledge.ErrExport},
 		},
@@ -1446,14 +1446,14 @@ func TestLedgerFailsOnBrokenStore(t *testing.T) {
 		{
 			"approve fails to append",
 			args{readOnly, func(ctx context.Context, l *knowledge.Ledger) (any, error) {
-				return l.Approve(ctx, "k1", 1, "ann")
+				return l.Approve(ctx, "k1", 1, "sam")
 			}},
 			want{knowledge.Knowledge{}, file.ErrAppend},
 		},
 		{
 			"retire fails to append",
 			args{readOnly, func(ctx context.Context, l *knowledge.Ledger) (any, error) {
-				return l.Retire(ctx, "k1", 1, "ann")
+				return l.Retire(ctx, "k1", 1, "sam")
 			}},
 			want{knowledge.Knowledge{}, file.ErrAppend},
 		},
@@ -1485,11 +1485,11 @@ func TestLedgerRefusedRetryExportsVetoes(t *testing.T) {
 	}
 	type call func(context.Context, *knowledge.Ledger) error
 	approve := func(ctx context.Context, l *knowledge.Ledger) error {
-		_, err := l.Approve(ctx, "v", 1, "ann")
+		_, err := l.Approve(ctx, "v", 1, "sam")
 		return err
 	}
 	retire := func(ctx context.Context, l *knowledge.Ledger) error {
-		_, err := l.Retire(ctx, "v", 1, "ann")
+		_, err := l.Retire(ctx, "v", 1, "sam")
 		return err
 	}
 	type args struct {
@@ -1623,12 +1623,12 @@ func TestLedgerUnknownID(t *testing.T) {
 		},
 		{
 			"approve of an unknown id is not found",
-			func(ctx context.Context, l *knowledge.Ledger) (any, error) { return l.Approve(ctx, "nope", 1, "ann") },
+			func(ctx context.Context, l *knowledge.Ledger) (any, error) { return l.Approve(ctx, "nope", 1, "sam") },
 			want{knowledge.Knowledge{}, knowledge.ErrNotFound},
 		},
 		{
 			"retire of an unknown id is not found",
-			func(ctx context.Context, l *knowledge.Ledger) (any, error) { return l.Retire(ctx, "nope", 1, "ann") },
+			func(ctx context.Context, l *knowledge.Ledger) (any, error) { return l.Retire(ctx, "nope", 1, "sam") },
 			want{knowledge.Knowledge{}, knowledge.ErrNotFound},
 		},
 		{
@@ -1835,7 +1835,7 @@ func TestLedgerConcurrentWrite(t *testing.T) {
 	}
 	approve := func(id string) func(ctx context.Context, l *knowledge.Ledger) error {
 		return func(ctx context.Context, l *knowledge.Ledger) error {
-			_, err := l.Approve(ctx, id, 1, "ann")
+			_, err := l.Approve(ctx, id, 1, "sam")
 			return err
 		}
 	}
@@ -1846,7 +1846,7 @@ func TestLedgerConcurrentWrite(t *testing.T) {
 		}
 	}
 	retire := func(ctx context.Context, l *knowledge.Ledger) error {
-		_, err := l.Retire(ctx, "item", 1, "ann")
+		_, err := l.Retire(ctx, "item", 1, "sam")
 		return err
 	}
 	tcs := []struct {
@@ -1970,7 +1970,7 @@ func TestLedgerConcurrentApprovalsKeepEveryVeto(t *testing.T) {
 	var wg sync.WaitGroup
 	for i, l := range ledgers {
 		wg.Go(func() {
-			_, err := l.Approve(ctx, fmt.Sprintf("v%d", i), 1, "ann")
+			_, err := l.Approve(ctx, fmt.Sprintf("v%d", i), 1, "sam")
 			assert.NoError(t, err)
 		})
 	}
