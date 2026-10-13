@@ -32,14 +32,40 @@ From then on every `knowledge("support-bot", acme)` carries the item, and a run 
 
 | Method | Returns |
 |---|---|
-| `knowledge(producer, labels)` | `Knowledge` with `items` and the `text` to put in the prompt |
-| `record(producer, output, *, labels, applied, subject)` | the run id a verdict cites |
+| `knowledge(producer, labels, holdout_key)` | `Knowledge` with `items`, the `text` to put in the prompt and `withheld`. With a `holdout_key` such as `<service>:<hour>`, the `holdout` share of config.json gets no items and `withheld` instead |
+| `record(producer, output, *, labels, applied, subject, withheld, holdout_key)` | the run id a verdict cites. Pass `knowledge.withheld` as `withheld` and the `holdout_key` the run passed to `knowledge`. `report effect` counts only runs recorded with the key and counts a run without it as `undrawn`. `withheld` takes `Ref` or `Item` values |
 | `judge(run, verdict, reason, reason_code, edited, reviewer)` | nothing |
 | `propose(kind, content, from_run, producer, labels, new_labels, item_id, veto)` | `Candidate` with `id`, `version`, `status` and `overlaps`, the current items of the same kind one run may carry with it |
 | `approve(item_id, version, approver, labels=)` | Approves as proposed, or for the runs carrying `labels` when given, and `{}` for every run of the producer. `Approval` with `id`, `version`, `status`, `approver`, `veto`, `compaction_due` when one run would carry more than five items, and `export_error` and `folder_error` when a step after the approval failed |
 | `check_call(tool, arguments, producer)` | `Decision` with `action` of allow, block or ask, `veto` and `reason` |
+| `outcome(run, result, confirmed_cause, note, reviewer)` | nothing. `result` is a `Result`, confirmed, refuted or inconclusive: what a real check found, apart from the verdict on the output |
+| `report(name)` | `Report` with `report`, the report as JSON, and `since`, the RFC3339 start of the runs it read or empty for every run. `name` is a `ReportName`: `loop`, `extract`, `critic`, `effect`, `health` or `replay` |
 
 A tool that refuses, such as a proposal from a run nobody corrected, raises `ToolError` with the reason.
+
+Every adapter takes an optional `holdout_key`, passes it to `knowledge` and `record` and records what came back as applied or withheld.
+
+## A stream producer with a holdout
+
+A producer that runs on a schedule, such as an anomaly check over each window of a stream, draws the holdout on a key it keeps for the run. Use `<service>:<time block of an hour or more>` so the windows of one block land in the same arm and a lesson seen in one window does not leak into a withheld window next to it.
+
+```python
+from datetime import datetime, timezone
+
+block = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H")  # one hour
+orders = {"service": ["orders"]}
+knowledge = await c.knowledge("lag-check", orders, holdout_key=f"orders:{block}")
+answer = await check(window, knowledge.text)
+run = await c.record(
+    "lag-check", answer, labels=orders, applied=knowledge.items, withheld=knowledge.withheld, holdout_key=f"orders:{block}"
+)
+
+# later, when the cause was checked
+await c.outcome(run, "confirmed", confirmed_cause="partition 7 was hot")
+effect = (await c.report("effect")).report
+```
+
+The share comes from `holdout` in config.json. With `url` the share is the one in the config.json of the nodloop server, read when the server starts.
 
 ## Adapters
 
@@ -71,11 +97,13 @@ Claude Agent SDK hooks, the same loop the Claude Code plugin runs:
 ```python
 from nodloop.claude_agent import NodloopHooks
 
-hooks = NodloopHooks(c, "support-bot", acme)
+hooks = NodloopHooks(c, "support-bot", acme, holdout_key=conversation_id)
 options = ClaudeAgentOptions(hooks=hooks.hooks())
 ```
 
 Use one adapter instance per run or conversation, since it keeps the items it handed out and the id of the run it recorded.
+
+The Claude Agent hooks draw once per conversation since the key stays the same for every turn, so a whole conversation is in one arm. `report effect` counts every turn of one key as one draw unit, so the turns of a conversation widen its intervals instead of passing for independent samples.
 
 ## A shared server
 

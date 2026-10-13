@@ -6,7 +6,7 @@ import json
 import os
 from contextlib import AsyncExitStack
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
@@ -14,14 +14,29 @@ from mcp.client.streamable_http import create_mcp_http_client, streamable_http_c
 
 from . import binary
 
-__all__ = ["Approval", "Candidate", "Client", "Decision", "Item", "Knowledge", "ToolError"]
+__all__ = ["Approval", "Candidate", "Client", "Decision", "Item", "Knowledge", "Ref", "Report", "ReportName", "Result", "ToolError"]
 
 # The binary release the client fetches when no nodloop is installed
 VERSION = "0.8.0"
 
 
+# The reports report reads
+ReportName = Literal["loop", "extract", "critic", "effect", "health", "replay"]
+
+# What a real check found for a run
+Result = Literal["confirmed", "refuted", "inconclusive"]
+
+
 class ToolError(RuntimeError):
     """A tool answered an error such as a refused proposal"""
+
+
+@dataclass(frozen=True)
+class Ref:
+    """One knowledge version as a run names it"""
+
+    id: str
+    version: int
 
 
 @dataclass(frozen=True)
@@ -89,6 +104,27 @@ class Knowledge:
     items: list[Item]
     # Empty without items so a prompt gains nothing
     text: str
+    # The id and version of each item the holdout kept from the run
+    # Empty unless the holdout drew the key
+    # Pass them to record as withheld so the run counts in the withheld arm of report effect
+    withheld: list[Ref] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class Report:
+    """One report of the records with the start of the runs it read"""
+
+    # The report as JSON
+    report: Any
+    # The RFC3339 start of the window and empty when the report read every run
+    since: str = ""
+
+
+def _ref(v: Item | Ref | dict[str, Any]) -> dict[str, Any]:
+    """The id and version the run tool takes from an item or a ref"""
+    if isinstance(v, dict):
+        return {"id": v["id"], "version": v["version"]}
+    return {"id": v.id, "version": v.version}
 
 
 class Client:
@@ -156,11 +192,20 @@ class Client:
             return structured
         return json.loads(text) if text else None
 
-    async def knowledge(self, producer: str, labels: dict[str, list[str]] | None = None) -> Knowledge:
-        """The approved items a run of the producer with the labels receives and the text to put in its prompt"""
-        answer = await self.call("knowledge_for", {"producer": producer, "labels": labels or {}})
+    async def knowledge(self, producer: str, labels: dict[str, list[str]] | None = None, holdout_key: str = "") -> Knowledge:
+        """The approved items a run of the producer with the labels receives and the text to put in its prompt
+
+        holdout_key is a string kept for one run such as a service and an hour block and the holdout share of config.json draws on it
+        A drawn run gets no item and withheld instead
+        Without a key nothing is withheld
+        """
+        args: dict[str, Any] = {"producer": producer, "labels": labels or {}}
+        if holdout_key:
+            args["holdout_key"] = holdout_key
+        answer = await self.call("knowledge_for", args)
         items = [Item(i["id"], i["version"], i["kind"], i["content"], i.get("scope", {})) for i in answer.get("items") or []]
-        return Knowledge(items, answer.get("context", ""))
+        withheld = [Ref(r["id"], r["version"]) for r in answer.get("withheld") or []]
+        return Knowledge(items, answer.get("context", ""), withheld)
 
     async def record(
         self,
@@ -170,13 +215,25 @@ class Client:
         labels: dict[str, list[str]] | None = None,
         applied: list[Item] | None = None,
         subject: str = "",
+        withheld: list[Item | Ref] | None = None,
+        holdout_key: str = "",
     ) -> str:
-        """Records one output and returns the run id a verdict cites"""
+        """Records one output and returns the run id a verdict cites
+
+        withheld takes the refs knowledge answered for a run the holdout drew or the items themselves
+        Never together with applied
+        holdout_key is the key the run passed to knowledge
+        report effect counts a run without it only as undrawn
+        """
         args: dict[str, Any] = {"producer": producer, "output": output, "labels": labels or {}}
         if applied:
-            args["applied"] = [i.ref for i in applied]
+            args["applied"] = [_ref(i) for i in applied]
+        if withheld:
+            args["withheld"] = [_ref(r) for r in withheld]
         if subject:
             args["subject"] = subject
+        if holdout_key:
+            args["holdout_key"] = holdout_key
         return (await self.call("run", args))["trace_id"]
 
     async def judge(
@@ -196,6 +253,23 @@ class Client:
         if edited is not None:
             args["edited_output"] = edited
         await self.call("feedback", args)
+
+    async def outcome(self, run: str, result: Result, confirmed_cause: str = "", note: str = "", reviewer: str = "") -> None:
+        """Records what a real check found for a run: confirmed, refuted or inconclusive
+
+        A different fact from the verdict on the output
+        confirmed_cause only goes with confirmed
+        """
+        args: dict[str, Any] = {"trace_id": run, "result": result}
+        for key, value in (("confirmed_cause", confirmed_cause), ("note", note), ("reviewer", reviewer)):
+            if value:
+                args[key] = value
+        await self.call("outcome", args)
+
+    async def report(self, name: ReportName) -> Report:
+        """One report of the records as JSON with the start of the window it read"""
+        answer = await self.call("report", {"name": name})
+        return Report(answer["report"], answer.get("since", ""))
 
     async def propose(
         self,

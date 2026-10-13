@@ -20,6 +20,12 @@ export interface Item {
   scope?: Record<string, unknown>;
 }
 
+/** One knowledge version as a run names it */
+export interface Ref {
+  id: string;
+  version: number;
+}
+
 /**
  * The approved items a run receives and the text that carries them into its prompt
  * The text is empty without items so a prompt gains nothing
@@ -27,6 +33,12 @@ export interface Item {
 export interface Knowledge {
   items: Item[];
   text: string;
+  /**
+   * The items the holdout kept from the run
+   * Empty unless the holdout drew the key and absent from a Knowledge built without one
+   * Pass them to record as withheld so the run counts in the withheld arm of report effect
+   */
+  withheld?: Ref[];
 }
 
 /** What a tool call may do */
@@ -68,10 +80,49 @@ export interface Run {
   /** Text or any JSON value */
   output: unknown;
   labels?: Labels;
-  /** The items the run received, as knowledge returned them */
-  applied?: Item[];
+  /** The items the run received as knowledge returned them, or their refs */
+  applied?: (Item | Ref)[];
+  /**
+   * The items the holdout kept from the run as knowledge returned them in withheld, or the items themselves
+   * Never together with applied
+   */
+  withheld?: (Item | Ref)[];
   /** What the run was about in a few words */
   subject?: string;
+  /**
+   * The key the run passed to knowledge
+   * report effect counts a run without it only as undrawn
+   */
+  holdoutKey?: string;
+}
+
+/** The reports report reads */
+export type ReportName = "loop" | "extract" | "critic" | "effect" | "health" | "replay";
+
+/** One report of the records with the start of the runs it read */
+export interface Report {
+  /** The report as JSON */
+  report: any;
+  /** The RFC3339 start of the window and absent when the report read every run */
+  since?: string;
+}
+
+/** What an adapter takes besides the client and the producer */
+export interface AdapterOptions<L = Labels> {
+  labels?: L;
+  /** Passed to knowledge so a share of runs gets no item and report effect compares them */
+  holdoutKey?: string;
+}
+
+/**
+ * The options of an adapter from its third argument
+ * A labels mapping alone stays accepted since every label value is a list and no option value is
+ */
+export function adapterOptions<L>(arg: L | AdapterOptions<L> | undefined, empty: L): { labels: L; holdoutKey: string } {
+  if (arg === undefined) return { labels: empty, holdoutKey: "" };
+  if (typeof arg === "function" || Object.values(arg as object).some(Array.isArray)) return { labels: arg as L, holdoutKey: "" };
+  const options = arg as AdapterOptions<L>;
+  return { labels: options.labels ?? empty, holdoutKey: options.holdoutKey ?? "" };
 }
 
 /** A tool answered an error such as a refused proposal */
@@ -130,17 +181,26 @@ export class Client {
     return result.structuredContent ?? (text ? JSON.parse(text) : undefined);
   }
 
-  /** The approved items a run of the producer with the labels receives and the text to put in its prompt */
-  async knowledge(producer: string, labels: Labels = {}): Promise<Knowledge> {
-    const answer = await this.call("knowledge_for", { producer, labels });
-    return { items: answer.items ?? [], text: answer.context ?? "" };
+  /**
+   * The approved items a run of the producer with the labels receives and the text to put in its prompt
+   * holdoutKey is a string kept for one run such as a service and an hour block and the holdout share of config.json draws on it
+   * A drawn run gets no item and withheld instead
+   * Without a key nothing is withheld
+   */
+  async knowledge(producer: string, labels: Labels = {}, holdoutKey = ""): Promise<Knowledge> {
+    const args: Record<string, unknown> = { producer, labels };
+    if (holdoutKey) args.holdout_key = holdoutKey;
+    const answer = await this.call("knowledge_for", args);
+    return { items: answer.items ?? [], text: answer.context ?? "", withheld: answer.withheld ?? [] };
   }
 
   /** Records one output and returns the run id a verdict cites */
   async record(run: Run): Promise<string> {
     const args: Record<string, unknown> = { producer: run.producer, output: run.output, labels: run.labels ?? {} };
     if (run.applied?.length) args.applied = run.applied.map((i) => ({ id: i.id, version: i.version }));
+    if (run.withheld?.length) args.withheld = run.withheld.map(({ id, version }) => ({ id, version }));
     if (run.subject) args.subject = run.subject;
+    if (run.holdoutKey) args.holdout_key = run.holdoutKey;
     return (await this.call("run", args)).trace_id;
   }
 
@@ -156,6 +216,28 @@ export class Client {
     if (options.reviewer) args.reviewer = options.reviewer;
     if (options.edited !== undefined) args.edited_output = options.edited;
     await this.call("feedback", args);
+  }
+
+  /**
+   * Records what a real check found for a run
+   * A different fact from the verdict on the output and confirmedCause only goes with confirmed
+   */
+  async outcome(
+    run: string,
+    result: "confirmed" | "refuted" | "inconclusive",
+    options: { confirmedCause?: string; note?: string; reviewer?: string } = {},
+  ): Promise<void> {
+    const args: Record<string, unknown> = { trace_id: run, result };
+    if (options.confirmedCause) args.confirmed_cause = options.confirmedCause;
+    if (options.note) args.note = options.note;
+    if (options.reviewer) args.reviewer = options.reviewer;
+    await this.call("outcome", args);
+  }
+
+  /** One report of the records as JSON with the start of the window it read */
+  async report(name: ReportName): Promise<Report> {
+    const { report, since } = await this.call("report", { name });
+    return since ? { report, since } : { report };
   }
 
   /** Proposes a candidate a person approves later, from a corrected run or for a producer and labels */
