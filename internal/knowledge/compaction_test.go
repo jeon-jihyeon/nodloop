@@ -529,7 +529,7 @@ func TestLedgerProposeCompactionAgain(t *testing.T) {
 			second, err := l.ProposeCompaction(ctx, "a", seeds.drafts()[:1])
 			all, listErr := l.All(ctx)
 			require.NoError(t, listErr)
-			_, approveErr := approveCompaction(ctx, l, second.ID, "ann")
+			_, approveErr := approveCompaction(ctx, l, second.ID, "sam")
 
 			assert.ErrorIs(t, err, tc.want.err)
 			assert.Len(t, all, tc.want.records)
@@ -768,12 +768,12 @@ func TestLedgerCompactionCompleteness(t *testing.T) {
 			require.NoError(t, err)
 			id := before[0].Compaction
 			got, lookupErr := l.Compaction(ctx, id)
-			_, individualErr := l.Approve(ctx, proposed.Items[0].ID, proposed.Items[0].Version, "ann")
+			_, individualErr := l.Approve(ctx, proposed.Items[0].ID, proposed.Items[0].Version, "sam")
 			cv := coverage(proposed)
-			_, approveErr := l.ApproveCompaction(ctx, id, "ann", cv)
+			_, approveErr := l.ApproveCompaction(ctx, id, "sam", cv)
 			after, err := l.All(ctx)
 			require.NoError(t, err)
-			_, retryErr := l.ApproveCompaction(ctx, id, "ann", cv)
+			_, retryErr := l.ApproveCompaction(ctx, id, "sam", cv)
 			retried, err := l.All(ctx)
 			require.NoError(t, err)
 			vetoes, err := os.ReadFile(vetoPath)
@@ -924,41 +924,41 @@ func TestLedgerApproveCompaction(t *testing.T) {
 	}{
 		{
 			"approves the new items and retires the old ones",
-			args{coverage: passed, approver: "ann"},
+			args{coverage: passed, approver: "sam"},
 			want{appended: success, items: items, vetoes: true},
 		},
 		{
 			"a second call after a partial append appends only what is missing",
-			args{approved: candidate, coverage: passed, approver: "ann"},
+			args{approved: candidate, coverage: passed, approver: "sam"},
 			want{appended: success[1:], items: items, vetoes: true},
 		},
-		{"refused without a coverage", args{coverage: none, approver: "ann"}, want{err: knowledge.ErrCoverageNotPassed}},
-		{"refused when a fact is lost", args{coverage: lost, approver: "ann"}, want{err: knowledge.ErrCoverageNotPassed}},
-		{"refused when an old item is not covered", args{coverage: uncovered, approver: "ann"}, want{err: knowledge.ErrCoverageNotPassed}},
-		{"refused with the coverage of another compaction", args{coverage: other, approver: "ann"}, want{err: knowledge.ErrCoverageNotPassed}},
+		{"refused without a coverage", args{coverage: none, approver: "sam"}, want{err: knowledge.ErrCoverageNotPassed}},
+		{"refused when a fact is lost", args{coverage: lost, approver: "sam"}, want{err: knowledge.ErrCoverageNotPassed}},
+		{"refused when an old item is not covered", args{coverage: uncovered, approver: "sam"}, want{err: knowledge.ErrCoverageNotPassed}},
+		{"refused with the coverage of another compaction", args{coverage: other, approver: "sam"}, want{err: knowledge.ErrCoverageNotPassed}},
 		{
 			"refused when an old item changed since the proposal",
-			args{retired: []knowledge.Ref{{ID: "b", Version: 1}}, coverage: passed, approver: "ann"},
+			args{retired: []knowledge.Ref{{ID: "b", Version: 1}}, coverage: passed, approver: "sam"},
 			want{err: knowledge.ErrCompactionOutdated},
 		},
 		{
 			"refused when a candidate of the compaction was retired",
-			args{retired: candidate, coverage: passed, approver: "ann"},
+			args{retired: candidate, coverage: passed, approver: "sam"},
 			want{err: knowledge.ErrTransitionInvalid},
 		},
 		{
 			"refused when a new item pushes a review past the char cap",
-			args{coverage: passed, approver: "ann", drafts: longer},
+			args{coverage: passed, approver: "sam", drafts: longer},
 			want{err: knowledge.ErrFolderFull},
 		},
 		{
 			"a compaction that shrinks a review already past the char cap passes",
-			args{coverage: passed, approver: "ann", extra: []knowledge.Knowledge{large}},
+			args{coverage: passed, approver: "sam", extra: []knowledge.Knowledge{large}},
 			want{appended: retired([]knowledge.Knowledge{large}), items: items, vetoes: true},
 		},
 		{
 			"a compaction that shrinks a review already past the item cap passes",
-			args{coverage: passed, approver: "ann", extra: crowd},
+			args{coverage: passed, approver: "sam", extra: crowd},
 			want{appended: retired(crowd), items: items, vetoes: true},
 		},
 		{"refused without an approver", args{coverage: passed}, want{err: knowledge.ErrApproverRequired}},
@@ -986,7 +986,7 @@ func TestLedgerApproveCompaction(t *testing.T) {
 				history, err := l.History(ctx, ref.ID)
 				require.NoError(t, err)
 				k := history[0]
-				k.Status, k.Approver = knowledge.StatusApproved, "ann"
+				k.Status, k.Approver = knowledge.StatusApproved, "sam"
 				require.NoError(t, testkit.Err(l.Import(ctx, []knowledge.Knowledge{k})))
 			}
 			before, err := l.All(ctx)
@@ -1050,13 +1050,13 @@ func TestLedgerNarrowedDuringCompaction(t *testing.T) {
 			require.NoError(t, testkit.Err(l.Import(ctx, seeds.all())))
 			_, err = l.ProposeCompaction(ctx, "j", seeds.drafts())
 			require.NoError(t, err)
-			narrowed, _, err := l.Narrow(ctx, "j", 1, "task", []string{"push"}, []string{"r9"}, "ann")
+			narrowed, _, err := l.Narrow(ctx, "j", 1, "task", []string{"push"}, []string{"r9"}, "sam")
 			require.NoError(t, err)
 			require.Equal(t, 3, narrowed.Version)
 
 			approvals := map[string]func() error{
-				"narrowed":   func() error { return testkit.Err(l.Approve(ctx, "j", 3, "ann")) },
-				"compaction": func() error { return testkit.Err(approveCompaction(ctx, l, "c-1", "ann")) },
+				"narrowed":   func() error { return testkit.Err(l.Approve(ctx, "j", 3, "sam")) },
+				"compaction": func() error { return testkit.Err(approveCompaction(ctx, l, "c-1", "sam")) },
 			}
 			errs := map[string]error{}
 			for _, step := range tc.args {
@@ -1079,7 +1079,7 @@ func TestLedgerCandidateOfCompactedVersion(t *testing.T) {
 	reword := func(id string) knowledge.Knowledge {
 		return knowledge.Knowledge{
 			ID: id, Kind: knowledge.KindMeaning, Content: id + " reworded", Run: seeds.b.Run,
-			Evidence: knowledge.Evidence{FeedbackTraceIDs: []string{"t9"}}, Author: "ann",
+			Evidence: knowledge.Evidence{FeedbackTraceIDs: []string{"t9"}}, Author: "sam",
 		}
 	}
 	stacked := reword("b")
@@ -1101,20 +1101,20 @@ func TestLedgerCandidateOfCompactedVersion(t *testing.T) {
 			return testkit.Err(l.ProposeCompaction(ctx, "j", seeds.drafts()))
 		},
 		"approve compaction": func(ctx context.Context, l *knowledge.Ledger) error {
-			return testkit.Err(approveCompaction(ctx, l, "c-1", "ann"))
+			return testkit.Err(approveCompaction(ctx, l, "c-1", "sam"))
 		},
 		"approve b v2": func(ctx context.Context, l *knowledge.Ledger) error {
-			return testkit.Err(l.Approve(ctx, "b", 2, "ann"))
+			return testkit.Err(l.Approve(ctx, "b", 2, "sam"))
 		},
 		"approve b v3": func(ctx context.Context, l *knowledge.Ledger) error {
-			return testkit.Err(l.Approve(ctx, "b", 3, "ann"))
+			return testkit.Err(l.Approve(ctx, "b", 3, "sam"))
 		},
 		"approve k-1 v2": func(ctx context.Context, l *knowledge.Ledger) error {
-			return testkit.Err(l.Approve(ctx, "k-1", 2, "ann"))
+			return testkit.Err(l.Approve(ctx, "k-1", 2, "sam"))
 		},
-		"retire b v1": func(ctx context.Context, l *knowledge.Ledger) error { return testkit.Err(l.Retire(ctx, "b", 1, "ann")) },
+		"retire b v1": func(ctx context.Context, l *knowledge.Ledger) error { return testkit.Err(l.Retire(ctx, "b", 1, "sam")) },
 		"retire k-1 v1": func(ctx context.Context, l *knowledge.Ledger) error {
-			return testkit.Err(l.Retire(ctx, "k-1", 1, "ann"))
+			return testkit.Err(l.Retire(ctx, "k-1", 1, "sam"))
 		},
 	}
 	type want struct {
@@ -1257,7 +1257,7 @@ func TestLedgerProposeCompactionFreesFolder(t *testing.T) {
 
 			got, err := l.ProposeCompaction(ctx, "k00", tc.args)
 			if err == nil {
-				require.NoError(t, testkit.Err(l.ApproveCompaction(ctx, got.ID, "ann", coverage(got))))
+				require.NoError(t, testkit.Err(l.ApproveCompaction(ctx, got.ID, "sam", coverage(got))))
 			}
 			next := knowledge.Knowledge{
 				ID: "k-next", Kind: knowledge.KindMeaning, Content: "next fact", Author: "author",
@@ -1266,7 +1266,7 @@ func TestLedgerProposeCompactionFreesFolder(t *testing.T) {
 			}
 			_, _, proposeErr := l.Propose(ctx, next)
 			require.NoError(t, proposeErr)
-			_, nextErr := l.Approve(ctx, "k-next", 1, "ann")
+			_, nextErr := l.Approve(ctx, "k-next", 1, "sam")
 
 			assert.ErrorIs(t, err, tc.want.err)
 			assert.Len(t, got.Items, tc.want.items)
