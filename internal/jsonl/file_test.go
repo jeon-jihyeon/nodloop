@@ -543,6 +543,267 @@ func TestFileRepair(t *testing.T) {
 	}
 }
 
+func dropX() (func(row) bool, error) {
+	return func(r row) bool { return r.ID == "x" }, nil
+}
+
+func TestFileRemove(t *testing.T) {
+	type want struct {
+		removed int
+		content string
+	}
+	tcs := []struct {
+		name string
+		args string
+		want want
+	}{
+		{"nothing to drop leaves the file as it is", "{\"id\":\"a\"}\n", want{0, "{\"id\":\"a\"}\n"}},
+		{
+			"dropped records go and the rest stays in order",
+			"{\"id\":\"x\"}\n{\"id\":\"a\"}\n{\"id\":\"x\"}\n{\"id\":\"b\"}\n",
+			want{2, "{\"id\":\"a\"}\n{\"id\":\"b\"}\n"},
+		},
+		{"a corrupt line stays for doctor", "not json\n{\"id\":\"x\"}\n", want{1, "not json\n"}},
+		{"a torn last line stays for the next append", "{\"id\":\"x\"}\n{\"id", want{1, "{\"id"}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			path := filepath.Join(dir, "rows.jsonl")
+			require.NoError(t, os.WriteFile(path, []byte(tc.args), 0o600))
+			f, err := jsonl.Open[row](dir, "rows.jsonl")
+			require.NoError(t, err)
+
+			removed, err := f.Remove(dropX)
+
+			require.NoError(t, err)
+			assert.Equal(t, tc.want.removed, removed)
+			got, err := os.ReadFile(path)
+			require.NoError(t, err)
+			assert.Equal(t, tc.want.content, string(got))
+			assert.NoFileExists(t, path+".tmp", "no temp file is left beside the file")
+			assert.NoFileExists(t, path+".bak")
+		})
+	}
+}
+
+func TestFileRemoveDecide(t *testing.T) {
+	type want struct {
+		removed int
+		content string
+		err     error
+	}
+	content := "{\"id\":\"x\"}\n{\"id\":\"a\"}\n"
+	tcs := []struct {
+		name string
+		args func() (func(row) bool, error)
+		want want
+	}{
+		{"a refusal removes nothing and comes back", func() (func(row) bool, error) { return nil, assert.AnError }, want{0, content, assert.AnError}},
+		{"no drop leaves the file as it is", func() (func(row) bool, error) { return nil, nil }, want{0, content, nil}},
+		{"the drop decide returns removes", dropX, want{1, "{\"id\":\"a\"}\n", nil}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			path := filepath.Join(dir, "rows.jsonl")
+			require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
+			f, err := jsonl.Open[row](dir, "rows.jsonl")
+			require.NoError(t, err)
+
+			removed, err := f.Remove(tc.args)
+
+			assert.ErrorIs(t, err, tc.want.err)
+			assert.Equal(t, tc.want.removed, removed)
+			got, err := os.ReadFile(path)
+			require.NoError(t, err)
+			assert.Equal(t, tc.want.content, string(got))
+			assert.NoFileExists(t, path+".tmp")
+		})
+	}
+}
+
+// A rewrite that stops between its synced temp file and the rename as a killed process would
+// 1. a reader at that point reads every record of the file
+// 2. the file keeps every record and the next Open removes the temp file
+// 3. the next rewrite then runs as if nothing had happened
+// Not parallel since the stop holds for every rewrite of the package
+func TestFileRewriteStoppedBeforeRename(t *testing.T) {
+	content := "{\"id\":\"x\"}\n{\"id\":\"a\"}\nnot json\n{\"id\":\"b\"}\n"
+	whole := []row{{"x", 0}, {"a", 0}, {"b", 0}}
+	tcs := []struct {
+		name string
+		args func(jsonl.File[row]) (int, error)
+		want string
+	}{
+		{"remove", func(f jsonl.File[row]) (int, error) { return f.Remove(dropX) }, "{\"id\":\"a\"}\nnot json\n{\"id\":\"b\"}\n"},
+		{"repair", jsonl.File[row].Repair, "{\"id\":\"x\"}\n{\"id\":\"a\"}\n{\"id\":\"b\"}\n"},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "rows.jsonl")
+			require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
+			f, err := jsonl.Open[row](dir, "rows.jsonl")
+			require.NoError(t, err)
+			var seen []row
+			restore := jsonl.StopBeforeReplace(func() error {
+				seen, _ = f.All()
+				return assert.AnError
+			})
+
+			_, err = tc.args(f)
+			restore()
+
+			assert.ErrorIs(t, err, assert.AnError)
+			assert.Equal(t, whole, seen, "a reader during the rewrite reads every record")
+			got, err := os.ReadFile(path)
+			require.NoError(t, err)
+			assert.Equal(t, content, string(got), "the file keeps every record")
+			assert.FileExists(t, path+".tmp", "the stop leaves the temp file as a crash would")
+
+			reopened, err := jsonl.Open[row](dir, "rows.jsonl")
+			require.NoError(t, err)
+			assert.NoFileExists(t, path+".tmp", "open removes the temp file")
+			_, err = tc.args(reopened)
+			require.NoError(t, err)
+			got, err = os.ReadFile(path)
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, string(got))
+		})
+	}
+}
+
+// A backup an earlier release left when it stopped while it rewrote the file in place
+// Open puts back every record of the backup and keeps what was appended since
+func TestOpenRecoversBackup(t *testing.T) {
+	const (
+		a = "{\"id\":\"a\"}\n"
+		x = "{\"id\":\"x\"}\n"
+		b = "{\"id\":\"b\"}\n"
+		c = "{\"id\":\"c\"}\n"
+	)
+	const bom = "\uFEFF"
+	tcs := []struct {
+		name string
+		// The files written before Open by name
+		args map[string]string
+		want string
+	}{
+		{"an emptied file gets the backup back", map[string]string{"rows.jsonl.bak": a + x + b, "rows.jsonl": ""}, a + x + b},
+		{"a file cut halfway gets the backup back", map[string]string{"rows.jsonl.bak": a + x + b, "rows.jsonl": a + "{\"id\":\"b"}, a + x + b},
+		{"an emptied file keeps the runs appended since", map[string]string{"rows.jsonl.bak": a + x + b, "rows.jsonl": c}, a + x + b + c},
+		{"a finished rewrite keeps its appends after the backup", map[string]string{"rows.jsonl.bak": a + x + b, "rows.jsonl": a + b + c}, a + x + b + c},
+		{
+			"a backup torn while it was written leaves the file as it was",
+			map[string]string{"rows.jsonl.bak": a + "{\"id\":\"x", "rows.jsonl": a + x + b + c}, a + x + b + c,
+		},
+		{"equal lines count once each", map[string]string{"rows.jsonl.bak": a + a, "rows.jsonl": a + a + a}, a + a + a},
+		{"a missing file gets the backup back", map[string]string{"rows.jsonl.bak": a + x}, a + x},
+		{
+			"a byte order mark on the backup matches the first line the rewrite wrote without it",
+			map[string]string{"rows.jsonl.bak": bom + a + x + b, "rows.jsonl": a + b + c}, a + x + b + c,
+		},
+		{"a byte order mark on both files matches", map[string]string{"rows.jsonl.bak": bom + a + x, "rows.jsonl": bom + a + c}, a + x + c},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			path := filepath.Join(dir, "rows.jsonl")
+			for name, content := range tc.args {
+				require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte(content), 0o600))
+			}
+
+			f, err := jsonl.Open[row](dir, "rows.jsonl")
+
+			require.NoError(t, err)
+			got, err := os.ReadFile(path)
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, string(got))
+			assert.NoFileExists(t, path+".bak")
+			_, err = f.All()
+			assert.NoError(t, err)
+		})
+	}
+}
+
+// A recovery that fails leaves the backup so the next Open merges it again into the same records
+// Not parallel since the stop holds for every rewrite of the package
+func TestOpenRecoverFailures(t *testing.T) {
+	const (
+		a = "{\"id\":\"a\"}\n"
+		x = "{\"id\":\"x\"}\n"
+		c = "{\"id\":\"c\"}\n"
+	)
+	// Puts a directory holding a file where the backup is so a read or a removal of it fails
+	backupDir := func(path string) error {
+		return errors.Join(os.Remove(path+".bak"), os.MkdirAll(filepath.Join(path+".bak", "held"), 0o700))
+	}
+	tcs := []struct {
+		name string
+		// Runs before Open
+		before func(path string) error
+		// Runs where the recovery renames the merged file
+		stop func(path string) error
+		want error
+	}{
+		{"a backup that cannot be read", backupDir, func(string) error { return nil }, syscall.EISDIR},
+		{"a rename that fails", func(string) error { return nil }, func(string) error { return assert.AnError }, assert.AnError},
+		{"a backup that cannot be removed after the rename", func(string) error { return nil }, backupDir, syscall.ENOTEMPTY},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "rows.jsonl")
+			require.NoError(t, os.WriteFile(path+".bak", []byte(a+x), 0o600))
+			require.NoError(t, os.WriteFile(path, []byte(a+c), 0o600))
+			require.NoError(t, tc.before(path))
+			restore := jsonl.StopBeforeReplace(func() error { return tc.stop(path) })
+
+			_, err := jsonl.Open[row](dir, "rows.jsonl")
+			restore()
+
+			assert.ErrorIs(t, err, tc.want)
+			require.NoError(t, os.RemoveAll(path+".bak"))
+			require.NoError(t, os.WriteFile(path+".bak", []byte(a+x), 0o600))
+			_, err = jsonl.Open[row](dir, "rows.jsonl")
+			require.NoError(t, err)
+			got, err := os.ReadFile(path)
+			require.NoError(t, err)
+			assert.Equal(t, a+x+c, string(got))
+			assert.NoFileExists(t, path+".bak")
+			assert.NoFileExists(t, path+".tmp")
+		})
+	}
+}
+
+// Writers that append while removes replace the file keep every record
+func TestFileRemoveConcurrentWritersKeepEveryRecord(t *testing.T) {
+	f, err := jsonl.Open[row](t.TempDir(), "rows.jsonl")
+	require.NoError(t, err)
+	var wg sync.WaitGroup
+	for i := range 40 {
+		wg.Go(func() {
+			assert.NoError(t, f.Append(row{ID: "kept", N: i}))
+			assert.NoError(t, f.Append(row{ID: "x", N: i}))
+		})
+		wg.Go(func() {
+			_, err := f.Remove(dropX)
+			assert.NoError(t, err)
+		})
+	}
+	wg.Wait()
+
+	all, err := f.All()
+
+	require.NoError(t, err)
+	kept := slices.DeleteFunc(all, func(r row) bool { return r.ID == "x" })
+	assert.Len(t, kept, 40)
+}
+
 // Newest over any content finds the records All finds in the reverse order and agrees on corrupt lines
 func FuzzFileNewest(f *testing.F) {
 	for _, seed := range []string{
