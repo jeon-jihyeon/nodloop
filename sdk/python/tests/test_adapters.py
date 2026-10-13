@@ -1,11 +1,12 @@
 from dataclasses import dataclass, field, replace
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
-from nodloop import Client
+from nodloop import Client, Ref
 from nodloop.claude_agent import NodloopHooks as ClaudeHooks
 from nodloop.langchain import NodloopMiddleware
 from nodloop.openai_agents import NodloopHooks as OpenAIHooks
@@ -159,3 +160,20 @@ async def test_langchain_create_agent(binary: str, records: str) -> None:
     assert mw.run in recorded
     assert len(prompts) == 2 and all(p.startswith("You help\n\nnodloop: corrections") for p in prompts)
     assert [i.id for i in mw.applied] == ["window"]
+
+
+async def test_adapter_records_withheld(binary: str, records: str, home: Path) -> None:
+    """An adapter with a holdout key the holdout draws gets no item and records the run as withheld"""
+    (home / ".nodloop").mkdir(exist_ok=True)
+    (home / ".nodloop" / "config.json").write_text('{"holdout": 0.999}')
+    async with Client(records, binary) as c:
+        await seed(c)
+        hooks = ClaudeHooks(c, "bot", ACME, holdout_key="conversation-1")
+
+        prompt = await hooks.prompt({"prompt": "refund?"}, None, None)
+        await hooks.stop({"last_assistant_message": "The window is 30 days"}, None, None)
+        effect = (await c.call("report", {"name": "effect"}))["report"]
+
+    assert prompt == {}
+    assert hooks.applied == [] and Ref("window", 1) in hooks.withheld
+    assert [(r["runs"], r["judged"], r["undrawn"]) for r in effect if r.get("producer") == "bot" and r["arm"] == "withheld"] == [(1, 0, 0)]

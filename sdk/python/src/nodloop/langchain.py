@@ -13,7 +13,7 @@ from typing import Any
 from langchain.agents.middleware import AgentMiddleware
 from langchain_core.messages import AIMessage, SystemMessage, ToolMessage
 
-from .client import Client, Item, Knowledge
+from .client import Client, Item, Knowledge, Ref
 
 Labels = dict[str, list[str]]
 
@@ -24,12 +24,21 @@ class NodloopMiddleware(AgentMiddleware):
     labels is a mapping or a function of the agent state that returns one
     """
 
-    def __init__(self, client: Client, producer: str, labels: Labels | Callable[[Any], Labels] | None = None) -> None:
+    def __init__(
+        self,
+        client: Client,
+        producer: str,
+        labels: Labels | Callable[[Any], Labels] | None = None,
+        holdout_key: str = "",
+    ) -> None:
         super().__init__()
         self.client = client
         self.producer = producer
         self.labels = labels or {}
+        # Passed to knowledge so a share of runs gets no item and report effect compares them
+        self.holdout_key = holdout_key
         self.applied: list[Item] = []
+        self.withheld: list[Ref] = []
         # The items of the current run, fetched on its first model call and dropped once the run is recorded
         self._knowledge: Knowledge | None = None
         # The run the final answer was recorded as so a verdict can cite it
@@ -40,8 +49,8 @@ class NodloopMiddleware(AgentMiddleware):
 
     async def awrap_model_call(self, request: Any, handler: Callable[[Any], Any]) -> Any:
         if self._knowledge is None:
-            self._knowledge = await self.client.knowledge(self.producer, self._labels(request.state))
-            self.applied = self._knowledge.items
+            self._knowledge = await self.client.knowledge(self.producer, self._labels(request.state), self.holdout_key)
+            self.applied, self.withheld = self._knowledge.items, self._knowledge.withheld
         text = self._knowledge.text
         if not text:
             return await handler(request)
@@ -50,7 +59,14 @@ class NodloopMiddleware(AgentMiddleware):
     async def aafter_agent(self, state: Any, runtime: Any) -> None:
         answers = [m for m in state["messages"] if isinstance(m, AIMessage)]
         if answers:
-            self.run = await self.client.record(self.producer, answers[-1].text, labels=self._labels(state), applied=self.applied)
+            self.run = await self.client.record(
+                self.producer,
+                answers[-1].text,
+                labels=self._labels(state),
+                applied=self.applied,
+                withheld=self.withheld,
+                holdout_key=self.holdout_key,
+            )
         self._knowledge = None
 
     async def awrap_tool_call(self, request: Any, handler: Callable[[Any], Any]) -> Any:

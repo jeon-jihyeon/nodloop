@@ -6,7 +6,7 @@ import { NodloopMiddleware } from "../src/langchain.ts";
 import { AIMessage, createAgent, HumanMessage, SystemMessage, ToolMessage } from "langchain";
 import { FakeListChatModel } from "@langchain/core/utils/testing";
 import type { BaseMessage } from "@langchain/core/messages";
-import { acme, open, runs, seed } from "./setup.ts";
+import { acme, holdout, open, runs, seed } from "./setup.ts";
 
 const signal = { signal: new AbortController().signal };
 
@@ -129,6 +129,28 @@ test("langchain middleware inside createAgent puts the items in the system messa
     assert.ok(mw.run);
     assert.ok((await runs(c)).includes(mw.run));
   } finally {
+    await c.close();
+  }
+});
+
+test("an adapter with a holdout key the holdout draws gets no item and records the run as withheld", async () => {
+  holdout(0.999);
+  const c = await open();
+  try {
+    await seed(c);
+    const hooks = new ClaudeHooks(c, "bot", { labels: acme, holdoutKey: "conversation-1" });
+
+    const prompt: any = await hooks.prompt({ hook_event_name: "UserPromptSubmit", prompt: "refund?" } as any, undefined, signal);
+    await hooks.stop({ hook_event_name: "Stop", last_assistant_message: "The window is 30 days" } as any, undefined, signal);
+    const effect = (await c.call("report", { name: "effect" })).report;
+
+    assert.deepEqual(prompt, {});
+    assert.deepEqual(hooks.applied, []);
+    assert.ok(hooks.withheld.some((r) => r.id === "window"));
+    const row = effect.find((r: { producer: string; arm: string }) => r.producer === "bot" && r.arm === "withheld");
+    assert.deepEqual([row.runs, row.judged, row.undrawn], [1, 0, 0]);
+  } finally {
+    holdout(0);
     await c.close();
   }
 });

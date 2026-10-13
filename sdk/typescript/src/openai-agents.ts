@@ -4,29 +4,33 @@
 // 3. vetoGuardrail checks every tool call against the approved vetoes and rejects a blocked one with the reason
 
 import { defineToolInputGuardrail, ToolGuardrailFunctionOutputFactory, type Runner } from "@openai/agents";
-import type { Client, Item, Labels } from "./client.ts";
+import { adapterOptions, type AdapterOptions, type Client, type Item, type Labels, type Ref } from "./client.ts";
 
 // Use one instance per run because it keeps the items and the run id of that run
 export class NodloopHooks {
   applied: Item[] = [];
+  withheld: Ref[] = [];
   // The run the final output was recorded as so a verdict can cite it
   run = "";
 
   private readonly client: Client;
   private readonly producer: string;
+  private readonly holdoutKey: string;
   private readonly labels: Labels;
 
-  constructor(client: Client, producer: string, labels: Labels = {}) {
+  // The third argument takes the options or a labels mapping alone
+  constructor(client: Client, producer: string, options: AdapterOptions | Labels = {}) {
     this.client = client;
     this.producer = producer;
-    this.labels = labels;
+    ({ labels: this.labels, holdoutKey: this.holdoutKey } = adapterOptions<Labels>(options, {}));
   }
 
   // Dynamic instructions: the base and the approved items under it
   instructions(base: string): () => Promise<string> {
     return async () => {
-      const knowledge = await this.client.knowledge(this.producer, this.labels);
+      const knowledge = await this.client.knowledge(this.producer, this.labels, this.holdoutKey);
       this.applied = knowledge.items;
+      this.withheld = knowledge.withheld ?? [];
       return knowledge.text ? `${base}\n\n${knowledge.text}` : base;
     };
   }
@@ -34,7 +38,7 @@ export class NodloopHooks {
   // Records the output of an agent that ended as a run
   async record(output: unknown): Promise<string> {
     const text = typeof output === "string" ? output : JSON.stringify(output);
-    this.run = await this.client.record({ producer: this.producer, output: text, labels: this.labels, applied: this.applied });
+    this.run = await this.client.record({ producer: this.producer, output: text, labels: this.labels, applied: this.applied, withheld: this.withheld, holdoutKey: this.holdoutKey });
     return this.run;
   }
 

@@ -4,6 +4,7 @@ export {
   Client,
   ToolError,
   version,
+  type AdapterOptions,
   type Approval,
   type Candidate,
   type Decision,
@@ -11,5 +12,8 @@ export {
   type Knowledge,
   type Labels,
   type Options,
+  type Ref,
+  type Report,
+  type ReportName,
   type Run,
 } from "./client.ts";

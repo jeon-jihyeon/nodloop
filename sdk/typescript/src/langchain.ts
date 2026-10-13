@@ -5,12 +5,13 @@
 
 import { AIMessage, createMiddleware, SystemMessage, ToolMessage } from "langchain";
 import type { BaseMessage } from "@langchain/core/messages";
-import type { Client, Item, Knowledge, Labels } from "./client.ts";
+import { adapterOptions, type AdapterOptions, type Client, type Item, type Knowledge, type Labels, type Ref } from "./client.ts";
 
 // Use one instance per agent run because it keeps the items and the run id of that run
 // labels is a mapping or a function of the agent state that returns one
 export class NodloopMiddleware {
   applied: Item[] = [];
+  withheld: Ref[] = [];
   // The run the final answer was recorded as so a verdict can cite it
   run = "";
 
@@ -18,12 +19,18 @@ export class NodloopMiddleware {
   private knowledge?: Knowledge;
   private readonly client: Client;
   private readonly producer: string;
+  private readonly holdoutKey: string;
   private readonly labels: Labels | ((state: unknown) => Labels);
 
-  constructor(client: Client, producer: string, labels: Labels | ((state: unknown) => Labels) = {}) {
+  // The third argument takes the options or a labels mapping or function alone
+  constructor(
+    client: Client,
+    producer: string,
+    options: AdapterOptions<Labels | ((state: unknown) => Labels)> | Labels | ((state: unknown) => Labels) = {},
+  ) {
     this.client = client;
     this.producer = producer;
-    this.labels = labels;
+    ({ labels: this.labels, holdoutKey: this.holdoutKey } = adapterOptions<Labels | ((state: unknown) => Labels)>(options, {}));
   }
 
   // The middleware option of createAgent
@@ -32,8 +39,9 @@ export class NodloopMiddleware {
       name: "NodloopMiddleware",
       wrapModelCall: async (request, handler) => {
         if (!this.knowledge) {
-          this.knowledge = await this.client.knowledge(this.producer, this.labelsOf(request.state));
+          this.knowledge = await this.client.knowledge(this.producer, this.labelsOf(request.state), this.holdoutKey);
           this.applied = this.knowledge.items;
+          this.withheld = this.knowledge.withheld ?? [];
         }
         const text = this.knowledge.text;
         if (!text) return handler(request);
@@ -62,7 +70,7 @@ export class NodloopMiddleware {
     const answers = state.messages.filter((m) => AIMessage.isInstance(m));
     if (!answers.length) return "";
     const output = answers[answers.length - 1].text;
-    this.run = await this.client.record({ producer: this.producer, output, labels: this.labelsOf(state), applied: this.applied });
+    this.run = await this.client.record({ producer: this.producer, output, labels: this.labelsOf(state), applied: this.applied, withheld: this.withheld, holdoutKey: this.holdoutKey });
     return this.run;
   }
 
