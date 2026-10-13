@@ -2,7 +2,10 @@ package mcp_test
 
 import (
 	"context"
+	"fmt"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -10,19 +13,26 @@ import (
 	"github.com/jeon-jihyeon/nodloop/internal/compact"
 	"github.com/jeon-jihyeon/nodloop/internal/extract"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
+	"github.com/jeon-jihyeon/nodloop/internal/loop"
 	"github.com/jeon-jihyeon/nodloop/internal/mcp"
+	"github.com/jeon-jihyeon/nodloop/internal/retain"
 	"github.com/jeon-jihyeon/nodloop/internal/testkit"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
 )
 
-func newServer(st testkit.Stores, session string) *mcp.Server {
+func newServer(st testkit.Stores, session string, policy mcp.Policy) *mcp.Server {
 	compactor := compact.New(st.Ledger, st.Traces, st.Feedback, st.Traces, st.Clock.Now)
-	return mcp.New(st.Traces, st.Feedback, st.Outcomes, st.Ledger, compactor, extract.New(st.Ledger, st.Traces, st.Feedback, st.Clock.Now), st.Clock.Now, session, "nodloop", "--record-dir /records", "")
+	return mcp.New(st.Traces, st.Feedback, st.Outcomes, st.Ledger, compactor, extract.New(st.Ledger, st.Traces, st.Feedback, st.Clock.Now), st.Clock.Now, session, "nodloop", "--record-dir /records", "", policy)
 }
 
 func connect(t *testing.T, st testkit.Stores) testkit.Client {
 	t.Helper()
-	srv := newServer(st, mcp.NewSession(st.Clock.Now()))
+	return connectWith(t, st, mcp.Policy{})
+}
+
+func connectWith(t *testing.T, st testkit.Stores, policy mcp.Policy) testkit.Client {
+	t.Helper()
+	srv := newServer(st, mcp.NewSession(st.Clock.Now()), policy)
 	return testkit.Connect(t, mcp.NewHost(func(context.Context) (*mcp.Server, error) { return srv, nil }, "test", "").ServeTransport)
 }
 
@@ -318,4 +328,182 @@ func TestServerNewLabelsAndCheckCall(t *testing.T) {
 	assert.ErrorContains(t, refused, knowledge.ErrScopeUnobserved.Error())
 	assert.Equal(t, map[string]any{"action": "block", "veto": "no-sed", "reason": "Never edit with sed -i"}, blocked)
 	assert.Equal(t, map[string]any{"action": "allow"}, allowed)
+}
+
+// A server whose approved item git-c reaches the runs of session in repo nodloop
+func taught(t *testing.T, policy mcp.Policy) testkit.Client {
+	t.Helper()
+	c := connectWith(t, testkit.Open(t), policy)
+	runID := recordRun(t, c, "nodloop")
+	require.NoError(t, c.Run(t, "feedback", map[string]any{"trace_id": runID, "verdict": "reject", "reason": "use git -C"}))
+	require.NoError(t, c.Run(t, "propose", map[string]any{"id": "git-c", "kind": "judgment", "content": "use git -C", "from": runID}))
+	require.NoError(t, c.Run(t, "approve", map[string]any{"id": "git-c", "version": 1, "approver": "ann"}))
+	return c
+}
+
+// A drawn holdout key gets no item and the refs of every item the call would have answered
+func TestServerKnowledgeForHoldout(t *testing.T) {
+	type args struct {
+		share knowledge.Holdout
+		key   string
+	}
+	type want struct {
+		items    int
+		context  bool
+		withheld []knowledge.Ref
+	}
+	tcs := []struct {
+		name string
+		args args
+		want want
+	}{
+		{"a drawn key gets the withheld refs and no item", args{0.999, "window-1"}, want{0, false, []knowledge.Ref{{ID: "git-c", Version: 1}}}},
+		{"no key is never drawn", args{0.999, ""}, want{1, true, nil}},
+		{"no share withholds nothing", args{0, "window-1"}, want{1, true, nil}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			c := taught(t, mcp.Policy{Holdout: tc.args.share})
+			var got struct {
+				Items    []any           `json:"items"`
+				Context  string          `json:"context"`
+				Withheld []knowledge.Ref `json:"withheld"`
+			}
+
+			args := map[string]any{"producer": "session", "labels": map[string]any{"repo": []any{"nodloop"}}, "holdout_key": tc.args.key}
+			require.NoError(t, c.Call(t, "knowledge_for", args, &got))
+
+			assert.Len(t, got.Items, tc.want.items)
+			assert.Equal(t, tc.want.context, got.Context != "")
+			assert.Equal(t, tc.want.withheld, got.Withheld)
+		})
+	}
+}
+
+// A run names what it applied or what the holdout withheld and never both
+// Each recorded run runs AfterRun
+func TestServerRunWithheld(t *testing.T) {
+	gitC := []any{map[string]any{"id": "git-c", "version": 1}}
+	holdout := knowledge.Holdout(0.5)
+	// The first key of the form w-N whose draw withholds as asked
+	key := func(withheld bool) string {
+		for i := 0; ; i++ {
+			if k := fmt.Sprintf("w-%d", i); holdout.WithholdsRun("session", k) == withheld {
+				return k
+			}
+		}
+	}
+	type args struct {
+		applied, withheld []any
+		key               string
+	}
+	type row struct {
+		arm           string
+		runs, undrawn int
+	}
+	type want struct {
+		err       string
+		effect    []row
+		afterRuns int32
+	}
+	tcs := []struct {
+		name string
+		args args
+		want want
+	}{
+		{"a withheld run of a withheld draw counts in the withheld arm", args{nil, gitC, key(true)}, want{"<nil>", []row{
+			{"applied", 0, 0}, {"withheld", 1, 0},
+		}, 2}},
+		{"an applied run of an applied draw counts in the applied arm", args{gitC, nil, key(false)}, want{"<nil>", []row{
+			{"applied", 1, 0}, {"withheld", 0, 0},
+		}, 2}},
+		{"a run without a holdout key is undrawn", args{gitC, nil, ""}, want{"<nil>", []row{
+			{"applied", 0, 1}, {"withheld", 0, 1},
+		}, 2}},
+		{"applied items on a withheld draw are undrawn", args{gitC, nil, key(true)}, want{"<nil>", []row{
+			{"applied", 0, 1}, {"withheld", 0, 1},
+		}, 2}},
+		{"applied and withheld together are refused", args{gitC, gitC, key(true)}, want{testkit.ErrTool.Error() + ": " + knowledge.ErrWithheldApplied.Error(), []row{
+			{"applied", 0, 0}, {"withheld", 0, 0},
+		}, 1}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var afterRuns atomic.Int32
+			c := taught(t, mcp.Policy{Holdout: holdout, AfterRun: func(context.Context) { afterRuns.Add(1) }})
+			var effect struct {
+				Report []loop.EffectRow `json:"report"`
+			}
+
+			err := c.Run(t, "run", map[string]any{
+				"producer": "session", "labels": map[string]any{"repo": []any{"nodloop"}}, "output": "x",
+				"applied": tc.args.applied, "withheld": tc.args.withheld, "holdout_key": tc.args.key,
+			})
+			require.NoError(t, c.Call(t, "report", map[string]any{"name": "effect"}, &effect))
+
+			assert.Equal(t, tc.want.err, fmt.Sprint(err))
+			var got []row
+			for _, r := range effect.Report {
+				got = append(got, row{string(r.Arm), r.Runs, r.Undrawn})
+			}
+			assert.Equal(t, tc.want.effect, got)
+			assert.Equal(t, tc.want.afterRuns, afterRuns.Load())
+		})
+	}
+}
+
+// With retention set the reports read the runs since its cutoff only
+// A retention a prune would refuse reads every run as no retention does
+func TestServerRetentionWindow(t *testing.T) {
+	type args struct {
+		days retain.Days
+		// The days before now the last prune of the records cut at and none when 0
+		pruned int
+	}
+	type want struct {
+		runs  int
+		since bool
+	}
+	tcs := []struct {
+		name string
+		args args
+		want want
+	}{
+		{"a week reads the runs of the week", args{7, 0}, want{1, true}},
+		{"no retention reads every run", args{0, 0}, want{2, false}},
+		{"a retention under a week reads every run", args{3, 0}, want{2, false}},
+		{"a prune another surface ran sets the window without retention", args{0, 7}, want{1, true}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			st := testkit.Open(t)
+			marks := retain.NewMarker(st.Dir)
+			if tc.args.pruned > 0 {
+				cutoff := st.Clock.Now().Add(-time.Duration(tc.args.pruned) * 24 * time.Hour)
+				_, err := marks.Claim(context.Background(), st.Clock.Now(), cutoff, retain.Interval)
+				require.NoError(t, err)
+			}
+			c := connectWith(t, st, mcp.Policy{Retention: tc.args.days, Marks: marks})
+			old, err := trace.NewRun("session", "", nil, []byte(`{"applied":[]}`), []byte("old"), st.Clock.Now().Add(-8*24*time.Hour))
+			require.NoError(t, err)
+			require.NoError(t, st.Traces.Append(context.Background(), old))
+			recordRun(t, c, "nodloop")
+			var loopReport struct {
+				Since  *time.Time `json:"since"`
+				Report struct {
+					Totals struct {
+						Runs int `json:"runs"`
+					} `json:"totals"`
+				} `json:"report"`
+			}
+
+			require.NoError(t, c.Call(t, "report", map[string]any{"name": "loop"}, &loopReport))
+
+			assert.Equal(t, tc.want.runs, loopReport.Report.Totals.Runs)
+			assert.Equal(t, tc.want.since, loopReport.Since != nil)
+		})
+	}
 }

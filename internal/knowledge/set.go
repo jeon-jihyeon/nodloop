@@ -93,6 +93,15 @@ func (s Set) Cites(traceID string) bool {
 	return slices.ContainsFunc(s, func(k Knowledge) bool { return slices.Contains(k.Evidence.FeedbackTraceIDs, traceID) })
 }
 
+// The version of each item in set order
+func (s Set) Refs() []Ref {
+	out := make([]Ref, 0, len(s))
+	for _, k := range s {
+		out = append(out, Ref{ID: k.ID, Version: k.Version})
+	}
+	return out
+}
+
 // The vetoes of the approved items in id order
 // The source names the version and the approver so a reader of the veto file can trace a block back
 func (s Set) Vetoes() []veto.Spec {

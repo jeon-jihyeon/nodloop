@@ -40,7 +40,7 @@ func TestRunRunRecord(t *testing.T) {
 		{
 			"records JSON output as it is",
 			[]string{"record", "--producer", "session", "--output", "{json}"},
-			want{input: `{"applied":null}`, output: `{"answer":1}`},
+			want{input: `{"applied":[]}`, output: `{"answer":1}`},
 		},
 		{"refuses a run without output", []string{"record", "--producer", "session"}, want{code: 1, stderr: `^nodloop run: record: --output is required\n`}},
 		{
@@ -169,4 +169,27 @@ func TestRunKnowledgeForRuns(t *testing.T) {
 			assert.True(t, strings.HasPrefix(stdout, tc.want), stdout)
 		})
 	}
+}
+
+// knowledge for prints the withheld items of a drawn key and run record with the same key records the run in its arm
+func TestRunHoldoutRoundTrip(t *testing.T) {
+	home, records, _ := hookHome(t, "use git -C")
+	require.Equal(t, 0, runConfig([]string{"holdout", "0.999"}, func(k string) string { return map[string]string{"HOME": home}[k] }, &bytes.Buffer{}, &bytes.Buffer{}))
+	getenv := func(k string) string { return map[string]string{"HOME": home, envRecordDir: records}[k] }
+	out := filepath.Join(t.TempDir(), "out.txt")
+	require.NoError(t, os.WriteFile(out, []byte("answer"), 0o600))
+	var items, id, stderr bytes.Buffer
+
+	forCode := runKnowledge([]string{"for", "--producer", "session", "--label", "repo=nodloop", "--holdout-key", "w-1"}, getenv, nil, time.Now, &items, &stderr)
+	recordCode := runRun([]string{"record", "--producer", "session", "--label", "repo=nodloop", "--withheld", "git-c:1", "--holdout-key", "w-1", "--output", out},
+		getenv, time.Now, &id, &stderr)
+
+	require.Equal(t, 0, forCode, stderr.String())
+	require.Equal(t, 0, recordCode, stderr.String())
+	assert.Equal(t, "withheld\tgit-c\tv1\ntotal\t0 items\t0 chars\n", items.String())
+	store, err := tracefile.New(records)
+	require.NoError(t, err)
+	got, err := store.Get(t.Context(), strings.TrimSpace(id.String()))
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"applied":[],"withheld":[{"id":"git-c","version":1}],"drawn":true,"share":0.999,"scheme":1,"unit":"284c9f5258848319"}`, string(got.Input))
 }

@@ -3,13 +3,10 @@ package main
 import (
 	"cmp"
 	"context"
-	"crypto/sha256"
-	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"math"
 	"os"
 	"path/filepath"
 	"slices"
@@ -21,6 +18,7 @@ import (
 	"github.com/jeon-jihyeon/nodloop/internal/feedback"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	knowledgefile "github.com/jeon-jihyeon/nodloop/internal/knowledge/file"
+	"github.com/jeon-jihyeon/nodloop/internal/retain"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
 	tracefile "github.com/jeon-jihyeon/nodloop/internal/trace/file"
 )
@@ -44,7 +42,8 @@ const (
 	// 1. the hooks read the records from the end and stop here so the first prompt of a session reads one window of runs
 	// 2. a session resumed after it starts without a previous run
 	// The busiest day so far recorded 573 runs so a week of such days is about 4000 runs
-	sessionWindow = 7 * 24 * time.Hour
+	// 3. the shortest retention so a prune never removes the run a turn names
+	sessionWindow = retain.MinDays * 24 * time.Hour
 )
 
 // The hooks of a Claude Code conversation
@@ -118,7 +117,7 @@ type hookCommand struct {
 	mode   sessionMode
 	// The version the launcher ran this binary for and else the build version
 	plugin  string
-	holdout holdout
+	holdout knowledge.Holdout
 	// The reaction point the user set up and nil when the conversation judges alone
 	reaction *classify.Plan
 }
@@ -126,7 +125,7 @@ type hookCommand struct {
 // The approved items of this place and the session note added to the prompt as context, or nothing when neither has a line
 // 1. a failed read of the runs still adds the items
 // 2. a corrupt line in the records leaves out that record and the rest still reach the prompt
-// 3. a turn the holdout draws gets the note and no item
+// 3. a turn of a session the holdout draws gets the note and no item
 func (c hookCommand) prompt(ctx context.Context, sessionID, message string, labels trace.Labels) error {
 	all, allErr := c.all(ctx)
 	if allErr != nil && !errors.Is(allErr, knowledgefile.ErrCorrupt) {
@@ -134,7 +133,7 @@ func (c hookCommand) prompt(ctx context.Context, sessionID, message string, labe
 	}
 	previous, runsErr := c.previousRun(ctx, sessionID)
 	items := hookItems(all.For(sessionProducer, labels))
-	if c.holdout.withholds(sessionID, previous.ID) {
+	if c.holdout.WithholdsRun(sessionProducer, sessionID) {
 		items = nil
 	}
 	recorded, reactErr := c.react(ctx, turn{run: previous, message: message})
@@ -216,6 +215,10 @@ func (c hookCommand) previousRun(ctx context.Context, sessionID string) (trace.T
 // 2. the previous run is the one the prompt hook named this turn, so each run is looked at for a lesson once
 // 3. a correction a knowledge record already cites is not drafted again in the background
 // The conversation usually drafted it in the same turn
+// 4. the holdout draws once per session so every turn of a conversation is in one arm
+// A lesson shown in one turn stays in the context of the next so a draw per turn would leak it into the withheld arm
+// 5. the daily retention prune starts in a process of its own when it is due since Claude Code may end an async hook when it exits
+// A failure to start it is printed like any other
 func (c hookCommand) stop(ctx context.Context, sessionID string, labels trace.Labels, answer reply) error {
 	if strings.TrimSpace(string(answer)) == "" {
 		return nil
@@ -230,15 +233,16 @@ func (c hookCommand) stop(ctx context.Context, sessionID string, labels trace.La
 	}
 	corrupt := errors.Join(runsErr, allErr)
 	shown, _ := hookItems(all.For(sessionProducer, labels)).fitting()
-	refs := make([]knowledge.Ref, 0, len(shown))
-	for _, k := range shown {
-		refs = append(refs, knowledge.Ref{ID: k.ID, Version: k.Version})
+	applied := shown.Refs()
+	var withheld []knowledge.Ref
+	if c.holdout.WithholdsRun(sessionProducer, sessionID) {
+		applied, withheld = nil, applied
 	}
-	in := runInput{Applied: refs, Plugin: c.plugin}
-	if c.holdout.withholds(sessionID, previous.ID) {
-		in.Applied, in.Withheld = []knowledge.Ref{}, refs
+	in, err := knowledge.NewRunInput(applied, withheld, c.plugin)
+	if err != nil {
+		return err
 	}
-	input, err := json.Marshal(in)
+	input, err := json.Marshal(c.holdout.Drawn(in, sessionProducer, sessionID))
 	if err != nil {
 		return err
 	}
@@ -254,10 +258,11 @@ func (c hookCommand) stop(ctx context.Context, sessionID string, labels trace.La
 	if err := store.Append(ctx, tr); err != nil {
 		return err
 	}
+	pruneErr := c.prune(ctx)
 	if all.Cites(previous.ID) {
-		return corrupt
+		return errors.Join(corrupt, pruneErr)
 	}
-	return errors.Join(corrupt, c.extract(ctx, previous.ID, previous.Time))
+	return errors.Join(corrupt, pruneErr, c.extract(ctx, previous.ID, previous.Time))
 }
 
 // The extraction of the run started when the conversation alone judged it and its latest verdict corrects it
@@ -286,6 +291,24 @@ func (c hookCommand) extract(ctx context.Context, runID string, at time.Time) er
 		return nil
 	}
 	return c.detach([]string{"knowledge", "extract", "--from", runID})
+}
+
+// Starts records prune --daily in a process of its own when the daily prune is due
+// 1. the marker is read here without its lock so most turns start nothing and the started process claims the marker itself
+// 2. the process reads the record directory and the retention from the same environment and config.json as the hook
+func (c hookCommand) prune(ctx context.Context) error {
+	if c.app.cfg.retention == 0 {
+		return nil
+	}
+	daily, err := c.app.daily()
+	if err != nil {
+		return err
+	}
+	due, err := daily.Due(ctx)
+	if err != nil || !due {
+		return err
+	}
+	return c.detach([]string{"records", "prune", "--daily"})
 }
 
 // Starts nodloop with the args in a process that outlives the caller
@@ -503,20 +526,4 @@ func repoName(root string) string {
 		return filepath.Base(main)
 	}
 	return filepath.Base(root)
-}
-
-// The share of turns whose prompt receives no item so report effect can compare turns with and without them
-type holdout float64
-
-// Whether the turn withholds every item
-// 1. the draw hashes the session and the id of its previous run so the prompt hook and the stop hook of one turn agree
-// The first turn of a session hashes an empty id
-// SHA-256 because the high bits of FNV barely move between similar ids
-// 2. a turn without a session id is never drawn
-func (h holdout) withholds(sessionID, previous string) bool {
-	if h <= 0 || sessionID == "" {
-		return false
-	}
-	sum := sha256.Sum256(fmt.Appendf(nil, "%s:%s", sessionID, previous))
-	return float64(binary.BigEndian.Uint64(sum[:8]))/math.MaxUint64 < float64(h)
 }

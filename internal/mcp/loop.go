@@ -26,7 +26,11 @@ func (s *Server) queue(ctx context.Context, _ *sdk.CallToolRequest, in queueInpu
 	if in.Seed != nil {
 		opts.Seed = *in.Seed
 	}
-	h, err := loop.Load(ctx, s.traces, s.verdicts, s.outcomes, s.ledger)
+	since, err := s.since(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	h, err := loop.Load(ctx, s.traces, s.verdicts, s.outcomes, s.ledger, since)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -43,7 +47,11 @@ func (s *Server) queue(ctx context.Context, _ *sdk.CallToolRequest, in queueInpu
 
 // Health rows and audit issues of every knowledge version
 func (s *Server) knowledgeHealth(ctx context.Context, _ *sdk.CallToolRequest, _ struct{}) (*sdk.CallToolResult, any, error) {
-	h, err := loop.Load(ctx, s.traces, s.verdicts, s.outcomes, s.ledger)
+	since, err := s.since(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	h, err := loop.Load(ctx, s.traces, s.verdicts, s.outcomes, s.ledger, since)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -55,13 +63,22 @@ type reportInput struct {
 }
 
 // The report under its name so the answer is an object whatever shape the report has
+// since names the start of the runs it read and is left out when it read every run
 func (s *Server) report(ctx context.Context, _ *sdk.CallToolRequest, in reportInput) (*sdk.CallToolResult, any, error) {
-	stores := loop.Stores{Traces: s.traces, Verdicts: s.verdicts, Outcomes: s.outcomes, Items: s.ledger}
+	since, err := s.since(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	stores := loop.Stores{Traces: s.traces, Verdicts: s.verdicts, Outcomes: s.outcomes, Items: s.ledger, Since: since}
 	report, err := stores.Report(ctx, in.Name, s.now())
 	if err != nil {
 		return nil, nil, err
 	}
-	return nil, map[string]any{"name": in.Name, "report": report}, nil
+	answer := map[string]any{"name": in.Name, "report": report}
+	if !since.IsZero() {
+		answer["since"] = since
+	}
+	return nil, answer, nil
 }
 
 type reaffirmInput struct {

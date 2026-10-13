@@ -163,3 +163,24 @@ func TestHostOpensPerCall(t *testing.T) {
 	}
 	assert.Len(t, sessions, 1)
 }
+
+// The MCP run tool starts the daily prune of config retention and knowledge_for draws with config holdout
+func TestMCPOpenPolicy(t *testing.T) {
+	getenv, records := pruneHome(t, "30")
+	home := getenv("HOME")
+	require.NoError(t, os.WriteFile(filepath.Join(home, ".nodloop", "config.json"), []byte(`{"retention":30,"holdout":0.999}`), 0o600))
+	now := func() time.Time { return pruneNow }
+	var log bytes.Buffer
+	open := mcpOpen{getenv: getenv, now: now, session: mcp.NewSession(now()), log: &log}.open
+	c := testkit.Connect(t, mcp.NewHost(open, "test", "").ServeTransport)
+	var answer struct {
+		Withheld []any `json:"withheld"`
+	}
+
+	require.NoError(t, c.Run(t, "run", map[string]any{"producer": "bot", "output": "x"}))
+	require.NoError(t, c.Call(t, "knowledge_for", map[string]any{"producer": "bot", "holdout_key": "window-1"}, &answer))
+
+	assert.Empty(t, log.String())
+	assert.NotContains(t, traceIDs(t, records), "old-unjudged")
+	assert.NotNil(t, answer.Withheld, "the holdout of config.json draws the call")
+}

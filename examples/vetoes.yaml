@@ -4,7 +4,8 @@
 # The Bash patterns match the field commands that the guard derives from command through a shell parser
 #   one line per simple command in the order the shell runs them, also inside if, loops, pipes and substitutions
 #   a line holds the command name and its arguments without leading VAR=value assignments or redirections
-#   quotes and backslashes are removed, a word holding a space comes back quoted and a part that expands renders as $
+#   quotes and backslashes are removed
+#   a word holding a space comes back quoted and a part that expands renders as $
 #   a subshell or a substitution opens with a line ( and closes with a line )
 #   the command find runs through -exec, -execdir, -ok or -okdir is a line of its own
 # Each Bash pattern starts a line with one prefix of wrappers, assignments, durations and options

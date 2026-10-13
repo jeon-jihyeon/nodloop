@@ -9,6 +9,7 @@ import (
 
 	"github.com/jeon-jihyeon/nodloop/internal/feedback"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
+	"github.com/jeon-jihyeon/nodloop/internal/loop"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
 )
 
@@ -27,6 +28,7 @@ type VetoCondition = knowledge.VetoCondition
 type (
 	Verdict    = feedback.Verdict
 	ReasonCode = feedback.ReasonCode
+	Result     = feedback.Result
 	Kind       = knowledge.Kind
 	Status     = knowledge.Status
 )
@@ -43,6 +45,10 @@ const (
 	ReasonForm     = feedback.ReasonForm     // the content was right and the shape wrong
 	ReasonOther    = feedback.ReasonOther    // none of the others
 
+	ResultConfirmed    = feedback.ResultConfirmed    // the check held the output
+	ResultRefuted      = feedback.ResultRefuted      // the check showed the output wrong
+	ResultInconclusive = feedback.ResultInconclusive // the check settled nothing
+
 	KindJudgment = knowledge.KindJudgment // what to do or not do
 	KindMeaning  = knowledge.KindMeaning  // how to read something in this place
 )
@@ -58,19 +64,27 @@ type Run struct {
 	// The output as text or JSON
 	// Keys, tokens and passwords in it are redacted before it is stored
 	Output []byte
-	// The knowledge versions the run received, as Items returned them
+	// The knowledge versions the run received as Items or Draw returned them
 	Applied []Ref
+	// The knowledge versions a holdout kept from the run as Draw returned them
+	// Never together with Applied
+	Withheld []Ref
+	// The key the run passed to Draw
+	// Record draws on it again and marks the run drawn so report effect counts it in its arm
+	// A run recorded without one counts in neither arm
+	HoldoutKey string
 }
 
 // Records the run and returns the id a verdict cites
+// 1. with WithRetention a due daily prune starts in a goroutine so Record never waits for a rewrite of the records
+// 2. its failure goes to WithPruneError since the run is recorded
+// 3. the prune keeps running when ctx ends and WaitPrune waits for it
 func (c *Client) Record(ctx context.Context, r Run) (string, error) {
-	applied := r.Applied
-	if applied == nil {
-		applied = []Ref{}
+	in, err := knowledge.NewRunInput(r.Applied, r.Withheld, "")
+	if err != nil {
+		return "", err
 	}
-	input, err := json.Marshal(struct {
-		Applied []Ref `json:"applied"`
-	}{applied})
+	input, err := json.Marshal(c.holdout.Drawn(in, r.Producer, r.HoldoutKey))
 	if err != nil {
 		return "", err
 	}
@@ -82,7 +96,38 @@ func (c *Client) Record(ctx context.Context, r Run) (string, error) {
 	if err := c.traces.Append(ctx, tr); err != nil {
 		return "", err
 	}
+	c.startPrune(context.WithoutCancel(ctx))
 	return tr.ID, nil
+}
+
+// Starts the daily prune when the mark says one is due
+// Most runs find the mark fresh so they start no goroutine
+func (c *Client) startPrune(ctx context.Context) {
+	if c.prune == nil {
+		return
+	}
+	due, err := c.prune.Due(ctx)
+	if err != nil || !due {
+		c.reportPrune(err)
+		return
+	}
+	c.pruning.Go(func() {
+		_, err := c.prune.Run(ctx)
+		c.reportPrune(err)
+	})
+}
+
+func (c *Client) reportPrune(err error) {
+	if err != nil && c.pruneFailed != nil {
+		c.pruneFailed(err)
+	}
+}
+
+// Waits for every daily prune Record started
+// Call it before the process exits or the directory is removed
+// A prune that stops halfway leaves the records whole and runs again a day later
+func (c *Client) WaitPrune() {
+	c.pruning.Wait()
 }
 
 // A person's verdict on a recorded run
@@ -118,6 +163,44 @@ func (c *Client) Judge(ctx context.Context, j Judgment) error {
 		return err
 	}
 	return c.verdicts.Append(ctx, fb)
+}
+
+// What a real check found for a recorded run apart from the verdict on its output
+type Outcome struct {
+	Run    string
+	Result Result
+	// The cause that held in the reviewer's words
+	ConfirmedCause string
+	// What the check showed beyond the result
+	Note string
+	// Who checked and author when empty
+	Reviewer string
+}
+
+// Records the outcome of a run that exists
+func (c *Client) Outcome(ctx context.Context, o Outcome) error {
+	if err := c.checkRun(ctx, o.Run); err != nil {
+		return err
+	}
+	out, err := feedback.NewOutcome(o.Run, o.Result, o.ConfirmedCause, o.Note, o.Reviewer, c.now())
+	if err != nil {
+		return err
+	}
+	return c.outcomes.Append(ctx, out)
+}
+
+// One report of the records as JSON in the shape the MCP tool report and nodloop report --json answer
+// 1. a name that names no report fails with ErrReportUnknown
+// 2. the runs are read from the later of the WithRetention cutoff and the cutoff of the last prune of the directory
+func (c *Client) Report(ctx context.Context, name string) (json.RawMessage, error) {
+	last, err := c.marks.Last(ctx)
+	if err != nil {
+		return nil, err
+	}
+	stores := loop.Stores{
+		Traces: c.traces, Verdicts: c.verdicts, Outcomes: c.outcomes, Items: c.ledger, Since: c.days.Window(c.now(), last),
+	}
+	return stores.Report(ctx, loop.ReportName(name), c.now())
 }
 
 func (c *Client) checkRun(ctx context.Context, id string) error {
@@ -178,6 +261,31 @@ func (c *Client) Items(ctx context.Context, producer string, labels Labels) (Ite
 		return nil, err
 	}
 	return newItems(all.For(producer, labels)), nil
+}
+
+// What one run receives under the holdout
+// Exactly one of them holds the refs when the producer has items in the labels
+// Pass the same key as Run HoldoutKey when recording the run
+type Draw struct {
+	// The items to put in the prompt and pass as Applied
+	Items Items
+	// The refs the holdout kept from the run to pass as Withheld
+	Withheld []Ref
+}
+
+// The items a run of the producer with the labels receives unless the holdout withholds the key
+// 1. the key is what the producer keeps for one run such as a window id and the draw hashes the producer with it
+// 2. an empty key or no WithHoldout never withholds so Items equals what Items returns
+func (c *Client) Draw(ctx context.Context, producer string, labels Labels, key string) (Draw, error) {
+	all, err := c.ledger.All(ctx)
+	if err != nil {
+		return Draw{}, err
+	}
+	items := all.For(producer, labels)
+	if !c.holdout.WithholdsRun(producer, key) {
+		return Draw{Items: newItems(items)}, nil
+	}
+	return Draw{Items: Items{}, Withheld: items.Refs()}, nil
 }
 
 // The candidates a run of the producer with the labels would receive once a person approves them

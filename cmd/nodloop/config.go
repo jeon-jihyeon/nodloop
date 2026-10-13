@@ -7,7 +7,9 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	"github.com/jeon-jihyeon/nodloop/internal/llm"
+	"github.com/jeon-jihyeon/nodloop/internal/retain"
 	"github.com/jeon-jihyeon/nodloop/internal/userconfig"
 )
 
@@ -24,7 +26,10 @@ type config struct {
 	recordDir   string
 	home        homeDir
 	classifiers classifierConfig
-	holdout     holdout
+	holdout     knowledge.Holdout
+	// retention of config.json as written
+	// Checked where a prune reads it
+	retention retain.Days
 	// session_mode of config.json as written, checked where a hook reads it
 	sessionMode string
 }
@@ -43,7 +48,10 @@ func resolveConfig(getenv func(string) string, recordDir string) (config, error)
 	if err != nil {
 		return config{}, err
 	}
-	return config{recordDir: records, home: h, classifiers: uc.classifierConfig, holdout: holdout(uc.Holdout), sessionMode: uc.SessionMode}, nil
+	return config{
+		recordDir: records, home: h, classifiers: uc.classifierConfig, holdout: knowledge.Holdout(uc.Holdout),
+		retention: retain.Days(uc.Retention), sessionMode: uc.SessionMode,
+	}, nil
 }
 
 // The record flag a command pasted into another shell needs to read these records
@@ -54,7 +62,8 @@ func (c config) recordArgs() string {
 	return "--record-dir " + shellWord(c.recordDir)
 }
 
-// config approver, holdout and session_mode print the saved value and save the value given after them
+// Each setting of config prints the saved value and saves the value given after it
+// The settings are approver and holdout and retention and session_mode
 // config alone lists every setting with its value and where the value came from
 func runConfig(args []string, getenv func(string) string, stdout, stderr io.Writer) int {
 	h := homeDir(getenv("HOME"))
@@ -75,6 +84,8 @@ func runConfig(args []string, getenv func(string) string, stdout, stderr io.Writ
 		err = cmd.approver(value)
 	case "holdout":
 		err = cmd.holdout(value)
+	case "retention":
+		err = cmd.retention(value)
 	case "session_mode":
 		err = cmd.sessionMode(value)
 	default:
@@ -109,15 +120,19 @@ func (c configCommand) list(getenv func(string) string) error {
 	if err != nil {
 		session = err.Error()
 	}
-	share := ""
+	share, days := "", ""
 	if uc.Holdout != 0 {
 		share = strconv.FormatFloat(uc.Holdout, 'g', -1, 64)
+	}
+	if uc.Retention != 0 {
+		days = strconv.Itoa(uc.Retention)
 	}
 	rows := []struct{ name, env, configured, value string }{
 		{"record_dir", envRecordDir, uc.RecordDir, records},
 		{"session_mode", envSession, uc.SessionMode, session},
 		{"approver", "", uc.Approver, uc.Approver},
 		{"holdout", "", share, cmp.Or(share, "0")},
+		{"retention", "", days, cmp.Or(days, "0")},
 		{"decision_points", "", uc.pointsText(), ""},
 		{"claude binary", envClaudeBin, "", cmp.Or(getenv(envClaudeBin), llm.DefaultBin)},
 		{"model", envLLMModel, "", cmp.Or(getenv(envLLMModel), llm.DefaultModel)},
@@ -166,13 +181,46 @@ func (c configCommand) holdout(value string) error {
 		return nil
 	}
 	share, err := strconv.ParseFloat(value, 64)
-	if err != nil || share < 0 || share >= 1 {
-		return fmt.Errorf("%w: %q. Give a share from 0 up to but not including 1, such as 0.1", errHoldoutInvalid, value)
+	if err != nil {
+		return fmt.Errorf("%w: %q is not a number", errHoldoutInvalid, value)
+	}
+	if err := knowledge.Holdout(share).Check(); err != nil {
+		return fmt.Errorf("%w: %w", errHoldoutInvalid, err)
 	}
 	if err := c.home.config().Save(map[string]any{"holdout": share}); err != nil {
 		return err
 	}
 	fmt.Fprintln(c.out, strconv.FormatFloat(share, 'g', -1, 64))
+	return nil
+}
+
+// Prints the saved days or saves the ones given
+// 0 keeps every trace and fewer than retain MinDays is refused since the hooks look back that far for the previous run of a session
+func (c configCommand) retention(value string) error {
+	if value == "" {
+		uc, err := c.home.readConfig()
+		if err != nil {
+			return err
+		}
+		fmt.Fprintln(c.out, uc.Retention)
+		return nil
+	}
+	days, err := strconv.Atoi(value)
+	if err != nil {
+		return fmt.Errorf("%w: %q is not whole days", errRetentionInvalid, value)
+	}
+	if err := retain.Days(days).Check(); err != nil {
+		return fmt.Errorf("%w: %w", errRetentionInvalid, err)
+	}
+	// 0 removes the key so config lists it as the default
+	var saved any = days
+	if days == 0 {
+		saved = nil
+	}
+	if err := c.home.config().Save(map[string]any{"retention": saved}); err != nil {
+		return err
+	}
+	fmt.Fprintln(c.out, days)
 	return nil
 }
 

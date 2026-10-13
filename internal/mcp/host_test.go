@@ -23,13 +23,13 @@ func TestHostOpenFails(t *testing.T) {
 	inputs := map[string]map[string]any{
 		"run": {"producer": "session", "output": "x"}, "knowledge_for": {"producer": "session"},
 		"feedback": {"trace_id": "t", "verdict": "approve"}, "outcome": {"trace_id": "t", "result": "confirmed"},
-		"propose": {"kind": "meaning", "content": "c"}, "approve": {"id": "k", "version": 1, "approver": "ann"},
+		"propose": {"kind": "meaning", "content": "c"}, "approve": {"id": "k", "version": 1, "approver": "sam"},
 		"compaction": {"id": "k"}, "propose_compaction": {"anchor": "k", "items": []any{}},
 		"check_compaction":   {"compaction": "c", "items": []any{}},
-		"approve_compaction": {"compaction": "c", "approver": "ann"},
+		"approve_compaction": {"compaction": "c", "approver": "sam"},
 		"extraction":         {"from": "t"},
 		"propose_extraction": {"from": "t", "relation": "add", "kind": "judgment", "content": "x", "critique": map[string]any{"states": true, "holds": true, "fits": true, "why": "ok"}},
-		"queue":              {}, "knowledge_health": {}, "reaffirm": {"id": "k", "version": 1, "approver": "ann"},
+		"queue":              {}, "knowledge_health": {}, "reaffirm": {"id": "k", "version": 1, "approver": "sam"},
 		"check_call": {"tool": "Bash", "input": map[string]any{"command": "ls"}},
 		"report":     {"name": "loop"},
 	}
@@ -50,7 +50,7 @@ func TestHostSerializesCalls(t *testing.T) {
 	opened := 0
 	open := func(context.Context) (*mcp.Server, error) {
 		opened++
-		return newServer(st, session), nil
+		return newServer(st, session, mcp.Policy{}), nil
 	}
 	c := testkit.Connect(t, mcp.NewHost(open, "test", "").ServeTransport)
 	runID := recordRun(t, c, "nodloop")

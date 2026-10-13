@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -21,8 +22,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	"github.com/jeon-jihyeon/nodloop/internal/loop"
 	"github.com/jeon-jihyeon/nodloop/internal/mcp"
+	"github.com/jeon-jihyeon/nodloop/internal/retain"
+	"github.com/jeon-jihyeon/nodloop/internal/trace"
 	"github.com/jeon-jihyeon/nodloop/server/internal/pg"
 )
 
@@ -104,9 +108,17 @@ func (p prefixed) open(key serverKey, now func() time.Time, session string) mcp.
 	return p.tenantStores.open(key, now, session)
 }
 
-func (p prefixed) reports(key serverKey, now func() time.Time) (loop.Stores, error) {
+func (p prefixed) reports(ctx context.Context, key serverKey, now func() time.Time) (loop.Stores, error) {
 	key.Tenant = p.prefix + key.Tenant
-	return p.tenantStores.reports(key, now)
+	return p.tenantStores.reports(ctx, key, now)
+}
+
+func (p prefixed) retainer(tenant string, now func() time.Time) (*retain.Retainer, error) {
+	return p.tenantStores.retainer(p.prefix+tenant, now)
+}
+
+func (p prefixed) marks(tenant string) (retain.Marks, error) {
+	return p.tenantStores.marks(p.prefix + tenant)
 }
 
 // Each key sees the tools of its role, writes the records of its tenant and approves under its own name
@@ -233,7 +245,7 @@ func TestServeHandlerReports(t *testing.T) {
 func TestFileTenantsReportsPrivateDir(t *testing.T) {
 	base := t.TempDir()
 
-	_, err := fileTenants{base: base}.reports(hashed("ann", "acme", mcp.RoleApprover), time.Now)
+	_, err := fileTenants{base: base}.reports(context.Background(), hashed("ann", "acme", mcp.RoleApprover), time.Now)
 
 	require.NoError(t, err)
 	info, err := os.Stat(filepath.Join(base, "tenants", "acme"))
@@ -250,8 +262,16 @@ func (unopened) open(serverKey, func() time.Time, string) mcp.Open {
 	}
 }
 
-func (unopened) reports(serverKey, func() time.Time) (loop.Stores, error) {
+func (unopened) reports(context.Context, serverKey, func() time.Time) (loop.Stores, error) {
 	return loop.Stores{}, errUnopened
+}
+
+func (unopened) retainer(string, func() time.Time) (*retain.Retainer, error) {
+	return nil, errUnopened
+}
+
+func (unopened) marks(string) (retain.Marks, error) {
+	return nil, errUnopened
 }
 
 var errUnopened = errors.New("mkdir /srv/records/tenants/acme: permission denied")
@@ -285,4 +305,178 @@ func TestRunServeWithoutHome(t *testing.T) {
 
 	assert.Equal(t, 1, code)
 	assert.Equal(t, "nodloop-server serve: home directory unknown\n", stderr.String())
+}
+
+// serve refuses a policy of config.json and an address it cannot listen on before it serves
+func TestRunServeRefuses(t *testing.T) {
+	type args struct {
+		config string
+		addr   string
+	}
+	keys := `"server":{"keys":[{"name":"ann","tenant":"acme","role":"approver","sha256":"00"}]}`
+	tcs := []struct {
+		name string
+		args args
+		want string
+	}{
+		{"a retention under a week", args{`{"retention":3,` + keys + `}`, "127.0.0.1:0"}, retain.ErrDaysTooShort.Error()},
+		{"a holdout of 1", args{`{"holdout":1,` + keys + `}`, "127.0.0.1:0"}, knowledge.ErrHoldoutInvalid.Error()},
+		{"an address it cannot listen on", args{`{"retention":30,` + keys + `}`, "127.0.0.1:-1"}, "listen tcp"},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			home := t.TempDir()
+			require.NoError(t, os.MkdirAll(filepath.Join(home, ".nodloop"), 0o700))
+			require.NoError(t, os.WriteFile(filepath.Join(home, ".nodloop", "config.json"), []byte(tc.args.config), 0o600))
+			var stderr bytes.Buffer
+			getenv := func(k string) string { return map[string]string{"HOME": home}[k] }
+
+			code := run([]string{"serve", "--addr", tc.args.addr, "--record-dir", t.TempDir()}, getenv, time.Now, &bytes.Buffer{}, &stderr)
+
+			assert.Equal(t, 1, code)
+			assert.Contains(t, stderr.String(), tc.want)
+		})
+	}
+}
+
+// A pruner of the file backend never creates the directory of a tenant without records
+func TestPrunerSkipsATenantWithoutRecords(t *testing.T) {
+	base := t.TempDir()
+	var log bytes.Buffer
+	p := pruner{stores: fileTenants{base: base}, tenants: []string{"acme"}, days: 30, now: time.Now, log: &log}
+
+	p.once(context.Background())
+
+	assert.Empty(t, log.String())
+	assert.NoDirExists(t, filepath.Join(base, "tenants", "acme"))
+}
+
+// The holdout share the stores carry reaches knowledge_for of every key
+func TestServeHandlerHoldout(t *testing.T) {
+	stores := fileTenants{base: t.TempDir(), policy: mcp.Policy{Holdout: 0.999}}
+	config := serverConfig{Keys: []serverKey{hashed("ann", "acme", mcp.RoleApprover)}}
+	srv := httptest.NewServer(newServeHandler(stores, config, time.Now, io.Discard))
+	t.Cleanup(srv.Close)
+	ann := dial(t, srv.URL, "ann")
+	run := call(t, ann, "run", map[string]any{"producer": "bot", "output": "steps"})["trace_id"]
+	call(t, ann, "feedback", map[string]any{"trace_id": run, "verdict": "reject", "reason": "no window"})
+	call(t, ann, "propose", map[string]any{"id": "window", "kind": "judgment", "content": "quote the window", "from": run})
+	call(t, ann, "approve", map[string]any{"id": "window", "version": 1, "approver": "ann"})
+
+	got := call(t, ann, "knowledge_for", map[string]any{"producer": "bot", "holdout_key": "window-1"})
+
+	assert.Equal(t, []any{map[string]any{"id": "window", "version": float64(1)}}, got["withheld"])
+	assert.Empty(t, got["items"])
+}
+
+// A daily prune removes the old unjudged runs of each tenant and never a run of another tenant
+func TestPrunerOnce(t *testing.T) {
+	for name, stores := range backends(t) {
+		t.Run(name, func(t *testing.T) {
+			pruneScenario(t, stores(t))
+		})
+	}
+}
+
+func pruneScenario(t *testing.T, stores tenantStores) {
+	at := time.Date(2026, 10, 12, 12, 0, 0, 0, time.UTC)
+	now := func() time.Time { return at }
+	config := serverConfig{Keys: []serverKey{hashed("ann", "acme", mcp.RoleApprover), hashed("globex-bot", "globex", mcp.RoleProducer)}}
+	srv := httptest.NewServer(newServeHandler(stores, config, func() time.Time { return at.Add(-40 * 24 * time.Hour) }, io.Discard))
+	t.Cleanup(srv.Close)
+	ann, globex := dial(t, srv.URL, "ann"), dial(t, srv.URL, "globex-bot")
+	judged := call(t, ann, "run", map[string]any{"producer": "bot", "output": "judged"})["trace_id"]
+	call(t, ann, "feedback", map[string]any{"trace_id": judged, "verdict": "approve"})
+	call(t, ann, "run", map[string]any{"producer": "bot", "output": "unjudged"})
+	call(t, globex, "run", map[string]any{"producer": "bot", "output": "pruned too"})
+	var log bytes.Buffer
+	p := pruner{stores: stores, tenants: append(config.tenants(), "unknown"), days: 30, now: now, log: &log}
+
+	p.once(context.Background())
+
+	for tenant, want := range map[string][]any{"acme": {judged}, "globex": nil} {
+		r, err := stores.reports(context.Background(), serverKey{Tenant: tenant}, func() time.Time { return time.Time{} })
+		require.NoError(t, err)
+		runs, err := r.Traces.List(context.Background(), trace.Filter{Name: trace.NameRun})
+		require.NoError(t, err)
+		var ids []any
+		for _, run := range runs {
+			ids = append(ids, run.ID)
+		}
+		assert.Equal(t, want, ids, tenant)
+	}
+	assert.Empty(t, log.String())
+}
+
+// The mark of the last prune lives with the records so a restarted server prunes at start only when a day passed
+func TestPrunerAfterARestart(t *testing.T) {
+	for name, stores := range backends(t) {
+		t.Run(name, func(t *testing.T) {
+			at := time.Date(2026, 10, 12, 12, 0, 0, 0, time.UTC)
+			config := serverConfig{Keys: []serverKey{hashed("ann", "acme", mcp.RoleApprover)}}
+			tenants := stores(t)
+			srv := httptest.NewServer(newServeHandler(tenants, config, func() time.Time { return at.Add(-40 * 24 * time.Hour) }, io.Discard))
+			t.Cleanup(srv.Close)
+			ann := dial(t, srv.URL, "ann")
+			left := func() int {
+				r, err := tenants.reports(context.Background(), serverKey{Tenant: "acme"}, func() time.Time { return time.Time{} })
+				require.NoError(t, err)
+				runs, err := r.Traces.List(context.Background(), trace.Filter{Name: trace.NameRun})
+				require.NoError(t, err)
+				return len(runs)
+			}
+			// A new pruner at each time stands for a server started again
+			prune := func(now time.Time) {
+				var log bytes.Buffer
+				pruner{stores: tenants, tenants: config.tenants(), days: 30, now: func() time.Time { return now }, log: &log}.once(context.Background())
+				require.Empty(t, log.String())
+			}
+
+			call(t, ann, "run", map[string]any{"producer": "bot", "output": "first"})
+			prune(at)
+			call(t, ann, "run", map[string]any{"producer": "bot", "output": "second"})
+			prune(at.Add(time.Hour))
+			afterRestart := left()
+			prune(at.Add(25 * time.Hour))
+
+			assert.Equal(t, 1, afterRestart, "a restart within the day leaves the second run")
+			assert.Equal(t, 0, left(), "a day later the prune runs at start")
+		})
+	}
+}
+
+// A pruner that cannot open a tenant names it on the log and goes on with the next tick
+func TestPrunerLogsAFailure(t *testing.T) {
+	log := &lockedBuffer{}
+	p := pruner{stores: unopened{}, tenants: []string{"acme"}, days: 30, now: time.Now, log: log}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+
+	go func() {
+		p.run(ctx, time.Millisecond)
+		close(done)
+	}()
+
+	require.Eventually(t, func() bool { return strings.Count(log.String(), "retention of tenant acme") >= 2 }, 5*time.Second, time.Millisecond)
+	cancel()
+	<-done
+}
+
+// A log the pruner writes while the test reads it
+type lockedBuffer struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (l *lockedBuffer) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.Write(p)
+}
+
+func (l *lockedBuffer) String() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.String()
 }

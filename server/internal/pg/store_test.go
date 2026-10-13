@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"sync"
@@ -15,6 +16,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeon-jihyeon/nodloop/internal/feedback"
 	"github.com/jeon-jihyeon/nodloop/internal/feedback/feedbacktest"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge/knowledgetest"
@@ -66,6 +68,70 @@ func TestTenantsApart(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Empty(t, other)
+}
+
+// A prune of one tenant never removes the trace of the same id another tenant holds
+func TestPruneKeepsOtherTenants(t *testing.T) {
+	db, tenant := open(t)
+	ctx := context.Background()
+	run, err := trace.NewRun("bot", "", nil, []byte(`{"applied":[]}`), []byte(`"x"`), time.Now())
+	require.NoError(t, err)
+	require.NoError(t, db.Traces(tenant+"-acme").Append(ctx, run))
+	require.NoError(t, db.Traces(tenant+"-globex").Append(ctx, run))
+
+	removed, err := db.Traces(tenant+"-acme").Prune(ctx, func(context.Context) ([]string, error) { return []string{run.ID}, nil })
+
+	require.NoError(t, err)
+	assert.Equal(t, 1, removed)
+	left, err := db.Traces(tenant+"-globex").Get(ctx, run.ID)
+	require.NoError(t, err)
+	assert.Equal(t, run.ID, left.ID)
+}
+
+// A citation committed after decide read the citations keeps its run when the DELETE runs
+// The ids span two batches so every batch checks the citations
+func TestPruneKeepsRunsCitedAfterDecide(t *testing.T) {
+	db, tenant := open(t)
+	ctx := context.Background()
+	traces := db.Traces(tenant)
+	runs := map[string]trace.Trace{}
+	for _, name := range []string{"judged", "checked", "taught", "unjudged"} {
+		run, err := trace.NewRun("bot", name, nil, []byte(`{"applied":[]}`), []byte(`"x"`), time.Now())
+		require.NoError(t, err)
+		require.NoError(t, traces.Append(ctx, run))
+		runs[name] = run
+	}
+	classify := trace.Trace{ID: trace.NewID(time.Now()), Name: trace.NameClassify, Ref: runs["judged"].ID, Time: time.Now(), Input: []byte(`{}`)}
+	require.NoError(t, traces.Append(ctx, classify))
+	ids := []string{runs["judged"].ID, runs["checked"].ID, runs["taught"].ID, classify.ID}
+	for i := range 5000 {
+		ids = append(ids, fmt.Sprintf("missing-%d", i))
+	}
+	ids = append(ids, runs["unjudged"].ID)
+	decide := func(context.Context) ([]string, error) {
+		fb, err := feedback.New(runs["judged"].ID, feedback.VerdictApprove, "", "", nil, "ann", time.Now())
+		require.NoError(t, err)
+		require.NoError(t, db.Feedback(tenant).Append(ctx, fb))
+		o, err := feedback.NewOutcome(runs["checked"].ID, feedback.ResultConfirmed, "", "", "", time.Now())
+		require.NoError(t, err)
+		require.NoError(t, db.Outcomes(tenant).Append(ctx, o))
+		require.NoError(t, db.Knowledge(tenant).Append(ctx, knowledge.Knowledge{
+			ID: "k", Version: 1, Evidence: knowledge.Evidence{FeedbackTraceIDs: []string{runs["taught"].ID}},
+		}))
+		return ids, nil
+	}
+
+	removed, err := traces.Prune(ctx, decide)
+
+	require.NoError(t, err)
+	assert.Equal(t, 1, removed, "only the run nothing cites goes")
+	left, err := traces.List(ctx, trace.Filter{})
+	require.NoError(t, err)
+	var got []string
+	for _, tr := range left {
+		got = append(got, tr.ID)
+	}
+	assert.ElementsMatch(t, []string{runs["judged"].ID, runs["checked"].ID, runs["taught"].ID, classify.ID}, got)
 }
 
 // Concurrent decisions of one tenant see each other so only one of two approvals of the same candidate lands

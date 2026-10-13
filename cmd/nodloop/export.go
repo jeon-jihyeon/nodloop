@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 
@@ -119,8 +120,8 @@ type exportCommand struct {
 	out io.Writer
 }
 
-// Sends every run since the time with the verdicts given since then
-// No verdict on such a run comes before the run so these are all of its verdicts
+// Sends every run since the time with the verdicts and outcomes given since then
+// No verdict or outcome on such a run comes before the run so these are all of them
 func (c exportCommand) otel(ctx context.Context, exporter *otel.Exporter, since time.Time, output bool) error {
 	traces, err := c.app.traces()
 	if err != nil {
@@ -138,9 +139,19 @@ func (c exportCommand) otel(ctx context.Context, exporter *otel.Exporter, since 
 	if err != nil {
 		return err
 	}
-	if err := exporter.Export(ctx, runs, verdicts, output); err != nil {
+	checks, err := c.app.outcomes()
+	if err != nil {
 		return err
 	}
-	fmt.Fprintf(c.out, "exported %d runs and %d verdicts\n", len(runs), len(verdicts))
+	all, err := checks.List(ctx, "")
+	if err != nil {
+		return err
+	}
+	outcomes := slices.DeleteFunc(all, func(o feedback.Outcome) bool { return o.Time.Before(since) })
+	sent, err := exporter.Export(ctx, runs, verdicts, outcomes, output)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(c.out, "exported %d runs and %d verdicts and %d outcomes\n", len(runs), len(verdicts), sent)
 	return nil
 }

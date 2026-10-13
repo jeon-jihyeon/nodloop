@@ -21,6 +21,8 @@ var (
 	// A replay trace holds a result the replay package wrote so one that does not decode was edited or cut
 	errReplayUndecodable = errors.New("replay trace does not decode")
 	// go deletes a go run build on exit so a hook on it would fail open
+	// The marker lock of the record directory is held by another prune
+	errPruneRunning        = errors.New("another prune is running")
 	errExecutableTemporary = errors.New("the executable is a temporary go build. Install from a built binary such as one from go install")
 )
 
@@ -30,11 +32,14 @@ var (
 var (
 	errUnknownAction      = errors.New("unknown action")
 	errHoldoutInvalid     = errors.New("invalid holdout")
+	errRetentionInvalid   = errors.New("invalid retention")
+	errRetentionUnset     = errors.New("no retention set. Set one with nodloop config retention <days>")
 	errSessionModeUnknown = errors.New("unknown session mode")
 	errDeferred           = errors.New("deferred to the conversation")
 	errCallInput          = errors.New("call input is not a JSON object")
 	errRequired           = errors.New("is required")
 	errScopeFlags         = errors.New("--label and --everywhere exclude each other")
+	errPruneFlags         = errors.New("--dry-run and --daily exclude each other")
 	errUnknownTraceName   = errors.New("unknown trace name")
 	errNoAction           = fmt.Errorf("an action %w", errRequired)
 )

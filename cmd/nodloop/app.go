@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"time"
@@ -16,6 +17,7 @@ import (
 	knowledgefile "github.com/jeon-jihyeon/nodloop/internal/knowledge/file"
 	"github.com/jeon-jihyeon/nodloop/internal/llm"
 	"github.com/jeon-jihyeon/nodloop/internal/replay"
+	"github.com/jeon-jihyeon/nodloop/internal/retain"
 	tracefile "github.com/jeon-jihyeon/nodloop/internal/trace/file"
 	vetofile "github.com/jeon-jihyeon/nodloop/internal/veto/file"
 )
@@ -178,4 +180,74 @@ func (a app) checkRuns(ctx context.Context, ids ...string) error {
 		}
 	}
 	return nil
+}
+
+// The retainer over every store of the record directory that may cite a run
+func (a app) retainer() (*retain.Retainer, error) {
+	traces, err := a.traces()
+	if err != nil {
+		return nil, err
+	}
+	verdicts, err := a.feedback()
+	if err != nil {
+		return nil, err
+	}
+	outcomes, err := a.outcomes()
+	if err != nil {
+		return nil, err
+	}
+	ledger, err := a.ledger()
+	if err != nil {
+		return nil, err
+	}
+	return retain.New(traces, verdicts, outcomes, ledger), nil
+}
+
+// The daily prune of the record directory under the retention of config.json
+// The retainer opens its stores only when the marker says a prune is due
+func (a app) daily() (retain.Daily, error) {
+	dir, err := a.makeRecordDir()
+	if err != nil {
+		return retain.Daily{}, err
+	}
+	return retain.NewDaily(retain.NewMarker(dir), a.cfg.retention, a.retainer, a.now), nil
+}
+
+// The daily retention prune that follows every recorded run
+// Nothing runs without retention so the records stay as they are until the user sets one
+func (a app) dailyPrune(ctx context.Context) error {
+	if a.cfg.retention == 0 {
+		return nil
+	}
+	daily, err := a.daily()
+	if err != nil {
+		return err
+	}
+	_, err = daily.Run(ctx)
+	return err
+}
+
+// The start of the runs the reports read
+// The later of the retention of config.json and the cutoff of the last prune of the record directory
+// So records a service pruned under its own retention never mix judged runs with the unjudged runs that survived
+func (a app) window(ctx context.Context) (time.Time, error) {
+	dir, err := a.makeRecordDir()
+	if err != nil {
+		return time.Time{}, err
+	}
+	last, err := retain.NewMarker(dir).Last(ctx)
+	if err != nil {
+		return time.Time{}, err
+	}
+	return a.cfg.retention.Window(a.now(), last), nil
+}
+
+// The daily prune after a run a command recorded
+// A failure goes to stderr and never fails the command since the run is recorded
+func (a app) afterRun(stderr io.Writer) func(ctx context.Context) {
+	return func(ctx context.Context) {
+		if err := a.dailyPrune(ctx); err != nil {
+			fmt.Fprintln(stderr, "nodloop: retention:", err)
+		}
+	}
 }

@@ -42,22 +42,31 @@ type runInput struct {
 	Subject  string              `json:"subject,omitempty" jsonschema:"what the run was about in a few words"`
 	Output   any                 `json:"output" jsonschema:"the output as it was given to the person, a JSON value or text"`
 	Applied  []knowledge.Ref     `json:"applied,omitempty" jsonschema:"the knowledge items with their versions that the run applied, as knowledge_for answered them"`
+	Withheld []knowledge.Ref     `json:"withheld,omitempty" jsonschema:"the withheld items knowledge_for answered when the holdout drew the run. Never together with applied"`
+	// The run tool takes the draw again from the key so a producer passes back only what it holds
+	HoldoutKey string `json:"holdout_key,omitempty" jsonschema:"the holdout key the run passed to knowledge_for. Report effect counts only runs recorded with it"`
 }
 
 // Records one output so a person can nod on it
+// AfterRun of the policy follows the record
 func (s *Server) run(ctx context.Context, _ *sdk.CallToolRequest, in runInput) (*sdk.CallToolResult, any, error) {
-	// Text stays a JSON string even when it reads as a number, and secrets go before anything is written
+	refs, err := knowledge.NewRunInput(in.Applied, in.Withheld, "")
+	if err != nil {
+		return nil, nil, err
+	}
+	// Text stays a JSON string even when it reads as a number
+	// Secrets go before anything is written
 	b, err := json.Marshal(in.Output)
 	if err != nil {
 		return nil, nil, err
 	}
 	b = []byte(feedback.Redact(string(b)))
-	input, err := json.Marshal(map[string][]knowledge.Ref{"applied": in.Applied})
-	if err != nil {
-		return nil, nil, err
-	}
 	if in.Producer == "" {
 		return nil, nil, trace.ErrProducerRequired
+	}
+	input, err := json.Marshal(s.policy.Holdout.Drawn(refs, in.Producer, in.HoldoutKey))
+	if err != nil {
+		return nil, nil, err
 	}
 	tr, err := trace.NewRun(in.Producer, in.Subject, in.Labels, input, b, s.now())
 	if err != nil {
@@ -67,12 +76,17 @@ func (s *Server) run(ctx context.Context, _ *sdk.CallToolRequest, in runInput) (
 	if err := s.traces.Append(ctx, tr); err != nil {
 		return nil, nil, err
 	}
+	if s.policy.AfterRun != nil {
+		s.policy.AfterRun(ctx)
+	}
 	return nil, map[string]any{"trace_id": tr.ID}, nil
 }
 
 type knowledgeForInput struct {
 	Producer string              `json:"producer" jsonschema:"the producer of the run about to be made"`
 	Labels   map[string][]string `json:"labels,omitempty" jsonschema:"the situation of that run as key to values"`
+	// A producer opts in to the holdout by passing one
+	HoldoutKey string `json:"holdout_key,omitempty" jsonschema:"a string kept for one run such as a window id. The holdout draws on it so a share of runs gets no item and report effect compares them"`
 }
 
 type runItem struct {
@@ -84,6 +98,7 @@ type runItem struct {
 }
 
 // The approved items a run with these labels applies and whether they pass the run caps together
+// A run the holdout draws gets no item and withheld names every item it would have received
 func (s *Server) knowledgeFor(ctx context.Context, _ *sdk.CallToolRequest, in knowledgeForInput) (*sdk.CallToolResult, any, error) {
 	if in.Producer == "" {
 		return nil, nil, trace.ErrProducerRequired
@@ -93,16 +108,24 @@ func (s *Server) knowledgeFor(ctx context.Context, _ *sdk.CallToolRequest, in kn
 		return nil, nil, err
 	}
 	items := all.For(in.Producer, in.Labels)
+	var withheld []knowledge.Ref
+	if s.policy.Holdout.WithholdsRun(in.Producer, in.HoldoutKey) {
+		items, withheld = nil, items.Refs()
+	}
 	out := make([]runItem, 0, len(items))
 	chars := 0
 	for _, k := range items {
 		out = append(out, runItem{ID: k.ID, Version: k.Version, Kind: k.Kind, Content: k.Content, Scope: *k.Run})
 		chars += utf8.RuneCountInString(k.Text())
 	}
-	return nil, map[string]any{
+	answer := map[string]any{
 		"items": out, "chars": chars, "over_budget": chars > knowledge.RunChars || len(items) > knowledge.RunItems,
 		"context": items.Prompt(),
-	}, nil
+	}
+	if withheld != nil {
+		answer["withheld"] = withheld
+	}
+	return nil, answer, nil
 }
 
 // A proposal scoped to runs

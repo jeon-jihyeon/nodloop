@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -54,6 +56,77 @@ func (s *TraceStore) List(ctx context.Context, f trace.Filter) (trace.Traces, er
 	}
 	return collect(rows, f.Limit, f.Matches)
 }
+
+// The traces of the tenant with the names newest first without their output
+// json_to_record parses each row once into the fields a prune reads so no output leaves the database
+func (s *TraceStore) Heads(ctx context.Context, names ...trace.Name) (trace.Traces, error) {
+	wanted := make([]string, 0, len(names))
+	for _, n := range names {
+		wanted = append(wanted, string(n))
+	}
+	rows, err := s.pool.Query(ctx, `SELECT h.id, h.name, h.time, coalesce(h.ref, ''), coalesce(h.error, ''), h.input
+		FROM nodloop_traces t, json_to_record(t.data) AS h(id text, name text, time text, ref text, error text, input json)
+		WHERE t.tenant = $1 AND t.name = ANY($2) ORDER BY t.seq DESC`, s.tenant, wanted)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrRead, err)
+	}
+	defer rows.Close()
+	var out trace.Traces
+	for rows.Next() {
+		var t trace.Trace
+		var at string
+		var input []byte
+		if err := rows.Scan(&t.ID, &t.Name, &at, &t.Ref, &t.Error, &input); err != nil {
+			return nil, fmt.Errorf("%w: %w", ErrRead, err)
+		}
+		if t.Time, err = time.Parse(time.RFC3339Nano, at); err != nil {
+			return nil, fmt.Errorf("%w: %w", ErrRead, err)
+		}
+		t.Input = input
+		out = append(out, t)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrRead, err)
+	}
+	return out, nil
+}
+
+// Ids one DELETE of a prune takes so a first prune of a large tenant never writes its whole removal in one transaction
+const pruneBatch = 5000
+
+// Removes the traces of the tenant with the ids decide returns in batches and returns how many it removed
+// 1. a run stays while a verdict or an outcome or a knowledge record cites it when its DELETE runs
+// So a citation committed after decide read the citations still keeps its run
+// 2. a classify trace stays while its run is cited that way
+// 3. no other table loses a row
+func (s *TraceStore) Prune(ctx context.Context, decide func(context.Context) ([]string, error)) (int, error) {
+	ids, err := decide(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("%w: %w", ErrWrite, err)
+	}
+	removed := 0
+	for batch := range slices.Chunk(ids, pruneBatch) {
+		tag, err := s.pool.Exec(ctx, pruneSQL, s.tenant, batch)
+		if err != nil {
+			return removed, fmt.Errorf("%w: %w", ErrWrite, err)
+		}
+		removed += int(tag.RowsAffected())
+	}
+	return removed, nil
+}
+
+// One batch of a prune
+// run is the id of a run trace and the ref of a classify trace so a citation of the run keeps both
+const pruneSQL = `WITH doomed AS (
+	SELECT seq, CASE WHEN name = 'classify' THEN data->>'ref' ELSE id END AS run
+	FROM nodloop_traces WHERE tenant = $1 AND id = ANY($2)
+), cited AS (
+	SELECT trace_id AS run FROM nodloop_feedback WHERE tenant = $1 AND trace_id IN (SELECT run FROM doomed)
+	UNION SELECT trace_id FROM nodloop_outcomes WHERE tenant = $1 AND trace_id IN (SELECT run FROM doomed)
+	UNION SELECT json_array_elements_text(data->'evidence'->'feedback_trace_ids') FROM nodloop_knowledge WHERE tenant = $1
+	UNION SELECT json_array_elements_text(data->'evidence'->'outcome_trace_ids') FROM nodloop_knowledge WHERE tenant = $1
+)
+DELETE FROM nodloop_traces WHERE seq IN (SELECT seq FROM doomed d WHERE NOT EXISTS (SELECT 1 FROM cited c WHERE c.run = d.run))`
 
 // The feedback of one tenant
 type FeedbackStore struct {

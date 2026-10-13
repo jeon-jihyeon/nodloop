@@ -28,6 +28,10 @@ func TestRunExportOtel(t *testing.T) {
 	require.Equal(t, 0, runRun([]string{"record", "--producer", "bot", "--output", out}, base, func() time.Time { return at }, &id, &bytes.Buffer{}))
 	run := strings.TrimSpace(id.String())
 	require.Equal(t, 0, runFeedback([]string{"add", "--trace", run, "--verdict", "reject", "--reason", "no window"}, base, func() time.Time { return at.Add(time.Minute) }, &bytes.Buffer{}, &bytes.Buffer{}))
+	// Two outcomes of the run send one evaluation event so the line counts one
+	for _, result := range []string{"refuted", "confirmed"} {
+		require.Equal(t, 0, runFeedback([]string{"outcome", "--trace", run, "--result", result}, base, func() time.Time { return at.Add(time.Minute) }, &bytes.Buffer{}, &bytes.Buffer{}))
+	}
 	type args struct {
 		// {srv} stands for the URL of the collector of the row
 		args []string
@@ -49,24 +53,24 @@ func TestRunExportOtel(t *testing.T) {
 		{
 			"the flags name the endpoint and the headers",
 			args{[]string{"otel", "--endpoint", "{srv}/v1/traces", "--header", "Authorization=Basic flag"}, nil},
-			want{0, "exported 1 runs and 1 verdicts\n", "", []string{"/v1/traces"}, []string{"Basic flag"}},
+			want{0, "exported 1 runs and 1 verdicts and 1 outcomes\n", "", []string{"/v1/traces"}, []string{"Basic flag"}},
 		},
 		{
 			"the OTLP environment fills what the flags leave out",
 			args{[]string{"otel"}, map[string]string{envOTLPEndpoint: "{srv}/otel/", envOTLPHeaders: "Authorization=Basic%20env"}},
-			want{0, "exported 1 runs and 1 verdicts\n", "", []string{"/otel/v1/traces"}, []string{"Basic env"}},
+			want{0, "exported 1 runs and 1 verdicts and 1 outcomes\n", "", []string{"/otel/v1/traces"}, []string{"Basic env"}},
 		},
 		{
 			"a header of the flags wins over the same name in the environment",
 			args{[]string{"otel", "--endpoint", "{srv}/v1/traces", "--header", "Authorization=Basic flag"}, map[string]string{envOTLPHeaders: "Authorization=Basic%20env"}},
-			want{0, "exported 1 runs and 1 verdicts\n", "", []string{"/v1/traces"}, []string{"Basic flag"}},
+			want{0, "exported 1 runs and 1 verdicts and 1 outcomes\n", "", []string{"/v1/traces"}, []string{"Basic flag"}},
 		},
 		{"a pair without = in the environment fails", args{[]string{"otel", "--endpoint", "{srv}"}, map[string]string{envOTLPHeaders: "Authorization"}},
 			want{1, "", "is not name=value", nil, nil}},
 		{"a value the environment does not URL encode fails", args{[]string{"otel", "--endpoint", "{srv}"}, map[string]string{envOTLPHeaders: "Authorization=%zz"}},
 			want{1, "", "bad --header: OTEL_EXPORTER_OTLP_HEADERS: invalid URL escape", nil, nil}},
 		{"since after every run sends no request", args{[]string{"otel", "--endpoint", "{srv}", "--since", "2026-10-08T00:00:00Z"}, nil},
-			want{0, "exported 0 runs and 0 verdicts\n", "", nil, nil}},
+			want{0, "exported 0 runs and 0 verdicts and 0 outcomes\n", "", nil, nil}},
 		{"a since that is no RFC3339 time fails", args{[]string{"otel", "--endpoint", "{srv}", "--since", "yesterday"}, nil},
 			want{1, "", `parsing time "yesterday"`, nil, nil}},
 		{"no endpoint fails", args{[]string{"otel"}, nil}, want{1, "", "--endpoint is required", nil, nil}},

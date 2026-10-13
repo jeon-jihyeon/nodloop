@@ -15,7 +15,11 @@ type Report struct {
 	// Verdicts recorded before their run and left out of the waits
 	InvalidWaits     int    `json:"invalid_waits"`
 	KnowledgeApplied Cohort `json:"knowledge_applied"`
+	// Runs with no item to receive
 	WithoutKnowledge Cohort `json:"without_knowledge"`
+	// Runs a holdout kept their items from so they never count as runs without knowledge
+	// report effect compares them with the applied runs of the same draw
+	Withheld Cohort `json:"withheld"`
 }
 
 type Week struct {
@@ -111,8 +115,11 @@ func (h *History) Report(since time.Time) Report {
 	byWeek, byCohort := map[time.Time]*measures{}, map[*Cohort]*measures{}
 	for _, r := range h.entries {
 		cohort := &rep.WithoutKnowledge
-		if len(r.applied()) > 0 {
+		switch {
+		case len(r.applied()) > 0:
 			cohort = &rep.KnowledgeApplied
+		case len(r.input.Withheld) > 0:
+			cohort = &rep.Withheld
 		}
 		if o, ok := h.outcomes[r.trace.ID]; ok && !o.Time.Before(since) {
 			cohort.Outcomes.add(o.Result)

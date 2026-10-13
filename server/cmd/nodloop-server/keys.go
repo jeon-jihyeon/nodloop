@@ -33,6 +33,17 @@ type serverConfig struct {
 // A tenant names a directory under the record directory so it is one path element
 var tenantName = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,62}$`)
 
+// Every tenant a key names once in the order the keys first name them
+func (c serverConfig) tenants() []string {
+	var out []string
+	for _, k := range c.Keys {
+		if !slices.Contains(out, k.Tenant) {
+			out = append(out, k.Tenant)
+		}
+	}
+	return out
+}
+
 // The key whose hash matches the token compared in constant time
 func (c serverConfig) match(token string) (serverKey, bool) {
 	sum := sha256.Sum256([]byte(token))
