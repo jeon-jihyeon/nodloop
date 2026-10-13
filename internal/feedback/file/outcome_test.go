@@ -67,7 +67,7 @@ func TestOutcomeStoreList(t *testing.T) {
 	}
 	campaign := feedback.Outcome{
 		TraceID: "t1", Time: base.Add(2 * time.Minute), Result: feedback.ResultConfirmed, ConfirmedCause: "campaign",
-		Note: "checked", Reviewer: "jed",
+		Note: "checked", Reviewer: "sam",
 	}
 	type args struct {
 		// Created as a directory inside the store directory before any append

@@ -57,9 +57,9 @@ func TestNewOutcome(t *testing.T) {
 		},
 		{
 			"refuted keeps the named reviewer",
-			args{traceID: "t1", result: feedback.ResultRefuted, reviewer: "jed"},
+			args{traceID: "t1", result: feedback.ResultRefuted, reviewer: "sam"},
 			want{outcome: feedback.Outcome{
-				TraceID: "t1", Time: utc, Result: feedback.ResultRefuted, Note: "note", Reviewer: "jed",
+				TraceID: "t1", Time: utc, Result: feedback.ResultRefuted, Note: "note", Reviewer: "sam",
 			}},
 		},
 		{
@@ -121,7 +121,7 @@ func TestOutcomeImplicit(t *testing.T) {
 	}{
 		{"session reviewer is implicit", feedback.ReviewerSession, true},
 		{"author reviewer is a person", feedback.ReviewerAuthor, false},
-		{"named reviewer is a person", "jed", false},
+		{"named reviewer is a person", "sam", false},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {

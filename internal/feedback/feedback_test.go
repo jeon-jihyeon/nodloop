@@ -80,9 +80,9 @@ func TestNew(t *testing.T) {
 		},
 		{
 			"edit keeps the named reviewer and the edited review",
-			args{traceID: "t1", verdict: feedback.VerdictEdit, edited: hold, reviewer: "jed"},
+			args{traceID: "t1", verdict: feedback.VerdictEdit, edited: hold, reviewer: "sam"},
 			want{feedback: feedback.Feedback{
-				TraceID: "t1", Time: utc, Verdict: feedback.VerdictEdit, Reason: "why", Edited: hold, Reviewer: "jed",
+				TraceID: "t1", Time: utc, Verdict: feedback.VerdictEdit, Reason: "why", Edited: hold, Reviewer: "sam",
 			}},
 		},
 		{"missing trace id fails", args{verdict: feedback.VerdictApprove}, want{err: feedback.ErrTraceIDRequired}},
@@ -135,8 +135,8 @@ func TestNew(t *testing.T) {
 		},
 		{
 			"a withdraw keeps its reason",
-			args{traceID: "t1", verdict: feedback.VerdictWithdraw, reviewer: "jed"},
-			want{feedback: feedback.Feedback{TraceID: "t1", Time: utc, Verdict: feedback.VerdictWithdraw, Reason: "why", Reviewer: "jed"}},
+			args{traceID: "t1", verdict: feedback.VerdictWithdraw, reviewer: "sam"},
+			want{feedback: feedback.Feedback{TraceID: "t1", Time: utc, Verdict: feedback.VerdictWithdraw, Reason: "why", Reviewer: "sam"}},
 		},
 		{
 			"a withdraw with a reason code fails",
@@ -186,7 +186,7 @@ func TestFeedbackImplicit(t *testing.T) {
 	}{
 		{"session reviewer is implicit", feedback.ReviewerSession, true},
 		{"author reviewer is a person", feedback.ReviewerAuthor, false},
-		{"named reviewer is a person", "jed", false},
+		{"named reviewer is a person", "sam", false},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
@@ -269,7 +269,7 @@ func TestRecordsHuman(t *testing.T) {
 	session := feedback.Feedback{
 		TraceID: "t1", Time: base.Add(time.Minute), Verdict: feedback.VerdictApprove, Reviewer: feedback.ReviewerSession,
 	}
-	named := feedback.Feedback{TraceID: "t2", Time: base, Verdict: feedback.VerdictReject, Reviewer: "jed"}
+	named := feedback.Feedback{TraceID: "t2", Time: base, Verdict: feedback.VerdictReject, Reviewer: "sam"}
 	tcs := []struct {
 		name string
 		args feedback.Records
@@ -289,7 +289,7 @@ func TestRecordsHuman(t *testing.T) {
 		},
 		{
 			"a person's withdraw leaves no verdict of a person",
-			feedback.Records{{TraceID: "t1", Time: base.Add(time.Hour), Verdict: feedback.VerdictWithdraw, Reviewer: "jed"}, edited},
+			feedback.Records{{TraceID: "t1", Time: base.Add(time.Hour), Verdict: feedback.VerdictWithdraw, Reviewer: "sam"}, edited},
 			feedback.Records{},
 		},
 	}
@@ -351,7 +351,7 @@ func TestNewRedactsSessionRecords(t *testing.T) {
 		{"a key of the sk shape", "sk-" + strings.Repeat("d", 24), "[redacted]"},
 		{"a json web token", "eyJ" + strings.Repeat("e", 10) + "." + strings.Repeat("f", 10) + "." + strings.Repeat("g", 10), "[redacted]"},
 		{"the token after bearer", "Authorization: Bearer " + strings.Repeat("h", 20), "Authorization: Bearer [redacted]"},
-		{"the password of a url", "clone https://jed:" + "hunter2@example.com/repo", "clone https://jed:[redacted]@example.com/repo"},
+		{"the password of a url", "clone https://user:" + "hunter2@example.com/repo", "clone https://user:[redacted]@example.com/repo"},
 		{"a named value", "set password=" + "hunter2, then retry", "set password=[redacted], then retry"},
 		{"a named value after a colon", "API_KEY: " + "abc123", "API_KEY: [redacted]"},
 	}
@@ -360,7 +360,7 @@ func TestNewRedactsSessionRecords(t *testing.T) {
 			t.Parallel()
 			session, err := feedback.New("t1", feedback.VerdictReject, "", tc.args, nil, feedback.ReviewerSession, now)
 			require.NoError(t, err)
-			person, err := feedback.New("t1", feedback.VerdictReject, "", tc.args, nil, "jed", now)
+			person, err := feedback.New("t1", feedback.VerdictReject, "", tc.args, nil, "sam", now)
 			require.NoError(t, err)
 			outcome, err := feedback.NewOutcome("t1", feedback.ResultConfirmed, tc.args, tc.args, feedback.ReviewerSession, now)
 			require.NoError(t, err)

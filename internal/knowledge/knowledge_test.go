@@ -26,7 +26,7 @@ func TestKnowledgeValidate(t *testing.T) {
 		Status: knowledge.StatusCandidate, Author: "author", Time: at,
 	}
 	approved := valid
-	approved.Status, approved.Approver = knowledge.StatusApproved, "jed"
+	approved.Status, approved.Approver = knowledge.StatusApproved, "sam"
 	outcomeOnly := valid
 	outcomeOnly.Evidence = knowledge.Evidence{OutcomeTraceIDs: []string{"t1"}}
 	noID := valid

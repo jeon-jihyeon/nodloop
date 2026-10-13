@@ -260,7 +260,7 @@ func TestLedgerNarrow(t *testing.T) {
 		err        error
 	}
 	narrowed := candidateView{
-		version: 2, status: knowledge.StatusCandidate, author: "jed", except: trace.Labels{"task": {"push"}},
+		version: 2, status: knowledge.StatusCandidate, author: "sam", except: trace.Labels{"task": {"push"}},
 		outcomes: []string{"r2", "r1"}, feedback: []string{"f1"},
 	}
 	push := []string{"push"}
@@ -283,7 +283,7 @@ func TestLedgerNarrow(t *testing.T) {
 			ledger, _ := newTestLedger(t, t.TempDir(), at.Add(time.Hour))
 			require.NoError(t, testkit.Err(ledger.Import(ctx, []knowledge.Knowledge{tc.args.item})))
 
-			got, _, err := ledger.Narrow(ctx, "item", tc.args.version, "task", tc.args.values, []string{"r2", "r1"}, "jed")
+			got, _, err := ledger.Narrow(ctx, "item", tc.args.version, "task", tc.args.values, []string{"r2", "r1"}, "sam")
 			history, historyErr := ledger.History(ctx, "item")
 			require.NoError(t, historyErr)
 			approved, _ := ledger.Approve(ctx, "item", 2, "ann")
@@ -347,7 +347,7 @@ func TestLedgerPromote(t *testing.T) {
 			args{stated, 1, []string{"r1", "r2"}},
 			want{
 				candidateView{
-					version: 2, status: knowledge.StatusCandidate, basis: knowledge.BasisVerified, author: "jed", content: "lag",
+					version: 2, status: knowledge.StatusCandidate, basis: knowledge.BasisVerified, author: "sam", content: "lag",
 					run: repoRun(), outcomes: []string{"r0", "r1", "r2"},
 				},
 				2, 1, nil,
@@ -365,7 +365,7 @@ func TestLedgerPromote(t *testing.T) {
 			ledger, _ := newTestLedger(t, t.TempDir(), at.Add(time.Hour))
 			require.NoError(t, testkit.Err(ledger.Import(ctx, []knowledge.Knowledge{tc.args.item})))
 
-			got, _, err := ledger.Promote(ctx, "item", tc.args.version, tc.args.traceIDs, "jed")
+			got, _, err := ledger.Promote(ctx, "item", tc.args.version, tc.args.traceIDs, "sam")
 			history, historyErr := ledger.History(ctx, "item")
 			require.NoError(t, historyErr)
 			approved, _ := ledger.Approve(ctx, "item", 2, "ann")

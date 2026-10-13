@@ -262,7 +262,7 @@ func TestLedgerApproveRunScope(t *testing.T) {
 			_, _, err = l.Propose(ctx, runItem("k1", tc.args.v2))
 			require.NoError(t, err)
 
-			_, err = l.Approve(ctx, "k1", 2, "jed")
+			_, err = l.Approve(ctx, "k1", 2, "sam")
 
 			assert.ErrorIs(t, err, tc.want)
 		})

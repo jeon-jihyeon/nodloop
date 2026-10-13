@@ -80,12 +80,12 @@ func TestCompactRuns(t *testing.T) {
 			t.Parallel()
 			ctx := context.Background()
 			s, c, proposed := runFolder(t)
-			_, err := c.Approve(ctx, proposed.ID, "jed")
+			_, err := c.Approve(ctx, proposed.ID, "sam")
 			require.ErrorIs(t, err, compact.ErrNoCoverage, "nothing approves before a check")
 
 			_, err = c.Record(ctx, proposed.ID, tc.args)
 			require.ErrorIs(t, err, tc.want.recordErr)
-			got, err := c.Approve(ctx, proposed.ID, "jed")
+			got, err := c.Approve(ctx, proposed.ID, "sam")
 
 			require.ErrorIs(t, err, tc.want.approveErr)
 			if tc.want.approveErr != nil {
@@ -177,6 +177,6 @@ func TestCompactRunsCheck(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Len(t, cov.Items, 2)
-	_, err = c.Approve(ctx, proposed.ID, "jed")
+	_, err = c.Approve(ctx, proposed.ID, "sam")
 	assert.NoError(t, err)
 }
