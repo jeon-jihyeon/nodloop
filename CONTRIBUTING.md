@@ -64,9 +64,9 @@ Use haiku while iterating with `--model haiku` on the commands that call a model
 
 | Layer | Packages | Rule |
 |---|---|---|
-| Domain | `feedback`, `trace`, `llm`, `classify`, `veto`, `settings`, `jsonl`, `atomicfile` | No imports from the layers above |
+| Domain | `feedback`, `trace`, `llm`, `classify`, `veto`, `settings`, `userconfig`, `jsonl`, `atomicfile` | No imports from the layers above |
 | Core | `knowledge` | The ledger of items, their scopes and their history. Never a file store |
-| Application | `compact`, `extract`, `loop`, `replay` | Build on the core. They never import each other. `compact`, `extract` and `loop` are imported by `mcp`, `cmd/nodloop` and the server, and `replay` by `cmd/nodloop` alone |
+| Application | `compact`, `extract`, `loop`, `replay`, `retain` | Build on the core. They never import each other. `compact` and `extract` are imported by `mcp`, `cmd/nodloop` and the server, `loop` and `retain` by those and the `nodloop` package, and `replay` by `cmd/nodloop` alone |
 | Infra | the `file` subpackages and `otel` | Implements the stores in files, the veto and settings files and the OTLP export. Application code never imports one outside its tests |
 | Controllers | `cmd/nodloop`, `mcp`, `guard` | `cmd/nodloop` is the composition root and the only reader of the process environment |
 | Library | `nodloop` at the module root | A second composition root that other Go code imports |

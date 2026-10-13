@@ -82,7 +82,7 @@ Before you see a draft, a second model call checks it. It rejects drafts that ju
 | `knowledge compact`, `knowledge check` | When a run would carry more than five items, drafts a shorter set and checks that it loses no fact before you approve it |
 | `knowledge health`, `narrow`, `promote` | Flags items that keep getting corrected or haven't been used in 30 days, and proposes narrower or verified versions |
 | `report loop` | Shows where the loop stalls: runs, verdicts, corrections, drafts waiting and items approved, then per-item results |
-| `report effect` | With `config holdout 0.1`, one turn in ten gets no items, so you can compare correction rates with and without them |
+| `report effect` | With `config holdout 0.1`, one conversation in ten gets no items, so you can compare correction rates with and without them per producer, with intervals and a check that the arms split as drawn. Every run of one holdout key counts as one draw unit, so the turns of a conversation widen the intervals instead of passing for independent runs. A producer outside Claude Code joins by passing one holdout key per draw, such as `<service>:<hour>`, to `knowledge_for` and `run`, to `knowledge for` and `run record` with `--holdout-key`, or to `Draw` and `Run.HoldoutKey` in Go with `WithHoldout`. Runs that had items to receive but were recorded without the key count as undrawn |
 | `classifier set <point> --url <url>` | Lets your own HTTP classifier answer a decision point first, with claude as the fallback |
 
 Items are kept within a size budget per run, and an approved version goes stale after 90 days unless someone reaffirms it. `nodloop help <command>` has the details for each command.
@@ -131,14 +131,14 @@ async with Client() as c:
     await c.judge(mw.run, "reject", reason="the refund window was missing")
 ```
 
-See the [Python](sdk/python/README.md) and [TypeScript](sdk/typescript/README.md) READMEs for every method, and [example_test.go](example_test.go) for the Go package.
+See the [Python](sdk/python/README.md) and [TypeScript](sdk/typescript/README.md) READMEs for every method, and [example_test.go](example_test.go) for the Go package with `Draw`, `WithHoldout`, `WithRetention`, `Outcome` and `Report`.
 
 | Need | Use |
 |---|---|
 | Any MCP client | `nodloop mcp` serves the same loop as tools: `run`, `knowledge_for`, `feedback`, `propose`, `approve`, `check_call` and more |
 | A shared server for a team | `nodloop-server serve` offers the MCP tools over HTTP at `/mcp`, with per-tenant records, `producer`, `reviewer` and `approver` keys, and optional PostgreSQL |
 | Dashboards | `report <name> --json`, the MCP tool `report`, or `GET /v1/reports/{name}` on the server, for Grafana or any JSON data source |
-| Tracing tools | `nodloop export otel --endpoint <url>` sends runs as OpenTelemetry GenAI spans and verdicts as evaluation events, to a Collector, Langfuse or any OTLP backend |
+| Tracing tools | `nodloop export otel --endpoint <url>` sends runs as OpenTelemetry GenAI spans and verdicts and outcomes as evaluation events, to a Collector, Langfuse or any OTLP backend |
 
 ## Guard
 
@@ -174,7 +174,9 @@ Every record is an append-only JSON line, so the full history of every item stay
 | Approved items for a CLAUDE.md import | `approved.md` in the record directory (`nodloop knowledge export`) |
 | Guard decisions, background drafting log | `~/.nodloop/guard.jsonl`, `~/.nodloop/hook.log` |
 
-`nodloop config` lists every setting with its value and where it came from: session mode, approver, holdout, decision points, server keys, the claude binary and model (`sonnet` by default), PostgreSQL and the OTLP endpoint.
+`nodloop config` lists every setting with its value and where it came from: record directory, session mode, approver, holdout, retention, decision points, and the claude binary and model (`sonnet` by default).
+
+`nodloop config retention 30` keeps 30 days of runs nobody judged or cited, and fewer than 7 is refused. Once a day a recorded run removes older ones, `nodloop records prune` does it at once, and reports read the runs of that window. A Go service sets it with `WithRetention(30)`, which prunes in a goroutine that `WaitPrune` waits for before the process exits, and nodloop-server prunes every tenant from its own config. Each prune keeps its cutoff in `prune.json`, so every report over the records reads the same window whoever pruned them. A run with a verdict, an outcome or a knowledge citation stays whatever its age, and so do the first run that received and the newest run that applied each approved item. 0, the default, keeps every run.
 
 ## Privacy
 
@@ -185,7 +187,7 @@ No telemetry. Your records leave your machine only when:
 | A lesson or compaction is drafted, checked or replayed | the run outputs, verdicts and items involved, to `claude -p` under your Claude Code login |
 | A decision point asks your classifier | the text to judge, to the endpoint you set |
 | The plugin or an SDK needs its binary | a download of the release archive and checksums from GitHub |
-| You run `nodloop export otel` | runs and verdicts, plus outputs with `--with-output`, to the endpoint you name |
+| You run `nodloop export otel` | runs, verdicts and outcomes, plus outputs with `--with-output`, to the endpoint you name |
 
 Outputs are redacted of keys, tokens and passwords before they're stored or sent.
 
