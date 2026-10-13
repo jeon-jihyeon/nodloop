@@ -2,6 +2,31 @@
 
 Every release tag publishes the plugin, the darwin and linux binaries of `nodloop` and, from 0.7.0, `nodloop-server`, and both SDKs under one version. Versions before 0.6.0 reviewed incident data, which left this repository in 0.6.0.
 
+## Unreleased
+
+### Added
+- A producer outside Claude Code joins the holdout: `holdout_key` on the MCP tool `knowledge_for` and on `run`, `knowledge for --holdout-key` and `run record --withheld --holdout-key`, `Draw`, `WithHoldout` and `Run.HoldoutKey` in Go, and `holdout_key` in Python and `holdoutKey` in TypeScript on `knowledge`, `record` and the adapters. A drawn run records its `unit`, a hash of the key, so every run of one key counts as one draw
+- Retention: `nodloop config retention <days>`, `nodloop records prune [--dry-run | --daily]` and a daily prune after a recorded run, `WithRetention`, `WithPruneError` and `WaitPrune` in Go, and a daily prune of every tenant in nodloop-server. A run with a verdict, an outcome or a knowledge citation stays, and so do the first run that received and the newest run that applied each approved item. The stop hook starts the daily prune in a process of its own and the Go client in a goroutine, so neither waits for it. A verdict recorded while a prune waits for the trace file keeps its run. A prune decodes only the fields it reads, which keeps its memory on a 1.66 GB record file under 1 GB. `records prune` refuses `--dry-run` with `--daily` and stops with `another prune is running` when another process holds `prune.json`
+- `report effect` rows add `since`, `units`, `expected_share`, `rate` with a 95% Wilson interval, `judged_rate`, audit and outcome counts, `undrawn`, the sample ratio p value `srm_p`, `difference` with a 95% Newcombe interval, `insufficient` and `warnings`. The split check counts draw units, and the rates, their intervals and the judged rate check allow for the runs of one unit being alike, so the turns of a conversation never pass for independent runs. The text adds a first window line and the same columns after the producer
+- `report online` adds a `withheld` cohort
+- `Outcome`, `Report` and the `Result` type in Go and `outcome` and `report` in both SDKs. `report` returns the report with `since`, the start of the runs it read. Python adds the `Ref`, `Report`, `ReportName` and `Result` types and TypeScript exports `Ref`, `Report`, `ReportName` and `AdapterOptions`
+- `export otel` sends `nodloop.holdout.arm`, the applied or withheld items and the newest outcome as an evaluation event
+- The MCP `report` answer carries `since` when the report reads a window
+
+### Changed
+- `report effect` has two rows per producer with a `producer` field, and counts only runs recorded with a holdout draw. Runs recorded before this release count as `undrawn`
+- The conversation hooks draw the holdout once per session instead of once per turn, so a whole conversation is one arm
+- Every report reads from the later of the retention cutoff and the cutoff of the last prune of the records. The text of `report loop`, `report critic` and `report effect` opens with a `window` line, `all` when it read every run
+- The queue ranks a withheld run on the items it would have received and draws its audit samples from each arm in turn. `new_knowledge` marks only the first run that ever received a version, whatever window the queue reads
+- `report critic` counts the classify traces of the retention window
+- nodloop-server checks every tenant for a due prune at start and every hour from the mark kept with its records
+- The `export otel` line counts the outcome events it sent, one per run
+- A TypeScript adapter takes `{labels, holdoutKey}` as its third argument and still takes a plain labels object
+- The TypeScript `record` takes `{ id, version }` refs in `applied` as well as items
+
+### Fixed
+- A rewrite of a record file by `doctor --repair` writes a temp file and renames it over the file, so a crash or a reader never sees it empty or cut short. A backup an earlier release left from a stopped rewrite is merged back when the records open. Every writer also locks the data file on macOS and Linux, as earlier releases did, so a process of an earlier release never appends while a rewrite reads the file. Restart every nodloop process, the MCP server, Claude Code sessions and any Go service, on this release before the first prune or `doctor --repair`, since a process of an earlier release can still append to the file it opened before the rename and that run is lost
+
 ## 0.8.0 - 2026-10-08
 
 ### Added
