@@ -1,6 +1,6 @@
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import { createServer } from "node:net";
-import { mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { Client } from "../src/client.ts";
@@ -30,6 +30,13 @@ function serverBinary(): string {
     execFileSync("go", ["build", "-o", builtServer, "./cmd/nodloop-server"], { cwd: join(root, "server"), env: { ...process.env, HOME: realHome } });
   }
   return builtServer;
+}
+
+// Saves the holdout share in config.json of the test home
+// Only a call with a holdout key draws on it
+export function holdout(share: number): void {
+  mkdirSync(join(process.env.HOME!, ".nodloop"), { recursive: true });
+  writeFileSync(join(process.env.HOME!, ".nodloop", "config.json"), JSON.stringify({ holdout: share }));
 }
 
 export async function open(): Promise<Client> {

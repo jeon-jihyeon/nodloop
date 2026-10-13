@@ -13,7 +13,7 @@ from typing import Any
 
 from agents import RunHooks, ToolGuardrailFunctionOutput, tool_input_guardrail
 
-from .client import Client, Item
+from .client import Client, Item, Ref
 
 Labels = dict[str, list[str]]
 
@@ -24,11 +24,14 @@ class NodloopHooks(RunHooks):
     Use one instance per run because it keeps the items and the run id of that run
     """
 
-    def __init__(self, client: Client, producer: str, labels: Labels | None = None) -> None:
+    def __init__(self, client: Client, producer: str, labels: Labels | None = None, holdout_key: str = "") -> None:
         self.client = client
         self.producer = producer
         self.labels = labels or {}
+        # Passed to knowledge so a share of runs gets no item and report effect compares them
+        self.holdout_key = holdout_key
         self.applied: list[Item] = []
+        self.withheld: list[Ref] = []
         # The run the final output was recorded as so a verdict can cite it
         self.run: str = ""
 
@@ -36,15 +39,17 @@ class NodloopHooks(RunHooks):
         """Dynamic instructions: the base and the approved items under it"""
 
         async def build(context: Any, agent: Any) -> str:
-            knowledge = await self.client.knowledge(self.producer, self.labels)
-            self.applied = knowledge.items
+            knowledge = await self.client.knowledge(self.producer, self.labels, self.holdout_key)
+            self.applied, self.withheld = knowledge.items, knowledge.withheld
             return f"{base}\n\n{knowledge.text}" if knowledge.text else base
 
         return build
 
     async def on_agent_end(self, context: Any, agent: Any, output: Any) -> None:
         text = output if isinstance(output, str) else json.dumps(output, default=str)
-        self.run = await self.client.record(self.producer, text, labels=self.labels, applied=self.applied)
+        self.run = await self.client.record(
+            self.producer, text, labels=self.labels, applied=self.applied, withheld=self.withheld, holdout_key=self.holdout_key
+        )
 
 
 def veto_guardrail(client: Client, producer: str = "") -> Any:
