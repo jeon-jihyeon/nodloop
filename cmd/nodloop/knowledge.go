@@ -27,7 +27,7 @@ import (
 // Each action reads the ones it needs
 type knowledgeFlags struct {
 	id, kind, content, basis, approver, author, status, traceID, file string
-	from, producer, key, model                                        string
+	from, producer, key, model, holdoutKey                            string
 	version                                                           int
 	feedbackIDs, outcomeIDs                                           listFlag
 	labels, except                                                    labelFlag
@@ -54,6 +54,8 @@ func (f *knowledgeFlags) bind(fs *flag.FlagSet) {
 	fs.Var(&f.labels, "label", "propose, for and approve: key=value a run must carry. Repeatable. approve uses them instead of the proposed ones")
 	fs.Var(&f.except, "except", "propose: key=value a run must not carry. Repeatable")
 	fs.StringVar(&f.key, "key", "", "narrow: the label key whose refuted values the item stops reaching")
+	fs.StringVar(&f.holdoutKey, "holdout-key", "",
+		"for: a key kept for one run such as a window id. The holdout of config holdout draws on it. Pass the same key to run record")
 	fs.Var(&f.feedbackIDs, "evidence-feedback", "run id whose feedback supports it. Repeatable")
 	fs.Var(&f.outcomeIDs, "evidence-outcome", "run id whose outcome supports it. Repeatable")
 	fs.StringVar(&f.vetoTool, "veto-tool", "",
@@ -226,7 +228,7 @@ func (f knowledgeFlags) runPlace(ctx context.Context, action string, cmd knowled
 	labels := trace.Labels(f.labels)
 	switch action {
 	case "for":
-		return cmd.forRun(ctx, f.producer, labels)
+		return cmd.forRun(ctx, f.producer, labels, f.holdoutKey)
 	case "waiting":
 		return cmd.waiting(ctx, f.producer, labels)
 	default:
@@ -359,7 +361,8 @@ func (c knowledgeCommand) approveIn(labels trace.Labels) func(context.Context, s
 }
 
 // The approved items a run of the producer with the labels applies, then their size against the caps
-func (c knowledgeCommand) forRun(ctx context.Context, producer string, labels trace.Labels) error {
+// A run the holdout draws for the key gets a withheld line per item it would have received and no item
+func (c knowledgeCommand) forRun(ctx context.Context, producer string, labels trace.Labels, holdoutKey string) error {
 	if producer == "" {
 		return fmt.Errorf("for: --producer %w", errRequired)
 	}
@@ -368,6 +371,12 @@ func (c knowledgeCommand) forRun(ctx context.Context, producer string, labels tr
 		return err
 	}
 	items := all.For(producer, labels)
+	if c.app.cfg.holdout.WithholdsRun(producer, holdoutKey) {
+		for _, ref := range items.Refs() {
+			fmt.Fprintf(c.out, "withheld\t%s\tv%d\n", ref.ID, ref.Version)
+		}
+		items = nil
+	}
 	chars := 0
 	for _, k := range items {
 		chars += utf8.RuneCountInString(k.Text())

@@ -10,6 +10,7 @@ var (
 	// The read returns the records of the other lines with it
 	ErrCorrupt = errors.New("trace file: corrupt lines")
 	ErrRepair  = errors.New("trace file: repair failed")
+	ErrPrune   = errors.New("trace file: prune failed")
 )
 
 // A read that left out corrupt lines

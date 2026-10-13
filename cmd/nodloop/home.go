@@ -16,6 +16,8 @@ type userConfig struct {
 	Approver string `json:"approver,omitempty"`
 	// The share of conversation turns whose prompt receives no item so report effect has a comparison
 	Holdout float64 `json:"holdout,omitempty"`
+	// Whole days of unjudged and uncited runs a prune keeps and 0 for every run
+	Retention int `json:"retention,omitempty"`
 	// How a conversation records the verdicts it infers
 	// NODLOOP_SESSION overrides it per process
 	SessionMode string `json:"session_mode,omitempty"`

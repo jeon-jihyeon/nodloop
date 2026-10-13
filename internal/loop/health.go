@@ -90,7 +90,7 @@ func (h *History) Health(now time.Time) []Health {
 // The idle and contested signals of an approved version and the items to compact a contested one with
 func (h *History) lifetime(row *Health, k knowledge.Knowledge, now time.Time) {
 	reviewed := k.LastReviewed()
-	row.Idle = now.Sub(reviewed) >= IdleDays*24*time.Hour && h.runs.lastApplied(knowledge.Ref{ID: k.ID, Version: k.Version}).Before(reviewed)
+	row.Idle = now.Sub(reviewed) >= IdleDays*24*time.Hour && h.lastApplied[knowledge.Ref{ID: k.ID, Version: k.Version}].Before(reviewed)
 	row.Contested = h.runs.repeats(k) > 0
 	if !row.Contested {
 		return

@@ -26,7 +26,9 @@ const usage = `usage: nodloop-server <command> [flags]
                             Serve the MCP tools over streamable HTTP at /mcp for the keys, each tenant on its own records
                             under tenants of the record directory, or in one PostgreSQL database with --postgres or
                             NODLOOP_POSTGRES. 127.0.0.1:8787 by default. GET /v1/reports/<name> answers loop, extract,
-                            critic, effect, replay or health as JSON to a reviewer or approver key and GET /healthz answers without one
+                            critic, effect, replay or health as JSON to a reviewer or approver key and GET /healthz answers without one.
+                            holdout and retention of config.json are read once at start: holdout draws knowledge_for calls with a
+                            holdout key, and retention prunes each tenant's unjudged and uncited runs once a day, checked at start and every hour
   version                   Print the build version
 
 The record directory is --record-dir, then NODLOOP_RECORD_DIR, then record_dir of ~/.nodloop/config.json, then

@@ -32,12 +32,12 @@ func (l *labelFlag) Set(v string) error {
 	return nil
 }
 
-// Repeatable id:version flag of the knowledge a run applied
-type appliedFlag []knowledge.Ref
+// Repeatable id:version flag of the knowledge a run applied or a holdout kept from it
+type refFlag []knowledge.Ref
 
-func (a *appliedFlag) String() string { return fmt.Sprint([]knowledge.Ref(*a)) }
+func (a *refFlag) String() string { return fmt.Sprint([]knowledge.Ref(*a)) }
 
-func (a *appliedFlag) Set(v string) error {
+func (a *refFlag) Set(v string) error {
 	id, version, ok := strings.Cut(v, ":")
 	n, err := strconv.Atoi(version)
 	if !ok || id == "" || err != nil || n < 1 {
@@ -59,8 +59,10 @@ func runRun(args []string, getenv func(string) string, now func() time.Time, std
 	output := fs.String("output", "", "record: file holding the output, JSON or text")
 	var labels labelFlag
 	fs.Var(&labels, "label", "record: key=value of the situation. Repeatable")
-	var applied appliedFlag
+	var applied, withheld refFlag
 	fs.Var(&applied, "applied", "record: id:version of a knowledge item the run applied. Repeatable")
+	fs.Var(&withheld, "withheld", "record: id:version of a knowledge item knowledge for printed as withheld. Repeatable")
+	holdoutKey := fs.String("holdout-key", "", "record: the key the run passed to knowledge for. report effect counts only runs recorded with it")
 	if err := fs.Parse(args[1:]); err != nil {
 		return parseFailed(err)
 	}
@@ -69,9 +71,16 @@ func runRun(args []string, getenv func(string) string, now func() time.Time, std
 		return fail(stderr, "run", err)
 	}
 	cmd := runCommand{app: a, out: stdout}
+	ctx := context.Background()
 	switch args[0] {
 	case "record":
-		err = cmd.record(context.Background(), *producer, *subject, trace.Labels(labels), applied, *output)
+		var in knowledge.RunInput
+		if in, err = knowledge.NewRunInput(applied, withheld, ""); err == nil {
+			err = cmd.record(ctx, *producer, *subject, trace.Labels(labels), a.cfg.holdout.Drawn(in, *producer, *holdoutKey), *output)
+		}
+		if err == nil {
+			a.afterRun(stderr)(ctx)
+		}
 	default:
 		err = fmt.Errorf("%w %q", errUnknownAction, args[0])
 	}
@@ -88,7 +97,7 @@ type runCommand struct {
 
 // Prints the id a nod on the run cites
 func (c runCommand) record(
-	ctx context.Context, producer, subject string, labels trace.Labels, applied []knowledge.Ref, outputPath string,
+	ctx context.Context, producer, subject string, labels trace.Labels, in knowledge.RunInput, outputPath string,
 ) error {
 	if outputPath == "" {
 		return fmt.Errorf("record: --output %w", errRequired)
@@ -97,7 +106,7 @@ func (c runCommand) record(
 	if err != nil {
 		return fmt.Errorf("--output: %w", err)
 	}
-	input, err := json.Marshal(runInput{Applied: applied})
+	input, err := json.Marshal(in)
 	if err != nil {
 		return err
 	}
@@ -114,14 +123,4 @@ func (c runCommand) record(
 	}
 	fmt.Fprintln(c.out, tr.ID)
 	return nil
-}
-
-// What a run trace keeps as its input
-type runInput struct {
-	Applied []knowledge.Ref `json:"applied"`
-	// The plugin version a conversation hook ran under so a report can compare releases
-	// Empty for a run recorded through run record
-	Plugin string `json:"plugin,omitempty"`
-	// The items a holdout kept from the prompt of the turn while applied stays empty
-	Withheld []knowledge.Ref `json:"withheld,omitempty"`
 }

@@ -50,14 +50,11 @@ type Totals struct {
 // Runs and the verdicts on them
 type Runs struct {
 	ids map[string]bool
-	// Plugin version per run
-	// Empty for a run recorded before 0.7 or outside the conversation hooks
-	versions map[string]string
-	times    map[string]time.Time
-	applied  map[knowledge.Ref][]string
-	// What each run received and what a holdout kept from it
-	received map[string][]knowledge.Ref
-	withheld map[string][]knowledge.Ref
+	// The input per run with its items and its draw and its plugin version
+	inputs map[string]knowledge.RunInput
+	// The producer per run
+	producers map[string]string
+	applied   map[knowledge.Ref][]string
 	// Latest verdict of a person per trace, or the latest one a session inferred when no person gave one
 	verdicts map[string]feedback.Feedback
 	// First correction per trace by anyone
@@ -67,26 +64,21 @@ type Runs struct {
 // Failed runs and runs whose input does not read are left out because they applied nothing a person could judge
 func NewRuns(traces trace.Traces, verdicts feedback.Records) Runs {
 	r := Runs{
-		ids: map[string]bool{}, versions: map[string]string{}, times: map[string]time.Time{}, applied: map[knowledge.Ref][]string{},
-		received: map[string][]knowledge.Ref{}, withheld: map[string][]knowledge.Ref{},
+		ids: map[string]bool{}, inputs: map[string]knowledge.RunInput{}, producers: map[string]string{},
+		applied:  map[knowledge.Ref][]string{},
 		verdicts: map[string]feedback.Feedback{}, firstCorrection: map[string]time.Time{},
 	}
 	for _, tr := range traces {
 		if tr.Name != trace.NameRun || tr.Error != "" {
 			continue
 		}
-		var in struct {
-			Applied  []knowledge.Ref `json:"applied"`
-			Plugin   string          `json:"plugin"`
-			Withheld []knowledge.Ref `json:"withheld"`
-		}
+		var in knowledge.RunInput
 		if json.Unmarshal(tr.Input, &in) != nil {
 			continue
 		}
 		r.ids[tr.ID] = true
-		r.versions[tr.ID] = in.Plugin
-		r.times[tr.ID] = tr.Time
-		r.received[tr.ID], r.withheld[tr.ID] = in.Applied, in.Withheld
+		r.inputs[tr.ID] = in
+		r.producers[tr.ID] = tr.Producer
 		for _, ref := range in.Applied {
 			r.applied[ref] = append(r.applied[ref], tr.ID)
 		}
@@ -192,24 +184,14 @@ func (r Runs) taught(traceIDs []string) ([]feedback.ReasonCode, time.Time) {
 }
 
 // The plugin version a run was recorded under and unknown when it names none
+// Empty for a run recorded before 0.7 or outside the conversation hooks
 func (r Runs) version(runID string) string {
-	return cmp.Or(r.versions[runID], unknown)
+	return cmp.Or(r.inputs[runID].Plugin, unknown)
 }
 
 // A version or path the records do not name
 // Runs before 0.7 and runs recorded outside the conversation hooks carry no version
 const unknown = "unknown"
-
-// When a run last applied the version and zero when none did
-func (r Runs) lastApplied(ref knowledge.Ref) time.Time {
-	var last time.Time
-	for _, id := range r.applied[ref] {
-		if at := r.times[id]; at.After(last) {
-			last = at
-		}
-	}
-	return last
-}
 
 // Runs that applied the approved item and were corrected again for a reason it was taught by
 // A person's verdict and an inferred one both count

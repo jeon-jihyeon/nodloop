@@ -11,4 +11,6 @@ var (
 	errTenantInvalid = errors.New("invalid tenant")
 	errRoleInvalid   = errors.New("invalid role")
 	errNoKeys        = errors.New("no server key")
+	// A tenant that has no record directory yet so a prune has nothing to read
+	errNoRecords = errors.New("no records")
 )

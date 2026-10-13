@@ -703,7 +703,7 @@ func TestRunReportLoop(t *testing.T) {
 	code := runReport([]string{"loop"}, getenv, time.Now, &stdout, &stderr)
 
 	require.Equal(t, 0, code, stderr.String())
-	assert.Equal(t, "loop\truns 2\tjudged 1\tinferred 0\tcorrected 0\twaiting 0\tapproved 1\n"+
+	assert.Equal(t, "window\tall\nloop\truns 2\tjudged 1\tinferred 0\tcorrected 0\twaiting 0\tapproved 1\n"+
 		"scope\tunknown\titems 1\tsingle session 0\tnever applied 0\n"+
 		"git-c\tv1\tapplied 1\tfollowed 1 of 1\trepeat 0\tinferred followed 0 of 0\tinferred repeat 0\tsettle -\n"+
 		"misapplied\tnot measured: no label says which runs an item should have reached\n", stdout.String())
@@ -882,63 +882,38 @@ func TestRunKnowledgeApproveIn(t *testing.T) {
 	}
 }
 
-func TestHoldoutWithholds(t *testing.T) {
-	tcs := []struct {
-		name    string
-		share   holdout
-		session string
-		want    bool
-	}{
-		{"no share withholds nothing", 0, "s1", false},
-		{"a turn without a session is never drawn", 0.999, "", false},
-		{"a share near 1 withholds the turn", 0.999, "s1", true},
-	}
-	for _, tc := range tcs {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			assert.Equal(t, tc.want, tc.share.withholds(tc.session, ""))
-		})
-	}
-}
-
-// A share draws about that share of turns and the same turn always draws the same
-func TestHoldoutShare(t *testing.T) {
-	drawn := 0
-	for turn := range 1000 {
-		previous := trace.NewID(time.Date(2026, 10, 7, 0, 0, 0, 0, time.UTC).Add(time.Duration(turn) * time.Minute))
-		if holdout(0.2).withholds("s1", previous) {
-			drawn++
-		}
-		assert.Equal(t, holdout(0.2).withholds("s1", previous), holdout(0.2).withholds("s1", previous))
-	}
-	assert.InDelta(t, 200, drawn, 50)
-}
-
-// A turn the holdout draws gets no item in its prompt and its run records them as withheld
+// A session the holdout draws gets no item in any prompt and every run of it records them as withheld with its draw
 func TestRunHookHoldout(t *testing.T) {
-	require.True(t, holdout(0.999).withholds("s1", ""))
+	require.True(t, knowledge.Holdout(0.999).WithholdsRun(sessionProducer, "s1"))
 	home, records, repo := hookHome(t, "use git -C")
 	require.Equal(t, 0, runConfig([]string{"holdout", "0.999"}, func(k string) string { return map[string]string{"HOME": home}[k] }, &bytes.Buffer{}, &bytes.Buffer{}))
 	getenv := func(k string) string { return map[string]string{"HOME": home, envRecordDir: records}[k] }
-	stdin := `{"session_id":"s1","cwd":"` + repo + `","last_assistant_message":"done"}`
-	var prompt bytes.Buffer
+	var prompts bytes.Buffer
+	for _, session := range []string{"s1", "s1", ""} {
+		stdin := `{"session_id":"` + session + `","cwd":"` + repo + `","last_assistant_message":"done"}`
+		require.Equal(t, 0, runHook([]string{"prompt"}, getenv, nil, time.Now, strings.NewReader(stdin), &prompts, &bytes.Buffer{}))
+		require.Equal(t, 0, runHook([]string{"stop"}, getenv, nil, time.Now, strings.NewReader(stdin), &bytes.Buffer{}, &bytes.Buffer{}))
+	}
 
-	require.Equal(t, 0, runHook([]string{"prompt"}, getenv, nil, time.Now, strings.NewReader(stdin), &prompt, &bytes.Buffer{}))
-	require.Equal(t, 0, runHook([]string{"stop"}, getenv, nil, time.Now, strings.NewReader(stdin), &bytes.Buffer{}, &bytes.Buffer{}))
-
-	assert.NotContains(t, prompt.String(), "use git -C")
 	store, err := tracefile.New(records)
 	require.NoError(t, err)
-	runs, err := store.List(context.Background(), trace.Filter{Name: trace.NameRun, SessionID: "s1"})
+	runs, err := store.List(context.Background(), trace.Filter{Name: trace.NameRun})
 	require.NoError(t, err)
-	require.Len(t, runs, 1)
-	var in struct {
-		Applied  []knowledge.Ref `json:"applied"`
-		Withheld []knowledge.Ref `json:"withheld"`
+	require.Len(t, runs, 4, "the three turns after the run of the home")
+	var got []knowledge.RunInput
+	for _, run := range runs[:3] {
+		var in knowledge.RunInput
+		require.NoError(t, json.Unmarshal(run.Input, &in))
+		in.Plugin = ""
+		got = append(got, in)
 	}
-	require.NoError(t, json.Unmarshal(runs[0].Input, &in))
-	assert.Empty(t, in.Applied)
-	assert.Equal(t, []knowledge.Ref{{ID: "git-c", Version: 1}}, in.Withheld)
+	gitC := []knowledge.Ref{{ID: "git-c", Version: 1}}
+	assert.Equal(t, []knowledge.RunInput{
+		{Applied: gitC},
+		{Applied: []knowledge.Ref{}, Withheld: gitC, Drawn: true, Share: 0.999, Scheme: knowledge.DrawScheme, Unit: "d698df9d2c5b9655"},
+		{Applied: []knowledge.Ref{}, Withheld: gitC, Drawn: true, Share: 0.999, Scheme: knowledge.DrawScheme, Unit: "d698df9d2c5b9655"},
+	}, got, "both turns of the session are withheld in one unit and a turn without a session is never drawn")
+	assert.Equal(t, 1, strings.Count(prompts.String(), "use git -C"), "only the prompt without a session gets the item")
 }
 
 // The reaction point judges the user's message on the previous answer before the conversation does

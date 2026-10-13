@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"maps"
 	"slices"
+	"time"
 
 	"github.com/jeon-jihyeon/nodloop/internal/feedback"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
@@ -15,8 +16,8 @@ import (
 // One recorded run as the views read it
 type entry struct {
 	trace trace.Trace
-	// The versions the run names in its input
-	runApplied []knowledge.Ref
+	// What the run names in its input
+	input knowledge.RunInput
 }
 
 // Whether both runs come from the same place: the same producer and every label
@@ -27,24 +28,46 @@ func (r entry) samePlace(other entry) bool {
 
 // The knowledge versions the run applied
 func (r entry) applied() []knowledge.Ref {
-	return r.runApplied
+	return r.input.Applied
 }
 
-// Whether the run is the first to apply one of its versions
-// first names the earliest run per version
-func (r entry) introduces(first map[knowledge.Ref]string) bool {
-	for _, ref := range r.applied() {
-		if first[ref] == r.trace.ID {
+// The versions the run applied or would have applied had the holdout not kept them
+// A view that must not tell the arms apart reads these
+func (r entry) received() []knowledge.Ref {
+	if len(r.input.Applied) > 0 {
+		return r.input.Applied
+	}
+	return r.input.Withheld
+}
+
+// The arm of a drawn run with items to receive and empty for any other run
+func (r entry) arm() Arm {
+	switch {
+	case !r.input.Drawn:
+		return ""
+	case len(r.input.Applied) > 0:
+		return ArmApplied
+	case len(r.input.Withheld) > 0:
+		return ArmWithheld
+	}
+	return ""
+}
+
+// Whether the run is the first to receive one of its versions
+// first holds the earliest run per version
+func (r entry) introduces(first map[knowledge.Ref]trace.Trace) bool {
+	for _, ref := range r.received() {
+		if first[ref].ID == r.trace.ID {
 			return true
 		}
 	}
 	return false
 }
 
-// Whether something was applied and every applied version is stated
+// Whether something was received and every received version is stated
 // A version missing from versions counts as not stated so an unknown item never raises the signal
 func (r entry) statedOnly(versions map[knowledge.Ref]knowledge.Knowledge) bool {
-	applied := r.applied()
+	applied := r.received()
 	for _, ref := range applied {
 		if k, ok := versions[ref]; !ok || k.Basis != knowledge.BasisStated {
 			return false
@@ -70,6 +93,12 @@ type History struct {
 	vocabulary map[string]trace.Labels
 	// The runs with every verdict so a lifetime signal sees what the conversation inferred too
 	runs Runs
+	// When a run last applied each version
+	// Read over every run and not only the window
+	lastApplied map[knowledge.Ref]time.Time
+	// The earliest run that received each version applied or withheld
+	// Read over every run so a window never makes a later run the first
+	firstReceived map[knowledge.Ref]trace.Trace
 }
 
 type TraceStore interface {
@@ -88,9 +117,9 @@ type KnowledgeStore interface {
 	All(ctx context.Context) (knowledge.Set, error)
 }
 
-// Every record of the stores read once and joined
+// Every record of the stores read once and joined by New over the window from since on
 func Load(
-	ctx context.Context, traces TraceStore, verdicts FeedbackStore, outcomes OutcomeStore, items KnowledgeStore,
+	ctx context.Context, traces TraceStore, verdicts FeedbackStore, outcomes OutcomeStore, items KnowledgeStore, since time.Time,
 ) (*History, error) {
 	all, err := traces.List(ctx, trace.Filter{Name: trace.NameRun})
 	if err != nil {
@@ -108,28 +137,41 @@ func Load(
 	if err != nil {
 		return nil, err
 	}
-	return New(all, records, checks, set), nil
+	return New(all, records, checks, set, since), nil
 }
 
-func New(traces trace.Traces, verdicts feedback.Records, outcomes feedback.Outcomes, items knowledge.Set) *History {
+// The history of the runs since the time and the zero time reads every run
+// 1. runs before since are left out so a retention window never mixes every judged run with the unjudged runs that survived
+// 2. when a version was last applied and the first run to receive it are read over every run
+// A run before the window still counts as a use of the version and as its first run
+func New(traces trace.Traces, verdicts feedback.Records, outcomes feedback.Outcomes, items knowledge.Set, since time.Time) *History {
+	window := slices.DeleteFunc(slices.Clone(traces), trace.Filter{Since: since}.Older)
 	h := &History{
 		verdicts: map[string]feedback.Feedback{}, outcomes: map[string]feedback.Outcome{},
 		withFeedback: map[string]bool{}, withOutcome: map[string]bool{}, knowledge: items, vocabulary: map[string]trace.Labels{},
-		runs: NewRuns(traces, verdicts),
+		runs: NewRuns(window, verdicts), lastApplied: map[knowledge.Ref]time.Time{}, firstReceived: map[knowledge.Ref]trace.Trace{},
 	}
 	recorded := map[string]bool{}
 	for _, tr := range traces {
 		if tr.Name != trace.NameRun || tr.Error != "" {
 			continue
 		}
-		recorded[tr.ID] = true
-		var in struct {
-			Applied []knowledge.Ref `json:"applied"`
-		}
+		var in knowledge.RunInput
 		_ = json.Unmarshal(tr.Input, &in)
-		h.entries = append(h.entries, entry{trace: tr, runApplied: in.Applied})
+		for _, ref := range in.Applied {
+			if tr.Time.After(h.lastApplied[ref]) {
+				h.lastApplied[ref] = tr.Time
+			}
+		}
+		r := entry{trace: tr, input: in}
+		h.receive(r)
+		if tr.Time.Before(since) {
+			continue
+		}
+		recorded[tr.ID] = true
+		h.entries = append(h.entries, r)
 		if _, ok := h.vocabulary[tr.Producer]; !ok {
-			h.vocabulary[tr.Producer] = traces.Vocabulary(tr.Producer)
+			h.vocabulary[tr.Producer] = window.Vocabulary(tr.Producer)
 		}
 	}
 	for _, fb := range verdicts {
@@ -145,6 +187,17 @@ func New(traces trace.Traces, verdicts feedback.Records, outcomes feedback.Outco
 		h.outcomes[o.TraceID] = o
 	}
 	return h
+}
+
+// Keeps the run as the first to receive each of its versions when it is earlier than the one kept
+// Runs of one time take the lower trace id so the order of the store never decides
+func (h *History) receive(r entry) {
+	for _, ref := range r.received() {
+		old, ok := h.firstReceived[ref]
+		if !ok || r.trace.Time.Before(old.Time) || (r.trace.Time.Equal(old.Time) && r.trace.ID < old.ID) {
+			h.firstReceived[ref] = r.trace
+		}
+	}
 }
 
 // The recorded output per trace id for the ids that name a run

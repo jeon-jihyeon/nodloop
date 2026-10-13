@@ -33,7 +33,11 @@ func (a app) history(ctx context.Context) (*loop.History, error) {
 	if err != nil {
 		return nil, err
 	}
-	return loop.Load(ctx, traces, verdicts, outcomes, ledger)
+	since, err := a.window(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return loop.Load(ctx, traces, verdicts, outcomes, ledger, since)
 }
 
 // One JSON row per knowledge version
@@ -231,11 +235,11 @@ func runRecordReport(args []string, show func(loopCommand, loop.Snapshot), geten
 	if err != nil {
 		return fail(stderr, "report", err)
 	}
-	stores, err := a.reportStores()
+	ctx := context.Background()
+	stores, err := a.reportStores(ctx)
 	if err != nil {
 		return fail(stderr, "report", err)
 	}
-	ctx := context.Background()
 	if *asJSON {
 		report, err := stores.Report(ctx, loop.ReportName(args[0]), now())
 		if err == nil {
@@ -255,7 +259,7 @@ func runRecordReport(args []string, show func(loopCommand, loop.Snapshot), geten
 }
 
 // The stores of the record directory every report reads
-func (a app) reportStores() (loop.Stores, error) {
+func (a app) reportStores(ctx context.Context) (loop.Stores, error) {
 	traces, err := a.traces()
 	if err != nil {
 		return loop.Stores{}, err
@@ -272,7 +276,11 @@ func (a app) reportStores() (loop.Stores, error) {
 	if err != nil {
 		return loop.Stores{}, err
 	}
-	return loop.Stores{Traces: traces, Verdicts: verdicts, Outcomes: outcomes, Items: ledger}, nil
+	since, err := a.window(ctx)
+	if err != nil {
+		return loop.Stores{}, err
+	}
+	return loop.Stores{Traces: traces, Verdicts: verdicts, Outcomes: outcomes, Items: ledger, Since: since}, nil
 }
 
 // One line per plugin version and path: extractions by conclusion, drafts by refusal and the critic questions answered false
@@ -291,20 +299,82 @@ func seconds(d time.Duration) string {
 	return max(d.Round(time.Second), time.Second).String()
 }
 
-// One line per critic: drafts it judged and how its judgments matched what a person later decided on the run
+// The window line first and one line per critic after it
+// Each line holds the drafts it judged and how its judgments matched what a person later decided on the run
 func (c loopCommand) critics(e loop.Snapshot) {
+	fmt.Fprintf(c.out, "window\t%s\n", windowText(e.Since()))
 	for _, row := range e.Critics() {
 		fmt.Fprintf(c.out, "critic\t%s\tjudged %d\tagree %d\tfalse pass %d\tfalse refuse %d\topen %d\n",
 			row.Critic, row.Judged, row.Agree, row.FalsePass, row.FalseRefuse, row.Open)
 	}
 }
 
-// One line per arm: runs that applied items and runs a holdout kept them from, judged, corrected and corrected for an item's reason
+// A first line with the window and the drawn runs of each arm
+// One line per arm of each producer after it
+// 1. the arm stays in the second column and the producer follows the counts so a reader of the first columns reads every line
+// 2. the rates and the health checks of the arms follow the producer column in the order of EffectRow
+// 3. the two rows of a report without runs have no producer column and nothing after it
 func (c loopCommand) effect(e loop.Snapshot) {
-	for _, row := range e.Effect() {
-		fmt.Fprintf(c.out, "effect\t%s\truns %d\tjudged %d\tcorrected %d\tsame reason %d\n",
-			row.Arm, row.Runs, row.Judged, row.Corrected, row.SameReason)
+	rows := e.Effect()
+	var arms [2]int
+	for _, row := range rows {
+		if row.Arm == loop.ArmWithheld {
+			arms[1] += row.Runs
+			continue
+		}
+		arms[0] += row.Runs
 	}
+	fmt.Fprintf(c.out, "window\t%s\tapplied runs %d\twithheld runs %d\n", windowText(e.Since()), arms[0], arms[1])
+	for _, row := range rows {
+		fmt.Fprintf(c.out, "effect\t%s\truns %d\tjudged %d\tcorrected %d\tsame reason %d",
+			row.Arm, row.Runs, row.Judged, row.Corrected, row.SameReason)
+		if row.Producer != "" {
+			fmt.Fprintf(c.out, "\tproducer %s\tunits %d\trate %s\tjudged rate %s\texpected share %.3f", row.Producer,
+				row.Units, interval(row.Rate, row.RateLow, row.RateHigh), number(row.JudgedRate), row.ExpectedShare)
+			fmt.Fprintf(c.out, "\taudit judged %d corrected %d\toutcomes confirmed %d refuted %d\tundrawn %d",
+				row.AuditJudged, row.AuditCorrected, row.Confirmed, row.Refuted, row.Undrawn)
+			fmt.Fprintf(c.out, "\tsrm p %s\tdifference %s\twarnings %s",
+				number(row.SRMP), interval(row.Difference, row.DifferenceLow, row.DifferenceHigh), warnings(row.Warnings))
+		}
+		fmt.Fprintln(c.out)
+	}
+}
+
+// The window start as RFC3339 or all for every run
+// Every text report over the runs opens with it so a reader always sees which runs it counted
+func windowText(since time.Time) string {
+	if since.IsZero() {
+		return "all"
+	}
+	return since.Format(time.RFC3339)
+}
+
+// A value with three decimals or a dash for none
+func number(v *float64) string {
+	if v == nil {
+		return "-"
+	}
+	return fmt.Sprintf("%.3f", *v)
+}
+
+// A value with its interval in brackets or a dash for none
+func interval(v, low, high *float64) string {
+	if v == nil {
+		return "-"
+	}
+	return fmt.Sprintf("%.3f [%.3f, %.3f]", *v, *low, *high)
+}
+
+// The warnings joined by commas or a dash for none
+func warnings(ws []loop.EffectWarning) string {
+	if len(ws) == 0 {
+		return "-"
+	}
+	parts := make([]string, 0, len(ws))
+	for _, w := range ws {
+		parts = append(parts, string(w))
+	}
+	return strings.Join(parts, ",")
 }
 
 // One line per version from its newest replay
@@ -328,10 +398,12 @@ func counts(m map[string]int) string {
 	return strings.Join(parts, ", ")
 }
 
-// A first line of totals, then one scope line per plugin version and one drafts line per plugin version and drafting path
+// The window line first
+// A line of totals then one scope line per plugin version and one drafts line per plugin version and drafting path
 // One line per approved run item after them: applied, followed of judged and repeat by people then by a session, and settle
 // A last line says misapplied is not measured
 func (c loopCommand) runs(e loop.Snapshot) {
+	fmt.Fprintf(c.out, "window\t%s\n", windowText(e.Since()))
 	report := e.Loop()
 	t := report.Totals
 	fmt.Fprintf(c.out, "loop\truns %d\tjudged %d\tinferred %d\tcorrected %d\twaiting %d\tapproved %d\n",

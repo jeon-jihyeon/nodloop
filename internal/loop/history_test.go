@@ -63,7 +63,7 @@ func TestNew(t *testing.T) {
 		{TraceID: "r1", Verdict: feedback.VerdictEdit, Time: monday.Add(4 * time.Hour), Reviewer: feedback.ReviewerSession},
 	}
 
-	h := loop.New(traces, verdicts, nil, knowledge.Set{runItem("git-c", 1)})
+	h := loop.New(traces, verdicts, nil, knowledge.Set{runItem("git-c", 1)}, time.Time{})
 
 	got := h.Health(monday)
 	require.Len(t, got, 1)
@@ -72,15 +72,30 @@ func TestNew(t *testing.T) {
 	assert.Equal(t, map[string]json.RawMessage{"r1": json.RawMessage(`{"answer":"r1"}`)}, h.Outputs([]string{"r1", "failed", "check"}))
 }
 
-// Load reads the run traces of the stores
+// Load reads the run traces of the stores since the cutoff of the retention window
 func TestLoad(t *testing.T) {
-	ctx := context.Background()
-	s := testkit.Open(t)
-	require.NoError(t, s.Traces.Append(ctx, sessionRun(t, "r1", 1, "nodloop")))
-	require.NoError(t, s.Feedback.Append(ctx, verdict("r1", feedback.VerdictApprove, monday.Add(time.Hour))))
+	tcs := []struct {
+		name string
+		args time.Time
+		want int
+	}{
+		{"the zero time reads every run", time.Time{}, 2},
+		{"a run before the cutoff is left out with its verdict", monday.Add(2 * time.Hour), 1},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ctx := context.Background()
+			s := testkit.Open(t)
+			require.NoError(t, s.Traces.Append(ctx, sessionRun(t, "r1", 1, "nodloop")))
+			require.NoError(t, s.Traces.Append(ctx, sessionRun(t, "r2", 3, "nodloop")))
+			require.NoError(t, s.Feedback.Append(ctx, verdict("r1", feedback.VerdictApprove, monday.Add(time.Hour))))
+			require.NoError(t, s.Feedback.Append(ctx, verdict("r2", feedback.VerdictApprove, monday.Add(4*time.Hour))))
 
-	h, err := loop.Load(ctx, s.Traces, s.Feedback, s.Outcomes, s.Ledger)
+			h, err := loop.Load(ctx, s.Traces, s.Feedback, s.Outcomes, s.Ledger, tc.args)
 
-	require.NoError(t, err)
-	assert.Equal(t, 1, h.Report(time.Time{}).WithoutKnowledge.Verdicts.Approve)
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, h.Report(time.Time{}).WithoutKnowledge.Verdicts.Approve)
+		})
+	}
 }

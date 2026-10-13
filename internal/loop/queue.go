@@ -20,7 +20,7 @@ const (
 	ReasonNewKnowledge    Reason = "new_knowledge"    // the first run that applied a knowledge version
 	ReasonStatedOnly      Reason = "stated_only"      // every applied item is stated and none verified
 	ReasonNoApprovedItem  Reason = "no_approved_item" // no approved item reaches the place of the run
-	ReasonNoKnowledge     Reason = "no_knowledge"     // nothing was applied
+	ReasonNoKnowledge     Reason = "no_knowledge"     // the run had no item to receive
 )
 
 // The valid reasons with their full weight
@@ -44,6 +44,8 @@ type QueueItem struct {
 	// Human verdicts in the same place before the run and how many of them corrected
 	PlaceReviewed    int `json:"place_reviewed"`
 	PlaceCorrections int `json:"place_corrections"`
+	// The holdout arm the audit draws within and never part of the answer so a person judges blind
+	arm Arm
 }
 
 // Adds the full weight of the reason
@@ -66,8 +68,8 @@ func (item QueueItem) compare(other QueueItem) int {
 	return cmp.Or(cmp.Compare(other.Score, item.Score), item.Time.Compare(other.Time), cmp.Compare(item.TraceID, other.TraceID))
 }
 
+// Scores every run on what it received or would have received so the order never depends on the holdout arm
 func (h *History) rank(candidates []entry) []QueueItem {
-	first := h.firstApplications(candidates)
 	versions := map[knowledge.Ref]knowledge.Knowledge{}
 	for _, k := range h.knowledge.Versions() {
 		versions[knowledge.Ref{ID: k.ID, Version: k.Version}] = k
@@ -76,10 +78,10 @@ func (h *History) rank(candidates []entry) []QueueItem {
 	for _, r := range candidates {
 		item := QueueItem{
 			TraceID: r.trace.ID, Producer: r.trace.Producer, Labels: r.trace.Labels, Subject: r.trace.Subject,
-			Time: r.trace.Time, Reasons: []Reason{},
+			Time: r.trace.Time, Reasons: []Reason{}, arm: r.arm(),
 		}
 		h.pastCorrections(&item, r)
-		if r.introduces(first) {
+		if r.introduces(h.firstReceived) {
 			item.signal(ReasonNewKnowledge)
 		}
 		if r.statedOnly(versions) {
@@ -88,7 +90,7 @@ func (h *History) rank(candidates []entry) []QueueItem {
 		if len(h.knowledge.For(r.trace.Producer, r.trace.Labels)) == 0 {
 			item.signal(ReasonNoApprovedItem)
 		}
-		if len(r.applied()) == 0 {
+		if len(r.received()) == 0 {
 			item.signal(ReasonNoKnowledge)
 		}
 		items = append(items, item)
@@ -116,24 +118,6 @@ func (h *History) pastCorrections(item *QueueItem, r entry) {
 	}
 }
 
-// The trace id of the earliest run that applied each version among the history and the candidates
-func (h *History) firstApplications(candidates []entry) map[knowledge.Ref]string {
-	earliest := map[knowledge.Ref]trace.Trace{}
-	for _, r := range slices.Concat(h.entries, candidates) {
-		for _, ref := range r.applied() {
-			old, ok := earliest[ref]
-			if !ok || r.trace.Time.Before(old.Time) || (r.trace.Time.Equal(old.Time) && r.trace.ID < old.ID) {
-				earliest[ref] = r.trace
-			}
-		}
-	}
-	out := make(map[knowledge.Ref]string, len(earliest))
-	for ref, tr := range earliest {
-		out[ref] = tr.ID
-	}
-	return out
-}
-
 // What a queue call takes when it leaves the limit or the audit rate out
 const (
 	QueueLimit     = 10
@@ -158,7 +142,9 @@ func (o QueueOptions) validate() error {
 }
 
 // The first limit items where the last ceil of limit times the audit rate slots are drawn from the rest of the order
-// A short order that fits the priority slots has no audit sample
+// 1. a short order that fits the priority slots has no audit sample
+// 2. the draw takes one run of each arm in turn so every arm gets audit samples whatever its share
+// The runs outside both arms take turns as a third arm
 func (o QueueOptions) sample(items []QueueItem) []QueueItem {
 	if o.Limit == 0 {
 		return items
@@ -167,14 +153,26 @@ func (o QueueOptions) sample(items []QueueItem) []QueueItem {
 	if len(items) <= priority {
 		return items
 	}
-	rest := items[priority:]
 	rng := rand.New(rand.NewPCG(uint64(o.Seed), 0))
-	rng.Shuffle(len(rest), func(i, j int) { rest[i], rest[j] = rest[j], rest[i] })
-	count := min(o.Limit, len(items))
-	for i := priority; i < count; i++ {
-		items[i].Audit = true
+	arms := map[Arm][]QueueItem{}
+	for _, item := range items[priority:] {
+		arms[item.arm] = append(arms[item.arm], item)
 	}
-	return items[:count]
+	order := []Arm{ArmApplied, ArmWithheld, ""}
+	for _, arm := range order {
+		rng.Shuffle(len(arms[arm]), func(i, j int) { arms[arm][i], arms[arm][j] = arms[arm][j], arms[arm][i] })
+	}
+	out := slices.Clone(items[:priority])
+	for len(out) < min(o.Limit, len(items)) {
+		for _, arm := range order {
+			if len(arms[arm]) > 0 && len(out) < o.Limit {
+				item := arms[arm][0]
+				item.Audit = true
+				out, arms[arm] = append(out, item), arms[arm][1:]
+			}
+		}
+	}
+	return out
 }
 
 // The runs without a human verdict in queue order with an audit share

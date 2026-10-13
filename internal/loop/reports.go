@@ -42,9 +42,12 @@ type LoopReport struct {
 
 // The traces a report reads with every verdict and knowledge record joined once
 type Snapshot struct {
-	traces trace.Traces
-	runs   Runs
-	items  knowledge.Set
+	traces   trace.Traces
+	runs     Runs
+	items    knowledge.Set
+	outcomes feedback.Outcomes
+	// The start of the window the runs were read in
+	since time.Time
 }
 
 func (s Snapshot) Loop() LoopReport {
@@ -65,7 +68,12 @@ func (s Snapshot) Critics() []CriticRow {
 }
 
 func (s Snapshot) Effect() []EffectRow {
-	return s.runs.Effect(s.items)
+	return s.runs.Effect(s.items, s.outcomes, s.since)
+}
+
+// The start of the window the runs were read in and zero for every run
+func (s Snapshot) Since() time.Time {
+	return s.since
 }
 
 // The stores every report reads from
@@ -74,6 +82,9 @@ type Stores struct {
 	Verdicts FeedbackStore
 	Outcomes OutcomeStore
 	Items    KnowledgeStore
+	// The cutoff of the retention window and the runs before it are left out
+	// The zero time reads every run
+	Since time.Time
 }
 
 // The trace names the report of the name reads
@@ -97,15 +108,25 @@ func (s Stores) Snapshot(ctx context.Context, name ReportName) (Snapshot, error)
 	if !name.Valid() {
 		return Snapshot{}, fmt.Errorf("%w: %q. Ask for one of %v", ErrReportUnknown, name, ReportNames())
 	}
-	return s.snapshot(ctx, name.traces())
+	snap, err := s.snapshot(ctx, name.traces())
+	if err != nil || name != ReportEffect {
+		return snap, err
+	}
+	snap.outcomes, err = s.Outcomes.List(ctx, "")
+	return snap, err
 }
 
 // Reads the traces of each name in turn so no report reads a trace it never looks at
-// Each name keeps the newest first order of the store
+// 1. each name keeps the newest first order of the store
+// 2. runs and classify traces are read in the window since a prune removes both and a count over all time would mix what survived
 func (s Stores) snapshot(ctx context.Context, names []trace.Name) (Snapshot, error) {
 	var all trace.Traces
 	for _, name := range names {
-		found, err := s.Traces.List(ctx, trace.Filter{Name: name})
+		f := trace.Filter{Name: name}
+		if name == trace.NameRun || name == trace.NameClassify {
+			f.Since = s.Since
+		}
+		found, err := s.Traces.List(ctx, f)
 		if err != nil {
 			return Snapshot{}, err
 		}
@@ -119,7 +140,7 @@ func (s Stores) snapshot(ctx context.Context, names []trace.Name) (Snapshot, err
 	if err != nil {
 		return Snapshot{}, err
 	}
-	return Snapshot{traces: all, runs: NewRuns(all, records), items: set}, nil
+	return Snapshot{traces: all, runs: NewRuns(all, records), items: set, since: s.Since}, nil
 }
 
 // The report of the name as JSON for a reader that picks it at run time
@@ -134,7 +155,7 @@ func (s Stores) Report(ctx context.Context, name ReportName, now time.Time) (jso
 
 func (s Stores) report(ctx context.Context, name ReportName, now time.Time) (any, error) {
 	if name == ReportHealth {
-		h, err := Load(ctx, s.Traces, s.Verdicts, s.Outcomes, s.Items)
+		h, err := Load(ctx, s.Traces, s.Verdicts, s.Outcomes, s.Items, s.Since)
 		if err != nil {
 			return nil, err
 		}

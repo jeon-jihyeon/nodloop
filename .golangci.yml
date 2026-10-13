@@ -29,7 +29,9 @@ linters:
         - name: exported
           disabled: true
     # Packages import downward only: domain → application → infra → controllers
-    # knowledge is the ledger, compact and extract and loop sit above it and only mcp and cmd import them
+    # knowledge is the ledger and the application packages sit above it
+    # compact and extract are imported by mcp and cmd and the server
+    # loop and retain are imported by those and the nodloop package at the module root
     # No package imports a producer: a producer reaches the core through the MCP tools or the CLI
     # cmd/nodloop is the composition root and imports everything
     # Test files may reach the testkit harness and the file stores so $test is left out where that matters
@@ -55,6 +57,8 @@ linters:
               desc: domain packages do not import extract
             - pkg: github.com/jeon-jihyeon/nodloop/internal/loop
               desc: domain packages do not import loop
+            - pkg: github.com/jeon-jihyeon/nodloop/internal/retain
+              desc: domain packages do not import retain
             - pkg: github.com/jeon-jihyeon/nodloop/internal/guard
               desc: domain packages do not import guard
             - pkg: github.com/jeon-jihyeon/nodloop/internal/mcp
@@ -70,6 +74,7 @@ linters:
             - "**/internal/extract/**"
             - "**/internal/loop/**"
             - "**/internal/replay/**"
+            - "**/internal/retain/**"
             - "!**/internal/knowledge/file/**"
             - "!$test"
           deny:
@@ -104,17 +109,21 @@ linters:
             - pkg: github.com/jeon-jihyeon/nodloop/internal/extract
               desc: only mcp, cmd and the server import extract
             - pkg: github.com/jeon-jihyeon/nodloop/internal/loop
-              desc: only mcp, cmd and the server import loop
+              desc: only mcp, cmd, the server and the nodloop package import loop
+            - pkg: github.com/jeon-jihyeon/nodloop/internal/retain
+              desc: only mcp, cmd, the server and the nodloop package import retain
         compact:
           files:
             - "**/internal/compact/**"
           deny:
             - pkg: github.com/jeon-jihyeon/nodloop/internal/loop
-              desc: only mcp, cmd and the server import loop
+              desc: only mcp, cmd, the server and the nodloop package import loop
             - pkg: github.com/jeon-jihyeon/nodloop/internal/extract
               desc: only mcp, cmd and the server import extract
             - pkg: github.com/jeon-jihyeon/nodloop/internal/replay
               desc: only cmd imports replay
+            - pkg: github.com/jeon-jihyeon/nodloop/internal/retain
+              desc: only mcp, cmd, the server and the nodloop package import retain
         extract:
           files:
             - "**/internal/extract/**"
@@ -122,9 +131,11 @@ linters:
             - pkg: github.com/jeon-jihyeon/nodloop/internal/compact
               desc: extract and compact share only the ledger
             - pkg: github.com/jeon-jihyeon/nodloop/internal/loop
-              desc: only mcp, cmd and the server import loop
+              desc: only mcp, cmd, the server and the nodloop package import loop
             - pkg: github.com/jeon-jihyeon/nodloop/internal/replay
               desc: only cmd imports replay
+            - pkg: github.com/jeon-jihyeon/nodloop/internal/retain
+              desc: only mcp, cmd, the server and the nodloop package import retain
         loop:
           files:
             - "**/internal/loop/**"
@@ -137,6 +148,8 @@ linters:
               desc: loop never calls a model
             - pkg: github.com/jeon-jihyeon/nodloop/internal/replay
               desc: loop reads replay traces as records only
+            - pkg: github.com/jeon-jihyeon/nodloop/internal/retain
+              desc: only mcp, cmd, the server and the nodloop package import retain
         replay:
           files:
             - "**/internal/replay/**"
@@ -146,7 +159,23 @@ linters:
             - pkg: github.com/jeon-jihyeon/nodloop/internal/extract
               desc: replay reads the ledger only
             - pkg: github.com/jeon-jihyeon/nodloop/internal/loop
-              desc: only mcp, cmd and the server import loop
+              desc: only mcp, cmd, the server and the nodloop package import loop
+            - pkg: github.com/jeon-jihyeon/nodloop/internal/retain
+              desc: only mcp, cmd, the server and the nodloop package import retain
+        retain:
+          files:
+            - "**/internal/retain/**"
+          deny:
+            - pkg: github.com/jeon-jihyeon/nodloop/internal/compact
+              desc: retain reads records through their stores only
+            - pkg: github.com/jeon-jihyeon/nodloop/internal/extract
+              desc: retain reads records through their stores only
+            - pkg: github.com/jeon-jihyeon/nodloop/internal/loop
+              desc: retain reads records through their stores only
+            - pkg: github.com/jeon-jihyeon/nodloop/internal/replay
+              desc: retain reads records through their stores only
+            - pkg: github.com/jeon-jihyeon/nodloop/internal/llm
+              desc: retain never calls a model
         guard:
           files:
             - "**/internal/guard/**"

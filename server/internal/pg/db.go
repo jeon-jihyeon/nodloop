@@ -32,6 +32,9 @@ CREATE INDEX IF NOT EXISTS nodloop_knowledge_tenant ON nodloop_knowledge (tenant
 CREATE TABLE IF NOT EXISTS nodloop_rules (
 	tenant text PRIMARY KEY, body text NOT NULL
 );
+CREATE TABLE IF NOT EXISTS nodloop_prunes (
+	tenant text PRIMARY KEY, at timestamptz NOT NULL, cutoff timestamptz NOT NULL
+);
 `
 
 // The advisory lock key that serializes the schema of every process opening one database
@@ -80,4 +83,8 @@ func (db *DB) Outcomes(tenant string) *OutcomeStore {
 
 func (db *DB) Knowledge(tenant string) *KnowledgeStore {
 	return &KnowledgeStore{pool: db.pool, tenant: tenant}
+}
+
+func (db *DB) Prunes(tenant string) *PruneStore {
+	return &PruneStore{pool: db.pool, tenant: tenant}
 }
