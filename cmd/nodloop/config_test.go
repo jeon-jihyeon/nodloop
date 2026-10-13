@@ -131,6 +131,14 @@ func TestRunConfig(t *testing.T) {
 		{"no holdout prints 0", args{"", []string{"holdout"}, false}, want{0, "0\n", "", ""}},
 		{"a holdout of 1 is refused", args{"", []string{"holdout", "1"}, false}, want{1, "", "invalid holdout", ""}},
 		{"a holdout that is no number is refused", args{"", []string{"holdout", "some"}, false}, want{1, "", "invalid holdout", ""}},
+		{"a retention is saved", args{"", []string{"retention", "30"}, false}, want{0, "30\n", "", "{\n  \"retention\": 30\n}\n"}},
+		{"a week is the shortest retention", args{"", []string{"retention", "7"}, false}, want{0, "7\n", "", "{\n  \"retention\": 7\n}\n"}},
+		{"a saved retention is printed", args{`{"retention":30}`, []string{"retention"}, false}, want{0, "30\n", "", `{"retention":30}`}},
+		{"no retention prints 0", args{"", []string{"retention"}, false}, want{0, "0\n", "", ""}},
+		{"a retention of 0 removes the key", args{`{"approver":"ann","retention":30}`, []string{"retention", "0"}, false},
+			want{0, "0\n", "", "{\n  \"approver\": \"ann\"\n}\n"}},
+		{"a retention under a week is refused", args{"", []string{"retention", "6"}, false}, want{1, "", "invalid retention", ""}},
+		{"a retention of part of a day is refused", args{"", []string{"retention", "7.5"}, false}, want{1, "", "invalid retention", ""}},
 		{"no session mode prints deferred", args{"", []string{"session_mode"}, false}, want{0, "deferred\n", "", ""}},
 		{"a session mode is saved", args{"", []string{"session_mode", "immediate"}, false}, want{0, "immediate\n", "", "{\n  \"session_mode\": \"immediate\"\n}\n"}},
 		{"a saved session mode is printed", args{`{"session_mode":"manual"}`, []string{"session_mode"}, false}, want{0, "manual\n", "", `{"session_mode":"manual"}`}},
@@ -176,24 +184,24 @@ func TestRunConfigList(t *testing.T) {
 		{
 			"nothing saved lists the defaults",
 			args{"", nil},
-			"record_dir\t<home>/.nodloop/records\tdefault\nsession_mode\tdeferred\tdefault\napprover\t-\tdefault\nholdout\t0\tdefault\n" +
+			"record_dir\t<home>/.nodloop/records\tdefault\nsession_mode\tdeferred\tdefault\napprover\t-\tdefault\nholdout\t0\tdefault\nretention\t0\tdefault\n" +
 				"decision_points\t-\tdefault\nclaude binary\tclaude\tdefault\nmodel\tsonnet\tdefault\n",
 		},
 		{
 			"config.json and the environment name their source and the environment wins",
 			args{
-				`{"record_dir":"/saved","approver":"ann","holdout":0.1,"session_mode":"manual","classifiers":{"local":{"url":"http://x"}},` +
+				`{"record_dir":"/saved","approver":"ann","holdout":0.1,"retention":30,"session_mode":"manual","classifiers":{"local":{"url":"http://x"}},` +
 					`"decisions":{"critic":{"mode":"single","members":["local"]}},"server":{"keys":[{"name":"ci","tenant":"acme","role":"producer","sha256":"x"}]}}`,
 				map[string]string{envRecordDir: "/env", envSession: "off", envLLMModel: "opus"},
 			},
-			"record_dir\t/env\tNODLOOP_RECORD_DIR\nsession_mode\toff\tNODLOOP_SESSION\napprover\tann\tconfig.json\nholdout\t0.1\tconfig.json\n" +
+			"record_dir\t/env\tNODLOOP_RECORD_DIR\nsession_mode\toff\tNODLOOP_SESSION\napprover\tann\tconfig.json\nholdout\t0.1\tconfig.json\nretention\t30\tconfig.json\n" +
 				"decision_points\tcritic\tconfig.json\nclaude binary\tclaude\tdefault\n" +
 				"model\topus\tNODLOOP_LLM_MODEL\n",
 		},
 		{
 			"an unreadable classifier setup shows its error in its row",
 			args{`{"classifiers":{"a":{"url":"http://a"},"b":{"url":"http://b"}},"decisions":{"critic":{"mode":"parallel","members":["a","b"]}}}`, nil},
-			"record_dir\t<home>/.nodloop/records\tdefault\nsession_mode\tdeferred\tdefault\napprover\t-\tdefault\nholdout\t0\tdefault\n" +
+			"record_dir\t<home>/.nodloop/records\tdefault\nsession_mode\tdeferred\tdefault\napprover\t-\tdefault\nholdout\t0\tdefault\nretention\t0\tdefault\n" +
 				"decision_points\tclassifier setup no longer run: decisions.critic in config.json asks [a b]. " +
 				"Run nodloop classifier set critic --url <url> to ask one endpoint before claude\tconfig.json\n" +
 				"claude binary\tclaude\tdefault\nmodel\tsonnet\tdefault\n",
@@ -203,7 +211,7 @@ func TestRunConfigList(t *testing.T) {
 			args{"", map[string]string{envSession: "later"}},
 			"record_dir\t<home>/.nodloop/records\tdefault\n" +
 				"session_mode\tunknown session mode: NODLOOP_SESSION is \"later\". Use deferred, immediate, manual or off\tNODLOOP_SESSION\n" +
-				"approver\t-\tdefault\nholdout\t0\tdefault\ndecision_points\t-\tdefault\nclaude binary\tclaude\tdefault\nmodel\tsonnet\tdefault\n",
+				"approver\t-\tdefault\nholdout\t0\tdefault\nretention\t0\tdefault\ndecision_points\t-\tdefault\nclaude binary\tclaude\tdefault\nmodel\tsonnet\tdefault\n",
 		},
 	}
 	for _, tc := range tcs {

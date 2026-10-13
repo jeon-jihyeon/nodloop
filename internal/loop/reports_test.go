@@ -17,6 +17,71 @@ import (
 	vetofile "github.com/jeon-jihyeon/nodloop/internal/veto/file"
 )
 
+// A report with a cutoff reads only the runs since it
+func TestStoresReportWindow(t *testing.T) {
+	st := testkit.Open(t)
+	ctx := context.Background()
+	old, err := trace.NewRun("session", "", nil, []byte(`{"applied":[]}`), []byte("old"), st.Clock.Now())
+	require.NoError(t, err)
+	require.NoError(t, st.Traces.Append(ctx, old))
+	cutoff := st.Clock.Now()
+	young, err := trace.NewRun("session", "", nil, []byte(`{"applied":[]}`), []byte("young"), st.Clock.Now())
+	require.NoError(t, err)
+	require.NoError(t, st.Traces.Append(ctx, young))
+	tcs := []struct {
+		name string
+		args time.Time
+		want int
+	}{
+		{"no cutoff counts every run", time.Time{}, 2},
+		{"a cutoff counts the runs since it", cutoff, 1},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			stores := loop.Stores{Traces: st.Traces, Verdicts: st.Feedback, Outcomes: st.Outcomes, Items: st.Ledger, Since: tc.args}
+			snap, err := stores.Snapshot(ctx, loop.ReportLoop)
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, snap.Loop().Totals.Runs)
+		})
+	}
+}
+
+// The critic report counts the classify traces of the window since a prune removes the old ones with their runs
+func TestStoresReportCriticWindow(t *testing.T) {
+	st := testkit.Open(t)
+	ctx := context.Background()
+	classify := func(at time.Time) {
+		tr := trace.Trace{
+			ID: trace.NewID(at), Name: trace.NameClassify, Subject: "reaction", Ref: "run", Time: at, Input: json.RawMessage(`{}`),
+			Output: json.RawMessage(`{"members":[{"name":"laya","answers":{"holds":{"yes":0.9}}}]}`),
+		}
+		require.NoError(t, st.Traces.Append(ctx, tr))
+	}
+	classify(st.Clock.Now())
+	cutoff := st.Clock.Now().Add(time.Minute)
+	classify(cutoff.Add(time.Minute))
+	tcs := []struct {
+		name string
+		args time.Time
+		want int
+	}{
+		{"no cutoff counts every classify trace", time.Time{}, 2},
+		{"a cutoff counts the classify traces since it", cutoff, 1},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			stores := loop.Stores{Traces: st.Traces, Verdicts: st.Feedback, Outcomes: st.Outcomes, Items: st.Ledger, Since: tc.args}
+			snap, err := stores.Snapshot(ctx, loop.ReportCritic)
+			require.NoError(t, err)
+			rows := snap.Critics()
+			require.Len(t, rows, 1)
+			assert.Equal(t, tc.want, rows[0].Judged)
+		})
+	}
+}
+
 // Every report name answers its report as JSON and an unknown name is refused before any read
 func TestStoresReport(t *testing.T) {
 	st := testkit.Open(t)
@@ -39,7 +104,7 @@ func TestStoresReport(t *testing.T) {
 		}}},
 		{"extract has no row without an extraction", loop.ReportExtract, want{report: []loop.ExtractRow{}}},
 		{"critic has no row without a critic", loop.ReportCritic, want{report: []loop.CriticRow{}}},
-		{"effect has a row per arm without runs that received items", loop.ReportEffect, want{report: []loop.EffectRow{{Arm: "applied"}, {Arm: "withheld"}}}},
+		{"effect has a row per arm without runs that received items", loop.ReportEffect, want{report: []loop.EffectRow{{Arm: "applied", Warnings: []loop.EffectWarning{}}, {Arm: "withheld", Warnings: []loop.EffectWarning{}}}}},
 		{"health has no row without knowledge", loop.ReportHealth, want{report: []loop.Health{}}},
 		{"replay has no row without a replay", loop.ReportReplay, want{report: []loop.ReplayRow{}}},
 		{"an unknown name is refused", "nope", want{err: loop.ErrReportUnknown}},

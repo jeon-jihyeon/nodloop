@@ -1,7 +1,10 @@
 package loop_test
 
 import (
+	"encoding/json"
+	"fmt"
 	"math"
+	"slices"
 	"testing"
 	"time"
 
@@ -27,7 +30,7 @@ func TestHistoryQueueReasons(t *testing.T) {
 		verdict("taught", feedback.VerdictEdit, monday.Add(30*time.Minute)),
 		verdict("r1", feedback.VerdictApprove, monday.Add(90*time.Minute)),
 	}
-	h := loop.New(runs, verdicts, nil, knowledge.Set{runItem("git-c", 1)})
+	h := loop.New(runs, verdicts, nil, knowledge.Set{runItem("git-c", 1)}, time.Time{})
 
 	got, err := h.Queue(loop.QueueOptions{})
 
@@ -38,6 +41,103 @@ func TestHistoryQueueReasons(t *testing.T) {
 		Score: 4, Reasons: []loop.Reason{loop.ReasonPastCorrections, loop.ReasonStatedOnly}, PlaceReviewed: 2, PlaceCorrections: 1,
 	}, got[0], "one of the two earlier verdicts in the repo corrected and the version reached an earlier run")
 	assert.Equal(t, []loop.Reason{loop.ReasonNoApprovedItem, loop.ReasonNoKnowledge}, got[1].Reasons)
+}
+
+// Only the first run ever to receive a version is new knowledge whatever window the history reads
+func TestHistoryQueueNewKnowledgeOverEveryRun(t *testing.T) {
+	gitC := knowledge.Ref{ID: "git-c", Version: 1}
+	runs := trace.Traces{sessionRun(t, "later", 2, "nodloop", gitC), sessionRun(t, "first", 0, "nodloop", gitC)}
+	tcs := []struct {
+		name string
+		args time.Time
+		want map[string]bool
+	}{
+		{"every run read marks the first", time.Time{}, map[string]bool{"first": true, "later": false}},
+		{"a window after the first run marks none", monday.Add(time.Hour), map[string]bool{"later": false}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			h := loop.New(runs, nil, nil, knowledge.Set{runItem("git-c", 1)}, tc.args)
+
+			items, err := h.Queue(loop.QueueOptions{})
+
+			require.NoError(t, err)
+			got := map[string]bool{}
+			for _, item := range items {
+				got[item.TraceID] = slices.Contains(item.Reasons, loop.ReasonNewKnowledge)
+			}
+			assert.Equal(t, tc.want, got)
+		})
+	}
+}
+
+// A drawn run of the applied arm or the withheld arm in the repo nodloop with the refs
+func drawnRun(t *testing.T, id string, offset int, withheld bool, refs ...knowledge.Ref) trace.Trace {
+	t.Helper()
+	in := knowledge.RunInput{Applied: refs, Drawn: true, Share: 0.5, Scheme: knowledge.DrawScheme}
+	if withheld {
+		in.Applied, in.Withheld = []knowledge.Ref{}, refs
+	}
+	raw, err := json.Marshal(in)
+	require.NoError(t, err)
+	tr := sessionRun(t, id, offset, "nodloop")
+	tr.Input = raw
+	return tr
+}
+
+// A withheld run ranks on the items it would have received so its score and reasons never tell its arm
+func TestHistoryQueueIsBlindToTheArm(t *testing.T) {
+	gitC := knowledge.Ref{ID: "git-c", Version: 1}
+	runs := trace.Traces{drawnRun(t, "first", 0, false, gitC), drawnRun(t, "applied", 1, false, gitC), drawnRun(t, "withheld", 1, true, gitC)}
+	verdicts := feedback.Records{verdict("first", feedback.VerdictApprove, monday.Add(30*time.Minute))}
+	h := loop.New(runs, verdicts, nil, knowledge.Set{runItem("git-c", 1)}, time.Time{})
+
+	got, err := h.Queue(loop.QueueOptions{})
+
+	require.NoError(t, err)
+	require.Len(t, got, 2)
+	assert.Equal(t, got[0].Score, got[1].Score)
+	assert.Equal(t, got[0].Reasons, got[1].Reasons)
+	assert.NotContains(t, got[1].Reasons, loop.ReasonNoKnowledge)
+}
+
+// The audit takes one run of each arm in turn so a small withheld arm still gets audit samples
+func TestHistoryQueueAuditDrawsEachArm(t *testing.T) {
+	gitC := knowledge.Ref{ID: "git-c", Version: 1}
+	var runs trace.Traces
+	for i := range 20 {
+		runs = append(runs, drawnRun(t, fmt.Sprintf("a%02d", i), i, false, gitC))
+	}
+	runs = append(runs, drawnRun(t, "w1", 30, true, gitC), sessionRun(t, "bare", 31, "nodloop"))
+	h := loop.New(runs, nil, nil, knowledge.Set{runItem("git-c", 1)}, time.Time{})
+	type want struct {
+		withheld, bare bool
+	}
+	tcs := []struct {
+		name string
+		args int64
+		want want
+	}{
+		{"seed 1", 1, want{true, true}},
+		{"seed 2", 2, want{true, true}},
+		{"seed 3", 3, want{true, true}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := h.Queue(loop.QueueOptions{Limit: 5, AuditRate: 0.6, Seed: tc.args})
+			require.NoError(t, err)
+			audited := map[string]bool{}
+			for _, item := range got {
+				if item.Audit {
+					audited[item.TraceID] = true
+				}
+			}
+			assert.Len(t, audited, 3)
+			assert.Equal(t, tc.want, want{audited["w1"], audited["bare"]})
+		})
+	}
 }
 
 func TestHistoryQueue(t *testing.T) {
@@ -74,7 +174,7 @@ func TestHistoryQueue(t *testing.T) {
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			h := loop.New(runs, nil, nil, knowledge.Set{runItem("git-c", 1)})
+			h := loop.New(runs, nil, nil, knowledge.Set{runItem("git-c", 1)}, time.Time{})
 			got, err := h.Queue(tc.args)
 			assert.ErrorIs(t, err, tc.want.err)
 			var ids []string
@@ -97,7 +197,7 @@ func TestHistoryQueueAudit(t *testing.T) {
 	for i, id := range []string{"a", "b", "c", "d", "e", "f"} {
 		runs = append(runs, sessionRun(t, id, i, "nodloop"))
 	}
-	h := loop.New(runs, nil, nil, nil)
+	h := loop.New(runs, nil, nil, nil, time.Time{})
 
 	got, err := h.Queue(loop.QueueOptions{Limit: 3, AuditRate: 0.2, Seed: 7})
 

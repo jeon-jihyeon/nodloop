@@ -3,8 +3,11 @@ package file
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
+	"time"
 
 	"github.com/jeon-jihyeon/nodloop/internal/jsonl"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
@@ -14,6 +17,24 @@ const tracesFile = "traces.jsonl"
 
 type Store struct {
 	file jsonl.File[trace.Trace]
+	// The same file read as heads by a prune
+	heads jsonl.File[head]
+	ids   jsonl.File[idLine]
+}
+
+// The fields of a trace a prune reads
+type head struct {
+	ID    string          `json:"id"`
+	Name  trace.Name      `json:"name"`
+	Ref   string          `json:"ref,omitempty"`
+	Time  time.Time       `json:"time"`
+	Input json.RawMessage `json:"input"`
+	Error string          `json:"error,omitempty"`
+}
+
+// The one field of a trace a removal reads
+type idLine struct {
+	ID string `json:"id"`
 }
 
 func New(dir string) (*Store, error) {
@@ -25,7 +46,15 @@ func open(dir, name string) (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrOpen, err)
 	}
-	return &Store{file: f}, nil
+	heads, err := jsonl.Open[head](dir, name)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrOpen, err)
+	}
+	ids, err := jsonl.Open[idLine](dir, name)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrOpen, err)
+	}
+	return &Store{file: f, heads: heads, ids: ids}, nil
 }
 
 func (s *Store) Append(_ context.Context, t trace.Trace) error {
@@ -57,6 +86,42 @@ func (s *Store) List(_ context.Context, f trace.Filter) (trace.Traces, error) {
 		return found, readFailed(err)
 	}
 	return found, nil
+}
+
+// The traces of the names newest first without their output
+// Each line decodes into the fields a prune reads so no output is ever decoded
+// A corrupt line returns the traces of the other lines with the error as List does
+func (s *Store) Heads(_ context.Context, names ...trace.Name) (trace.Traces, error) {
+	found, err := s.heads.Newest(func(h head) bool { return slices.Contains(names, h.Name) }, nil, 0)
+	out := make(trace.Traces, 0, len(found))
+	for _, h := range found {
+		out = append(out, trace.Trace{ID: h.ID, Name: h.Name, Ref: h.Ref, Time: h.Time, Input: h.Input, Error: h.Error})
+	}
+	if err != nil {
+		return out, readFailed(err)
+	}
+	return out, nil
+}
+
+// Removes the traces of the ids decide returns and returns how many it removed
+// decide runs under the lock every writer of the file takes so no run is appended between it and the rewrite
+// Each line decodes only its id
+func (s *Store) Prune(ctx context.Context, decide func(context.Context) ([]string, error)) (int, error) {
+	n, err := s.ids.Remove(func() (func(idLine) bool, error) {
+		ids, err := decide(ctx)
+		if err != nil || len(ids) == 0 {
+			return nil, err
+		}
+		drop := make(map[string]bool, len(ids))
+		for _, id := range ids {
+			drop[id] = true
+		}
+		return func(l idLine) bool { return drop[l.ID] }, nil
+	})
+	if err != nil {
+		return n, fmt.Errorf("%w: %w", ErrPrune, err)
+	}
+	return n, nil
 }
 
 // How many records the file holds and the error naming its corrupt lines

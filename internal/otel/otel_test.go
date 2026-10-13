@@ -80,8 +80,10 @@ func TestExporterExport(t *testing.T) {
 	t.Cleanup(srv.Close)
 	e := otel.New(srv.URL+"/v1/traces", map[string]string{"Authorization": "Basic x"}, "0.6.7", srv.Client())
 
-	require.NoError(t, e.Export(context.Background(), trace.Traces{run}, verdicts, true))
-	require.NoError(t, e.Export(context.Background(), trace.Traces{run}, nil, false))
+	_, err := e.Export(context.Background(), trace.Traces{run}, verdicts, nil, true)
+	require.NoError(t, err)
+	_, err = e.Export(context.Background(), trace.Traces{run}, nil, nil, false)
+	require.NoError(t, err)
 
 	require.Len(t, c.bodies, 2)
 	assert.Equal(t, "Basic x", c.headers[0].Get("Authorization"))
@@ -134,7 +136,7 @@ func TestExporterExportBatchesAndFails(t *testing.T) {
 			srv := httptest.NewServer(c)
 			t.Cleanup(srv.Close)
 
-			err := otel.New(srv.URL, nil, "", srv.Client()).Export(context.Background(), runs, nil, false)
+			_, err := otel.New(srv.URL, nil, "", srv.Client()).Export(context.Background(), runs, nil, nil, false)
 
 			assert.ErrorIs(t, err, tc.want.err)
 			assert.Len(t, c.bodies, tc.want.requests)
@@ -147,12 +149,15 @@ func TestExporterExportSpan(t *testing.T) {
 	type args struct {
 		run      trace.Trace
 		verdicts []feedback.Feedback
+		outcomes []feedback.Outcome
 	}
 	type want struct {
 		// Attributes of the span checked by key
 		attrs map[string]any
 		// Score labels of the events in order
 		events []string
+		// The outcome events Export counts
+		sent int
 	}
 	reject := feedback.Feedback{TraceID: "r1", Time: at, Verdict: feedback.VerdictReject, Reviewer: "ann"}
 	tcs := []struct {
@@ -174,15 +179,50 @@ func TestExporterExportSpan(t *testing.T) {
 			"a withdrawn verdict sends no event",
 			args{trace.Trace{ID: "r1", Producer: "bot"}, []feedback.Feedback{
 				{TraceID: "r1", Time: at.Add(time.Minute), Verdict: feedback.VerdictWithdraw, Reviewer: "ann"}, reject,
-			}},
+			}, nil},
 			want{attrs: map[string]any{"nodloop.run.id": "r1"}},
 		},
 		{
 			"only the newest verdict of a run is sent",
 			args{trace.Trace{ID: "r1", Producer: "bot"}, []feedback.Feedback{
 				{TraceID: "r1", Time: at.Add(time.Minute), Verdict: feedback.VerdictApprove, Reviewer: "ann"}, reject,
-			}},
+			}, nil},
 			want{attrs: map[string]any{"nodloop.run.id": "r1"}, events: []string{"approve"}},
+		},
+		{
+			"a drawn run names its arm and its items",
+			args{run: trace.Trace{ID: "r1", Producer: "bot", Input: json.RawMessage(`{"applied":[{"id":"git-c","version":2}],"drawn":true,"share":0.1,"scheme":1}`)}},
+			want{attrs: map[string]any{
+				"nodloop.holdout.arm":       "applied",
+				"nodloop.knowledge.applied": map[string]any{"values": []any{map[string]any{"stringValue": "git-c:2"}}},
+			}},
+		},
+		{
+			"a withheld run names the items the holdout kept",
+			args{run: trace.Trace{ID: "r1", Producer: "bot", Input: json.RawMessage(`{"applied":[],"withheld":[{"id":"git-c","version":2}],"drawn":true}`)}},
+			want{attrs: map[string]any{
+				"nodloop.holdout.arm":        "withheld",
+				"nodloop.knowledge.withheld": map[string]any{"values": []any{map[string]any{"stringValue": "git-c:2"}}},
+			}},
+		},
+		{
+			"a run with items and no draw is undrawn",
+			args{run: trace.Trace{ID: "r1", Producer: "bot", Input: json.RawMessage(`{"applied":[{"id":"git-c","version":2}]}`)}},
+			want{attrs: map[string]any{"nodloop.holdout.arm": "undrawn"}},
+		},
+		{
+			"a run without items has no arm",
+			args{run: trace.Trace{ID: "r1", Producer: "bot", Input: json.RawMessage(`{"applied":[],"drawn":true}`)}},
+			want{attrs: map[string]any{"nodloop.holdout.arm": nil}},
+		},
+		{
+			"the newest outcome goes as an evaluation after the verdict",
+			args{trace.Trace{ID: "r1", Producer: "bot"}, []feedback.Feedback{reject}, []feedback.Outcome{
+				{TraceID: "r1", Time: at, Result: feedback.ResultRefuted, Reviewer: "ann"},
+				{TraceID: "r1", Time: at.Add(time.Hour), Result: feedback.ResultConfirmed, ConfirmedCause: "a slow consumer", Reviewer: "ann"},
+				{TraceID: "other", Time: at, Result: feedback.ResultRefuted, Reviewer: "ann"},
+			}},
+			want{attrs: map[string]any{"nodloop.run.id": "r1"}, events: []string{"reject", "confirmed"}, sent: 1},
 		},
 	}
 	for _, tc := range tcs {
@@ -192,9 +232,10 @@ func TestExporterExportSpan(t *testing.T) {
 			srv := httptest.NewServer(c)
 			t.Cleanup(srv.Close)
 
-			err := otel.New(srv.URL, nil, "", srv.Client()).Export(context.Background(), trace.Traces{tc.args.run}, tc.args.verdicts, true)
+			sent, err := otel.New(srv.URL, nil, "", srv.Client()).Export(context.Background(), trace.Traces{tc.args.run}, tc.args.verdicts, tc.args.outcomes, true)
 
 			require.NoError(t, err)
+			assert.Equal(t, tc.want.sent, sent)
 			spans := c.spans()
 			require.Len(t, spans, 1)
 			got := attrs(spans[0])
@@ -226,7 +267,7 @@ func TestExporterExportFailsToSend(t *testing.T) {
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			err := otel.New(tc.args, nil, "", http.DefaultClient).Export(context.Background(), trace.Traces{{ID: "r1"}}, nil, false)
+			_, err := otel.New(tc.args, nil, "", http.DefaultClient).Export(context.Background(), trace.Traces{{ID: "r1"}}, nil, nil, false)
 			assert.ErrorContains(t, err, tc.want)
 		})
 	}

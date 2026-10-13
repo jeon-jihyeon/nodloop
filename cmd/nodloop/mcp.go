@@ -12,6 +12,7 @@ import (
 
 	"github.com/jeon-jihyeon/nodloop/internal/extract"
 	"github.com/jeon-jihyeon/nodloop/internal/mcp"
+	"github.com/jeon-jihyeon/nodloop/internal/retain"
 )
 
 // The server starts whatever its config so the conversation can tell the user what to fix
@@ -32,7 +33,7 @@ func runMCP(
 		cmd.list()
 		return 0
 	}
-	open := mcpOpen{flags: records, getenv: getenv, now: now, session: mcp.NewSession(now())}.open
+	open := mcpOpen{flags: records, getenv: getenv, now: now, session: mcp.NewSession(now()), log: stderr}.open
 	instructions := pluginVersion(getenv(envPluginVersion)).mismatch(buildVersion(), executable())
 	if instructions != "" {
 		instructions += ". Tell the user this before the first answer"
@@ -89,6 +90,8 @@ type mcpOpen struct {
 	session string
 	// The person of a server key and empty over stdio
 	person string
+	// Where a failed prune after a run is written since stdout is the protocol stream
+	log io.Writer
 }
 
 // The server over the record directory of that moment
@@ -118,5 +121,13 @@ func (o mcpOpen) open(context.Context) (*mcp.Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	return mcp.New(traces, verdicts, outcomes, ledger, compactor, extract.New(ledger, traces, verdicts, o.now), o.now, o.session, executable(), a.cfg.recordArgs(), o.person), nil
+	dir, err := a.makeRecordDir()
+	if err != nil {
+		return nil, err
+	}
+	policy := mcp.Policy{Holdout: a.cfg.holdout, Retention: a.cfg.retention, Marks: retain.NewMarker(dir), AfterRun: a.afterRun(o.log)}
+	return mcp.New(
+		traces, verdicts, outcomes, ledger, compactor, extract.New(ledger, traces, verdicts, o.now), o.now, o.session, executable(),
+		a.cfg.recordArgs(), o.person, policy,
+	), nil
 }

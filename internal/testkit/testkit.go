@@ -58,6 +58,26 @@ func (f *FlakyFeedback) List(ctx context.Context, filter feedback.Filter) ([]fee
 	return f.Store.List(ctx, filter)
 }
 
+// Fails Heads and Prune after the allowed calls so a test sees a prune fail at its read or at its removal
+type FlakyTraces struct {
+	*tracefile.Store
+	Reads
+}
+
+func (f *FlakyTraces) Heads(ctx context.Context, names ...trace.Name) (trace.Traces, error) {
+	if err := f.next(); err != nil {
+		return nil, err
+	}
+	return f.Store.Heads(ctx, names...)
+}
+
+func (f *FlakyTraces) Prune(ctx context.Context, decide func(context.Context) ([]string, error)) (int, error) {
+	if err := f.next(); err != nil {
+		return 0, err
+	}
+	return f.Store.Prune(ctx, decide)
+}
+
 // Panics on the append of a trace of Name
 // A test proves that a panic under a held lock never blocks a later call
 type PanickingTraces struct {
@@ -75,6 +95,7 @@ func (p PanickingTraces) Append(ctx context.Context, tr trace.Trace) error {
 // One temp record dir behind every store
 // The ledger runs on the clock
 type Stores struct {
+	Dir      string
 	Traces   *tracefile.Store
 	Feedback *feedbackfile.Store
 	Outcomes *feedbackfile.OutcomeStore
@@ -98,7 +119,7 @@ func Open(t *testing.T) Stores {
 	ledger := knowledge.NewLedger(
 		items, vetofile.NewApprovedFile(t.TempDir(), dir), clock.Now, func(prefix string) string { return prefix + "generated" },
 	)
-	return Stores{Traces: traces, Feedback: verdicts, Outcomes: outcomes, Ledger: ledger, Clock: clock}
+	return Stores{Dir: dir, Traces: traces, Feedback: verdicts, Outcomes: outcomes, Ledger: ledger, Clock: clock}
 }
 
 // Steps a second per call so two calls around a model call give a positive duration

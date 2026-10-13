@@ -20,8 +20,10 @@ corrections to the next run in the same place
 
 commands:
   run record --producer <p> --output <file> [--label <key=value>] [--subject <s>] [--applied <id:version>]
+             [--withheld <id:version>] [--holdout-key <k>]
                             Record one output of any producer as a run and print its id for feedback.
-                            Output that is not JSON is kept as text
+                            Output that is not JSON is kept as text. --withheld names the items knowledge for printed as
+                            withheld and --holdout-key the key it drew with so report effect counts the run in its arm
   hook start | hook prompt | hook stop
                             The Claude Code conversation hooks the plugin registers. start counts the candidates waiting
                             for approval in the place when Claude Code starts or resumes a session, not after clear or
@@ -59,8 +61,10 @@ commands:
                             cites, and those it should leave alone, the newest ten approved runs its scope reaches. A lesson
                             that would change an approved output reaches too far. Recorded as a replay trace and shown by
                             knowledge waiting. It never blocks an approval
-  knowledge for --producer <p> [--label <key=value>]
-                            The approved items a run of the producer with these labels applies, and their size
+  knowledge for --producer <p> [--label <key=value>] [--holdout-key <k>]
+                            The approved items a run of the producer with these labels applies, and their size. With a
+                            holdout key a share of runs gets a withheld line per item and no item. Pass the same key and
+                            those refs to run record
   knowledge waiting --producer <p> [--label <key=value>]
                             The candidates a run of the producer with these labels would receive once approved, with the
                             runs whose verdicts taught them
@@ -107,18 +111,22 @@ commands:
                             Runs without a verdict in the order to check them, with a random audit share
   report online [--since <RFC3339>]
                             Weekly verdict rates, waits and edit widths, and the runs with and without knowledge compared
-  report loop               A totals line of runs, verdicts by a person and by a session, corrections, candidates waiting
+  report loop               A window line with the start of the runs read or all. A totals line of runs, verdicts by a person and by a session, corrections, candidates waiting
                             and approved items. A scope line per plugin version: current items, those whose scope admits
                             one session at most and approved ones never applied. A drafts line per plugin version and
                             drafting path: drafted, approved, dropped, waiting and the median time to a decision. Then per
                             approved item: runs that applied it, how many a person approved of
                             those judged, how many were corrected again for the reason that taught it, the same two counts
                             over verdicts a session inferred, and the time from that correction to the approval
-  report effect             Runs that applied items against runs whose turn the holdout of config holdout drew:
-                            runs, judged, corrected and corrected again for a reason an item was taught by
+  report effect             A window line with the start of the runs read and the drawn runs per arm. Then per producer,
+                            drawn runs that applied items against drawn runs the holdout kept them from: runs, judged,
+                            corrected and corrected again for a reason an item was taught by, then the draw units, the
+                            corrected rate with its 95% Wilson interval widened for runs of one unit, the judged rate, the expected share, audit and outcome counts, runs
+                            recorded without a holdout key, the sample ratio p value, the difference of the rates with its
+                            95% Newcombe interval and the warnings srm, judged_rate, insufficient and mixed_shares
   report extract            Per plugin version of the corrected run and per drafting path: extractions by how they
                             ended, refused drafts by what refused them, and the critic questions answered false
-  report critic             Per critic: drafts judged and how often a pass or a refusal matched what a person later
+  report critic             A window line, then per critic: drafts judged and how often a pass or a refusal matched what a person later
                             decided on candidates of the same run, with the runs nobody decided yet
   report replay             Per knowledge version its newest replay: passed or failed, corrected outputs it missed and
                             approved outputs it would have changed
@@ -126,6 +134,15 @@ commands:
   trace list [--name <n>] [--session <id>] [--subject <s>] [--limit <n>]
                             List traces newest first
   trace show <id>           Print one trace as JSON
+  records prune [--dry-run | --daily]
+                            Remove the runs older than config retention that no verdict, outcome or knowledge version
+                            cites, with the classify traces of those runs, whatever the daily marker says. The first
+                            run that received and the newest run that applied each approved item stay. --dry-run
+                            prints what it would remove and keep.
+                            --daily prunes only when prune.json says a day passed and prints nothing. Every prune keeps
+                            its cutoff in prune.json and every report reads from the later of that cutoff and config
+                            retention. run record and the MCP run tool prune at most once a day after a run and hook stop
+                            starts records prune --daily in a process of its own
   guard [--vetoes <path>]   PreToolUse hook. Reads hook input from stdin and blocks calls that match a veto,
                             or asks the person when the veto says action ask and no matching veto blocks.
                             Without --vetoes, loads every .claude/nodloop/vetoes.yaml from the hook cwd up to the git root
@@ -145,8 +162,13 @@ commands:
   config                    Every setting with its value and where it came from: an environment variable, config.json
                             or the default
   config approver [<name>]  Print the name saved in ~/.nodloop/config.json to approve under, or save one
-  config holdout [<share>]  Print or save the share of conversation turns whose prompt gets no item so report effect
-                            can compare. 0 by default
+  config holdout [<share>]  Print or save the share of draws that get no item so report effect can compare: each Claude
+                            Code conversation is one draw, and each holdout key a producer passes to knowledge_for, to
+                            knowledge for --holdout-key or to the nodloop-server it reads at start is one draw.
+                            The Go package takes WithHoldout instead. 0 by default
+  config retention [<days>] Print or save the whole days of unjudged and uncited runs the records keep. 0 by default
+                            keeps every run and fewer than 7 is refused. Reports then read the runs of that window and
+                            the text of report loop, critic and effect names its start in a first window line
   config session_mode [<mode>]
                             Print or save how a conversation records the verdicts it infers: deferred, immediate, manual
                             or off. deferred by default and NODLOOP_SESSION overrides it
@@ -163,7 +185,7 @@ commands:
   server                    Moved to its own binary nodloop-server in 0.7.0
   export otel [--endpoint <url>] [--header <Name=value>] [--since <RFC3339>] [--with-output]
                             Send every run as an OpenTelemetry GenAI span and its newest verdict as a gen_ai.evaluation.result
-                            event on it, in OTLP JSON over HTTP, so a collector, Langfuse or Phoenix shows them. A run whose
+                            event on it, and its newest outcome as a second event, in OTLP JSON over HTTP, so a collector, Langfuse or Phoenix shows them. A run whose
                             newest verdict is withdraw gets no event. The ids derive from the run so sending again replaces. OTEL_EXPORTER_OTLP_TRACES_ENDPOINT, OTEL_EXPORTER_OTLP_ENDPOINT
                             and OTEL_EXPORTER_OTLP_HEADERS fill what the flags leave out. The output goes only with --with-output
   doctor [--repair]         Read every record file and the guard log, and name the lines that fail to decode.
@@ -223,9 +245,10 @@ func run(args []string, getenv func(string) string, stdin io.Reader, stdout io.W
 		return runHelp(words, stdout)
 	}
 	commands := map[string]func(args []string) int{
-		"help":  func(args []string) int { return runHelp(args, stdout) },
-		"trace": func(args []string) int { return runTrace(args, getenv, time.Now, stdout, stderr) },
-		"run":   func(args []string) int { return runRun(args, getenv, time.Now, stdout, stderr) },
+		"help":    func(args []string) int { return runHelp(args, stdout) },
+		"trace":   func(args []string) int { return runTrace(args, getenv, time.Now, stdout, stderr) },
+		"records": func(args []string) int { return runRecords(args, getenv, time.Now, stdout, stderr) },
+		"run":     func(args []string) int { return runRun(args, getenv, time.Now, stdout, stderr) },
 		"hook": func(args []string) int {
 			return runHook(args, getenv, detached(homeDir(getenv("HOME")).hookLog()), time.Now, stdin, stdout, stderr)
 		},
@@ -302,7 +325,8 @@ func helpWords(args []string) ([]string, bool) {
 // 2. a usage error adds the usage of the command
 func fail(stderr io.Writer, command string, err error) int {
 	fmt.Fprintf(stderr, "nodloop %s: %s\n", command, strings.TrimPrefix(err.Error(), command+": "))
-	if errors.Is(err, errUnknownAction) || errors.Is(err, errRequired) || errors.Is(err, errUnknownTraceName) {
+	if errors.Is(err, errUnknownAction) || errors.Is(err, errRequired) || errors.Is(err, errUnknownTraceName) ||
+		errors.Is(err, errPruneFlags) {
 		fmt.Fprintf(stderr, "\n%s", usageText(usage).of(command))
 	}
 	return 1

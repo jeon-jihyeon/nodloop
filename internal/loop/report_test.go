@@ -19,6 +19,7 @@ func TestHistoryReport(t *testing.T) {
 		sessionRun(t, "r1", 0, "nodloop", gitC),
 		sessionRun(t, "r2", 1, "nodloop"),
 		sessionRun(t, "r3", 2, "nodloop"),
+		drawnRun(t, "w1", 3, true, gitC),
 	}
 	edit := verdict("r2", feedback.VerdictEdit, monday.Add(3*time.Hour))
 	edit.Edited, edit.ReasonCode = []byte(`{"answer":"fixed","note":"x"}`), feedback.ReasonOther
@@ -28,16 +29,17 @@ func TestHistoryReport(t *testing.T) {
 		verdict("r1", feedback.VerdictApprove, monday.Add(2*time.Hour)),
 		edit,
 		audit,
+		verdict("w1", feedback.VerdictReject, monday.Add(5*time.Hour)),
 	}
 	outcomes := feedback.Outcomes{outcome("r1", feedback.ResultConfirmed, monday.Add(4*time.Hour))}
-	h := loop.New(runs, verdicts, outcomes, nil)
+	h := loop.New(runs, verdicts, outcomes, nil, time.Time{})
 	tcs := []struct {
 		name string
 		args time.Time
 		want int
 	}{
-		{"every verdict from the start", time.Time{}, 3},
-		{"only the verdicts from since on", monday.Add(150 * time.Minute), 1},
+		{"every verdict from the start", time.Time{}, 4},
+		{"only the verdicts from since on", monday.Add(150 * time.Minute), 2},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
@@ -57,6 +59,8 @@ func TestHistoryReport(t *testing.T) {
 	assert.Equal(t, 1, got.KnowledgeApplied.Verdicts.Approve)
 	assert.Equal(t, 1, got.KnowledgeApplied.Outcomes.Confirmed)
 	assert.Equal(t, 1, got.WithoutKnowledge.Verdicts.Edit)
+	assert.Equal(t, 0, got.WithoutKnowledge.Verdicts.Reject, "a withheld run is never a run without knowledge")
+	assert.Equal(t, 1, got.Withheld.Verdicts.Reject)
 	assert.Equal(t, map[feedback.ReasonCode]int{feedback.ReasonOther: 1}, got.WithoutKnowledge.Verdicts.ReasonCodes)
 	require.NotNil(t, got.WithoutKnowledge.MedianEditWidth)
 	assert.InDelta(t, 2, *got.WithoutKnowledge.MedianEditWidth, 0.001, "the edit changed answer and added note")

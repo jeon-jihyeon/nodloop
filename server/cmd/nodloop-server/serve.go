@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -23,6 +24,7 @@ import (
 	knowledgefile "github.com/jeon-jihyeon/nodloop/internal/knowledge/file"
 	"github.com/jeon-jihyeon/nodloop/internal/loop"
 	"github.com/jeon-jihyeon/nodloop/internal/mcp"
+	"github.com/jeon-jihyeon/nodloop/internal/retain"
 	tracefile "github.com/jeon-jihyeon/nodloop/internal/trace/file"
 	"github.com/jeon-jihyeon/nodloop/internal/userconfig"
 	vetofile "github.com/jeon-jihyeon/nodloop/internal/veto/file"
@@ -49,6 +51,10 @@ func runServe(args []string, getenv func(string) string, now func() time.Time, s
 	if len(uc.Server.Keys) == 0 {
 		return fail(stderr, "serve", fmt.Errorf("%w. Add one with nodloop-server key add", errNoKeys))
 	}
+	policy := mcp.Policy{Holdout: knowledge.Holdout(uc.Holdout), Retention: retain.Days(uc.Retention)}
+	if err := errors.Join(policy.Holdout.Check(), policy.Retention.Check()); err != nil {
+		return fail(stderr, "serve", err)
+	}
 	var stores tenantStores
 	var where string
 	if *dsn != "" {
@@ -57,17 +63,34 @@ func runServe(args []string, getenv func(string) string, now func() time.Time, s
 			return fail(stderr, "serve", err)
 		}
 		defer db.Close()
-		stores, where = pgTenants{db: db}, "records in PostgreSQL"
+		stores, where = pgTenants{db: db, policy: policy}, "records in PostgreSQL"
 	} else {
 		dir, err := h.RecordDir(*recordDir, getenv(envRecordDir), uc.RecordDir)
 		if err != nil {
 			return fail(stderr, "serve", err)
 		}
-		stores, where = fileTenants{base: dir}, "records under "+dir
+		stores, where = fileTenants{base: dir, policy: policy}, "records under "+dir
 	}
+	ln, err := net.Listen("tcp", *addr)
+	if err != nil {
+		return fail(stderr, "serve", err)
+	}
+	// The pruner stops and is waited for before the deferred close of the database
+	ctx, cancel := context.WithCancel(context.Background())
+	pruned := make(chan struct{})
+	defer func() {
+		cancel()
+		<-pruned
+	}()
+	go func() {
+		defer close(pruned)
+		if policy.Retention > 0 {
+			pruner{stores: stores, tenants: uc.Server.tenants(), days: policy.Retention, now: now, log: stderr}.run(ctx, pruneTick)
+		}
+	}()
 	fmt.Fprintf(stderr, "nodloop-server: %d keys, %s, listening on http://%s/mcp with reports at /v1/reports/{name}\n", len(uc.Server.Keys), where, *addr)
-	srv := &http.Server{Addr: *addr, Handler: newServeHandler(stores, uc.Server, now, stderr), ReadHeaderTimeout: 10 * time.Second}
-	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+	srv := &http.Server{Handler: newServeHandler(stores, uc.Server, now, stderr), ReadHeaderTimeout: 10 * time.Second}
+	if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return fail(stderr, "serve", err)
 	}
 	return 0
@@ -126,7 +149,7 @@ func (h *serveHandler) report(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("the role %s may not read reports", key.Role), http.StatusForbidden)
 		return
 	}
-	stores, err := h.stores.reports(key, h.now)
+	stores, err := h.stores.reports(r.Context(), key, h.now)
 	if err != nil {
 		h.internal(w, key, err)
 		return
@@ -168,12 +191,70 @@ func (h *serveHandler) server(r *http.Request) *sdk.Server {
 type tenantStores interface {
 	open(key serverKey, now func() time.Time, session string) mcp.Open
 	// The stores the reports of the tenant read without the tools of a host
-	reports(key serverKey, now func() time.Time) (loop.Stores, error)
+	reports(ctx context.Context, key serverKey, now func() time.Time) (loop.Stores, error)
+	// The retainer over every store of the tenant that may cite a run
+	retainer(tenant string, now func() time.Time) (*retain.Retainer, error)
+	// Where the last prune of the tenant is kept
+	// A file tenant without a directory fails with errNoRecords so a prune never creates it
+	marks(tenant string) (retain.Marks, error)
+}
+
+// How often the pruner asks each tenant whether its daily prune is due
+const pruneTick = time.Hour
+
+// Prunes the records of every tenant once a day
+// 1. the mark of each tenant is kept with its records so a restart and every replica read when the last prune ran
+// 2. the first check runs at start so a prune that came due while the server was down runs at once and a restart loop prunes no more than once a day
+// 3. a failure goes to the log with its tenant and the next day tries again
+type pruner struct {
+	stores  tenantStores
+	tenants []string
+	days    retain.Days
+	now     func() time.Time
+	log     io.Writer
+}
+
+func (p pruner) run(ctx context.Context, every time.Duration) {
+	ticker := time.NewTicker(every)
+	defer ticker.Stop()
+	for {
+		p.once(ctx)
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
+}
+
+// The daily prune of each tenant on its own stores so no tenant ever loses a run of another
+// A tenant without records is skipped
+func (p pruner) once(ctx context.Context) {
+	for _, tenant := range p.tenants {
+		marks, err := p.stores.marks(tenant)
+		if err == nil {
+			open := func() (*retain.Retainer, error) { return p.stores.retainer(tenant, p.now) }
+			_, err = retain.NewDaily(marks, p.days, open, p.now).Run(ctx)
+		}
+		if err != nil && !errors.Is(err, errNoRecords) {
+			fmt.Fprintf(p.log, "nodloop-server: retention of tenant %s: %v\n", tenant, err)
+		}
+	}
+}
+
+// The start of the runs the reports of the tenant read
+func window(ctx context.Context, policy mcp.Policy, now time.Time) (time.Time, error) {
+	last, err := policy.Marks.Last(ctx)
+	if err != nil {
+		return time.Time{}, err
+	}
+	return policy.Retention.Window(now, last), nil
 }
 
 // The record directory of each tenant under tenants of the base directory
 type fileTenants struct {
-	base string
+	base   string
+	policy mcp.Policy
 }
 
 // The record stores of one tenant directory
@@ -186,7 +267,7 @@ type tenantFiles struct {
 
 // No home so the config of the server user is not read for a tenant and no veto file is written under it
 func (f fileTenants) files(tenant string, now func() time.Time) (tenantFiles, error) {
-	dir := filepath.Join(f.base, "tenants", tenant)
+	dir := f.dir(tenant)
 	// The records of a tenant are private to the server user so no other account on the host reads them
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return tenantFiles{}, fmt.Errorf("record dir: %w", err)
@@ -211,6 +292,17 @@ func (f fileTenants) files(tenant string, now func() time.Time) (tenantFiles, er
 	return tenantFiles{traces: traces, verdicts: verdicts, outcomes: outcomes, ledger: ledger}, nil
 }
 
+// The policy of the server with the marks of the tenant
+func (f fileTenants) policyOf(tenant string) mcp.Policy {
+	p := f.policy
+	p.Marks = retain.NewMarker(f.dir(tenant))
+	return p
+}
+
+func (f fileTenants) dir(tenant string) string {
+	return filepath.Join(f.base, "tenants", tenant)
+}
+
 func (f fileTenants) open(key serverKey, now func() time.Time, session string) mcp.Open {
 	return func(context.Context) (*mcp.Server, error) {
 		t, err := f.files(key.Tenant, now)
@@ -219,21 +311,56 @@ func (f fileTenants) open(key serverKey, now func() time.Time, session string) m
 		}
 		compactor := compact.New(t.ledger, t.traces, t.verdicts, t.traces, now)
 		extractor := extract.New(t.ledger, t.traces, t.verdicts, now)
-		return mcp.New(t.traces, t.verdicts, t.outcomes, t.ledger, compactor, extractor, now, session, cliName, "", key.Name), nil
+		return mcp.New(t.traces, t.verdicts, t.outcomes, t.ledger, compactor, extractor, now, session, cliName, "", key.Name, f.policyOf(key.Tenant)), nil
 	}
 }
 
-func (f fileTenants) reports(key serverKey, now func() time.Time) (loop.Stores, error) {
+func (f fileTenants) reports(ctx context.Context, key serverKey, now func() time.Time) (loop.Stores, error) {
 	t, err := f.files(key.Tenant, now)
 	if err != nil {
 		return loop.Stores{}, err
 	}
-	return loop.Stores{Traces: t.traces, Verdicts: t.verdicts, Outcomes: t.outcomes, Items: t.ledger}, nil
+	since, err := window(ctx, f.policyOf(key.Tenant), now())
+	if err != nil {
+		return loop.Stores{}, err
+	}
+	return loop.Stores{Traces: t.traces, Verdicts: t.verdicts, Outcomes: t.outcomes, Items: t.ledger, Since: since}, nil
+}
+
+// The directory of a tenant that has records
+// A tenant whose directory does not exist yet fails with errNoRecords so a prune never creates it
+func (f fileTenants) recorded(tenant string) (string, error) {
+	dir := f.dir(tenant)
+	_, err := os.Stat(dir)
+	if errors.Is(err, os.ErrNotExist) {
+		return "", errNoRecords
+	}
+	return dir, err
+}
+
+func (f fileTenants) marks(tenant string) (retain.Marks, error) {
+	dir, err := f.recorded(tenant)
+	if err != nil {
+		return nil, err
+	}
+	return retain.NewMarker(dir), nil
+}
+
+func (f fileTenants) retainer(tenant string, now func() time.Time) (*retain.Retainer, error) {
+	if _, err := f.recorded(tenant); err != nil {
+		return nil, err
+	}
+	t, err := f.files(tenant, now)
+	if err != nil {
+		return nil, err
+	}
+	return retain.New(t.traces, t.verdicts, t.outcomes, t.ledger), nil
 }
 
 // The rows of each tenant in one database
 type pgTenants struct {
-	db *pg.DB
+	db     *pg.DB
+	policy mcp.Policy
 }
 
 // No veto file is written since the tool calls of a server's producers are checked through check_call
@@ -247,14 +374,34 @@ func (p pgTenants) open(key serverKey, now func() time.Time, session string) mcp
 		ledger := p.ledger(key.Tenant, now)
 		compactor := compact.New(ledger, traces, verdicts, traces, now)
 		extractor := extract.New(ledger, traces, verdicts, now)
-		return mcp.New(traces, verdicts, p.db.Outcomes(key.Tenant), ledger, compactor, extractor, now, session, cliName, "", key.Name), nil
+		return mcp.New(traces, verdicts, p.db.Outcomes(key.Tenant), ledger, compactor, extractor, now, session, cliName, "", key.Name, p.policyOf(key.Tenant)), nil
 	}
 }
 
-func (p pgTenants) reports(key serverKey, now func() time.Time) (loop.Stores, error) {
+// The policy of the server with the marks of the tenant
+func (p pgTenants) policyOf(tenant string) mcp.Policy {
+	policy := p.policy
+	policy.Marks = p.db.Prunes(tenant)
+	return policy
+}
+
+func (p pgTenants) reports(ctx context.Context, key serverKey, now func() time.Time) (loop.Stores, error) {
+	since, err := window(ctx, p.policyOf(key.Tenant), now())
+	if err != nil {
+		return loop.Stores{}, err
+	}
 	return loop.Stores{
 		Traces: p.db.Traces(key.Tenant), Verdicts: p.db.Feedback(key.Tenant), Outcomes: p.db.Outcomes(key.Tenant), Items: p.ledger(key.Tenant, now),
+		Since: since,
 	}, nil
+}
+
+func (p pgTenants) marks(tenant string) (retain.Marks, error) {
+	return p.db.Prunes(tenant), nil
+}
+
+func (p pgTenants) retainer(tenant string, now func() time.Time) (*retain.Retainer, error) {
+	return retain.New(p.db.Traces(tenant), p.db.Feedback(tenant), p.db.Outcomes(tenant), p.ledger(tenant, now)), nil
 }
 
 // The CLI a tool answer names for a check that runs a model such as knowledge check

@@ -44,7 +44,7 @@ func TestHistoryHealth(t *testing.T) {
 				verdict("r1", feedback.VerdictApprove, monday.Add(4*time.Hour)),
 				verdict("r2", feedback.VerdictReject, monday.Add(4*time.Hour)),
 			}
-			h := loop.New(runs, verdicts, tc.args, knowledge.Set{runItem("git-c", 1)})
+			h := loop.New(runs, verdicts, tc.args, knowledge.Set{runItem("git-c", 1)}, time.Time{})
 
 			got := h.Health(monday)
 
@@ -71,7 +71,7 @@ func TestHistoryCarriedOutcomes(t *testing.T) {
 	runs := trace.Traces{sessionRun(t, "r1", 1, "nodloop", old)}
 	outcomes := feedback.Outcomes{outcome("r1", feedback.ResultRefuted, monday.Add(time.Hour))}
 
-	h := loop.New(runs, nil, outcomes, knowledge.Set{merged, elsewhere, runItem("old", 1)})
+	h := loop.New(runs, nil, outcomes, knowledge.Set{merged, elsewhere, runItem("old", 1)}, time.Time{})
 
 	rows := map[string]loop.Health{}
 	for _, row := range h.Health(monday) {
@@ -92,7 +92,7 @@ func TestHistoryRefutedValues(t *testing.T) {
 		outcome("r2", feedback.ResultConfirmed, monday.Add(3*time.Hour)),
 	}
 
-	h := loop.New(runs, nil, outcomes, knowledge.Set{runItem("git-c", 1)})
+	h := loop.New(runs, nil, outcomes, knowledge.Set{runItem("git-c", 1)}, time.Time{})
 
 	assert.Equal(t, []string{"docs"}, h.RefutedValues("git-c", 1, "dir"))
 	assert.Empty(t, h.RefutedValues("git-c", 1, "task"))
@@ -110,7 +110,7 @@ func TestHistoryBrokenReferences(t *testing.T) {
 	lost := runItem("lost", 1)
 	lost.Evidence = knowledge.Evidence{FeedbackTraceIDs: []string{"missing"}, OutcomeTraceIDs: []string{"taught"}, Knowledge: []knowledge.Ref{{ID: "x", Version: 1}}}
 
-	h := loop.New(runs, verdicts, nil, knowledge.Set{ok, moved, lost})
+	h := loop.New(runs, verdicts, nil, knowledge.Set{ok, moved, lost}, time.Time{})
 
 	assert.ElementsMatch(t, []loop.Issue{
 		{ID: "moved", Version: 1, Field: "labels", Reference: "repo=renamed"},
@@ -131,6 +131,8 @@ func TestHistoryLifetime(t *testing.T) {
 		runs     trace.Traces
 		verdicts feedback.Records
 		now      time.Time
+		// The cutoff of the retention window
+		since time.Time
 	}
 	type want struct {
 		idle, contested bool
@@ -144,17 +146,24 @@ func TestHistoryLifetime(t *testing.T) {
 		args args
 		want want
 	}{
-		{"an item applied after approval is neither", args{trace.Traces{sessionRun(t, "r1", 1, "nodloop", gitC)}, nil, later}, want{}},
-		{"an item no run applied since approval is idle once IdleDays passed", args{nil, nil, later}, want{idle: true}},
-		{"an item no run applied is not idle before IdleDays", args{nil, nil, monday.Add(time.Hour)}, want{}},
+		{"an item applied after approval is neither", args{trace.Traces{sessionRun(t, "r1", 1, "nodloop", gitC)}, nil, later, time.Time{}}, want{}},
+		{"an item no run applied since approval is idle once IdleDays passed", args{nil, nil, later, time.Time{}}, want{idle: true}},
+		{"an item no run applied is not idle before IdleDays", args{nil, nil, monday.Add(time.Hour), time.Time{}}, want{}},
+		{
+			"an item applied after approval before the retention window is not idle",
+			args{trace.Traces{sessionRun(t, "r1", 1, "nodloop", gitC)}, nil, later, monday.Add(2 * time.Hour)}, want{},
+		},
 		{"an inferred correction of a run that applied it makes it contested",
-			args{trace.Traces{sessionRun(t, "r1", 1, "nodloop", gitC)}, feedback.Records{inferred("r1", feedback.VerdictReject, feedback.ReasonForm)}, later},
+			args{
+				trace.Traces{sessionRun(t, "r1", 1, "nodloop", gitC)}, feedback.Records{inferred("r1", feedback.VerdictReject, feedback.ReasonForm)},
+				later, time.Time{},
+			},
 			want{contested: true, compactWith: []string{"pr-body"}}},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			h := loop.New(tc.args.runs, tc.args.verdicts, nil, knowledge.Set{runItem("git-c", 1), runItem("pr-body", 1)})
+			h := loop.New(tc.args.runs, tc.args.verdicts, nil, knowledge.Set{runItem("git-c", 1), runItem("pr-body", 1)}, tc.args.since)
 
 			got := h.Health(tc.args.now)
 
