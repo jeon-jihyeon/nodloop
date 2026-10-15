@@ -164,39 +164,6 @@ func (f Feedback) EditWidth(original json.RawMessage) int {
 	return width
 }
 
-// Empty fields mean all
-type Filter struct {
-	TraceID  string
-	Verdicts []Verdict
-	Reviewer string
-	// Verdicts before it are left out
-	// Verdicts are appended in time order
-	Since time.Time
-	// Zero means all
-	Limit int
-}
-
-// Whether the verdict is from before Since
-func (f Filter) Older(fb Feedback) bool {
-	return fb.Time.Before(f.Since)
-}
-
-func (f Filter) Matches(fb Feedback) bool {
-	if f.Older(fb) {
-		return false
-	}
-	if f.TraceID != "" && fb.TraceID != f.TraceID {
-		return false
-	}
-	if len(f.Verdicts) > 0 && !slices.Contains(f.Verdicts, fb.Verdict) {
-		return false
-	}
-	if f.Reviewer != "" && fb.Reviewer != f.Reviewer {
-		return false
-	}
-	return true
-}
-
 func (f Feedback) trace() string {
 	return f.TraceID
 }

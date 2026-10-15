@@ -10,10 +10,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeon-jihyeon/nodloop/internal/feedback"
 	"github.com/jeon-jihyeon/nodloop/internal/feedback/feedbacktest"
 	"github.com/jeon-jihyeon/nodloop/internal/feedback/file"
 	"github.com/jeon-jihyeon/nodloop/internal/jsonl"
+	"github.com/jeon-jihyeon/nodloop/internal/record"
 )
 
 func TestContract(t *testing.T) {
@@ -61,7 +61,7 @@ func TestStoreAppend(t *testing.T) {
 			require.NoError(t, os.MkdirAll(filepath.Join(dir, tc.args), 0o700))
 			store, err := file.New(dir)
 			require.NoError(t, err)
-			assert.ErrorIs(t, store.Append(ctx, feedback.Feedback{TraceID: "a"}), tc.want)
+			assert.ErrorIs(t, store.Append(ctx, record.Feedback{TraceID: "a"}), tc.want)
 		})
 	}
 }
@@ -84,7 +84,7 @@ func TestStoreList(t *testing.T) {
 			require.NoError(t, os.MkdirAll(filepath.Join(dir, tc.args), 0o700))
 			store, err := file.New(dir)
 			require.NoError(t, err)
-			got, err := store.List(ctx, feedback.Filter{})
+			got, err := store.List(ctx, record.FeedbackFilter{})
 			assert.ErrorIs(t, err, tc.want)
 			assert.Nil(t, got)
 		})
@@ -120,22 +120,22 @@ func TestStoresCorruptLine(t *testing.T) {
 			args{
 				func(dir, id string) error {
 					s, err := file.New(dir)
-					return errors.Join(err, s.Append(ctx, feedback.Feedback{TraceID: id}))
+					return errors.Join(err, s.Append(ctx, record.Feedback{TraceID: id}))
 				},
 				func(dir string) (any, error) {
 					s, _ := file.New(dir)
-					return s.List(ctx, feedback.Filter{})
+					return s.List(ctx, record.FeedbackFilter{})
 				},
 				func(dir string) (checked, error) { return file.New(dir) },
 			},
-			want{"feedback.jsonl", []feedback.Feedback{{TraceID: "c"}, {TraceID: "a"}}},
+			want{"feedback.jsonl", []record.Feedback{{TraceID: "c"}, {TraceID: "a"}}},
 		},
 		{
 			"outcomes",
 			args{
 				func(dir, id string) error {
 					s, err := file.NewOutcomeStore(dir)
-					return errors.Join(err, s.Append(ctx, feedback.Outcome{TraceID: id}))
+					return errors.Join(err, s.Append(ctx, record.Outcome{TraceID: id}))
 				},
 				func(dir string) (any, error) {
 					s, _ := file.NewOutcomeStore(dir)
@@ -143,7 +143,7 @@ func TestStoresCorruptLine(t *testing.T) {
 				},
 				func(dir string) (checked, error) { return file.NewOutcomeStore(dir) },
 			},
-			want{"outcomes.jsonl", []feedback.Outcome{{TraceID: "c"}, {TraceID: "a"}}},
+			want{"outcomes.jsonl", []record.Outcome{{TraceID: "c"}, {TraceID: "a"}}},
 		},
 	}
 	for _, tc := range tcs {

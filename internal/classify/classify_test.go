@@ -16,6 +16,7 @@ import (
 
 	"github.com/jeon-jihyeon/nodloop/internal/classify"
 	"github.com/jeon-jihyeon/nodloop/internal/classify/classifymock"
+	"github.com/jeon-jihyeon/nodloop/internal/record"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
 	tracefile "github.com/jeon-jihyeon/nodloop/internal/trace/file"
 )
@@ -175,7 +176,7 @@ func TestPlanClassify(t *testing.T) {
 				assert.ErrorIs(t, err, want)
 			}
 			assert.Equal(t, tc.want.answers, got)
-			recorded, err := traces.List(ctx, trace.Filter{Name: trace.NameClassify})
+			recorded, err := traces.List(ctx, record.TraceFilter{Name: string(trace.NameClassify)})
 			require.NoError(t, err)
 			require.Len(t, recorded, 1)
 			assert.Equal(t, "critic", recorded[0].Subject)
@@ -214,7 +215,7 @@ func TestPlanClassifyTimes(t *testing.T) {
 		Classify(ctx, classify.Request{State: "the draft", Questions: questions})
 
 	require.NoError(t, err)
-	recorded, err := traces.List(ctx, trace.Filter{Name: trace.NameClassify})
+	recorded, err := traces.List(ctx, record.TraceFilter{Name: string(trace.NameClassify)})
 	require.NoError(t, err)
 	require.Len(t, recorded, 1)
 	var out struct {

@@ -42,7 +42,7 @@ func (l *Ledger) Reaffirm(ctx context.Context, id string, version int, approver 
 		return Knowledge{}, fmt.Errorf("%w: reaffirm needs one", ErrApproverRequired)
 	}
 	var k Knowledge
-	err := l.store.AppendDecided(ctx, func(all Set) ([]Knowledge, error) {
+	err := l.appendDecided(ctx, func(all Set) ([]Knowledge, error) {
 		var err error
 		if k, err = all.currentApproved(id, version); err != nil {
 			return nil, err

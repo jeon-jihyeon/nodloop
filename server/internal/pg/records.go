@@ -11,8 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/jeon-jihyeon/nodloop/internal/feedback"
-	"github.com/jeon-jihyeon/nodloop/internal/trace"
+	"github.com/jeon-jihyeon/nodloop/internal/record"
 )
 
 // The traces of one tenant
@@ -21,36 +20,36 @@ type TraceStore struct {
 	tenant string
 }
 
-func (s *TraceStore) Append(ctx context.Context, t trace.Trace) error {
+func (s *TraceStore) Append(ctx context.Context, t record.Trace) error {
 	data, err := json.Marshal(t)
 	if err != nil {
 		return fmt.Errorf("%w: %w", ErrAppend, err)
 	}
 	if _, err := s.pool.Exec(ctx, `INSERT INTO nodloop_traces (tenant, id, name, session_id, data) VALUES ($1, $2, $3, $4, $5)`,
-		s.tenant, t.ID, string(t.Name), t.SessionID, data); err != nil {
+		s.tenant, t.ID, t.Name, t.SessionID, data); err != nil {
 		return fmt.Errorf("%w: %w", ErrAppend, err)
 	}
 	return nil
 }
 
 // The newest trace of the id
-func (s *TraceStore) Get(ctx context.Context, id string) (trace.Trace, error) {
-	found, err := s.List(ctx, trace.Filter{ID: id, Limit: 1})
+func (s *TraceStore) Get(ctx context.Context, id string) (record.Trace, error) {
+	found, err := s.List(ctx, record.TraceFilter{ID: id, Limit: 1})
 	if err != nil {
-		return trace.Trace{}, err
+		return record.Trace{}, err
 	}
 	if len(found) == 0 {
-		return trace.Trace{}, fmt.Errorf("%w: %q", trace.ErrNotFound, id)
+		return record.Trace{}, fmt.Errorf("%w: %q", record.ErrTraceNotFound, id)
 	}
 	return found[0], nil
 }
 
 // Newest first
 // The query narrows by the indexed fields and Matches decides the rest so the store answers exactly what the file store does
-func (s *TraceStore) List(ctx context.Context, f trace.Filter) (trace.Traces, error) {
+func (s *TraceStore) List(ctx context.Context, f record.TraceFilter) ([]record.Trace, error) {
 	rows, err := s.pool.Query(ctx, `SELECT data FROM nodloop_traces
 		WHERE tenant = $1 AND ($2 = '' OR id = $2) AND ($3 = '' OR name = $3) AND ($4 = '' OR session_id = $4)
-		ORDER BY seq DESC`, s.tenant, f.ID, string(f.Name), f.SessionID)
+		ORDER BY seq DESC`, s.tenant, f.ID, f.Name, f.SessionID)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrRead, err)
 	}
@@ -59,21 +58,17 @@ func (s *TraceStore) List(ctx context.Context, f trace.Filter) (trace.Traces, er
 
 // The traces of the tenant with the names newest first without their output
 // json_to_record parses each row once into the fields a prune reads so no output leaves the database
-func (s *TraceStore) Heads(ctx context.Context, names ...trace.Name) (trace.Traces, error) {
-	wanted := make([]string, 0, len(names))
-	for _, n := range names {
-		wanted = append(wanted, string(n))
-	}
+func (s *TraceStore) Heads(ctx context.Context, names ...string) ([]record.Trace, error) {
 	rows, err := s.pool.Query(ctx, `SELECT h.id, h.name, h.time, coalesce(h.ref, ''), coalesce(h.error, ''), h.input
 		FROM nodloop_traces t, json_to_record(t.data) AS h(id text, name text, time text, ref text, error text, input json)
-		WHERE t.tenant = $1 AND t.name = ANY($2) ORDER BY t.seq DESC`, s.tenant, wanted)
+		WHERE t.tenant = $1 AND t.name = ANY($2) ORDER BY t.seq DESC`, s.tenant, names)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrRead, err)
 	}
 	defer rows.Close()
-	var out trace.Traces
+	var out []record.Trace
 	for rows.Next() {
-		var t trace.Trace
+		var t record.Trace
 		var at string
 		var input []byte
 		if err := rows.Scan(&t.ID, &t.Name, &at, &t.Ref, &t.Error, &input); err != nil {
@@ -134,12 +129,12 @@ type FeedbackStore struct {
 	tenant string
 }
 
-func (s *FeedbackStore) Append(ctx context.Context, fb feedback.Feedback) error {
+func (s *FeedbackStore) Append(ctx context.Context, fb record.Feedback) error {
 	return insert(ctx, s.pool, `INSERT INTO nodloop_feedback (tenant, trace_id, data) VALUES ($1, $2, $3)`, s.tenant, fb.TraceID, fb)
 }
 
 // Newest first
-func (s *FeedbackStore) List(ctx context.Context, f feedback.Filter) ([]feedback.Feedback, error) {
+func (s *FeedbackStore) List(ctx context.Context, f record.FeedbackFilter) ([]record.Feedback, error) {
 	rows, err := s.pool.Query(ctx, `SELECT data FROM nodloop_feedback WHERE tenant = $1 AND ($2 = '' OR trace_id = $2) ORDER BY seq DESC`,
 		s.tenant, f.TraceID)
 	if err != nil {
@@ -154,18 +149,18 @@ type OutcomeStore struct {
 	tenant string
 }
 
-func (s *OutcomeStore) Append(ctx context.Context, o feedback.Outcome) error {
+func (s *OutcomeStore) Append(ctx context.Context, o record.Outcome) error {
 	return insert(ctx, s.pool, `INSERT INTO nodloop_outcomes (tenant, trace_id, data) VALUES ($1, $2, $3)`, s.tenant, o.TraceID, o)
 }
 
 // Newest first and every outcome for an empty trace id
-func (s *OutcomeStore) List(ctx context.Context, traceID string) ([]feedback.Outcome, error) {
+func (s *OutcomeStore) List(ctx context.Context, traceID string) ([]record.Outcome, error) {
 	rows, err := s.pool.Query(ctx, `SELECT data FROM nodloop_outcomes WHERE tenant = $1 AND ($2 = '' OR trace_id = $2) ORDER BY seq DESC`,
 		s.tenant, traceID)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrRead, err)
 	}
-	return collect(rows, 0, feedback.OutcomeFilter{TraceID: traceID}.Matches)
+	return collect(rows, 0, record.OutcomeFilter{TraceID: traceID}.Matches)
 }
 
 func insert(ctx context.Context, pool *pgxpool.Pool, sql, tenant, traceID string, record any) error {

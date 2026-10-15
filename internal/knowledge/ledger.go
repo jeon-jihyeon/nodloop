@@ -8,6 +8,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/jeon-jihyeon/nodloop/internal/record"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
 	"github.com/jeon-jihyeon/nodloop/internal/veto"
 )
@@ -24,12 +25,12 @@ type Store interface {
 	// Appends in one write the records decide returns for every record newest first
 	// 1. decide runs once while no other writer can append so it decides on the records as they are then
 	// 2. a refusal of decide comes back as it is and nothing is written
-	AppendDecided(ctx context.Context, decide func(all Set) ([]Knowledge, error)) error
+	AppendDecided(ctx context.Context, decide func(all []record.Knowledge) ([]record.Knowledge, error)) error
 	// Every record newest first
-	List(ctx context.Context) ([]Knowledge, error)
+	List(ctx context.Context) ([]record.Knowledge, error)
 	// Rewrites the rules file with what render returns for every record newest first
 	// render runs while no other writer can append so the later of two writers reads the newer records
-	ReplaceRules(ctx context.Context, render func(all Set) string) error
+	ReplaceRules(ctx context.Context, render func(all []record.Knowledge) string) error
 }
 
 // Where the vetoes of the approved items take effect
@@ -83,8 +84,22 @@ func (l *Ledger) Compactable(ctx context.Context, anchor string) (Compactable, e
 	return all.Compactable(anchor)
 }
 
+// A corrupt line returns the records of the other lines with the error as the store does
 func (l *Ledger) All(ctx context.Context) (Set, error) {
-	return l.store.List(ctx)
+	records, err := l.store.List(ctx)
+	return RestoreAll(records), err
+}
+
+// Appends what decide returns for the records under the store lock
+// A refusal of decide comes back as it is
+func (l *Ledger) appendDecided(ctx context.Context, decide func(all Set) ([]Knowledge, error)) error {
+	return l.store.AppendDecided(ctx, func(all []record.Knowledge) ([]record.Knowledge, error) {
+		records, err := decide(RestoreAll(all))
+		if err != nil {
+			return nil, err
+		}
+		return Set(records).Records(), nil
+	})
 }
 
 func (l *Ledger) History(ctx context.Context, id string) (Set, error) {
@@ -157,7 +172,7 @@ func (l *Ledger) Propose(ctx context.Context, draft Knowledge) (Knowledge, Set, 
 func (l *Ledger) appendCandidate(ctx context.Context, decide func(all Set, now time.Time) (Knowledge, error)) (Knowledge, Set, error) {
 	var k Knowledge
 	var overlaps Set
-	err := l.store.AppendDecided(ctx, func(all Set) ([]Knowledge, error) {
+	err := l.appendDecided(ctx, func(all Set) ([]Knowledge, error) {
 		var err error
 		if k, err = decide(all, l.now().UTC()); err != nil {
 			return nil, err
@@ -206,7 +221,7 @@ func (l *Ledger) ScopeIn(ctx context.Context, id string, version int, labels tra
 // The approval decided on the records as seen recorded under the store lock
 func (l *Ledger) approve(ctx context.Context, id string, version int, approver string, seen func(all Set) (Set, error)) (Knowledge, error) {
 	var to Knowledge
-	err := l.store.AppendDecided(ctx, func(all Set) ([]Knowledge, error) {
+	err := l.appendDecided(ctx, func(all Set) ([]Knowledge, error) {
 		all, err := seen(all)
 		if err != nil {
 			return nil, err
@@ -226,7 +241,7 @@ func (l *Ledger) approve(ctx context.Context, id string, version int, approver s
 
 func (l *Ledger) Retire(ctx context.Context, id string, version int, approver string) (Knowledge, error) {
 	var to Knowledge
-	err := l.store.AppendDecided(ctx, func(all Set) ([]Knowledge, error) {
+	err := l.appendDecided(ctx, func(all Set) ([]Knowledge, error) {
 		history, err := all.historyOf(id)
 		if err != nil {
 			return nil, err
@@ -257,7 +272,7 @@ func (l *Ledger) refused(ctx context.Context, err error) error {
 // The records land as they are without the status change checks because they were decided where they were written
 func (l *Ledger) Import(ctx context.Context, records []Knowledge) (Set, error) {
 	var fresh Set
-	err := l.store.AppendDecided(ctx, func(all Set) ([]Knowledge, error) {
+	err := l.appendDecided(ctx, func(all Set) ([]Knowledge, error) {
 		var err error
 		fresh, err = all.importable(records)
 		return fresh, err
@@ -282,7 +297,8 @@ func (l *Ledger) Export(ctx context.Context) error {
 		}
 		return all.Vetoes(), nil
 	})
-	return errors.Join(vetoes, l.store.ReplaceRules(ctx, Set.Rules))
+	rules := l.store.ReplaceRules(ctx, func(all []record.Knowledge) string { return RestoreAll(all).Rules() })
+	return errors.Join(vetoes, rules)
 }
 
 // The status change already happened so the error names it
@@ -305,7 +321,7 @@ func (l *Ledger) ProposeCompaction(ctx context.Context, anchor string, drafts []
 		}
 	}
 	c := Compaction{ID: l.newID(compactionPrefix)}
-	err := l.store.AppendDecided(ctx, func(all Set) ([]Knowledge, error) {
+	err := l.appendDecided(ctx, func(all Set) ([]Knowledge, error) {
 		old, err := all.Compactable(anchor)
 		if err != nil {
 			return nil, err
@@ -339,7 +355,7 @@ func (l *Ledger) Compaction(ctx context.Context, id string) (Compaction, error) 
 // 3. a second call appends only the records still missing such as those of a legacy call cut between two appends
 // 4. vetoes are exported once after the records
 func (l *Ledger) ApproveCompaction(ctx context.Context, id, approver string, check Coverage) (Compaction, error) {
-	err := l.store.AppendDecided(ctx, func(all Set) ([]Knowledge, error) {
+	err := l.appendDecided(ctx, func(all Set) ([]Knowledge, error) {
 		return all.compactionApproval(id, approver, check, l.now().UTC())
 	})
 	if err != nil {

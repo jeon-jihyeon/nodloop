@@ -64,10 +64,11 @@ Use haiku while iterating with `--model haiku` on the commands that call a model
 
 | Layer | Packages | Rule |
 |---|---|---|
-| Domain | `feedback`, `trace`, `llm`, `classify`, `veto`, `settings`, `userconfig`, `jsonl`, `atomicfile` | No imports from the layers above |
+| Record | `record` | The shapes the stores read and write: one file per record kind with its filter. Imports nothing from the module |
+| Domain | `feedback`, `trace`, `llm`, `classify`, `veto`, `settings`, `userconfig`, `jsonl`, `atomicfile` | No imports from the layers above. `trace`, `feedback` and `knowledge` restore their models from records and turn them back into records |
 | Core | `knowledge` | The ledger of items, their scopes and their history. Never a file store |
 | Application | `compact`, `extract`, `loop`, `replay`, `retain` | Build on the core. They never import each other. `compact` and `extract` are imported by `mcp`, `cmd/nodloop` and the server, `loop` and `retain` by those and the `nodloop` package, and `replay` by `cmd/nodloop` alone |
-| Infra | the `file` subpackages and `otel` | Implements the stores in files, the veto and settings files and the OTLP export. Application code never imports one outside its tests |
+| Infra | the `file` subpackages and `otel` | Implements the stores in files, the veto and settings files and the OTLP export. The stores take and return record shapes and `otel` takes runs of its own, so none of them imports `trace`, `feedback` or `knowledge`. The caller converts. Application code never imports one outside its tests |
 | Controllers | `cmd/nodloop`, `mcp`, `guard` | `cmd/nodloop` is the composition root and the only reader of the process environment |
 | Library | `nodloop` at the module root | A second composition root that other Go code imports |
 | Server | `server/cmd/nodloop-server`, `server/internal/pg` | A module of its own: the HTTP server, its keys and the PostgreSQL stores. It composes the core packages itself and the root module never imports it |

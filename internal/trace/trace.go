@@ -136,54 +136,6 @@ func (u Usage) PromptTokens() int {
 	return u.InputTokens + u.CacheReadTokens + u.CacheCreateTokens
 }
 
-// Empty fields mean all
-type Filter struct {
-	ID        string
-	Name      Name
-	SessionID string
-	Subject   string
-	Ref       string
-	// Every tag must be present
-	Tags []string
-	// Traces before it are left out
-	// Traces are appended in time order
-	Since time.Time
-	// Zero means all
-	Limit int
-}
-
-func (f Filter) Matches(t Trace) bool {
-	if f.Older(t) {
-		return false
-	}
-	if f.ID != "" && t.ID != f.ID {
-		return false
-	}
-	if f.Name != "" && t.Name != f.Name {
-		return false
-	}
-	if f.SessionID != "" && t.SessionID != f.SessionID {
-		return false
-	}
-	if f.Subject != "" && t.Subject != f.Subject {
-		return false
-	}
-	if f.Ref != "" && t.Ref != f.Ref {
-		return false
-	}
-	for _, want := range f.Tags {
-		if !slices.Contains(t.Tags, want) {
-			return false
-		}
-	}
-	return true
-}
-
-// Whether the trace is from before Since
-func (f Filter) Older(t Trace) bool {
-	return t.Time.Before(f.Since)
-}
-
 // Time sortable id
 // 1. unix milliseconds as 12 hex digits so lexical order is time order
 // 2. 8 random hex chars so two runs in the same millisecond differ

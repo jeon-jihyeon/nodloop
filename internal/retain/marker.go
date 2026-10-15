@@ -9,6 +9,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/jeon-jihyeon/nodloop/internal/record"
 )
 
 const (
@@ -21,10 +23,10 @@ const (
 // One prune of a record store
 type Mark struct {
 	// When the prune started
-	At time.Time `json:"at"`
+	At time.Time
 	// The runs before it may be gone so a report reads from it on
 	// Zero on a marker of a release that did not record it
-	Cutoff time.Time `json:"cutoff,omitzero"`
+	Cutoff time.Time
 }
 
 // Whether the prune started less than every before now
@@ -40,7 +42,7 @@ type Marks interface {
 	// Reports whether it recorded it so only one process runs the prune
 	Claim(ctx context.Context, at, cutoff time.Time, every time.Duration) (bool, error)
 	// The last prune recorded and the zero Mark when none was
-	Last(ctx context.Context) (Mark, error)
+	Last(ctx context.Context) (record.Mark, error)
 }
 
 // The marks of a record directory in its MarkerFile
@@ -76,11 +78,11 @@ func (m Marker) Claim(_ context.Context, at, cutoff time.Time, every time.Durati
 	if err != nil {
 		return false, fmt.Errorf("%w: %w", ErrMarker, err)
 	}
-	var last Mark
-	if json.Unmarshal(b, &last) == nil && last.fresh(at, every) {
+	var last record.Mark
+	if json.Unmarshal(b, &last) == nil && Mark(last).fresh(at, every) {
 		return false, nil
 	}
-	b, err = json.Marshal(Mark{At: at, Cutoff: cutoff})
+	b, err = json.Marshal(record.Mark{At: at, Cutoff: cutoff})
 	if err != nil {
 		return false, fmt.Errorf("%w: %w", ErrMarker, err)
 	}
@@ -95,17 +97,17 @@ func (m Marker) Claim(_ context.Context, at, cutoff time.Time, every time.Durati
 
 // Read without the lock
 // A missing marker and one that does not decode read as no prune so far
-func (m Marker) Last(context.Context) (Mark, error) {
+func (m Marker) Last(context.Context) (record.Mark, error) {
 	b, err := os.ReadFile(m.path())
 	if errors.Is(err, os.ErrNotExist) {
-		return Mark{}, nil
+		return record.Mark{}, nil
 	}
 	if err != nil {
-		return Mark{}, fmt.Errorf("%w: %w", ErrMarker, err)
+		return record.Mark{}, fmt.Errorf("%w: %w", ErrMarker, err)
 	}
-	var last Mark
+	var last record.Mark
 	if json.Unmarshal(b, &last) != nil {
-		return Mark{}, nil
+		return record.Mark{}, nil
 	}
 	return last, nil
 }
@@ -136,7 +138,7 @@ func (d Daily) Due(ctx context.Context) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	return !last.fresh(d.now(), Interval), nil
+	return !Mark(last).fresh(d.now(), Interval), nil
 }
 
 // Prunes the record store when Interval passed since the last mark and reports whether it ran

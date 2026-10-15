@@ -15,6 +15,7 @@ import (
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	"github.com/jeon-jihyeon/nodloop/internal/loop"
 	"github.com/jeon-jihyeon/nodloop/internal/mcp"
+	"github.com/jeon-jihyeon/nodloop/internal/record"
 	"github.com/jeon-jihyeon/nodloop/internal/retain"
 	"github.com/jeon-jihyeon/nodloop/internal/testkit"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
@@ -162,7 +163,7 @@ func TestServerRefusals(t *testing.T) {
 	}{
 		{"a run without a producer", "run", map[string]any{"output": "x"}, `missing properties: ["producer"]`},
 		{"a run with an empty producer", "run", map[string]any{"producer": "", "output": "x"}, trace.ErrProducerRequired.Error()},
-		{"feedback on an unknown trace", "feedback", map[string]any{"trace_id": "nope", "verdict": "approve"}, trace.ErrNotFound.Error()},
+		{"feedback on an unknown trace", "feedback", map[string]any{"trace_id": "nope", "verdict": "approve"}, record.ErrTraceNotFound.Error()},
 		{"a label no run carries", "propose", map[string]any{
 			"kind": "judgment", "content": "x", "trace_ids": []any{runID}, "producer": "session", "labels": map[string]any{"repo": []any{"nodlop"}},
 		}, "no run of session carries repo=nodlop"},
@@ -489,7 +490,7 @@ func TestServerRetentionWindow(t *testing.T) {
 			c := connectWith(t, st, mcp.Policy{Retention: tc.args.days, Marks: marks})
 			old, err := trace.NewRun("session", "", nil, []byte(`{"applied":[]}`), []byte("old"), st.Clock.Now().Add(-8*24*time.Hour))
 			require.NoError(t, err)
-			require.NoError(t, st.Traces.Append(context.Background(), old))
+			require.NoError(t, st.Traces.Append(context.Background(), old.Record()))
 			recordRun(t, c, "nodloop")
 			var loopReport struct {
 				Since  *time.Time `json:"since"`

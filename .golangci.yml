@@ -29,6 +29,8 @@ linters:
         - name: exported
           disabled: true
     # Packages import downward only: domain → application → infra → controllers
+    # record holds the shapes the stores read and write and imports nothing of the module
+    # Stores and adapters take and return those shapes and never import the model they keep
     # knowledge is the ledger and the application packages sit above it
     # compact and extract are imported by mcp and cmd and the server
     # loop and retain are imported by those and the nodloop package at the module root
@@ -67,6 +69,30 @@ linters:
               desc: domain packages do not import the test harness
             - pkg: github.com/jeon-jihyeon/nodloop/cmd
               desc: nothing imports cmd
+        record:
+          files:
+            - "**/internal/record/**"
+            - "!$test"
+          deny:
+            - pkg: github.com/jeon-jihyeon/nodloop/
+              desc: record holds plain shapes and imports no package of the module
+        infrastructure:
+          files:
+            - "**/internal/trace/file/**"
+            - "**/internal/feedback/file/**"
+            - "**/internal/knowledge/file/**"
+            - "**/internal/otel/**"
+            - "**/internal/pg/**"
+            - "!$test"
+          deny:
+            - pkg: github.com/jeon-jihyeon/nodloop/internal/trace$
+              desc: stores and adapters take and return shapes of their own and the caller converts them into traces
+            - pkg: github.com/jeon-jihyeon/nodloop/internal/feedback$
+              desc: stores and adapters take and return shapes of their own and the caller converts them into verdicts and outcomes
+            - pkg: github.com/jeon-jihyeon/nodloop/internal/knowledge$
+              desc: stores and adapters take and return shapes of their own and the ledger converts them into knowledge
+            - pkg: github.com/jeon-jihyeon/nodloop/internal/retain$
+              desc: a store keeps the prune mark as a record shape and retain converts it
         application:
           files:
             - "**/internal/knowledge/**"

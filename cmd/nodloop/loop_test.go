@@ -60,7 +60,7 @@ func TestRunReportRecords(t *testing.T) {
 			require.NoError(t, store.Append(context.Background(), trace.Trace{
 				ID: "replay-1", Name: trace.NameReplay, Subject: "git-c", Time: at,
 				Output: json.RawMessage(`{"id":"git-c","version":1,"cases":[{"run":"r","expect":"breaks","breaks":true,"why":"w"}],"missed":0,"overreach":0}`),
-			}))
+			}.Record()))
 			if tc.args.corrupt {
 				f, err := os.OpenFile(filepath.Join(records, "traces.jsonl"), os.O_APPEND|os.O_WRONLY, 0o600)
 				require.NoError(t, err)
@@ -155,16 +155,16 @@ func TestRunReportText(t *testing.T) {
 				stamp := at.Add(time.Duration(i) * time.Second)
 				require.NoError(t, store.Append(context.Background(), trace.Trace{
 					ID: r.id, Name: trace.NameRun, Producer: "bot", Time: stamp, Input: json.RawMessage(r.input), Output: json.RawMessage(`"x"`),
-				}))
+				}.Record()))
 			}
 			for _, v := range tc.args.verdicts {
 				fb, err := feedback.New(v.run, v.verdict, v.code, "why", nil, "ann", at)
 				require.NoError(t, err)
-				require.NoError(t, verdicts.Append(context.Background(), fb))
+				require.NoError(t, verdicts.Append(context.Background(), fb.Record()))
 			}
 			require.NoError(t, store.Append(context.Background(), trace.Trace{
 				ID: "c1", Name: trace.NameClassify, Ref: "r1", Time: at, Input: json.RawMessage(`{}`), Output: json.RawMessage(tc.args.classify),
-			}))
+			}.Record()))
 			getenv := func(k string) string { return map[string]string{envRecordDir: records}[k] }
 			var stdout, stderr bytes.Buffer
 
@@ -187,7 +187,7 @@ func TestRunReportReadsTheWindowOfTheLastPrune(t *testing.T) {
 	for _, stamp := range []time.Time{cutoff.Add(-time.Hour), cutoff.Add(time.Hour)} {
 		run, err := trace.NewRun("bot", "", nil, json.RawMessage(`{"applied":[]}`), []byte("x"), stamp)
 		require.NoError(t, err)
-		require.NoError(t, store.Append(context.Background(), run))
+		require.NoError(t, store.Append(context.Background(), run.Record()))
 	}
 	getenv := func(k string) string { return map[string]string{envRecordDir: records}[k] }
 	var stdout, stderr bytes.Buffer

@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeon-jihyeon/nodloop/internal/record"
 	"github.com/jeon-jihyeon/nodloop/internal/retain"
 	"github.com/jeon-jihyeon/nodloop/internal/testkit"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
@@ -42,7 +43,7 @@ func TestDailySkipsAHeldLock(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("the trigger waited for the lock")
 	}
-	left, err := st.Traces.List(context.Background(), trace.Filter{})
+	left, err := st.Traces.List(context.Background(), record.TraceFilter{})
 	require.NoError(t, err)
 	assert.Len(t, left, 1)
 }

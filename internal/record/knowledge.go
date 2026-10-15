@@ -1,0 +1,58 @@
+package record
+
+import "time"
+
+// One line of the knowledge store
+// Field order follows the line as written so a record encodes to the same bytes it was read from
+type Knowledge struct {
+	ID             string    `json:"id"`
+	Version        int       `json:"version"`
+	Kind           string    `json:"kind"`
+	Content        string    `json:"content"`
+	Run            *RunScope `json:"run,omitempty"`
+	Evidence       Evidence  `json:"evidence"`
+	Basis          string    `json:"basis"`
+	Status         string    `json:"status"`
+	Approver       string    `json:"approver,omitempty"`
+	ApprovedAt     time.Time `json:"approved_at,omitzero"`
+	ReviewedAt     time.Time `json:"reviewed_at,omitzero"`
+	Supersedes     int       `json:"supersedes,omitempty"`
+	Base           int       `json:"base,omitempty"`
+	Time           time.Time `json:"time"`
+	Author         string    `json:"author"`
+	Drafted        bool      `json:"drafted,omitempty"`
+	NewLabels      bool      `json:"new_labels,omitempty"`
+	Veto           *Veto     `json:"veto,omitempty"`
+	Compaction     string    `json:"compaction,omitempty"`
+	CompactionSize int       `json:"compaction_size,omitempty"`
+}
+
+type RunScope struct {
+	Producer string              `json:"producer"`
+	Labels   map[string][]string `json:"labels,omitempty"`
+	Except   map[string][]string `json:"except,omitempty"`
+}
+
+type Evidence struct {
+	FeedbackTraceIDs []string `json:"feedback_trace_ids,omitempty"`
+	OutcomeTraceIDs  []string `json:"outcome_trace_ids,omitempty"`
+	ParagraphIDs     []string `json:"paragraph_ids,omitempty"`
+	Knowledge        []Ref    `json:"knowledge,omitempty"`
+}
+
+type Ref struct {
+	ID      string `json:"id"`
+	Version int    `json:"version"`
+}
+
+type Veto struct {
+	Tool    string          `json:"tool"`
+	When    []VetoCondition `json:"when"`
+	Example map[string]any  `json:"example"`
+}
+
+type VetoCondition struct {
+	Field  string `json:"field"`
+	Match  string `json:"match"`
+	Unless string `json:"unless,omitempty"`
+}

@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeon-jihyeon/nodloop/internal/mcp"
+	"github.com/jeon-jihyeon/nodloop/internal/record"
 	"github.com/jeon-jihyeon/nodloop/internal/testkit"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
 	tracefile "github.com/jeon-jihyeon/nodloop/internal/trace/file"
@@ -156,7 +157,7 @@ func TestHostOpensPerCall(t *testing.T) {
 	for _, dir := range []string{home.config().Records(), moved} {
 		traces, err := tracefile.New(dir)
 		require.NoError(t, err)
-		got, err := traces.List(t.Context(), trace.Filter{Name: trace.NameRun})
+		got, err := traces.List(t.Context(), record.TraceFilter{Name: string(trace.NameRun)})
 		require.NoError(t, err)
 		require.Len(t, got, 1, dir)
 		sessions[got[0].SessionID] = true

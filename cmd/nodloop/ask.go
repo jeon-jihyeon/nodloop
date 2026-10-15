@@ -8,6 +8,7 @@ import (
 
 	"github.com/jeon-jihyeon/nodloop/internal/feedback"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
+	"github.com/jeon-jihyeon/nodloop/internal/record"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
 )
 
@@ -96,11 +97,11 @@ func (c knowledgeCommand) teachings(ctx context.Context, runs []string) ([]teach
 	}
 	var taught []teaching
 	for _, id := range runs {
-		verdicts, err := store.List(ctx, feedback.Filter{TraceID: id})
+		verdicts, err := store.List(ctx, record.FeedbackFilter{TraceID: id})
 		if err != nil {
 			return nil, err
 		}
-		latest := feedback.Records(verdicts).Latest()
+		latest := feedback.RestoreAll(verdicts).Latest()
 		if len(latest) == 0 || latest[0].Reason == "" {
 			continue
 		}
@@ -108,7 +109,7 @@ func (c knowledgeCommand) teachings(ctx context.Context, runs []string) ([]teach
 		if err != nil {
 			return nil, err
 		}
-		taught = append(taught, teaching{reason: latest[0].Reason, answer: firstLine(run.Output)})
+		taught = append(taught, teaching{reason: latest[0].Reason, answer: firstLine(trace.Restore(run).Output)})
 	}
 	return taught, nil
 }

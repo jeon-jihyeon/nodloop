@@ -57,15 +57,6 @@ func NewOutcome(traceID string, result Result, confirmedCause, note, reviewer st
 	}, nil
 }
 
-// An empty trace id means all
-type OutcomeFilter struct {
-	TraceID string
-}
-
-func (f OutcomeFilter) Matches(o Outcome) bool {
-	return f.TraceID == "" || o.TraceID == f.TraceID
-}
-
 // Whether the check refuted the run at or after at such as the time of a verdict on it
 // A person who judged the run again after the refutation stands behind it once more
 func (o Outcome) RefutedSince(at time.Time) bool {

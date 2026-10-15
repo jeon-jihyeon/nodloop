@@ -10,6 +10,7 @@ import (
 
 	"github.com/jeon-jihyeon/nodloop/internal/feedback"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
+	"github.com/jeon-jihyeon/nodloop/internal/record"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
 )
 
@@ -36,20 +37,20 @@ type Folder struct {
 // Verdicts of the evidence traces
 // Newest first
 type FeedbackStore interface {
-	List(ctx context.Context, f feedback.Filter) ([]feedback.Feedback, error)
+	List(ctx context.Context, f record.FeedbackFilter) ([]record.Feedback, error)
 }
 
 // The evidence traces
 // Newest first
 type TraceStore interface {
-	List(ctx context.Context, f trace.Filter) (trace.Traces, error)
+	List(ctx context.Context, f record.TraceFilter) ([]record.Trace, error)
 }
 
 // The coverage checks beside the runs
 // Newest first
 type CheckStore interface {
-	Append(ctx context.Context, t trace.Trace) error
-	List(ctx context.Context, f trace.Filter) (trace.Traces, error)
+	Append(ctx context.Context, t record.Trace) error
+	List(ctx context.Context, f record.TraceFilter) ([]record.Trace, error)
 }
 
 // Drafts and proposes and checks and approves a compaction through the ledger
@@ -104,10 +105,11 @@ func (c *Compactor) propose(ctx context.Context, f Folder, d Draft, author strin
 	for _, item := range d.Items {
 		drafts = append(drafts, item.knowledge(f.Items, cmp.Or(author, defaultAuthor)))
 	}
-	runs, err := c.traces.List(ctx, trace.Filter{Name: trace.NameRun})
+	found, err := c.traces.List(ctx, record.TraceFilter{Name: string(trace.NameRun)})
 	if err != nil {
 		return knowledge.Compaction{}, err
 	}
+	runs := trace.RestoreAll(found)
 	if err := recordedLabels(runs, drafts); err != nil {
 		return knowledge.Compaction{}, err
 	}
@@ -129,10 +131,11 @@ func (c *Compactor) Approve(ctx context.Context, id, approver string) (knowledge
 // The latest verdict on every evidence trace of the items, once each in the order the items cite them
 // The first listed record of a trace is its newest
 func (c *Compactor) corrections(ctx context.Context, items knowledge.Set) ([]Correction, error) {
-	verdicts, err := c.feedback.List(ctx, feedback.Filter{})
+	found, err := c.feedback.List(ctx, record.FeedbackFilter{})
 	if err != nil {
 		return nil, err
 	}
+	verdicts := feedback.RestoreAll(found)
 	var ids []string
 	for _, k := range items {
 		for _, id := range k.Evidence.TraceIDs() {
@@ -143,7 +146,7 @@ func (c *Compactor) corrections(ctx context.Context, items knowledge.Set) ([]Cor
 	}
 	out := []Correction{}
 	for _, id := range ids {
-		if j := slices.IndexFunc(verdicts, feedback.Filter{TraceID: id}.Matches); j >= 0 {
+		if j := slices.IndexFunc(verdicts, func(fb feedback.Feedback) bool { return fb.TraceID == id }); j >= 0 {
 			out = append(out, Correction{TraceID: id, Verdict: verdicts[j].Verdict, Reason: verdicts[j].Reason})
 		}
 	}

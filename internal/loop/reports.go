@@ -9,6 +9,7 @@ import (
 
 	"github.com/jeon-jihyeon/nodloop/internal/feedback"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
+	"github.com/jeon-jihyeon/nodloop/internal/record"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
 )
 
@@ -112,7 +113,8 @@ func (s Stores) Snapshot(ctx context.Context, name ReportName) (Snapshot, error)
 	if err != nil || name != ReportEffect {
 		return snap, err
 	}
-	snap.outcomes, err = s.Outcomes.List(ctx, "")
+	outcomes, err := s.Outcomes.List(ctx, "")
+	snap.outcomes = feedback.RestoreOutcomes(outcomes)
 	return snap, err
 }
 
@@ -122,7 +124,7 @@ func (s Stores) Snapshot(ctx context.Context, name ReportName) (Snapshot, error)
 func (s Stores) snapshot(ctx context.Context, names []trace.Name) (Snapshot, error) {
 	var all trace.Traces
 	for _, name := range names {
-		f := trace.Filter{Name: name}
+		f := record.TraceFilter{Name: string(name)}
 		if name == trace.NameRun || name == trace.NameClassify {
 			f.Since = s.Since
 		}
@@ -130,9 +132,9 @@ func (s Stores) snapshot(ctx context.Context, names []trace.Name) (Snapshot, err
 		if err != nil {
 			return Snapshot{}, err
 		}
-		all = append(all, found...)
+		all = append(all, trace.RestoreAll(found)...)
 	}
-	records, err := s.Verdicts.List(ctx, feedback.Filter{})
+	records, err := s.Verdicts.List(ctx, record.FeedbackFilter{})
 	if err != nil {
 		return Snapshot{}, err
 	}
@@ -140,7 +142,7 @@ func (s Stores) snapshot(ctx context.Context, names []trace.Name) (Snapshot, err
 	if err != nil {
 		return Snapshot{}, err
 	}
-	return Snapshot{traces: all, runs: NewRuns(all, records), items: set, since: s.Since}, nil
+	return Snapshot{traces: all, runs: NewRuns(all, feedback.RestoreAll(records)), items: set, since: s.Since}, nil
 }
 
 // The report of the name as JSON for a reader that picks it at run time

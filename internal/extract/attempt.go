@@ -116,5 +116,5 @@ func (e *Extractor) record(ctx context.Context, r Reaction, path Path, rec Recor
 	if failed != nil {
 		tr.Error = failed.Error()
 	}
-	return errors.Join(failed, e.traces.Append(ctx, tr))
+	return errors.Join(failed, e.traces.Append(ctx, tr.Record()))
 }

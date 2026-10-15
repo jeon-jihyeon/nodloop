@@ -26,7 +26,7 @@ func runFolder(t *testing.T) (testkit.Stores, *compact.Compactor, knowledge.Comp
 	at := s.Clock.Now()
 	run, err := trace.NewRun("session", "", trace.Labels{"repo": {"nodloop"}}, nil, []byte("cd repo && git status"), at)
 	require.NoError(t, err)
-	require.NoError(t, s.Traces.Append(ctx, run))
+	require.NoError(t, s.Traces.Append(ctx, run.Record()))
 	scope := &knowledge.RunScope{Producer: "session", Labels: trace.Labels{"repo": {"nodloop"}}}
 	for id, content := range map[string]string{"a": "Use git -C <dir> instead of cd <dir> && git", "b": "Never cd into a directory before a git command"} {
 		_, _, err := s.Ledger.Propose(ctx, knowledge.Knowledge{
@@ -140,10 +140,10 @@ func TestCompactRunsRefusals(t *testing.T) {
 			at := s.Clock.Now()
 			run, err := trace.NewRun("session", "", trace.Labels{"repo": {"nodloop"}}, nil, []byte("x"), at)
 			require.NoError(t, err)
-			require.NoError(t, s.Traces.Append(ctx, run))
+			require.NoError(t, s.Traces.Append(ctx, run.Record()))
 			commit, err := trace.NewRun("session", "", trace.Labels{"repo": {"nodloop"}, "task": {"commit"}}, nil, []byte("x"), at)
 			require.NoError(t, err)
-			require.NoError(t, s.Traces.Append(ctx, commit))
+			require.NoError(t, s.Traces.Append(ctx, commit.Record()))
 			for _, id := range []string{"a", "b"} {
 				_, _, err := s.Ledger.Propose(ctx, knowledge.Knowledge{
 					ID: id, Kind: knowledge.KindJudgment, Content: id, Author: "author",

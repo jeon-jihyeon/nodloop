@@ -10,8 +10,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeon-jihyeon/nodloop/internal/feedback"
 	"github.com/jeon-jihyeon/nodloop/internal/feedback/file"
+	"github.com/jeon-jihyeon/nodloop/internal/record"
 )
 
 func TestNewOutcomeStore(t *testing.T) {
@@ -53,30 +53,30 @@ func TestOutcomeStoreAppend(t *testing.T) {
 			require.NoError(t, os.MkdirAll(filepath.Join(dir, tc.args), 0o700))
 			store, err := file.NewOutcomeStore(dir)
 			require.NoError(t, err)
-			assert.ErrorIs(t, store.Append(ctx, feedback.Outcome{TraceID: "a"}), tc.want)
+			assert.ErrorIs(t, store.Append(ctx, record.Outcome{TraceID: "a"}), tc.want)
 		})
 	}
 }
 
 func TestOutcomeStoreList(t *testing.T) {
 	base := time.Date(2026, 9, 23, 0, 0, 0, 0, time.UTC)
-	refuted := feedback.Outcome{TraceID: "t1", Time: base, Result: feedback.ResultRefuted, Reviewer: "author"}
-	tracking := feedback.Outcome{
-		TraceID: "t2", Time: base.Add(time.Minute), Result: feedback.ResultConfirmed, ConfirmedCause: "tracking change",
+	refuted := record.Outcome{TraceID: "t1", Time: base, Result: "refuted", Reviewer: "author"}
+	tracking := record.Outcome{
+		TraceID: "t2", Time: base.Add(time.Minute), Result: "confirmed", ConfirmedCause: "tracking change",
 		Reviewer: "author",
 	}
-	campaign := feedback.Outcome{
-		TraceID: "t1", Time: base.Add(2 * time.Minute), Result: feedback.ResultConfirmed, ConfirmedCause: "campaign",
+	campaign := record.Outcome{
+		TraceID: "t1", Time: base.Add(2 * time.Minute), Result: "confirmed", ConfirmedCause: "campaign",
 		Note: "checked", Reviewer: "sam",
 	}
 	type args struct {
 		// Created as a directory inside the store directory before any append
 		dir      string
-		outcomes []feedback.Outcome
+		outcomes []record.Outcome
 		traceID  string
 	}
 	type want struct {
-		outcomes []feedback.Outcome
+		outcomes []record.Outcome
 		err      error
 	}
 	tcs := []struct {
@@ -87,15 +87,15 @@ func TestOutcomeStoreList(t *testing.T) {
 		{"missing file lists nothing", args{}, want{}},
 		{
 			"empty trace id lists all newest first",
-			args{outcomes: []feedback.Outcome{refuted, tracking, campaign}},
-			want{outcomes: []feedback.Outcome{campaign, tracking, refuted}},
+			args{outcomes: []record.Outcome{refuted, tracking, campaign}},
+			want{outcomes: []record.Outcome{campaign, tracking, refuted}},
 		},
 		{
 			"trace id keeps that trace newest first",
-			args{outcomes: []feedback.Outcome{refuted, tracking, campaign}, traceID: "t1"},
-			want{outcomes: []feedback.Outcome{campaign, refuted}},
+			args{outcomes: []record.Outcome{refuted, tracking, campaign}, traceID: "t1"},
+			want{outcomes: []record.Outcome{campaign, refuted}},
 		},
-		{"unknown trace id lists nothing", args{outcomes: []feedback.Outcome{refuted}, traceID: "t9"}, want{}},
+		{"unknown trace id lists nothing", args{outcomes: []record.Outcome{refuted}, traceID: "t9"}, want{}},
 		{"directory in place of the file fails", args{dir: "outcomes.jsonl"}, want{err: file.ErrRead}},
 	}
 	ctx := context.Background()

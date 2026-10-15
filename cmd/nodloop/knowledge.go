@@ -20,6 +20,7 @@ import (
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	knowledgefile "github.com/jeon-jihyeon/nodloop/internal/knowledge/file"
 	"github.com/jeon-jihyeon/nodloop/internal/llm"
+	"github.com/jeon-jihyeon/nodloop/internal/record"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
 )
 
@@ -308,11 +309,11 @@ func (c knowledgeCommand) fromRun(ctx context.Context, id string, draft knowledg
 	if err != nil {
 		return knowledge.Knowledge{}, err
 	}
-	verdicts, err := store.List(ctx, feedback.Filter{TraceID: id})
+	verdicts, err := store.List(ctx, record.FeedbackFilter{TraceID: id})
 	if err != nil {
 		return knowledge.Knowledge{}, err
 	}
-	return draft.From(tr, verdicts)
+	return draft.From(trace.Restore(tr), feedback.RestoreAll(verdicts))
 }
 
 func (c knowledgeCommand) propose(ctx context.Context, draft knowledge.Knowledge) error {
@@ -339,11 +340,11 @@ func (c knowledgeCommand) recorded(ctx context.Context, run knowledge.RunScope) 
 	if err != nil {
 		return err
 	}
-	runs, err := store.List(ctx, trace.Filter{Name: trace.NameRun})
+	runs, err := store.List(ctx, record.TraceFilter{Name: string(trace.NameRun)})
 	if err != nil {
 		return err
 	}
-	return run.Recorded(trace.Traces(runs).Vocabulary(run.Producer))
+	return run.Recorded(trace.RestoreAll(runs).Vocabulary(run.Producer))
 }
 
 // Approves in the labels once a recorded run of the producer of the version carries each of them

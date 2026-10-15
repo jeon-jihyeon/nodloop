@@ -30,8 +30,8 @@ func TestRunTrace(t *testing.T) {
 		Input: json.RawMessage(`{}`),
 	}
 	ctx := context.Background()
-	require.NoError(t, store.Append(ctx, older))
-	require.NoError(t, store.Append(ctx, newer))
+	require.NoError(t, store.Append(ctx, older.Record()))
+	require.NoError(t, store.Append(ctx, newer.Record()))
 	shown, err := json.MarshalIndent(older, "", "  ")
 	require.NoError(t, err)
 	regular := filepath.Join(t.TempDir(), "regular")

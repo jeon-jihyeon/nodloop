@@ -15,6 +15,7 @@ import (
 	"github.com/jeon-jihyeon/nodloop/internal/feedback"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	"github.com/jeon-jihyeon/nodloop/internal/llm"
+	"github.com/jeon-jihyeon/nodloop/internal/record"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
 )
 
@@ -22,13 +23,13 @@ import (
 const defaultAuthor = "claude"
 
 type TraceStore interface {
-	Get(ctx context.Context, id string) (trace.Trace, error)
-	Append(ctx context.Context, tr trace.Trace) error
+	Get(ctx context.Context, id string) (record.Trace, error)
+	Append(ctx context.Context, tr record.Trace) error
 }
 
 // Newest first
 type FeedbackStore interface {
-	List(ctx context.Context, f feedback.Filter) ([]feedback.Feedback, error)
+	List(ctx context.Context, f record.FeedbackFilter) ([]record.Feedback, error)
 }
 
 // Answers the critic questions of a draft
@@ -72,18 +73,19 @@ type Result struct {
 // The run with its latest verdict and the items it reaches
 // A session verdict counts because the user picked it before it was recorded
 func (e *Extractor) Reaction(ctx context.Context, runID string) (Reaction, error) {
-	run, err := e.traces.Get(ctx, runID)
+	found, err := e.traces.Get(ctx, runID)
 	if err != nil {
 		return Reaction{}, err
 	}
+	run := trace.Restore(found)
 	if err := run.CheckRun(); err != nil {
 		return Reaction{}, err
 	}
-	verdicts, err := e.verdicts.List(ctx, feedback.Filter{TraceID: runID})
+	verdicts, err := e.verdicts.List(ctx, record.FeedbackFilter{TraceID: runID})
 	if err != nil {
 		return Reaction{}, err
 	}
-	latest := feedback.Records(verdicts).Latest()
+	latest := feedback.RestoreAll(verdicts).Latest()
 	if len(latest) == 0 || !latest[0].Corrects() {
 		return Reaction{}, fmt.Errorf("%w: %s", ErrNotCorrected, runID)
 	}

@@ -8,6 +8,7 @@ import (
 
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	"github.com/jeon-jihyeon/nodloop/internal/llm"
+	"github.com/jeon-jihyeon/nodloop/internal/record"
 	"github.com/jeon-jihyeon/nodloop/internal/replay"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
 )
@@ -59,12 +60,12 @@ func (c knowledgeCommand) lastReplays(ctx context.Context) (lastReplays, error) 
 	if err != nil {
 		return nil, err
 	}
-	replays, err := traces.List(ctx, trace.Filter{Name: trace.NameReplay})
+	replays, err := traces.List(ctx, record.TraceFilter{Name: string(trace.NameReplay)})
 	if err != nil {
 		return nil, err
 	}
 	out := lastReplays{}
-	for _, tr := range replays {
+	for _, tr := range trace.RestoreAll(replays) {
 		if tr.Error != "" {
 			continue
 		}

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jeon-jihyeon/nodloop/internal/record"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
 	tracefile "github.com/jeon-jihyeon/nodloop/internal/trace/file"
 )
@@ -19,7 +20,7 @@ func runTrace(args []string, getenv func(string) string, now func() time.Time, s
 	fs := newFlagSet("trace "+args[0], stderr)
 	var records recordFlags
 	records.bind(fs)
-	var f trace.Filter
+	var f record.TraceFilter
 	name := fs.String("name", "", "trace name such as run")
 	fs.StringVar(&f.SessionID, "session", "", "session id")
 	fs.StringVar(&f.Subject, "subject", "", "subject such as a task or file name")
@@ -28,8 +29,8 @@ func runTrace(args []string, getenv func(string) string, now func() time.Time, s
 	if err != nil {
 		return parseFailed(err)
 	}
-	f.Name = trace.Name(*name)
-	if *name != "" && !f.Name.Valid() {
+	f.Name = *name
+	if *name != "" && !trace.Name(*name).Valid() {
 		names := make([]string, 0, len(trace.Names()))
 		for _, n := range trace.Names() {
 			names = append(names, string(n))
@@ -66,12 +67,12 @@ type traceCommand struct {
 	out   io.Writer
 }
 
-func (c traceCommand) list(ctx context.Context, f trace.Filter) error {
+func (c traceCommand) list(ctx context.Context, f record.TraceFilter) error {
 	traces, err := c.store.List(ctx, f)
 	if err != nil {
 		return err
 	}
-	for _, t := range traces {
+	for _, t := range trace.RestoreAll(traces) {
 		fmt.Fprintf(c.out, "%s\t%s\t%s\t%s\t$%.4f\n", t.ID, t.Time.Format(time.RFC3339), t.Name, t.Subject, t.Usage.CostUSD)
 	}
 	return nil
@@ -85,7 +86,7 @@ func (c traceCommand) show(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	b, err := json.MarshalIndent(t, "", "  ")
+	b, err := json.MarshalIndent(trace.Restore(t), "", "  ")
 	if err != nil {
 		return err
 	}

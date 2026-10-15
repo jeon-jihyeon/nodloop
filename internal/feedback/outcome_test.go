@@ -94,25 +94,6 @@ func TestNewOutcome(t *testing.T) {
 	}
 }
 
-func TestOutcomeFilterMatches(t *testing.T) {
-	o := feedback.Outcome{TraceID: "t1", Result: feedback.ResultConfirmed}
-	tcs := []struct {
-		name string
-		args feedback.OutcomeFilter
-		want bool
-	}{
-		{"empty filter matches all", feedback.OutcomeFilter{}, true},
-		{"same trace id matches", feedback.OutcomeFilter{TraceID: "t1"}, true},
-		{"other trace id does not match", feedback.OutcomeFilter{TraceID: "t2"}, false},
-	}
-	for _, tc := range tcs {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			assert.Equal(t, tc.want, tc.args.Matches(o))
-		})
-	}
-}
-
 func TestOutcomeImplicit(t *testing.T) {
 	tcs := []struct {
 		name string

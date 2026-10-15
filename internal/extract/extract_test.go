@@ -19,6 +19,7 @@ import (
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	"github.com/jeon-jihyeon/nodloop/internal/llm"
 	"github.com/jeon-jihyeon/nodloop/internal/llm/llmmock"
+	"github.com/jeon-jihyeon/nodloop/internal/record"
 	"github.com/jeon-jihyeon/nodloop/internal/testkit"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
 )
@@ -36,10 +37,10 @@ func corrected(t *testing.T) (testkit.Stores, *extract.Extractor, string) {
 	require.NoError(t, err)
 	run, err := trace.NewRun("session", "", trace.Labels{"repo": {"nodloop"}, "dir": {"cmd"}}, nil, output, s.Clock.Now())
 	require.NoError(t, err)
-	require.NoError(t, s.Traces.Append(ctx, run))
+	require.NoError(t, s.Traces.Append(ctx, run.Record()))
 	fb, err := feedback.New(run.ID, feedback.VerdictEdit, feedback.ReasonApproach, "use git -C", json.RawMessage(`"git -C repo status"`), "", s.Clock.Now())
 	require.NoError(t, err)
-	require.NoError(t, s.Feedback.Append(ctx, fb))
+	require.NoError(t, s.Feedback.Append(ctx, fb.Record()))
 	_, _, err = s.Ledger.Propose(ctx, knowledge.Knowledge{
 		ID: "git-c", Kind: knowledge.KindJudgment, Content: "Prefer git -C over cd", Author: "author",
 		Run:      &knowledge.RunScope{Producer: "session", Labels: trace.Labels{"repo": {"nodloop"}}},
@@ -149,7 +150,7 @@ func TestExtractorReactionNotCorrected(t *testing.T) {
 	s, e, runID := corrected(t)
 	fb, err := feedback.New(runID, feedback.VerdictApprove, "", "", nil, "", s.Clock.Now())
 	require.NoError(t, err)
-	require.NoError(t, s.Feedback.Append(ctx, fb))
+	require.NoError(t, s.Feedback.Append(ctx, fb.Record()))
 
 	_, err = e.Reaction(ctx, runID)
 
@@ -218,7 +219,7 @@ func TestExtractorExtract(t *testing.T) {
 // The one extract trace of the run with its path checked
 func recorded(t *testing.T, s testkit.Stores, path extract.Path, runID string) extract.Record {
 	t.Helper()
-	traces, err := s.Traces.List(context.Background(), trace.Filter{Name: trace.NameExtract})
+	traces, err := s.Traces.List(context.Background(), record.TraceFilter{Name: string(trace.NameExtract)})
 	require.NoError(t, err)
 	require.Len(t, traces, 1)
 	assert.Equal(t, string(path), traces[0].Subject)

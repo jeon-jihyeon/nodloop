@@ -15,6 +15,7 @@ import (
 	feedbackfile "github.com/jeon-jihyeon/nodloop/internal/feedback/file"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	knowledgefile "github.com/jeon-jihyeon/nodloop/internal/knowledge/file"
+	"github.com/jeon-jihyeon/nodloop/internal/record"
 	"github.com/jeon-jihyeon/nodloop/internal/retain"
 	"github.com/jeon-jihyeon/nodloop/internal/testkit"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
@@ -31,7 +32,7 @@ func add(t *testing.T, st testkit.Stores, name trace.Name, days int, ref, input 
 	t.Helper()
 	at := now.Add(-time.Duration(days) * 24 * time.Hour)
 	tr := trace.Trace{ID: trace.NewID(at), Name: name, Producer: "bot", Time: at, Ref: ref, Input: []byte(input)}
-	require.NoError(t, st.Traces.Append(context.Background(), tr))
+	require.NoError(t, st.Traces.Append(context.Background(), tr.Record()))
 	return tr.ID
 }
 
@@ -39,7 +40,7 @@ func judge(t *testing.T, st testkit.Stores, id string, verdict feedback.Verdict,
 	t.Helper()
 	fb, err := feedback.New(id, verdict, "", "", nil, reviewer, now)
 	require.NoError(t, err)
-	require.NoError(t, st.Feedback.Append(context.Background(), fb))
+	require.NoError(t, st.Feedback.Append(context.Background(), fb.Record()))
 }
 
 // A candidate of the id that cites the evidence
@@ -78,7 +79,7 @@ func fixture(t *testing.T) (testkit.Stores, map[string]string) {
 		ID: trace.NewID(now.Add(-35 * 24 * time.Hour)), Name: trace.NameRun, Producer: "bot", Time: now.Add(-35 * 24 * time.Hour),
 		Input: []byte(usesA), Error: "timeout",
 	}
-	require.NoError(t, st.Traces.Append(ctx, failed))
+	require.NoError(t, st.Traces.Append(ctx, failed.Record()))
 	ids["failed use"] = failed.ID
 	ids["use appended late"] = add(t, st, trace.NameRun, 44, "", usesA)
 	ids["classify of a removed run"] = add(t, st, trace.NameClassify, 40, ids["unjudged"], none)
@@ -90,7 +91,7 @@ func fixture(t *testing.T) (testkit.Stores, map[string]string) {
 	judge(t, st, ids["withdrawn"], feedback.VerdictWithdraw, "")
 	o, err := feedback.NewOutcome(ids["checked"], feedback.ResultRefuted, "", "", "", now)
 	require.NoError(t, err)
-	require.NoError(t, st.Outcomes.Append(ctx, o))
+	require.NoError(t, st.Outcomes.Append(ctx, o.Record()))
 	propose(t, st, "a", knowledge.Evidence{FeedbackTraceIDs: []string{ids["taught"]}})
 	require.NoError(t, testkit.Err(st.Ledger.Approve(ctx, "a", 1, "ann")))
 	propose(t, st, "b", knowledge.Evidence{OutcomeTraceIDs: []string{ids["confirmed"]}})
@@ -105,7 +106,7 @@ func TestRetainerPrune(t *testing.T) {
 	require.NoError(t, err)
 	removed, err := retainer.Apply(ctx, plan)
 	require.NoError(t, err)
-	left, err := st.Traces.List(ctx, trace.Filter{})
+	left, err := st.Traces.List(ctx, record.TraceFilter{})
 	require.NoError(t, err)
 	kept := map[string]bool{}
 	for _, tr := range left {
@@ -164,7 +165,7 @@ func TestRetainerApplyReadsTheCitationsAgain(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Zero(t, removed)
-	left, err := st.Traces.List(ctx, trace.Filter{})
+	left, err := st.Traces.List(ctx, record.TraceFilter{})
 	require.NoError(t, err)
 	assert.Equal(t, []string{classify, run}, []string{left[0].ID, left[1].ID})
 }
@@ -243,7 +244,7 @@ func TestRetainerPruneFailures(t *testing.T) {
 
 			assert.ErrorIs(t, err, tc.want.err)
 			assert.Equal(t, tc.want.removed, removed)
-			left, err := st.Traces.List(ctx, trace.Filter{})
+			left, err := st.Traces.List(ctx, record.TraceFilter{})
 			require.NoError(t, err)
 			assert.Len(t, left, tc.want.left)
 		})
@@ -357,7 +358,7 @@ func TestDaily(t *testing.T) {
 			assert.ErrorIs(t, secondErr, tc.want.secondErr)
 			assert.Equal(t, tc.want.first, first)
 			assert.Equal(t, tc.want.second, second)
-			left, err := st.Traces.List(ctx, trace.Filter{})
+			left, err := st.Traces.List(ctx, record.TraceFilter{})
 			require.NoError(t, err)
 			assert.Len(t, left, tc.want.left)
 		})
@@ -378,7 +379,7 @@ func TestDailyMarksTheCutoff(t *testing.T) {
 	assert.True(t, ran)
 	last, err := marks.Last(ctx)
 	require.NoError(t, err)
-	assert.Equal(t, retain.Mark{At: now, Cutoff: retain.Days(30).Cutoff(now)}, last)
+	assert.Equal(t, record.Mark{At: now, Cutoff: retain.Days(30).Cutoff(now)}, last)
 }
 
 func TestDailyDue(t *testing.T) {
@@ -440,7 +441,7 @@ func TestDaysWindow(t *testing.T) {
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			assert.Equal(t, tc.want, tc.args.days.Window(now, retain.Mark{Cutoff: tc.args.last}))
+			assert.Equal(t, tc.want, tc.args.days.Window(now, tc.args.last))
 		})
 	}
 }

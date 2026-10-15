@@ -9,10 +9,10 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeon-jihyeon/nodloop/internal/feedback"
 	feedbackfile "github.com/jeon-jihyeon/nodloop/internal/feedback/file"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	knowledgefile "github.com/jeon-jihyeon/nodloop/internal/knowledge/file"
+	"github.com/jeon-jihyeon/nodloop/internal/record"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
 	tracefile "github.com/jeon-jihyeon/nodloop/internal/trace/file"
 	vetofile "github.com/jeon-jihyeon/nodloop/internal/veto/file"
@@ -39,7 +39,7 @@ type FlakyKnowledge struct {
 	Reads
 }
 
-func (f *FlakyKnowledge) List(ctx context.Context) ([]knowledge.Knowledge, error) {
+func (f *FlakyKnowledge) List(ctx context.Context) ([]record.Knowledge, error) {
 	if err := f.next(); err != nil {
 		return nil, err
 	}
@@ -51,7 +51,7 @@ type FlakyFeedback struct {
 	Reads
 }
 
-func (f *FlakyFeedback) List(ctx context.Context, filter feedback.Filter) ([]feedback.Feedback, error) {
+func (f *FlakyFeedback) List(ctx context.Context, filter record.FeedbackFilter) ([]record.Feedback, error) {
 	if err := f.next(); err != nil {
 		return nil, err
 	}
@@ -64,7 +64,7 @@ type FlakyTraces struct {
 	Reads
 }
 
-func (f *FlakyTraces) Heads(ctx context.Context, names ...trace.Name) (trace.Traces, error) {
+func (f *FlakyTraces) Heads(ctx context.Context, names ...string) ([]record.Trace, error) {
 	if err := f.next(); err != nil {
 		return nil, err
 	}
@@ -85,8 +85,8 @@ type PanickingTraces struct {
 	Name trace.Name
 }
 
-func (p PanickingTraces) Append(ctx context.Context, tr trace.Trace) error {
-	if tr.Name == p.Name {
+func (p PanickingTraces) Append(ctx context.Context, tr record.Trace) error {
+	if tr.Name == string(p.Name) {
 		panic("store failed")
 	}
 	return p.Store.Append(ctx, tr)

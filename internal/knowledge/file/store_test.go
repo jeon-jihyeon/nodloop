@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -15,6 +16,7 @@ import (
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge/file"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge/knowledgetest"
+	"github.com/jeon-jihyeon/nodloop/internal/record"
 )
 
 func TestContract(t *testing.T) {
@@ -65,7 +67,7 @@ func TestStoreAppend(t *testing.T) {
 			t.Parallel()
 			store, err := file.New(tc.args)
 			require.NoError(t, err)
-			assert.ErrorIs(t, store.Append(ctx, knowledge.Knowledge{ID: "a"}), tc.want.err)
+			assert.ErrorIs(t, store.Append(ctx, record.Knowledge{ID: "a"}), tc.want.err)
 			info, err := os.Stat(filepath.Join(tc.args, "knowledge.jsonl"))
 			require.NoError(t, err)
 			assert.Equal(t, tc.want.perm, info.Mode()&(os.ModeDir|os.ModePerm))
@@ -79,7 +81,7 @@ func TestStoreList(t *testing.T) {
 	store, err := file.New(dir)
 	require.NoError(t, err)
 	type want struct {
-		records []knowledge.Knowledge
+		records []record.Knowledge
 		err     error
 	}
 	tcs := []struct {
@@ -124,8 +126,8 @@ func TestStoreAppendDecided(t *testing.T) {
 			t.Parallel()
 			store, err := file.New(tc.args.dir)
 			require.NoError(t, err)
-			err = store.AppendDecided(ctx, func(knowledge.Set) ([]knowledge.Knowledge, error) {
-				return []knowledge.Knowledge{{ID: "a"}}, tc.args.refusal
+			err = store.AppendDecided(ctx, func([]record.Knowledge) ([]record.Knowledge, error) {
+				return []record.Knowledge{{ID: "a"}}, tc.args.refusal
 			})
 			assert.ErrorIs(t, err, tc.want.err)
 			assert.Equal(t, tc.want.notAppend, !errors.Is(err, file.ErrAppend))
@@ -136,10 +138,10 @@ func TestStoreAppendDecided(t *testing.T) {
 func TestStoreAppendDecidedConcurrent(t *testing.T) {
 	tcs := []struct {
 		name  string
-		seeds []knowledge.Knowledge
+		seeds []record.Knowledge
 	}{
 		{"empty store", nil},
-		{"seeded store", []knowledge.Knowledge{{ID: "old"}, {ID: "new"}}},
+		{"seeded store", []record.Knowledge{{ID: "old"}, {ID: "new"}}},
 	}
 	ctx := context.Background()
 	// Enough stores on one file to collide on the lock while the test stays fast
@@ -159,11 +161,11 @@ func TestStoreAppendDecidedConcurrent(t *testing.T) {
 				require.NoError(t, err)
 				go func() {
 					<-start
-					results <- store.AppendDecided(ctx, func(all knowledge.Set) ([]knowledge.Knowledge, error) {
-						if _, ok := all.Find("winner"); ok {
+					results <- store.AppendDecided(ctx, func(all []record.Knowledge) ([]record.Knowledge, error) {
+						if slices.ContainsFunc(all, func(k record.Knowledge) bool { return k.ID == "winner" }) {
 							return nil, knowledge.ErrTransitionInvalid
 						}
-						return []knowledge.Knowledge{{ID: "winner", Version: i}}, nil
+						return []record.Knowledge{{ID: "winner", Version: i}}, nil
 					})
 				}()
 			}
@@ -183,15 +185,15 @@ func TestStoreAppendDecidedConcurrent(t *testing.T) {
 }
 
 func TestStoreReplaceRules(t *testing.T) {
-	approved := knowledge.Knowledge{ID: "k", Version: 1, Status: knowledge.StatusApproved}
-	render := func(all knowledge.Set) string {
+	approved := record.Knowledge{ID: "k", Version: 1, Status: "approved"}
+	render := func(all []record.Knowledge) string {
 		if len(all) == 0 {
 			return ""
 		}
 		return "\n- " + all[0].ID + "\n"
 	}
 	type args struct {
-		records []knowledge.Knowledge
+		records []record.Knowledge
 		// Content of the rules file before the call and none when empty
 		before string
 	}
@@ -208,7 +210,7 @@ func TestStoreReplaceRules(t *testing.T) {
 		want want
 	}{
 		{"nothing to render and no file writes nothing", args{}, want{}},
-		{"records render under the header", args{records: []knowledge.Knowledge{approved}}, want{after: header + "\n- k\n"}},
+		{"records render under the header", args{records: []record.Knowledge{approved}}, want{after: header + "\n- k\n"}},
 		{"nothing to render keeps a header only file once written", args{before: "old"}, want{after: header}},
 	}
 	ctx := context.Background()
@@ -246,7 +248,7 @@ func TestStoreReplaceRulesFails(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, os.Mkdir(file.RulesPath(dir), 0o700))
 
-	err = store.ReplaceRules(context.Background(), func(knowledge.Set) string { return "\n- k\n" })
+	err = store.ReplaceRules(context.Background(), func([]record.Knowledge) string { return "\n- k\n" })
 
 	assert.ErrorIs(t, err, file.ErrWrite)
 }
@@ -258,7 +260,7 @@ func TestStoreCorruptLine(t *testing.T) {
 	store, err := file.New(dir)
 	require.NoError(t, err)
 	ctx := context.Background()
-	a, c := knowledge.Knowledge{ID: "a", Version: 1}, knowledge.Knowledge{ID: "c", Version: 1}
+	a, c := record.Knowledge{ID: "a", Version: 1}, record.Knowledge{ID: "c", Version: 1}
 	require.NoError(t, store.Append(ctx, a))
 	f, err := os.OpenFile(filepath.Join(dir, "knowledge.jsonl"), os.O_APPEND|os.O_WRONLY, 0o600)
 	require.NoError(t, err)
@@ -274,7 +276,7 @@ func TestStoreCorruptLine(t *testing.T) {
 		assert.ErrorIs(t, err, file.ErrCorrupt)
 		assert.ErrorIs(t, err, jsonl.ErrCorrupt)
 	}
-	assert.Equal(t, []knowledge.Knowledge{c, a}, listed)
+	assert.Equal(t, []record.Knowledge{c, a}, listed)
 	assert.Equal(t, 2, n)
 	moved, err := store.Repair()
 	require.NoError(t, err)

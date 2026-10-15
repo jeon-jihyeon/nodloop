@@ -9,7 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
+	"github.com/jeon-jihyeon/nodloop/internal/record"
 )
 
 // The knowledge of one tenant
@@ -19,7 +19,7 @@ type KnowledgeStore struct {
 	tenant string
 }
 
-func (s *KnowledgeStore) Append(ctx context.Context, k knowledge.Knowledge) error {
+func (s *KnowledgeStore) Append(ctx context.Context, k record.Knowledge) error {
 	data, err := json.Marshal(k)
 	if err != nil {
 		return fmt.Errorf("%w: %w", ErrAppend, err)
@@ -30,13 +30,13 @@ func (s *KnowledgeStore) Append(ctx context.Context, k knowledge.Knowledge) erro
 	return nil
 }
 
-func (s *KnowledgeStore) List(ctx context.Context) ([]knowledge.Knowledge, error) {
+func (s *KnowledgeStore) List(ctx context.Context) ([]record.Knowledge, error) {
 	return s.list(ctx, s.pool)
 }
 
 // decide gets the records newest first and its records land in their order
 // Its refusal comes back as it is and only a database failure becomes ErrAppend so a caller can tell the two apart
-func (s *KnowledgeStore) AppendDecided(ctx context.Context, decide func(all knowledge.Set) ([]knowledge.Knowledge, error)) error {
+func (s *KnowledgeStore) AppendDecided(ctx context.Context, decide func(all []record.Knowledge) ([]record.Knowledge, error)) error {
 	var refused error
 	err := s.locked(ctx, func(tx pgx.Tx) error {
 		all, err := s.list(ctx, tx)
@@ -70,7 +70,7 @@ func (s *KnowledgeStore) AppendDecided(ctx context.Context, decide func(all know
 
 // Stores the rules render returns as the approved.md text of the tenant
 // An empty render while the tenant has no rules writes nothing
-func (s *KnowledgeStore) ReplaceRules(ctx context.Context, render func(all knowledge.Set) string) error {
+func (s *KnowledgeStore) ReplaceRules(ctx context.Context, render func(all []record.Knowledge) string) error {
 	err := s.locked(ctx, func(tx pgx.Tx) error {
 		all, err := s.list(ctx, tx)
 		if err != nil {
@@ -118,10 +118,10 @@ type querier interface {
 	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
 }
 
-func (s *KnowledgeStore) list(ctx context.Context, q querier) (knowledge.Set, error) {
+func (s *KnowledgeStore) list(ctx context.Context, q querier) ([]record.Knowledge, error) {
 	rows, err := q.Query(ctx, `SELECT data FROM nodloop_knowledge WHERE tenant = $1 ORDER BY seq DESC`, s.tenant)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrRead, err)
 	}
-	return collect(rows, 0, func(knowledge.Knowledge) bool { return true })
+	return collect(rows, 0, func(record.Knowledge) bool { return true })
 }

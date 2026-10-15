@@ -10,6 +10,7 @@ import (
 
 	"github.com/jeon-jihyeon/nodloop/internal/feedback"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
+	"github.com/jeon-jihyeon/nodloop/internal/record"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
 )
 
@@ -102,15 +103,15 @@ type History struct {
 }
 
 type TraceStore interface {
-	List(ctx context.Context, f trace.Filter) (trace.Traces, error)
+	List(ctx context.Context, f record.TraceFilter) ([]record.Trace, error)
 }
 
 type FeedbackStore interface {
-	List(ctx context.Context, f feedback.Filter) ([]feedback.Feedback, error)
+	List(ctx context.Context, f record.FeedbackFilter) ([]record.Feedback, error)
 }
 
 type OutcomeStore interface {
-	List(ctx context.Context, traceID string) ([]feedback.Outcome, error)
+	List(ctx context.Context, traceID string) ([]record.Outcome, error)
 }
 
 type KnowledgeStore interface {
@@ -121,11 +122,11 @@ type KnowledgeStore interface {
 func Load(
 	ctx context.Context, traces TraceStore, verdicts FeedbackStore, outcomes OutcomeStore, items KnowledgeStore, since time.Time,
 ) (*History, error) {
-	all, err := traces.List(ctx, trace.Filter{Name: trace.NameRun})
+	all, err := traces.List(ctx, record.TraceFilter{Name: string(trace.NameRun)})
 	if err != nil {
 		return nil, err
 	}
-	records, err := verdicts.List(ctx, feedback.Filter{})
+	records, err := verdicts.List(ctx, record.FeedbackFilter{})
 	if err != nil {
 		return nil, err
 	}
@@ -137,7 +138,7 @@ func Load(
 	if err != nil {
 		return nil, err
 	}
-	return New(all, records, checks, set, since), nil
+	return New(trace.RestoreAll(all), feedback.RestoreAll(records), feedback.RestoreOutcomes(checks), set, since), nil
 }
 
 // The history of the runs since the time and the zero time reads every run
@@ -145,7 +146,7 @@ func Load(
 // 2. when a version was last applied and the first run to receive it are read over every run
 // A run before the window still counts as a use of the version and as its first run
 func New(traces trace.Traces, verdicts feedback.Records, outcomes feedback.Outcomes, items knowledge.Set, since time.Time) *History {
-	window := slices.DeleteFunc(slices.Clone(traces), trace.Filter{Since: since}.Older)
+	window := slices.DeleteFunc(slices.Clone(traces), func(tr trace.Trace) bool { return tr.Time.Before(since) })
 	h := &History{
 		verdicts: map[string]feedback.Feedback{}, outcomes: map[string]feedback.Outcome{},
 		withFeedback: map[string]bool{}, withOutcome: map[string]bool{}, knowledge: items, vocabulary: map[string]trace.Labels{},
