@@ -23,7 +23,7 @@ func TestTraceRoundTrip(t *testing.T) {
 		Ref:       "c1",
 		Time:      base,
 		Model:     "sonnet",
-		Input:     json.RawMessage(`{"mode":"batch","metrics":["click_count"]}`),
+		Input:     json.RawMessage(`{"mode":"batch","metrics":["row_count"]}`),
 		Output:    json.RawMessage(`{"status":"hold","hold_reasons":["gap in the window"]}`),
 		Error:     "timeout",
 		Usage: trace.Usage{
