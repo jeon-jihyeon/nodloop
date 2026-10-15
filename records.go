@@ -10,6 +10,7 @@ import (
 	"github.com/jeon-jihyeon/nodloop/internal/feedback"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	"github.com/jeon-jihyeon/nodloop/internal/loop"
+	"github.com/jeon-jihyeon/nodloop/internal/record"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
 )
 
@@ -93,7 +94,7 @@ func (c *Client) Record(ctx context.Context, r Run) (string, error) {
 		return "", err
 	}
 	tr.SessionID = r.SessionID
-	if err := c.traces.Append(ctx, tr); err != nil {
+	if err := c.traces.Append(ctx, tr.Record()); err != nil {
 		return "", err
 	}
 	c.startPrune(context.WithoutCancel(ctx))
@@ -162,7 +163,7 @@ func (c *Client) Judge(ctx context.Context, j Judgment) error {
 	if err != nil {
 		return err
 	}
-	return c.verdicts.Append(ctx, fb)
+	return c.verdicts.Append(ctx, fb.Record())
 }
 
 // What a real check found for a recorded run apart from the verdict on its output
@@ -186,7 +187,7 @@ func (c *Client) Outcome(ctx context.Context, o Outcome) error {
 	if err != nil {
 		return err
 	}
-	return c.outcomes.Append(ctx, out)
+	return c.outcomes.Append(ctx, out.Record())
 }
 
 // One report of the records as JSON in the shape the MCP tool report and nodloop report --json answer
@@ -198,17 +199,17 @@ func (c *Client) Report(ctx context.Context, name string) (json.RawMessage, erro
 		return nil, err
 	}
 	stores := loop.Stores{
-		Traces: c.traces, Verdicts: c.verdicts, Outcomes: c.outcomes, Items: c.ledger, Since: c.days.Window(c.now(), last),
+		Traces: c.traces, Verdicts: c.verdicts, Outcomes: c.outcomes, Items: c.ledger, Since: c.days.Window(c.now(), last.Cutoff),
 	}
 	return stores.Report(ctx, loop.ReportName(name), c.now())
 }
 
 func (c *Client) checkRun(ctx context.Context, id string) error {
-	tr, err := c.traces.Get(ctx, id)
+	found, err := c.traces.Get(ctx, id)
 	if err != nil {
 		return err
 	}
-	return tr.CheckRun()
+	return trace.Restore(found).CheckRun()
 }
 
 // The fields of one knowledge version a producer reads
@@ -347,11 +348,11 @@ func (c *Client) Propose(ctx context.Context, p Proposal) (Item, error) {
 		return Item{}, fmt.Errorf("%w: a proposal names a producer or a run it comes from", knowledge.ErrScopeInvalid)
 	}
 	if !p.NewLabels {
-		runs, err := c.traces.List(ctx, trace.Filter{Name: trace.NameRun})
+		runs, err := c.traces.List(ctx, record.TraceFilter{Name: string(trace.NameRun)})
 		if err != nil {
 			return Item{}, err
 		}
-		if err := draft.Run.Recorded(runs.Vocabulary(draft.Run.Producer)); err != nil {
+		if err := draft.Run.Recorded(trace.RestoreAll(runs).Vocabulary(draft.Run.Producer)); err != nil {
 			return Item{}, err
 		}
 	}
@@ -368,11 +369,11 @@ func (c *Client) fromRun(ctx context.Context, id string, draft knowledge.Knowled
 	if err != nil {
 		return knowledge.Knowledge{}, err
 	}
-	verdicts, err := c.verdicts.List(ctx, feedback.Filter{TraceID: id})
+	verdicts, err := c.verdicts.List(ctx, record.FeedbackFilter{TraceID: id})
 	if err != nil {
 		return knowledge.Knowledge{}, err
 	}
-	return draft.From(tr, verdicts)
+	return draft.From(trace.Restore(tr), feedback.RestoreAll(verdicts))
 }
 
 // Approves a candidate version on behalf of the named person
@@ -393,11 +394,11 @@ func (c *Client) ApproveIn(ctx context.Context, id string, version int, labels L
 	if err != nil {
 		return Item{}, err
 	}
-	runs, err := c.traces.List(ctx, trace.Filter{Name: trace.NameRun})
+	runs, err := c.traces.List(ctx, record.TraceFilter{Name: string(trace.NameRun)})
 	if err != nil {
 		return Item{}, err
 	}
-	if err := scope.Recorded(runs.Vocabulary(scope.Producer)); err != nil {
+	if err := scope.Recorded(trace.RestoreAll(runs).Vocabulary(scope.Producer)); err != nil {
 		return Item{}, err
 	}
 	k, err := c.ledger.ApproveIn(ctx, id, version, labels, approver)

@@ -6,25 +6,25 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/jeon-jihyeon/nodloop/internal/feedback"
 	"github.com/jeon-jihyeon/nodloop/internal/jsonl"
+	"github.com/jeon-jihyeon/nodloop/internal/record"
 )
 
 const feedbackFile = "feedback.jsonl"
 
 type Store struct {
-	file jsonl.File[feedback.Feedback]
+	file jsonl.File[record.Feedback]
 }
 
 func New(dir string) (*Store, error) {
-	f, err := jsonl.Open[feedback.Feedback](dir, feedbackFile)
+	f, err := jsonl.Open[record.Feedback](dir, feedbackFile)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrOpen, err)
 	}
 	return &Store{file: f}, nil
 }
 
-func (s *Store) Append(_ context.Context, fb feedback.Feedback) error {
+func (s *Store) Append(_ context.Context, fb record.Feedback) error {
 	if err := s.file.Append(fb); err != nil {
 		return fmt.Errorf("%w: %w", ErrAppend, err)
 	}
@@ -33,7 +33,7 @@ func (s *Store) Append(_ context.Context, fb feedback.Feedback) error {
 
 // Newest first
 // A corrupt line returns the verdicts of the other lines with the error
-func (s *Store) List(_ context.Context, f feedback.Filter) ([]feedback.Feedback, error) {
+func (s *Store) List(_ context.Context, f record.FeedbackFilter) ([]record.Feedback, error) {
 	records, err := s.file.Newest(f.Matches, f.Older, f.Limit)
 	if err != nil {
 		return records, readFailed(err)

@@ -118,7 +118,7 @@ func (c runCommand) record(
 	if err != nil {
 		return err
 	}
-	if err := store.Append(ctx, tr); err != nil {
+	if err := store.Append(ctx, tr.Record()); err != nil {
 		return err
 	}
 	fmt.Fprintln(c.out, tr.ID)

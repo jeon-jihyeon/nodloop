@@ -9,6 +9,7 @@ import (
 
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	"github.com/jeon-jihyeon/nodloop/internal/llm"
+	"github.com/jeon-jihyeon/nodloop/internal/record"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
 )
 
@@ -104,9 +105,10 @@ func (c *Compactor) Record(ctx context.Context, id string, answers []CoverageAns
 		return knowledge.Coverage{}, err
 	}
 	now := c.now()
-	if err := c.checks.Append(ctx, trace.Trace{
+	check := trace.Trace{
 		ID: trace.NewID(now), Name: trace.NameCheck, SessionID: id, Time: now, Input: json.RawMessage("{}"), Output: out,
-	}); err != nil {
+	}
+	if err := c.checks.Append(ctx, check.Record()); err != nil {
 		return knowledge.Coverage{}, err
 	}
 	return cov, nil
@@ -114,10 +116,11 @@ func (c *Compactor) Record(ctx context.Context, id string, answers []CoverageAns
 
 // The newest coverage recorded for the compaction
 func (c *Compactor) Coverage(ctx context.Context, id string) (knowledge.Coverage, error) {
-	checks, err := c.checks.List(ctx, trace.Filter{Name: trace.NameCheck, SessionID: id})
+	found, err := c.checks.List(ctx, record.TraceFilter{Name: string(trace.NameCheck), SessionID: id})
 	if err != nil {
 		return knowledge.Coverage{}, err
 	}
+	checks := trace.RestoreAll(found)
 	if len(checks) == 0 {
 		return knowledge.Coverage{}, fmt.Errorf("%w: %s", ErrNoCoverage, id)
 	}

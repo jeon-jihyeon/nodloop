@@ -18,6 +18,7 @@ import (
 	"github.com/jeon-jihyeon/nodloop/internal/feedback"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	knowledgefile "github.com/jeon-jihyeon/nodloop/internal/knowledge/file"
+	"github.com/jeon-jihyeon/nodloop/internal/record"
 	"github.com/jeon-jihyeon/nodloop/internal/retain"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
 	tracefile "github.com/jeon-jihyeon/nodloop/internal/trace/file"
@@ -206,8 +207,8 @@ func (c hookCommand) previousRun(ctx context.Context, sessionID string) (trace.T
 		return trace.Trace{}, err
 	}
 	since := c.app.now().Add(-sessionWindow)
-	runs, err := store.List(ctx, trace.Filter{Name: trace.NameRun, SessionID: sessionID, Since: since, Limit: 1})
-	return runs.Newest(), err
+	runs, err := store.List(ctx, record.TraceFilter{Name: string(trace.NameRun), SessionID: sessionID, Since: since, Limit: 1})
+	return trace.RestoreAll(runs).Newest(), err
 }
 
 // The answer as a run of the conversation with the items its prompt received, then the lesson of the previous run
@@ -255,7 +256,7 @@ func (c hookCommand) stop(ctx context.Context, sessionID string, labels trace.La
 	if err != nil {
 		return err
 	}
-	if err := store.Append(ctx, tr); err != nil {
+	if err := store.Append(ctx, tr.Record()); err != nil {
 		return err
 	}
 	pruneErr := c.prune(ctx)
@@ -278,11 +279,11 @@ func (c hookCommand) extract(ctx context.Context, runID string, at time.Time) er
 	if err != nil {
 		return err
 	}
-	list, err := verdicts.List(ctx, feedback.Filter{TraceID: runID, Since: at})
+	list, err := verdicts.List(ctx, record.FeedbackFilter{TraceID: runID, Since: at})
 	if err != nil {
 		return err
 	}
-	records := feedback.Records(list)
+	records := feedback.RestoreAll(list)
 	if len(records.Human()) > 0 {
 		return nil
 	}

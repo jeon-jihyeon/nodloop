@@ -15,6 +15,7 @@ import (
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	"github.com/jeon-jihyeon/nodloop/internal/llm"
 	"github.com/jeon-jihyeon/nodloop/internal/llm/llmmock"
+	"github.com/jeon-jihyeon/nodloop/internal/record"
 	"github.com/jeon-jihyeon/nodloop/internal/replay"
 	"github.com/jeon-jihyeon/nodloop/internal/testkit"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
@@ -22,14 +23,14 @@ import (
 
 // Records a run of the repo with the output and the verdict
 // An empty verdict records none
-func record(t *testing.T, st testkit.Stores, repo, output string, verdict feedback.Verdict) string {
+func recordRun(t *testing.T, st testkit.Stores, repo, output string, verdict feedback.Verdict) string {
 	t.Helper()
 	ctx := context.Background()
 	out, err := json.Marshal(output)
 	require.NoError(t, err)
 	run, err := trace.NewRun("session", "", trace.Labels{"repo": {repo}}, json.RawMessage(`{"applied":[]}`), out, st.Clock.Now())
 	require.NoError(t, err)
-	require.NoError(t, st.Traces.Append(ctx, run))
+	require.NoError(t, st.Traces.Append(ctx, run.Record()))
 	if verdict == "" {
 		return run.ID
 	}
@@ -39,7 +40,7 @@ func record(t *testing.T, st testkit.Stores, repo, output string, verdict feedba
 	}
 	fb, err := feedback.New(run.ID, verdict, "", reason, nil, "ann", st.Clock.Now())
 	require.NoError(t, err)
-	require.NoError(t, st.Feedback.Append(ctx, fb))
+	require.NoError(t, st.Feedback.Append(ctx, fb.Record()))
 	return run.ID
 }
 
@@ -55,11 +56,11 @@ func seed(t *testing.T) seeded {
 	t.Helper()
 	st := testkit.Open(t)
 	s := seeded{st: st}
-	s.corrected = record(t, st, "plant", "IDV 14 reads as a sensor fault", feedback.VerdictReject)
-	s.near = record(t, st, "plant", "IDV 14 is the cooling valve", feedback.VerdictApprove)
-	s.far = record(t, st, "plant", "IDV 11 is a temperature drift", feedback.VerdictApprove)
-	s.off = record(t, st, "other", "IDV 14 there is a pump", feedback.VerdictApprove)
-	record(t, st, "plant", "no verdict yet", "")
+	s.corrected = recordRun(t, st, "plant", "IDV 14 reads as a sensor fault", feedback.VerdictReject)
+	s.near = recordRun(t, st, "plant", "IDV 14 is the cooling valve", feedback.VerdictApprove)
+	s.far = recordRun(t, st, "plant", "IDV 11 is a temperature drift", feedback.VerdictApprove)
+	s.off = recordRun(t, st, "other", "IDV 14 there is a pump", feedback.VerdictApprove)
+	recordRun(t, st, "plant", "no verdict yet", "")
 	scope := &knowledge.RunScope{Producer: "session", Labels: trace.Labels{"repo": {"plant"}}}
 	for _, k := range []knowledge.Knowledge{
 		{
@@ -93,7 +94,7 @@ func answerAll(_ context.Context, req llm.Request) (llm.Response, error) {
 
 func TestReplayerReplay(t *testing.T) {
 	s := seed(t)
-	record(t, s.st, "plant", "a later answer that followed the lesson", feedback.VerdictApprove)
+	recordRun(t, s.st, "plant", "a later answer that followed the lesson", feedback.VerdictApprove)
 	client := llmmock.NewMockClient(gomock.NewController(t))
 	var prompt string
 	client.EXPECT().Complete(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, req llm.Request) (llm.Response, error) {
@@ -121,7 +122,7 @@ func TestReplayerReplay(t *testing.T) {
 	assert.NotContains(t, prompt, "keeps", "the judge never sees what a case expects")
 	assert.NotContains(t, prompt, "gone", "a cited run the records no longer hold is no case")
 	assert.Less(t, strings.Index(prompt, s.near), strings.Index(prompt, s.far), "the outputs come in the order of their run ids")
-	traces, err := s.st.Traces.List(context.Background(), trace.Filter{Name: trace.NameReplay})
+	traces, err := s.st.Traces.List(context.Background(), record.TraceFilter{Name: string(trace.NameReplay)})
 	require.NoError(t, err)
 	require.Len(t, traces, 1)
 	assert.Equal(t, "idv", traces[0].Subject)
@@ -137,7 +138,7 @@ func TestReplayerReplayAfterReaffirm(t *testing.T) {
 	ctx := context.Background()
 	_, err := s.st.Ledger.Approve(ctx, "idv", 1, "ann")
 	require.NoError(t, err)
-	record(t, s.st, "plant", "an answer that received the lesson", feedback.VerdictApprove)
+	recordRun(t, s.st, "plant", "an answer that received the lesson", feedback.VerdictApprove)
 	_, err = s.st.Ledger.Reaffirm(ctx, "idv", 1, "ann")
 	require.NoError(t, err)
 	client := llmmock.NewMockClient(gomock.NewController(t))
@@ -157,10 +158,10 @@ func TestReplayerReplayAfterReaffirm(t *testing.T) {
 // Only the newest approved runs of the scope are judged so one model call holds them
 func TestReplayerReplayCapsApprovedRuns(t *testing.T) {
 	st := testkit.Open(t)
-	corrected := record(t, st, "plant", "wrong", feedback.VerdictReject)
+	corrected := recordRun(t, st, "plant", "wrong", feedback.VerdictReject)
 	var approved []string
 	for i := range 12 {
-		approved = append(approved, record(t, st, "plant", fmt.Sprintf("answer %d", i), feedback.VerdictApprove))
+		approved = append(approved, recordRun(t, st, "plant", fmt.Sprintf("answer %d", i), feedback.VerdictApprove))
 	}
 	_, _, err := st.Ledger.Propose(context.Background(), knowledge.Knowledge{
 		ID: "wide", Kind: knowledge.KindMeaning, Content: "x", Author: "author",
@@ -186,7 +187,7 @@ type unrecorded struct {
 	replay.TraceStore
 }
 
-func (unrecorded) Append(context.Context, trace.Trace) error {
+func (unrecorded) Append(context.Context, record.Trace) error {
 	return assert.AnError
 }
 
@@ -258,7 +259,7 @@ func TestReplayerReplayFails(t *testing.T) {
 
 			assert.ErrorIs(t, err, tc.want.err)
 			assert.Equal(t, replay.Result{}, got)
-			recorded, err := s.st.Traces.List(context.Background(), trace.Filter{Name: trace.NameReplay})
+			recorded, err := s.st.Traces.List(context.Background(), record.TraceFilter{Name: string(trace.NameReplay)})
 			require.NoError(t, err)
 			require.Len(t, recorded, tc.want.failed)
 			for _, tr := range recorded {
@@ -272,7 +273,7 @@ func TestReplayerReplayFails(t *testing.T) {
 // A lesson whose run nobody corrected anymore and whose scope holds no approved run has nothing to judge
 func TestReplayerReplayWithoutCases(t *testing.T) {
 	st := testkit.Open(t)
-	run := record(t, st, "plant", "answer", feedback.VerdictReject)
+	run := recordRun(t, st, "plant", "answer", feedback.VerdictReject)
 	_, _, err := st.Ledger.Propose(context.Background(), knowledge.Knowledge{
 		ID: "lone", Kind: knowledge.KindMeaning, Content: "x", Author: "author",
 		Run:      &knowledge.RunScope{Producer: "session", Labels: trace.Labels{"repo": {"plant"}}},
@@ -281,7 +282,7 @@ func TestReplayerReplayWithoutCases(t *testing.T) {
 	require.NoError(t, err)
 	fb, err := feedback.New(run, feedback.VerdictWithdraw, "", "", nil, "ann", st.Clock.Now())
 	require.NoError(t, err)
-	require.NoError(t, st.Feedback.Append(context.Background(), fb))
+	require.NoError(t, st.Feedback.Append(context.Background(), fb.Record()))
 	client := llmmock.NewMockClient(gomock.NewController(t))
 
 	_, err = replay.New(st.Ledger, st.Traces, st.Feedback, client, "", st.Clock.Now).Replay(context.Background(), "lone", 0)

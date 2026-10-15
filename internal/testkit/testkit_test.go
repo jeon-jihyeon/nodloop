@@ -7,10 +7,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeon-jihyeon/nodloop/internal/feedback"
 	feedbackfile "github.com/jeon-jihyeon/nodloop/internal/feedback/file"
-	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	knowledgefile "github.com/jeon-jihyeon/nodloop/internal/knowledge/file"
+	"github.com/jeon-jihyeon/nodloop/internal/record"
 	"github.com/jeon-jihyeon/nodloop/internal/testkit"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
 )
@@ -21,9 +20,9 @@ func TestOpen(t *testing.T) {
 	ctx := context.Background()
 	st := testkit.Open(t)
 
-	traces, err := st.Traces.List(ctx, trace.Filter{})
+	traces, err := st.Traces.List(ctx, record.TraceFilter{})
 	require.NoError(t, err)
-	verdicts, err := st.Feedback.List(ctx, feedback.Filter{})
+	verdicts, err := st.Feedback.List(ctx, record.FeedbackFilter{})
 	require.NoError(t, err)
 	outcomes, err := st.Outcomes.List(ctx, "")
 	require.NoError(t, err)
@@ -46,7 +45,7 @@ func TestClockNow(t *testing.T) {
 // Two reads show which of them the allowed count lets through
 func TestFlakyKnowledgeList(t *testing.T) {
 	type want struct {
-		items []knowledge.Knowledge
+		items []record.Knowledge
 		errs  []error
 	}
 	tcs := []struct {
@@ -62,7 +61,7 @@ func TestFlakyKnowledgeList(t *testing.T) {
 		{
 			name: "one allowed read serves the store and fails the second",
 			args: 1,
-			want: want{items: []knowledge.Knowledge{{ID: "a"}}, errs: []error{nil, assert.AnError}},
+			want: want{items: []record.Knowledge{{ID: "a"}}, errs: []error{nil, assert.AnError}},
 		},
 	}
 	ctx := context.Background()
@@ -71,7 +70,7 @@ func TestFlakyKnowledgeList(t *testing.T) {
 			t.Parallel()
 			store, err := knowledgefile.New(t.TempDir())
 			require.NoError(t, err)
-			require.NoError(t, store.Append(ctx, knowledge.Knowledge{ID: "a"}))
+			require.NoError(t, store.Append(ctx, record.Knowledge{ID: "a"}))
 			flaky := &testkit.FlakyKnowledge{Store: store, Reads: testkit.Reads{Allowed: tc.args, Err: assert.AnError}}
 			items, first := flaky.List(ctx)
 			_, second := flaky.List(ctx)
@@ -98,8 +97,8 @@ func TestPanickingTracesAppend(t *testing.T) {
 			st := testkit.Open(t)
 			traces := testkit.PanickingTraces{Store: st.Traces, Name: trace.NameCheck}
 			tr := trace.Trace{ID: "t-1", Name: tc.args, Time: st.Clock.Now()}
-			tc.panics(t, func() { _ = traces.Append(ctx, tr) })
-			stored, err := st.Traces.List(ctx, trace.Filter{})
+			tc.panics(t, func() { _ = traces.Append(ctx, tr.Record()) })
+			stored, err := st.Traces.List(ctx, record.TraceFilter{})
 			require.NoError(t, err)
 			assert.Len(t, stored, tc.want)
 		})
@@ -109,7 +108,7 @@ func TestPanickingTracesAppend(t *testing.T) {
 // Two reads show which of them the allowed count lets through
 func TestFlakyFeedbackList(t *testing.T) {
 	type want struct {
-		items []feedback.Feedback
+		items []record.Feedback
 		errs  []error
 	}
 	tcs := []struct {
@@ -125,7 +124,7 @@ func TestFlakyFeedbackList(t *testing.T) {
 		{
 			name: "one allowed read serves the store and fails the second",
 			args: 1,
-			want: want{items: []feedback.Feedback{{TraceID: "a"}}, errs: []error{nil, assert.AnError}},
+			want: want{items: []record.Feedback{{TraceID: "a"}}, errs: []error{nil, assert.AnError}},
 		},
 	}
 	ctx := context.Background()
@@ -134,10 +133,10 @@ func TestFlakyFeedbackList(t *testing.T) {
 			t.Parallel()
 			store, err := feedbackfile.New(t.TempDir())
 			require.NoError(t, err)
-			require.NoError(t, store.Append(ctx, feedback.Feedback{TraceID: "a"}))
+			require.NoError(t, store.Append(ctx, record.Feedback{TraceID: "a"}))
 			flaky := &testkit.FlakyFeedback{Store: store, Reads: testkit.Reads{Allowed: tc.args, Err: assert.AnError}}
-			items, first := flaky.List(ctx, feedback.Filter{})
-			_, second := flaky.List(ctx, feedback.Filter{})
+			items, first := flaky.List(ctx, record.FeedbackFilter{})
+			_, second := flaky.List(ctx, record.FeedbackFilter{})
 			assert.Equal(t, tc.want, want{items: items, errs: []error{first, second}})
 		})
 	}

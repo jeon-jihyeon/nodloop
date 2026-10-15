@@ -18,6 +18,7 @@ import (
 	"github.com/jeon-jihyeon/nodloop/internal/llm"
 	"github.com/jeon-jihyeon/nodloop/internal/replay"
 	"github.com/jeon-jihyeon/nodloop/internal/retain"
+	"github.com/jeon-jihyeon/nodloop/internal/trace"
 	tracefile "github.com/jeon-jihyeon/nodloop/internal/trace/file"
 	vetofile "github.com/jeon-jihyeon/nodloop/internal/veto/file"
 )
@@ -175,7 +176,7 @@ func (a app) checkRuns(ctx context.Context, ids ...string) error {
 		if err != nil {
 			return err
 		}
-		if err := t.CheckRun(); err != nil {
+		if err := trace.Restore(t).CheckRun(); err != nil {
 			return err
 		}
 	}
@@ -239,7 +240,7 @@ func (a app) window(ctx context.Context) (time.Time, error) {
 	if err != nil {
 		return time.Time{}, err
 	}
-	return a.cfg.retention.Window(a.now(), last), nil
+	return a.cfg.retention.Window(a.now(), last.Cutoff), nil
 }
 
 // The daily prune after a run a command recorded

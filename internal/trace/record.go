@@ -1,0 +1,33 @@
+package trace
+
+import "github.com/jeon-jihyeon/nodloop/internal/record"
+
+// The trace a store line holds as it was recorded
+func Restore(r record.Trace) Trace {
+	return Trace{
+		ID: r.ID, Name: Name(r.Name), SessionID: r.SessionID, Subject: r.Subject, Ref: r.Ref, Time: r.Time, Model: r.Model,
+		Input: r.Input, Output: r.Output, Error: r.Error, Usage: Usage(r.Usage), DurationMS: r.DurationMS, Tags: r.Tags,
+		Producer: r.Producer, Labels: Labels(r.Labels),
+	}
+}
+
+// The traces of store lines in the order the store listed them
+func RestoreAll(rs []record.Trace) Traces {
+	if rs == nil {
+		return nil
+	}
+	out := make(Traces, 0, len(rs))
+	for _, r := range rs {
+		out = append(out, Restore(r))
+	}
+	return out
+}
+
+// The line a store writes for the trace
+func (t Trace) Record() record.Trace {
+	return record.Trace{
+		ID: t.ID, Name: string(t.Name), SessionID: t.SessionID, Subject: t.Subject, Ref: t.Ref, Time: t.Time, Model: t.Model,
+		Input: t.Input, Output: t.Output, Error: t.Error, Usage: record.Usage(t.Usage), DurationMS: t.DurationMS, Tags: t.Tags,
+		Producer: t.Producer, Labels: t.Labels,
+	}
+}

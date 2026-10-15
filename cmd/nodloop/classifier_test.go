@@ -18,6 +18,7 @@ import (
 
 	"github.com/jeon-jihyeon/nodloop/internal/llm"
 	"github.com/jeon-jihyeon/nodloop/internal/llm/llmmock"
+	"github.com/jeon-jihyeon/nodloop/internal/record"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
 	tracefile "github.com/jeon-jihyeon/nodloop/internal/trace/file"
 )
@@ -261,7 +262,7 @@ func TestRunKnowledgeExtractClassifier(t *testing.T) {
 			assert.Contains(t, stdout.String(), "relation\tadd\n")
 			traces, err := tracefile.New(records)
 			require.NoError(t, err)
-			recorded, err := traces.List(context.Background(), trace.Filter{Name: trace.NameClassify})
+			recorded, err := traces.List(context.Background(), record.TraceFilter{Name: string(trace.NameClassify)})
 			require.NoError(t, err)
 			assert.Len(t, recorded, tc.want.classified)
 			var report bytes.Buffer

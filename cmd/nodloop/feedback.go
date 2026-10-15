@@ -12,6 +12,7 @@ import (
 
 	"github.com/jeon-jihyeon/nodloop/internal/feedback"
 	feedbackfile "github.com/jeon-jihyeon/nodloop/internal/feedback/file"
+	"github.com/jeon-jihyeon/nodloop/internal/record"
 )
 
 // Flags of the feedback subcommands
@@ -37,10 +38,10 @@ func (f *feedbackFlags) bind(fs *flag.FlagSet) {
 	fs.BoolVar(&f.audit, "audit", false, "add: run selected by random audit")
 }
 
-func (f feedbackFlags) filter() feedback.Filter {
-	out := feedback.Filter{TraceID: f.traceID, Reviewer: f.reviewer, Limit: f.limit}
+func (f feedbackFlags) filter() record.FeedbackFilter {
+	out := record.FeedbackFilter{TraceID: f.traceID, Reviewer: f.reviewer, Limit: f.limit}
 	if f.verdict != "" {
-		out.Verdicts = []feedback.Verdict{feedback.Verdict(f.verdict)}
+		out.Verdicts = []string{f.verdict}
 	}
 	return out
 }
@@ -86,7 +87,7 @@ type feedbackCommand struct {
 	audit bool
 }
 
-func (c feedbackCommand) list(ctx context.Context, f feedback.Filter) error {
+func (c feedbackCommand) list(ctx context.Context, f record.FeedbackFilter) error {
 	store, err := c.app.feedback()
 	if err != nil {
 		return err
@@ -96,7 +97,7 @@ func (c feedbackCommand) list(ctx context.Context, f feedback.Filter) error {
 		return err
 	}
 	// A record without a code prints a dash so the reason stays in the last column
-	for _, fb := range records {
+	for _, fb := range feedback.RestoreAll(records) {
 		fmt.Fprintf(c.out, "%s\t%s\t%s\t%s\t%s\t%s\n",
 			fb.TraceID, fb.Time.Format(time.RFC3339), fb.Verdict, cmp.Or(string(fb.ReasonCode), "-"), fb.Reviewer, fb.Reason)
 	}
@@ -126,7 +127,7 @@ func (c feedbackCommand) add(
 	if err != nil {
 		return err
 	}
-	if err := store.Append(ctx, fb); err != nil {
+	if err := store.Append(ctx, fb.Record()); err != nil {
 		return err
 	}
 	fmt.Fprintf(c.out, "%s\t%s\t%s\n", fb.TraceID, fb.Verdict, fb.Reviewer)
@@ -158,7 +159,7 @@ func (c feedbackCommand) outcome(
 	if err != nil {
 		return err
 	}
-	if err := store.Append(ctx, o); err != nil {
+	if err := store.Append(ctx, o.Record()); err != nil {
 		return err
 	}
 	fmt.Fprintf(c.out, "%s\t%s\t%s\n", o.TraceID, o.Result, o.Reviewer)

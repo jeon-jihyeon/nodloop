@@ -18,6 +18,7 @@ import (
 
 	"github.com/jeon-jihyeon/nodloop/internal/feedback"
 	feedbackfile "github.com/jeon-jihyeon/nodloop/internal/feedback/file"
+	"github.com/jeon-jihyeon/nodloop/internal/record"
 	"github.com/jeon-jihyeon/nodloop/internal/retain"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
 	tracefile "github.com/jeon-jihyeon/nodloop/internal/trace/file"
@@ -47,11 +48,11 @@ func pruneHome(t *testing.T, retention string) (getenv func(string) string, reco
 		{ID: "old-judged", Name: trace.NameRun, Producer: "bot", Time: old, Input: []byte(`{}`)},
 		{ID: "recent", Name: trace.NameRun, Producer: "bot", Time: pruneNow.Add(-time.Hour), Input: []byte(`{}`)},
 	} {
-		require.NoError(t, traces.Append(ctx, tr))
+		require.NoError(t, traces.Append(ctx, tr.Record()))
 	}
 	fb, err := feedback.New("old-judged", feedback.VerdictApprove, "", "", nil, "", old)
 	require.NoError(t, err)
-	require.NoError(t, verdicts.Append(ctx, fb))
+	require.NoError(t, verdicts.Append(ctx, fb.Record()))
 	return func(k string) string { return map[string]string{"HOME": home, envRecordDir: records}[k] }, records
 }
 
@@ -60,7 +61,7 @@ func traceIDs(t *testing.T, records string) []string {
 	t.Helper()
 	store, err := tracefile.New(records)
 	require.NoError(t, err)
-	all, err := store.List(context.Background(), trace.Filter{})
+	all, err := store.List(context.Background(), record.TraceFilter{})
 	require.NoError(t, err)
 	var ids []string
 	for i := len(all) - 1; i >= 0; i-- {

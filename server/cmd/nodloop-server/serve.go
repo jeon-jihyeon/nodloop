@@ -248,7 +248,7 @@ func window(ctx context.Context, policy mcp.Policy, now time.Time) (time.Time, e
 	if err != nil {
 		return time.Time{}, err
 	}
-	return policy.Retention.Window(now, last), nil
+	return policy.Retention.Window(now, last.Cutoff), nil
 }
 
 // The record directory of each tenant under tenants of the base directory

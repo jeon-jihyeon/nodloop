@@ -16,6 +16,10 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeon-jihyeon/nodloop/internal/feedback"
+	"github.com/jeon-jihyeon/nodloop/internal/otel"
+	"github.com/jeon-jihyeon/nodloop/internal/trace"
 )
 
 func TestRunExportOtel(t *testing.T) {
@@ -109,6 +113,79 @@ func TestRunExportOtel(t *testing.T) {
 			for _, body := range bodies {
 				assert.True(t, json.Valid([]byte(body)))
 			}
+		})
+	}
+}
+
+func TestExported(t *testing.T) {
+	at := time.Date(2026, 10, 7, 9, 0, 0, 0, time.UTC)
+	run := trace.Trace{ID: "r1", Name: trace.NameRun, Producer: "bot", Time: at, Input: json.RawMessage(`{"applied":[]}`)}
+	with := func(input string) trace.Trace {
+		r := run
+		r.Input = json.RawMessage(input)
+		return r
+	}
+	reject := feedback.Feedback{TraceID: "r1", Time: at, Verdict: feedback.VerdictReject, ReasonCode: feedback.ReasonScope, Reason: "why", Reviewer: "ann"}
+	type args struct {
+		run      trace.Trace
+		verdicts feedback.Records
+		outcomes feedback.Outcomes
+	}
+	tcs := []struct {
+		name string
+		args args
+		want otel.Run
+	}{
+		{
+			"the verdict of the run goes along and one on another run stays off",
+			args{run: run, verdicts: feedback.Records{reject, {TraceID: "other", Time: at, Verdict: feedback.VerdictApprove, Reviewer: "ann"}}},
+			otel.Run{
+				ID: "r1", Producer: "bot", Time: at, Applied: []otel.Ref{}, Withheld: []otel.Ref{},
+				Verdict: &otel.Verdict{Time: at, Verdict: "reject", ReasonCode: "scope", Reason: "why", Reviewer: "ann"},
+			},
+		},
+		{
+			"only the newest verdict of a run goes along",
+			args{run: run, verdicts: feedback.Records{{TraceID: "r1", Time: at.Add(time.Minute), Verdict: feedback.VerdictApprove, Reviewer: "ann"}, reject}},
+			otel.Run{
+				ID: "r1", Producer: "bot", Time: at, Applied: []otel.Ref{}, Withheld: []otel.Ref{},
+				Verdict: &otel.Verdict{Time: at.Add(time.Minute), Verdict: "approve", Reviewer: "ann"},
+			},
+		},
+		{
+			"a withdrawn verdict goes along as none",
+			args{run: run, verdicts: feedback.Records{{TraceID: "r1", Time: at.Add(time.Minute), Verdict: feedback.VerdictWithdraw, Reviewer: "ann"}, reject}},
+			otel.Run{ID: "r1", Producer: "bot", Time: at, Applied: []otel.Ref{}, Withheld: []otel.Ref{}},
+		},
+		{
+			"the newest outcome of the run goes along",
+			args{run: run, outcomes: feedback.Outcomes{
+				{TraceID: "r1", Time: at, Result: feedback.ResultRefuted, Reviewer: "ann"},
+				{TraceID: "r1", Time: at.Add(time.Hour), Result: feedback.ResultConfirmed, ConfirmedCause: "a slow consumer", Reviewer: "ann"},
+				{TraceID: "other", Time: at, Result: feedback.ResultRefuted, Reviewer: "ann"},
+			}},
+			otel.Run{
+				ID: "r1", Producer: "bot", Time: at, Applied: []otel.Ref{}, Withheld: []otel.Ref{},
+				Outcome: &otel.Outcome{Time: at.Add(time.Hour), Result: "confirmed", ConfirmedCause: "a slow consumer", Reviewer: "ann"},
+			},
+		},
+		{
+			"the input names the items and the draw",
+			args{run: with(`{"applied":[],"withheld":[{"id":"git-c","version":2}],"drawn":true}`)},
+			otel.Run{ID: "r1", Producer: "bot", Time: at, Applied: []otel.Ref{}, Withheld: []otel.Ref{{ID: "git-c", Version: 2}}, Drawn: true},
+		},
+		{
+			"an input that does not decode names no item",
+			args{run: with(`{"applied":[{"id":"git-c","version":2}],"drawn":"yes"}`)},
+			otel.Run{ID: "r1", Producer: "bot", Time: at, Applied: []otel.Ref{}, Withheld: []otel.Ref{}},
+		},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			want := tc.want
+			want.Labels, want.Output = tc.args.run.Labels, tc.args.run.Output
+			assert.Equal(t, []otel.Run{want}, exported(trace.Traces{tc.args.run}, tc.args.verdicts, tc.args.outcomes))
 		})
 	}
 }

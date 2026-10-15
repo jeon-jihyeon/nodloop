@@ -103,5 +103,5 @@ func (c hookCommand) react(ctx context.Context, t turn) (feedback.Verdict, error
 	if err != nil {
 		return "", err
 	}
-	return v, store.Append(ctx, fb)
+	return v, store.Append(ctx, fb.Record())
 }

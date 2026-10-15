@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeon-jihyeon/nodloop/internal/jsonl"
-	"github.com/jeon-jihyeon/nodloop/internal/trace"
+	"github.com/jeon-jihyeon/nodloop/internal/record"
 	"github.com/jeon-jihyeon/nodloop/internal/trace/file"
 	"github.com/jeon-jihyeon/nodloop/internal/trace/tracetest"
 )
@@ -51,10 +51,10 @@ func TestStoreAppend(t *testing.T) {
 	require.NoError(t, err)
 	tcs := []struct {
 		name string
-		args trace.Trace
+		args record.Trace
 		want error
 	}{
-		{"directory in place of the file fails to append", trace.Trace{ID: "a"}, file.ErrAppend},
+		{"directory in place of the file fails to append", record.Trace{ID: "a"}, file.ErrAppend},
 	}
 	ctx := context.Background()
 	for _, tc := range tcs {
@@ -71,7 +71,7 @@ func TestStoreGet(t *testing.T) {
 	store, err := file.New(dir)
 	require.NoError(t, err)
 	type want struct {
-		trace trace.Trace
+		trace record.Trace
 		err   error
 	}
 	tcs := []struct {
@@ -98,15 +98,15 @@ func TestStoreList(t *testing.T) {
 	store, err := file.New(dir)
 	require.NoError(t, err)
 	type want struct {
-		traces trace.Traces
+		traces []record.Trace
 		err    error
 	}
 	tcs := []struct {
 		name string
-		args trace.Filter
+		args record.TraceFilter
 		want want
 	}{
-		{"directory in place of the file fails to read", trace.Filter{}, want{err: file.ErrRead}},
+		{"directory in place of the file fails to read", record.TraceFilter{}, want{err: file.ErrRead}},
 	}
 	ctx := context.Background()
 	for _, tc := range tcs {
@@ -126,13 +126,13 @@ func TestStoreCorruptLine(t *testing.T) {
 	store, err := file.New(dir)
 	require.NoError(t, err)
 	ctx := context.Background()
-	a := trace.Trace{ID: "a", Name: trace.NameRun, Input: json.RawMessage(`{}`), Output: json.RawMessage(`"x"`)}
-	c := trace.Trace{ID: "c", Name: trace.NameRun, Input: json.RawMessage(`{}`), Output: json.RawMessage(`"y"`)}
+	a := record.Trace{ID: "a", Name: "run", Input: json.RawMessage(`{}`), Output: json.RawMessage(`"x"`)}
+	c := record.Trace{ID: "c", Name: "run", Input: json.RawMessage(`{}`), Output: json.RawMessage(`"y"`)}
 	require.NoError(t, store.Append(ctx, a))
 	require.NoError(t, appendRaw(filepath.Join(dir, "traces.jsonl"), "not json\n"))
 	require.NoError(t, store.Append(ctx, c))
 
-	listed, listErr := store.List(ctx, trace.Filter{})
+	listed, listErr := store.List(ctx, record.TraceFilter{})
 	got, getErr := store.Get(ctx, "a")
 	n, checkErr := store.Check()
 
@@ -141,7 +141,7 @@ func TestStoreCorruptLine(t *testing.T) {
 		assert.ErrorIs(t, err, file.ErrCorrupt)
 		assert.ErrorIs(t, err, jsonl.ErrCorrupt)
 	}
-	assert.Equal(t, trace.Traces{c, a}, listed)
+	assert.Equal(t, []record.Trace{c, a}, listed)
 	assert.Equal(t, a, got, "get returns the trace found with the error as list does")
 	assert.Equal(t, 2, n)
 	moved, err := store.Repair()

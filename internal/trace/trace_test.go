@@ -114,43 +114,6 @@ func TestUsagePromptTokens(t *testing.T) {
 	}
 }
 
-func TestFilterMatches(t *testing.T) {
-	tr := trace.Trace{
-		ID:        "d1",
-		Name:      trace.NameRun,
-		SessionID: "eval-1",
-		Subject:   "tq-001",
-		Ref:       "c1",
-		Tags:      []string{"feedback:on", "z:3"},
-	}
-	tcs := []struct {
-		name string
-		args trace.Filter
-		want bool
-	}{
-		{"empty filter matches all", trace.Filter{}, true},
-		{"same id matches", trace.Filter{ID: "d1"}, true},
-		{"other id does not match", trace.Filter{ID: "d2"}, false},
-		{"same name matches", trace.Filter{Name: trace.NameRun}, true},
-		{"other name does not match", trace.Filter{Name: trace.NameCheck}, false},
-		{"same session matches", trace.Filter{SessionID: "eval-1"}, true},
-		{"other session does not match", trace.Filter{SessionID: "eval-2"}, false},
-		{"same subject matches", trace.Filter{Subject: "tq-001"}, true},
-		{"other subject does not match", trace.Filter{Subject: "tq-002"}, false},
-		{"same ref matches", trace.Filter{Ref: "c1"}, true},
-		{"other ref does not match", trace.Filter{Ref: "c2"}, false},
-		{"every tag present in any order matches", trace.Filter{Tags: []string{"z:3", "feedback:on"}}, true},
-		{"one missing tag does not match", trace.Filter{Tags: []string{"feedback:on", "feedback:off"}}, false},
-		{"limit is ignored by matching", trace.Filter{Limit: 1}, true},
-	}
-	for _, tc := range tcs {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			assert.Equal(t, tc.want, tc.args.Matches(tr))
-		})
-	}
-}
-
 func TestNewID(t *testing.T) {
 	tcs := []struct {
 		name string

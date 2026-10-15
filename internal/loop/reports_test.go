@@ -23,11 +23,11 @@ func TestStoresReportWindow(t *testing.T) {
 	ctx := context.Background()
 	old, err := trace.NewRun("session", "", nil, []byte(`{"applied":[]}`), []byte("old"), st.Clock.Now())
 	require.NoError(t, err)
-	require.NoError(t, st.Traces.Append(ctx, old))
+	require.NoError(t, st.Traces.Append(ctx, old.Record()))
 	cutoff := st.Clock.Now()
 	young, err := trace.NewRun("session", "", nil, []byte(`{"applied":[]}`), []byte("young"), st.Clock.Now())
 	require.NoError(t, err)
-	require.NoError(t, st.Traces.Append(ctx, young))
+	require.NoError(t, st.Traces.Append(ctx, young.Record()))
 	tcs := []struct {
 		name string
 		args time.Time
@@ -56,7 +56,7 @@ func TestStoresReportCriticWindow(t *testing.T) {
 			ID: trace.NewID(at), Name: trace.NameClassify, Subject: "reaction", Ref: "run", Time: at, Input: json.RawMessage(`{}`),
 			Output: json.RawMessage(`{"members":[{"name":"laya","answers":{"holds":{"yes":0.9}}}]}`),
 		}
-		require.NoError(t, st.Traces.Append(ctx, tr))
+		require.NoError(t, st.Traces.Append(ctx, tr.Record()))
 	}
 	classify(st.Clock.Now())
 	cutoff := st.Clock.Now().Add(time.Minute)
@@ -88,7 +88,7 @@ func TestStoresReport(t *testing.T) {
 	ctx := context.Background()
 	run, err := trace.NewRun("session", "", trace.Labels{"repo": {"nodloop"}}, []byte(`{"applied":[]}`), []byte("answer"), st.Clock.Now())
 	require.NoError(t, err)
-	require.NoError(t, st.Traces.Append(ctx, run))
+	require.NoError(t, st.Traces.Append(ctx, run.Record()))
 	stores := loop.Stores{Traces: st.Traces, Verdicts: st.Feedback, Outcomes: st.Outcomes, Items: st.Ledger}
 	type want struct {
 		report any
@@ -202,7 +202,7 @@ func TestSnapshotReplays(t *testing.T) {
 			ctx := context.Background()
 			run, err := trace.NewRun("session", "", nil, []byte(`{"applied":[]}`), []byte("answer"), st.Clock.Now())
 			require.NoError(t, err)
-			require.NoError(t, st.Traces.Append(ctx, run))
+			require.NoError(t, st.Traces.Append(ctx, run.Record()))
 			var newest time.Time
 			for _, r := range tc.args {
 				now := st.Clock.Now()
@@ -211,7 +211,7 @@ func TestSnapshotReplays(t *testing.T) {
 					output = json.RawMessage(r.output)
 				}
 				tr := trace.Trace{ID: trace.NewID(now), Name: trace.NameReplay, Subject: "a", Time: now, Output: output, Error: r.err}
-				require.NoError(t, st.Traces.Append(ctx, tr))
+				require.NoError(t, st.Traces.Append(ctx, tr.Record()))
 				if r.err == "" {
 					newest = now
 				}

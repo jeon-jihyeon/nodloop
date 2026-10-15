@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/jeon-jihyeon/nodloop/internal/record"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
 )
 
@@ -19,7 +20,7 @@ type Member struct {
 }
 
 type TraceStore interface {
-	Append(ctx context.Context, tr trace.Trace) error
+	Append(ctx context.Context, tr record.Trace) error
 }
 
 // The endpoint of a point and the built in member it falls back to
@@ -103,5 +104,5 @@ func (p *Plan) record(ctx context.Context, req Request, all []asked, answers Ans
 	if failed != nil {
 		tr.Error = failed.Error()
 	}
-	return p.traces.Append(ctx, tr)
+	return p.traces.Append(ctx, tr.Record())
 }

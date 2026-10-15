@@ -76,8 +76,9 @@ func TestRunRunRecord(t *testing.T) {
 			}
 			store, err := tracefile.New(records)
 			require.NoError(t, err)
-			got, err := store.Get(t.Context(), strings.TrimSpace(stdout.String()))
+			found, err := store.Get(t.Context(), strings.TrimSpace(stdout.String()))
 			require.NoError(t, err)
+			got := trace.Restore(found)
 			assert.Equal(t, trace.NameRun, got.Name)
 			assert.Equal(t, "session", got.Producer)
 			assert.Equal(t, tc.want.labels, got.Labels)

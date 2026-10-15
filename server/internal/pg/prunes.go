@@ -9,7 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/jeon-jihyeon/nodloop/internal/retain"
+	"github.com/jeon-jihyeon/nodloop/internal/record"
 )
 
 // The last prune of one tenant so every replica of the server and every restart reads one mark
@@ -32,14 +32,14 @@ func (s *PruneStore) Claim(ctx context.Context, at, cutoff time.Time, every time
 }
 
 // The zero Mark before the first prune of the tenant
-func (s *PruneStore) Last(ctx context.Context) (retain.Mark, error) {
-	var m retain.Mark
+func (s *PruneStore) Last(ctx context.Context) (record.Mark, error) {
+	var m record.Mark
 	err := s.pool.QueryRow(ctx, `SELECT at, cutoff FROM nodloop_prunes WHERE tenant = $1`, s.tenant).Scan(&m.At, &m.Cutoff)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return retain.Mark{}, nil
+		return record.Mark{}, nil
 	}
 	if err != nil {
-		return retain.Mark{}, fmt.Errorf("%w: %w", ErrRead, err)
+		return record.Mark{}, fmt.Errorf("%w: %w", ErrRead, err)
 	}
 	return m, nil
 }

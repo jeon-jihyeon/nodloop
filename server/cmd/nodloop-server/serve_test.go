@@ -25,6 +25,7 @@ import (
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	"github.com/jeon-jihyeon/nodloop/internal/loop"
 	"github.com/jeon-jihyeon/nodloop/internal/mcp"
+	"github.com/jeon-jihyeon/nodloop/internal/record"
 	"github.com/jeon-jihyeon/nodloop/internal/retain"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
 	"github.com/jeon-jihyeon/nodloop/server/internal/pg"
@@ -398,7 +399,7 @@ func pruneScenario(t *testing.T, stores tenantStores) {
 	for tenant, want := range map[string][]any{"acme": {judged}, "globex": nil} {
 		r, err := stores.reports(context.Background(), serverKey{Tenant: tenant}, func() time.Time { return time.Time{} })
 		require.NoError(t, err)
-		runs, err := r.Traces.List(context.Background(), trace.Filter{Name: trace.NameRun})
+		runs, err := r.Traces.List(context.Background(), record.TraceFilter{Name: string(trace.NameRun)})
 		require.NoError(t, err)
 		var ids []any
 		for _, run := range runs {
@@ -422,7 +423,7 @@ func TestPrunerAfterARestart(t *testing.T) {
 			left := func() int {
 				r, err := tenants.reports(context.Background(), serverKey{Tenant: "acme"}, func() time.Time { return time.Time{} })
 				require.NoError(t, err)
-				runs, err := r.Traces.List(context.Background(), trace.Filter{Name: trace.NameRun})
+				runs, err := r.Traces.List(context.Background(), record.TraceFilter{Name: string(trace.NameRun)})
 				require.NoError(t, err)
 				return len(runs)
 			}

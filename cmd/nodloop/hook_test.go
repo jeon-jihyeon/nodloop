@@ -23,6 +23,7 @@ import (
 	"github.com/jeon-jihyeon/nodloop/internal/jsonl"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	"github.com/jeon-jihyeon/nodloop/internal/loop"
+	"github.com/jeon-jihyeon/nodloop/internal/record"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
 	tracefile "github.com/jeon-jihyeon/nodloop/internal/trace/file"
 )
@@ -428,7 +429,7 @@ func hookPromptSetup(t *testing.T, getenv func(string) string, repo string, answ
 	store, err := tracefile.New(getenv(envRecordDir))
 	require.NoError(t, err)
 	propose := func(id, content string) {
-		runs, err := store.List(context.Background(), trace.Filter{Name: trace.NameRun, Limit: 1})
+		runs, err := store.List(context.Background(), record.TraceFilter{Name: string(trace.NameRun), Limit: 1})
 		require.NoError(t, err)
 		var stderr bytes.Buffer
 		require.Equal(t, 0, runKnowledge([]string{
@@ -444,7 +445,7 @@ func hookPromptSetup(t *testing.T, getenv func(string) string, repo string, answ
 	}
 	stdin := `{"session_id":"s1","cwd":"` + repo + `","last_assistant_message":"done"}`
 	require.Equal(t, 0, runHook([]string{"stop"}, getenv, nil, time.Now, strings.NewReader(stdin), &bytes.Buffer{}, &bytes.Buffer{}))
-	runs, err := store.List(context.Background(), trace.Filter{Name: trace.NameRun, SessionID: "s1"})
+	runs, err := store.List(context.Background(), record.TraceFilter{Name: string(trace.NameRun), SessionID: "s1"})
 	require.NoError(t, err)
 	require.Len(t, runs, 1)
 	if drafted {
@@ -494,12 +495,13 @@ func TestRunHookStop(t *testing.T) {
 			assert.Empty(t, stdout.String())
 			store, err := tracefile.New(records)
 			require.NoError(t, err)
-			runs, err := store.List(context.Background(), trace.Filter{Name: trace.NameRun, SessionID: "s1"})
+			found, err := store.List(context.Background(), record.TraceFilter{Name: string(trace.NameRun), SessionID: "s1"})
 			require.NoError(t, err)
-			require.Len(t, runs, tc.want.runs)
+			require.Len(t, found, tc.want.runs)
 			if tc.want.runs == 0 {
 				return
 			}
+			runs := trace.RestoreAll(found)
 			assert.Equal(t, trace.Labels{"repo": {"nodloop"}, "dir": {"."}}, runs[0].Labels)
 			assert.JSONEq(t, `{"applied":[{"id":"git-c","version":1}],"plugin":"0.7.0"}`, string(runs[0].Input))
 			assert.JSONEq(t, tc.want.output, string(runs[0].Output))
@@ -569,7 +571,7 @@ func TestRunHookStopExtract(t *testing.T) {
 			stop("committed with a long message")
 			store, err := tracefile.New(records)
 			require.NoError(t, err)
-			first, err := store.List(context.Background(), trace.Filter{Name: trace.NameRun, SessionID: "s1"})
+			first, err := store.List(context.Background(), record.TraceFilter{Name: string(trace.NameRun), SessionID: "s1"})
 			require.NoError(t, err)
 			require.Len(t, first, 1)
 			if tc.args.person != "" {
@@ -600,7 +602,7 @@ func TestRunHookStopExtract(t *testing.T) {
 			}
 
 			assert.Contains(t, stderr, tc.want.stderr)
-			runs, err := store.List(context.Background(), trace.Filter{Name: trace.NameRun, SessionID: "s1"})
+			runs, err := store.List(context.Background(), record.TraceFilter{Name: string(trace.NameRun), SessionID: "s1"})
 			require.NoError(t, err)
 			assert.Len(t, runs, 1+tc.args.stops)
 			if !tc.want.extracts {
@@ -649,7 +651,7 @@ func TestRunHookStopWindow(t *testing.T) {
 			require.Equal(t, 0, runHook([]string{"stop"}, getenv, start, now, strings.NewReader(stdin), &bytes.Buffer{}, &bytes.Buffer{}))
 			store, err := tracefile.New(records)
 			require.NoError(t, err)
-			runs, err := store.List(context.Background(), trace.Filter{Name: trace.NameRun, SessionID: "s1"})
+			runs, err := store.List(context.Background(), record.TraceFilter{Name: string(trace.NameRun), SessionID: "s1"})
 			require.NoError(t, err)
 			require.Len(t, runs, 1)
 			at = first.Add(tc.args.verdict)
@@ -693,7 +695,7 @@ func TestRunReportLoop(t *testing.T) {
 	require.Equal(t, 0, runHook([]string{"stop"}, getenv, nil, time.Now, strings.NewReader(stdin), &bytes.Buffer{}, &bytes.Buffer{}))
 	store, err := tracefile.New(records)
 	require.NoError(t, err)
-	runs, err := store.List(context.Background(), trace.Filter{Name: trace.NameRun, SessionID: "s2"})
+	runs, err := store.List(context.Background(), record.TraceFilter{Name: string(trace.NameRun), SessionID: "s2"})
 	require.NoError(t, err)
 	require.Len(t, runs, 1)
 	var stderr bytes.Buffer
@@ -817,7 +819,7 @@ func TestRunKnowledgeWaiting(t *testing.T) {
 	require.Empty(t, run)
 	store, err := tracefile.New(records)
 	require.NoError(t, err)
-	runs, err := store.List(context.Background(), trace.Filter{Name: trace.NameRun})
+	runs, err := store.List(context.Background(), record.TraceFilter{Name: string(trace.NameRun)})
 	require.NoError(t, err)
 	tcs := []struct {
 		name string
@@ -897,7 +899,7 @@ func TestRunHookHoldout(t *testing.T) {
 
 	store, err := tracefile.New(records)
 	require.NoError(t, err)
-	runs, err := store.List(context.Background(), trace.Filter{Name: trace.NameRun})
+	runs, err := store.List(context.Background(), record.TraceFilter{Name: string(trace.NameRun)})
 	require.NoError(t, err)
 	require.Len(t, runs, 4, "the three turns after the run of the home")
 	var got []knowledge.RunInput
@@ -987,13 +989,13 @@ func TestRunHookReaction(t *testing.T) {
 			assert.Equal(t, tc.want.stderr, stderr.String())
 			verdicts, err := feedbackfile.New(records)
 			require.NoError(t, err)
-			recorded, err := verdicts.List(context.Background(), feedback.Filter{TraceID: run})
+			recorded, err := verdicts.List(context.Background(), record.FeedbackFilter{TraceID: run})
 			require.NoError(t, err)
 			var latest struct {
 				verdict feedback.Verdict
 				reason  string
 			}
-			if newest := feedback.Records(recorded).Latest(); len(newest) > 0 {
+			if newest := feedback.RestoreAll(recorded).Latest(); len(newest) > 0 {
 				latest.verdict, latest.reason = newest[0].Verdict, newest[0].Reason
 			}
 			assert.Equal(t, tc.want.verdict, latest.verdict)
@@ -1025,7 +1027,7 @@ func TestRunHookCorruptLine(t *testing.T) {
 	assert.Contains(t, stopErr.String(), "traces.jsonl has corrupt lines")
 	store, err := tracefile.New(records)
 	require.NoError(t, err)
-	runs, err := store.List(context.Background(), trace.Filter{Name: trace.NameRun, SessionID: "s1"})
+	runs, err := store.List(context.Background(), record.TraceFilter{Name: string(trace.NameRun), SessionID: "s1"})
 	assert.ErrorIs(t, err, jsonl.ErrCorrupt)
 	assert.Len(t, runs, 1, "the stop hook still records the answer")
 }

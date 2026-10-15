@@ -14,6 +14,7 @@ import (
 	"github.com/jeon-jihyeon/nodloop/internal/feedback"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	"github.com/jeon-jihyeon/nodloop/internal/llm"
+	"github.com/jeon-jihyeon/nodloop/internal/record"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
 )
 
@@ -27,14 +28,14 @@ const (
 )
 
 type TraceStore interface {
-	Get(ctx context.Context, id string) (trace.Trace, error)
-	List(ctx context.Context, f trace.Filter) (trace.Traces, error)
-	Append(ctx context.Context, tr trace.Trace) error
+	Get(ctx context.Context, id string) (record.Trace, error)
+	List(ctx context.Context, f record.TraceFilter) ([]record.Trace, error)
+	Append(ctx context.Context, tr record.Trace) error
 }
 
 // Newest first
 type FeedbackStore interface {
-	List(ctx context.Context, f feedback.Filter) ([]feedback.Feedback, error)
+	List(ctx context.Context, f record.FeedbackFilter) ([]record.Feedback, error)
 }
 
 type KnowledgeStore interface {
@@ -175,12 +176,12 @@ func (g *gathered) add(run trace.Trace, expect Expect) {
 
 // The corrected runs the item cites and the newest approved runs its scope admits
 func (r *Replayer) cases(ctx context.Context, item knowledge.Knowledge) (gathered, error) {
-	verdicts, err := r.verdicts.List(ctx, feedback.Filter{})
+	verdicts, err := r.verdicts.List(ctx, record.FeedbackFilter{})
 	if err != nil {
 		return gathered{}, err
 	}
 	latest := map[string]feedback.Feedback{}
-	for _, v := range feedback.Records(verdicts).Latest() {
+	for _, v := range feedback.RestoreAll(verdicts).Latest() {
 		latest[v.TraceID] = v
 	}
 	g := gathered{outputs: map[string]string{}}
@@ -204,15 +205,15 @@ func (c Case) byRun(other Case) int {
 // A cited run counts only while its latest verdict still corrects it
 func (r *Replayer) corrected(ctx context.Context, item knowledge.Knowledge, latest map[string]feedback.Feedback, g *gathered) error {
 	for _, id := range item.Evidence.FeedbackTraceIDs {
-		run, err := r.traces.Get(ctx, id)
-		if errors.Is(err, trace.ErrNotFound) {
+		found, err := r.traces.Get(ctx, id)
+		if errors.Is(err, record.ErrTraceNotFound) {
 			continue
 		}
 		if err != nil {
 			return err
 		}
 		if v, ok := latest[id]; ok && v.Corrects() {
-			g.add(run, ExpectBreaks)
+			g.add(trace.Restore(found), ExpectBreaks)
 		}
 	}
 	return nil
@@ -221,10 +222,11 @@ func (r *Replayer) corrected(ctx context.Context, item knowledge.Knowledge, late
 // The newest approvedCases runs the item never reached whose latest verdict approves them
 // The verdict is a person's or one a session inferred
 func (r *Replayer) approved(ctx context.Context, item knowledge.Knowledge, latest map[string]feedback.Feedback, g *gathered) error {
-	runs, err := r.traces.List(ctx, trace.Filter{Name: trace.NameRun})
+	found, err := r.traces.List(ctx, record.TraceFilter{Name: string(trace.NameRun)})
 	if err != nil {
 		return err
 	}
+	runs := trace.RestoreAll(found)
 	reach := reach{since: item.ReachedSince(), cited: item.Evidence.FeedbackTraceIDs, scope: *item.Run}
 	kept := 0
 	for _, run := range runs {
@@ -270,13 +272,14 @@ func (r *Replayer) record(ctx context.Context, item knowledge.Knowledge, res llm
 		return err
 	}
 	now := r.now()
-	return r.traces.Append(ctx, trace.Trace{
+	tr := trace.Trace{
 		ID: trace.NewID(now), Name: trace.NameReplay, Subject: item.ID, Time: now, Input: input, Output: output, Error: failure,
 		Usage: trace.Usage{
 			InputTokens: res.InputTokens, OutputTokens: res.OutputTokens, CacheReadTokens: res.CacheRead, CacheCreateTokens: res.CacheCreate,
 			CostUSD: res.CostUSD,
 		},
-	})
+	}
+	return r.traces.Append(ctx, tr.Record())
 }
 
 // The system prompt of the judge

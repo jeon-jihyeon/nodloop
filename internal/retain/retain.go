@@ -11,6 +11,7 @@ import (
 
 	"github.com/jeon-jihyeon/nodloop/internal/feedback"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
+	"github.com/jeon-jihyeon/nodloop/internal/record"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
 )
 
@@ -44,28 +45,28 @@ func (d Days) Cutoff(now time.Time) time.Time {
 // 1. the later of the cutoff of the days and the cutoff of the last prune of the store
 // So a store pruned by a surface whose retention this one never set still reads only runs no prune touched
 // 2. a last cutoff after now comes from a clock set back and is left out
-func (d Days) Window(now time.Time, last Mark) time.Time {
+func (d Days) Window(now, lastCutoff time.Time) time.Time {
 	cutoff := d.Cutoff(now)
-	if last.Cutoff.After(cutoff) && !last.Cutoff.After(now) {
-		return last.Cutoff
+	if lastCutoff.After(cutoff) && !lastCutoff.After(now) {
+		return lastCutoff
 	}
 	return cutoff
 }
 
 // The traces a prune reads and the one removal it calls
 type TraceStore interface {
-	Heads(ctx context.Context, names ...trace.Name) (trace.Traces, error)
+	Heads(ctx context.Context, names ...string) ([]record.Trace, error)
 	// Removes the traces of the ids decide returns
 	// The store runs decide where no run can be cited unseen between it and the removal as far as the store can tell
 	Prune(ctx context.Context, decide func(context.Context) ([]string, error)) (int, error)
 }
 
 type FeedbackStore interface {
-	List(ctx context.Context, f feedback.Filter) ([]feedback.Feedback, error)
+	List(ctx context.Context, f record.FeedbackFilter) ([]record.Feedback, error)
 }
 
 type OutcomeStore interface {
-	List(ctx context.Context, traceID string) ([]feedback.Outcome, error)
+	List(ctx context.Context, traceID string) ([]record.Outcome, error)
 }
 
 type KnowledgeStore interface {
@@ -136,11 +137,11 @@ func (r *Retainer) Plan(ctx context.Context, cutoff time.Time) (Plan, error) {
 	if err != nil {
 		return Plan{}, err
 	}
-	found, err := r.traces.Heads(ctx, trace.NameRun, trace.NameClassify)
+	found, err := r.traces.Heads(ctx, string(trace.NameRun), string(trace.NameClassify))
 	if err != nil {
 		return Plan{}, err
 	}
-	hs := heads(found)
+	hs := heads(trace.RestoreAll(found))
 	approved := items.Approved().Refs()
 	for id := range hs.lastToApply(approved) {
 		keep[id] = true
@@ -171,18 +172,18 @@ func (r *Retainer) Plan(ctx context.Context, cutoff time.Time) (Plan, error) {
 // The run ids a verdict or an outcome or a version of the items names
 func (r *Retainer) cited(ctx context.Context, items knowledge.Set) (map[string]bool, error) {
 	cited := map[string]bool{}
-	verdicts, err := r.verdicts.List(ctx, feedback.Filter{})
+	verdicts, err := r.verdicts.List(ctx, record.FeedbackFilter{})
 	if err != nil {
 		return nil, err
 	}
-	for _, fb := range verdicts {
+	for _, fb := range feedback.RestoreAll(verdicts) {
 		cited[fb.TraceID] = true
 	}
 	outcomes, err := r.outcomes.List(ctx, "")
 	if err != nil {
 		return nil, err
 	}
-	for _, o := range outcomes {
+	for _, o := range feedback.RestoreOutcomes(outcomes) {
 		cited[o.TraceID] = true
 	}
 	for _, k := range items {

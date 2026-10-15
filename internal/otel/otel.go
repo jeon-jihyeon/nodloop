@@ -16,10 +16,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/jeon-jihyeon/nodloop/internal/feedback"
-	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
-	"github.com/jeon-jihyeon/nodloop/internal/trace"
 )
 
 // Spans in one request
@@ -39,30 +35,20 @@ func New(url string, headers map[string]string, version string, client *http.Cli
 	return &Exporter{url: url, headers: headers, version: version, client: client}
 }
 
-// Sends one span per run with one evaluation event for the verdict and one for the outcome in effect on it
+// Sends one span per run with one evaluation event for its verdict and one for its outcome
 // 1. the span and trace ids derive from the run id so sending a run again replaces it in a collector that keys on them
 // 2. the output goes along only when output is true since it may hold what a person wrote
-// 3. only the newest verdict and the newest outcome of a run count and a run whose newest verdict withdraws gets no verdict event
-// 4. the holdout arm and the items of the run go along so a backend can split the evaluations by arm
+// 3. the holdout arm and the items of the run go along so a backend can split the evaluations by arm
 // Returns how many outcome events it sent until the first failure
-// A run gets one outcome event at most
-func (e *Exporter) Export(ctx context.Context, runs trace.Traces, verdicts []feedback.Feedback, outcomes []feedback.Outcome, output bool) (int, error) {
-	byRun := map[string][]feedback.Feedback{}
-	for _, v := range feedback.Records(verdicts).Latest() {
-		byRun[v.TraceID] = append(byRun[v.TraceID], v)
-	}
-	checked := map[string]feedback.Outcome{}
-	for _, o := range feedback.Outcomes(outcomes).Latest() {
-		checked[o.TraceID] = o
-	}
+func (e *Exporter) Export(ctx context.Context, runs []Run, output bool) (int, error) {
 	sent := 0
 	for chunk := range slices.Chunk(runs, batch) {
 		spans := make([]span, 0, len(chunk))
 		events := 0
 		for _, r := range chunk {
-			s := newSpan(r, byRun[r.ID], output)
-			if o, ok := checked[r.ID]; ok {
-				s.Events = append(s.Events, outcomeEvent(o))
+			s := newSpan(r, output)
+			if r.Outcome != nil {
+				s.Events = append(s.Events, r.Outcome.event())
 				events++
 			}
 			spans = append(spans, s)
@@ -104,21 +90,21 @@ func (e *Exporter) send(ctx context.Context, spans []span) error {
 }
 
 // The verdict as the score of an evaluation
-var scores = map[feedback.Verdict]float64{
-	feedback.VerdictApprove: 1,
-	feedback.VerdictEdit:    0,
-	feedback.VerdictReject:  0,
+var scores = map[string]float64{
+	"approve": 1,
+	"edit":    0,
+	"reject":  0,
 }
 
 // An outcome as the score of an evaluation
 // Inconclusive is left out since a check that settled nothing has no score
-var outcomeScores = map[feedback.Result]float64{
-	feedback.ResultConfirmed: 1,
-	feedback.ResultRefuted:   0,
+var outcomeScores = map[string]float64{
+	"confirmed": 1,
+	"refuted":   0,
 }
 
-func outcomeEvent(o feedback.Outcome) event {
-	attrs := []attribute{str("gen_ai.evaluation.name", "nodloop.outcome"), str("gen_ai.evaluation.score.label", string(o.Result))}
+func (o Outcome) event() event {
+	attrs := []attribute{str("gen_ai.evaluation.name", "nodloop.outcome"), str("gen_ai.evaluation.score.label", o.Result)}
 	if score, ok := outcomeScores[o.Result]; ok {
 		attrs = append(attrs, double("gen_ai.evaluation.score.value", score))
 	}
@@ -129,34 +115,45 @@ func outcomeEvent(o feedback.Outcome) event {
 	return event{Time: nanos(o.Time), Name: "gen_ai.evaluation.result", Attributes: attrs}
 }
 
+func (v Verdict) event() event {
+	attrs := []attribute{str("gen_ai.evaluation.name", "nodloop.verdict"), str("gen_ai.evaluation.score.label", v.Verdict)}
+	if score, ok := scores[v.Verdict]; ok {
+		attrs = append(attrs, double("gen_ai.evaluation.score.value", score))
+	}
+	if v.Reason != "" {
+		attrs = append(attrs, str("gen_ai.evaluation.explanation", v.Reason))
+	}
+	if v.ReasonCode != "" {
+		attrs = append(attrs, str("nodloop.reason_code", v.ReasonCode))
+	}
+	attrs = append(attrs, str("nodloop.reviewer", v.Reviewer))
+	return event{Time: nanos(v.Time), Name: "gen_ai.evaluation.result", Attributes: attrs}
+}
+
 // The holdout arm and the items of a run as span attributes
 // 1. the GenAI conventions name no experiment arm so the keys stay under nodloop
 // 2. a run with no item to receive has no arm and a run with items that went through no draw is undrawn as report effect counts it
-func holdout(input json.RawMessage) []attribute {
-	var in knowledge.RunInput
-	if json.Unmarshal(input, &in) != nil {
-		return nil
-	}
+func (r Run) holdout() []attribute {
 	var out []attribute
-	if len(in.Applied) > 0 {
-		out = append(out, strs("nodloop.knowledge.applied", refs(in.Applied)))
+	if len(r.Applied) > 0 {
+		out = append(out, strs("nodloop.knowledge.applied", refs(r.Applied)))
 	}
-	if len(in.Withheld) > 0 {
-		out = append(out, strs("nodloop.knowledge.withheld", refs(in.Withheld)))
+	if len(r.Withheld) > 0 {
+		out = append(out, strs("nodloop.knowledge.withheld", refs(r.Withheld)))
 	}
 	switch {
 	case len(out) == 0:
 		return nil
-	case !in.Drawn:
+	case !r.Drawn:
 		return append(out, str("nodloop.holdout.arm", "undrawn"))
-	case len(in.Applied) > 0:
+	case len(r.Applied) > 0:
 		return append(out, str("nodloop.holdout.arm", "applied"))
 	}
 	return append(out, str("nodloop.holdout.arm", "withheld"))
 }
 
 // Each ref as id:version
-func refs(rs []knowledge.Ref) []string {
+func refs(rs []Ref) []string {
 	out := make([]string, 0, len(rs))
 	for _, r := range rs {
 		out = append(out, r.ID+":"+strconv.Itoa(r.Version))
@@ -165,7 +162,7 @@ func refs(rs []knowledge.Ref) []string {
 }
 
 // The run as an invoke_agent span of the GenAI conventions
-func newSpan(r trace.Trace, verdicts []feedback.Feedback, output bool) span {
+func newSpan(r Run, output bool) span {
 	sum := sha256.Sum256([]byte("nodloop:" + r.ID))
 	at := nanos(r.Time)
 	s := span{
@@ -186,23 +183,12 @@ func newSpan(r trace.Trace, verdicts []feedback.Feedback, output bool) span {
 	for _, k := range slices.Sorted(maps.Keys(r.Labels)) {
 		s.Attributes = append(s.Attributes, strs("nodloop.label."+k, r.Labels[k]))
 	}
-	s.Attributes = append(s.Attributes, holdout(r.Input)...)
+	s.Attributes = append(s.Attributes, r.holdout()...)
 	if output && len(r.Output) > 0 {
 		s.Attributes = append(s.Attributes, str("output.value", text(r.Output)))
 	}
-	for _, v := range verdicts {
-		attrs := []attribute{str("gen_ai.evaluation.name", "nodloop.verdict"), str("gen_ai.evaluation.score.label", string(v.Verdict))}
-		if score, ok := scores[v.Verdict]; ok {
-			attrs = append(attrs, double("gen_ai.evaluation.score.value", score))
-		}
-		if v.Reason != "" {
-			attrs = append(attrs, str("gen_ai.evaluation.explanation", v.Reason))
-		}
-		if v.ReasonCode != "" {
-			attrs = append(attrs, str("nodloop.reason_code", string(v.ReasonCode)))
-		}
-		attrs = append(attrs, str("nodloop.reviewer", v.Reviewer))
-		s.Events = append(s.Events, event{Time: nanos(v.Time), Name: "gen_ai.evaluation.result", Attributes: attrs})
+	if r.Verdict != nil {
+		s.Events = append(s.Events, r.Verdict.event())
 	}
 	return s
 }

@@ -10,6 +10,7 @@ import (
 	"github.com/jeon-jihyeon/nodloop/internal/compact"
 	"github.com/jeon-jihyeon/nodloop/internal/feedback"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
+	"github.com/jeon-jihyeon/nodloop/internal/record"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
 )
 
@@ -73,7 +74,7 @@ func (s *Server) run(ctx context.Context, _ *sdk.CallToolRequest, in runInput) (
 		return nil, nil, err
 	}
 	tr.SessionID = s.session
-	if err := s.traces.Append(ctx, tr); err != nil {
+	if err := s.traces.Append(ctx, tr.Record()); err != nil {
 		return nil, nil, err
 	}
 	if s.policy.AfterRun != nil {
@@ -136,20 +137,20 @@ func (s *Server) proposeRun(ctx context.Context, in proposeInput, draft knowledg
 	draft.Run = &knowledge.RunScope{Producer: in.Producer, Labels: in.Labels, Except: in.Except}
 	draft.NewLabels = in.NewLabels
 	if from != nil {
-		verdicts, err := s.verdicts.List(ctx, feedback.Filter{TraceID: from.ID})
+		verdicts, err := s.verdicts.List(ctx, record.FeedbackFilter{TraceID: from.ID})
 		if err != nil {
 			return nil, nil, err
 		}
-		if draft, err = draft.From(*from, verdicts); err != nil {
+		if draft, err = draft.From(*from, feedback.RestoreAll(verdicts)); err != nil {
 			return nil, nil, err
 		}
 	}
 	if !in.NewLabels {
-		runs, err := s.traces.List(ctx, trace.Filter{Name: trace.NameRun})
+		runs, err := s.traces.List(ctx, record.TraceFilter{Name: string(trace.NameRun)})
 		if err != nil {
 			return nil, nil, err
 		}
-		if err := draft.Run.Recorded(runs.Vocabulary(draft.Run.Producer)); err != nil {
+		if err := draft.Run.Recorded(trace.RestoreAll(runs).Vocabulary(draft.Run.Producer)); err != nil {
 			return nil, nil, err
 		}
 	}

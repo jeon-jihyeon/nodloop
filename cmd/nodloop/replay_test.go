@@ -133,7 +133,7 @@ func TestRunKnowledgeWaitingReplays(t *testing.T) {
 			require.NoError(t, err)
 			for i, tr := range tc.args.replays {
 				tr.ID, tr.Name, tr.Subject, tr.Time = fmt.Sprintf("replay-%d", i), trace.NameReplay, "git-c", now()
-				require.NoError(t, store.Append(context.Background(), tr))
+				require.NoError(t, store.Append(context.Background(), tr.Record()))
 			}
 			var stdout, stderr bytes.Buffer
 

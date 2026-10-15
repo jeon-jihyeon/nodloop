@@ -3,6 +3,7 @@ package main
 import (
 	"cmp"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -12,7 +13,9 @@ import (
 	"time"
 
 	"github.com/jeon-jihyeon/nodloop/internal/feedback"
+	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	"github.com/jeon-jihyeon/nodloop/internal/otel"
+	"github.com/jeon-jihyeon/nodloop/internal/record"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
 )
 
@@ -127,7 +130,7 @@ func (c exportCommand) otel(ctx context.Context, exporter *otel.Exporter, since 
 	if err != nil {
 		return err
 	}
-	runs, err := traces.List(ctx, trace.Filter{Name: trace.NameRun, Since: since})
+	runs, err := traces.List(ctx, record.TraceFilter{Name: string(trace.NameRun), Since: since})
 	if err != nil {
 		return err
 	}
@@ -135,7 +138,7 @@ func (c exportCommand) otel(ctx context.Context, exporter *otel.Exporter, since 
 	if err != nil {
 		return err
 	}
-	verdicts, err := store.List(ctx, feedback.Filter{Since: since})
+	verdicts, err := store.List(ctx, record.FeedbackFilter{Since: since})
 	if err != nil {
 		return err
 	}
@@ -147,11 +150,56 @@ func (c exportCommand) otel(ctx context.Context, exporter *otel.Exporter, since 
 	if err != nil {
 		return err
 	}
-	outcomes := slices.DeleteFunc(all, func(o feedback.Outcome) bool { return o.Time.Before(since) })
-	sent, err := exporter.Export(ctx, runs, verdicts, outcomes, output)
+	outcomes := slices.DeleteFunc(feedback.RestoreOutcomes(all), func(o feedback.Outcome) bool { return o.Time.Before(since) })
+	sent, err := exporter.Export(ctx, exported(trace.RestoreAll(runs), feedback.RestoreAll(verdicts), outcomes), output)
 	if err != nil {
 		return err
 	}
 	fmt.Fprintf(c.out, "exported %d runs and %d verdicts and %d outcomes\n", len(runs), len(verdicts), sent)
 	return nil
+}
+
+// The runs as the exporter sends them with the newest verdict and the newest outcome of each
+// 1. a run whose newest verdict withdraws gets no verdict
+// 2. an input that does not decode names no item so the run has no arm
+func exported(runs trace.Traces, verdicts feedback.Records, outcomes feedback.Outcomes) []otel.Run {
+	latest := map[string]feedback.Feedback{}
+	for _, v := range verdicts.Latest() {
+		latest[v.TraceID] = v
+	}
+	checked := map[string]feedback.Outcome{}
+	for _, o := range outcomes.Latest() {
+		checked[o.TraceID] = o
+	}
+	out := make([]otel.Run, 0, len(runs))
+	for _, r := range runs {
+		var in knowledge.RunInput
+		if json.Unmarshal(r.Input, &in) != nil {
+			in = knowledge.RunInput{}
+		}
+		run := otel.Run{
+			ID: r.ID, Time: r.Time, Producer: r.Producer, SessionID: r.SessionID, Subject: r.Subject, Labels: r.Labels,
+			Applied: otelRefs(in.Applied), Withheld: otelRefs(in.Withheld), Drawn: in.Drawn, Output: r.Output,
+		}
+		if v, ok := latest[r.ID]; ok {
+			run.Verdict = &otel.Verdict{
+				Time: v.Time, Verdict: string(v.Verdict), ReasonCode: string(v.ReasonCode), Reason: v.Reason, Reviewer: v.Reviewer,
+			}
+		}
+		if o, ok := checked[r.ID]; ok {
+			run.Outcome = &otel.Outcome{
+				Time: o.Time, Result: string(o.Result), ConfirmedCause: o.ConfirmedCause, Note: o.Note, Reviewer: o.Reviewer,
+			}
+		}
+		out = append(out, run)
+	}
+	return out
+}
+
+func otelRefs(refs []knowledge.Ref) []otel.Ref {
+	out := make([]otel.Ref, 0, len(refs))
+	for _, r := range refs {
+		out = append(out, otel.Ref(r))
+	}
+	return out
 }

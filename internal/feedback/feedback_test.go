@@ -196,38 +196,6 @@ func TestFeedbackImplicit(t *testing.T) {
 	}
 }
 
-func TestFilterMatches(t *testing.T) {
-	fb := feedback.Feedback{TraceID: "t1", Verdict: feedback.VerdictReject, Reviewer: "author"}
-	tcs := []struct {
-		name string
-		args feedback.Filter
-		want bool
-	}{
-		{"empty filter matches all", feedback.Filter{}, true},
-		{"same trace id matches", feedback.Filter{TraceID: "t1"}, true},
-		{"other trace id does not match", feedback.Filter{TraceID: "t2"}, false},
-		{
-			"verdict in the list matches",
-			feedback.Filter{Verdicts: []feedback.Verdict{feedback.VerdictEdit, feedback.VerdictReject}},
-			true,
-		},
-		{
-			"verdict outside the list does not match",
-			feedback.Filter{Verdicts: []feedback.Verdict{feedback.VerdictApprove}},
-			false,
-		},
-		{"same reviewer matches", feedback.Filter{Reviewer: "author"}, true},
-		{"other reviewer does not match", feedback.Filter{Reviewer: "session"}, false},
-		{"limit is ignored by matching", feedback.Filter{Limit: 1}, true},
-	}
-	for _, tc := range tcs {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			assert.Equal(t, tc.want, tc.args.Matches(fb))
-		})
-	}
-}
-
 func TestRecordsLatest(t *testing.T) {
 	base := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
 	approved := feedback.Feedback{TraceID: "t1", Time: base.Add(2 * time.Minute), Verdict: feedback.VerdictApprove}

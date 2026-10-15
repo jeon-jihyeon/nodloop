@@ -20,6 +20,7 @@ import (
 	"github.com/jeon-jihyeon/nodloop/internal/feedback"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	"github.com/jeon-jihyeon/nodloop/internal/loop"
+	"github.com/jeon-jihyeon/nodloop/internal/record"
 	"github.com/jeon-jihyeon/nodloop/internal/retain"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
 )
@@ -34,21 +35,21 @@ const (
 
 // Traces the tools look up and list
 type TraceStore interface {
-	Append(ctx context.Context, t trace.Trace) error
-	Get(ctx context.Context, id string) (trace.Trace, error)
-	List(ctx context.Context, f trace.Filter) (trace.Traces, error)
+	Append(ctx context.Context, t record.Trace) error
+	Get(ctx context.Context, id string) (record.Trace, error)
+	List(ctx context.Context, f record.TraceFilter) ([]record.Trace, error)
 }
 
 // Where the feedback tool writes
 type FeedbackStore interface {
-	Append(ctx context.Context, f feedback.Feedback) error
-	List(ctx context.Context, f feedback.Filter) ([]feedback.Feedback, error)
+	Append(ctx context.Context, f record.Feedback) error
+	List(ctx context.Context, f record.FeedbackFilter) ([]record.Feedback, error)
 }
 
 // Where the outcome tool writes
 type OutcomeStore interface {
-	Append(ctx context.Context, o feedback.Outcome) error
-	List(ctx context.Context, traceID string) ([]feedback.Outcome, error)
+	Append(ctx context.Context, o record.Outcome) error
+	List(ctx context.Context, traceID string) ([]record.Outcome, error)
 }
 
 // Every tool checks its input against the stores it needs and then calls one method of a module and shapes the answer
@@ -110,7 +111,7 @@ func (s *Server) since(ctx context.Context) (time.Time, error) {
 	if err != nil {
 		return time.Time{}, err
 	}
-	return s.policy.Retention.Window(s.now(), last), nil
+	return s.policy.Retention.Window(s.now(), last.Cutoff), nil
 }
 
 // The name an approval is recorded under: the person of the server key and else the name the call gives
@@ -231,10 +232,11 @@ var tools = []tool{
 
 // feedback and outcome and propose take a recorded run as the trace they concern
 func (s *Server) checkRun(ctx context.Context, id string) (trace.Trace, error) {
-	tr, err := s.traces.Get(ctx, id)
+	found, err := s.traces.Get(ctx, id)
 	if err != nil {
 		return trace.Trace{}, err
 	}
+	tr := trace.Restore(found)
 	return tr, tr.CheckRun()
 }
 
@@ -265,7 +267,7 @@ func (s *Server) feedback(ctx context.Context, _ *sdk.CallToolRequest, in feedba
 		return nil, nil, err
 	}
 	fb.Audit = in.Audit
-	if err = s.verdicts.Append(ctx, fb); err != nil {
+	if err = s.verdicts.Append(ctx, fb.Record()); err != nil {
 		return nil, nil, err
 	}
 	return nil, map[string]any{"trace_id": fb.TraceID, "verdict": fb.Verdict, "reason_code": fb.ReasonCode, "reviewer": fb.Reviewer}, nil
@@ -287,7 +289,7 @@ func (s *Server) outcome(ctx context.Context, _ *sdk.CallToolRequest, in outcome
 	if err != nil {
 		return nil, nil, err
 	}
-	if err = s.outcomes.Append(ctx, o); err != nil {
+	if err = s.outcomes.Append(ctx, o.Record()); err != nil {
 		return nil, nil, err
 	}
 	return nil, map[string]any{"trace_id": o.TraceID, "result": o.Result, "reviewer": o.Reviewer}, nil
@@ -448,11 +450,11 @@ func (s *Server) approval(ctx context.Context, in approveInput) (knowledge.Knowl
 	if err != nil {
 		return knowledge.Knowledge{}, err
 	}
-	runs, err := s.traces.List(ctx, trace.Filter{Name: trace.NameRun})
+	runs, err := s.traces.List(ctx, record.TraceFilter{Name: string(trace.NameRun)})
 	if err != nil {
 		return knowledge.Knowledge{}, err
 	}
-	if err := scope.Recorded(runs.Vocabulary(scope.Producer)); err != nil {
+	if err := scope.Recorded(trace.RestoreAll(runs).Vocabulary(scope.Producer)); err != nil {
 		return knowledge.Knowledge{}, err
 	}
 	return s.ledger.ApproveIn(ctx, in.ID, in.Version, in.Scope.Labels, approver)

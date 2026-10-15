@@ -10,13 +10,13 @@ import (
 	"time"
 
 	"github.com/jeon-jihyeon/nodloop/internal/jsonl"
-	"github.com/jeon-jihyeon/nodloop/internal/trace"
+	"github.com/jeon-jihyeon/nodloop/internal/record"
 )
 
 const tracesFile = "traces.jsonl"
 
 type Store struct {
-	file jsonl.File[trace.Trace]
+	file jsonl.File[record.Trace]
 	// The same file read as heads by a prune
 	heads jsonl.File[head]
 	ids   jsonl.File[idLine]
@@ -25,7 +25,7 @@ type Store struct {
 // The fields of a trace a prune reads
 type head struct {
 	ID    string          `json:"id"`
-	Name  trace.Name      `json:"name"`
+	Name  string          `json:"name"`
 	Ref   string          `json:"ref,omitempty"`
 	Time  time.Time       `json:"time"`
 	Input json.RawMessage `json:"input"`
@@ -42,7 +42,7 @@ func New(dir string) (*Store, error) {
 }
 
 func open(dir, name string) (*Store, error) {
-	f, err := jsonl.Open[trace.Trace](dir, name)
+	f, err := jsonl.Open[record.Trace](dir, name)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrOpen, err)
 	}
@@ -57,7 +57,7 @@ func open(dir, name string) (*Store, error) {
 	return &Store{file: f, heads: heads, ids: ids}, nil
 }
 
-func (s *Store) Append(_ context.Context, t trace.Trace) error {
+func (s *Store) Append(_ context.Context, t record.Trace) error {
 	if err := s.file.Append(t); err != nil {
 		return fmt.Errorf("%w: %w", ErrAppend, err)
 	}
@@ -65,13 +65,13 @@ func (s *Store) Append(_ context.Context, t trace.Trace) error {
 }
 
 // A corrupt line returns the trace found with the error as List does
-func (s *Store) Get(_ context.Context, id string) (trace.Trace, error) {
-	found, err := s.file.Newest(trace.Filter{ID: id}.Matches, nil, 1)
+func (s *Store) Get(_ context.Context, id string) (record.Trace, error) {
+	found, err := s.file.Newest(record.TraceFilter{ID: id}.Matches, nil, 1)
 	switch {
 	case len(found) == 0 && err != nil:
-		return trace.Trace{}, readFailed(err)
+		return record.Trace{}, readFailed(err)
 	case len(found) == 0:
-		return trace.Trace{}, fmt.Errorf("%w: %q", trace.ErrNotFound, id)
+		return record.Trace{}, fmt.Errorf("%w: %q", record.ErrTraceNotFound, id)
 	case err != nil:
 		return found[0], readFailed(err)
 	}
@@ -80,7 +80,7 @@ func (s *Store) Get(_ context.Context, id string) (trace.Trace, error) {
 
 // Newest first
 // A corrupt line returns the traces of the other lines with the error
-func (s *Store) List(_ context.Context, f trace.Filter) (trace.Traces, error) {
+func (s *Store) List(_ context.Context, f record.TraceFilter) ([]record.Trace, error) {
 	found, err := s.file.Newest(f.Matches, f.Older, f.Limit)
 	if err != nil {
 		return found, readFailed(err)
@@ -91,11 +91,11 @@ func (s *Store) List(_ context.Context, f trace.Filter) (trace.Traces, error) {
 // The traces of the names newest first without their output
 // Each line decodes into the fields a prune reads so no output is ever decoded
 // A corrupt line returns the traces of the other lines with the error as List does
-func (s *Store) Heads(_ context.Context, names ...trace.Name) (trace.Traces, error) {
+func (s *Store) Heads(_ context.Context, names ...string) ([]record.Trace, error) {
 	found, err := s.heads.Newest(func(h head) bool { return slices.Contains(names, h.Name) }, nil, 0)
-	out := make(trace.Traces, 0, len(found))
+	out := make([]record.Trace, 0, len(found))
 	for _, h := range found {
-		out = append(out, trace.Trace{ID: h.ID, Name: h.Name, Ref: h.Ref, Time: h.Time, Input: h.Input, Error: h.Error})
+		out = append(out, record.Trace{ID: h.ID, Name: h.Name, Ref: h.Ref, Time: h.Time, Input: h.Input, Error: h.Error})
 	}
 	if err != nil {
 		return out, readFailed(err)

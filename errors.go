@@ -4,8 +4,8 @@ import (
 	"github.com/jeon-jihyeon/nodloop/internal/feedback"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	"github.com/jeon-jihyeon/nodloop/internal/loop"
+	"github.com/jeon-jihyeon/nodloop/internal/record"
 	"github.com/jeon-jihyeon/nodloop/internal/retain"
-	"github.com/jeon-jihyeon/nodloop/internal/trace"
 )
 
 var (
@@ -26,5 +26,5 @@ var (
 	// An Outcome whose result is not one of the results
 	ErrResultUnknown = feedback.ErrResultUnknown
 	// A Judgment or an Outcome whose run id names no recorded run
-	ErrRunNotFound = trace.ErrNotFound
+	ErrRunNotFound = record.ErrTraceNotFound
 )

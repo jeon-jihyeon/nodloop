@@ -87,10 +87,10 @@ func TestLoad(t *testing.T) {
 			t.Parallel()
 			ctx := context.Background()
 			s := testkit.Open(t)
-			require.NoError(t, s.Traces.Append(ctx, sessionRun(t, "r1", 1, "nodloop")))
-			require.NoError(t, s.Traces.Append(ctx, sessionRun(t, "r2", 3, "nodloop")))
-			require.NoError(t, s.Feedback.Append(ctx, verdict("r1", feedback.VerdictApprove, monday.Add(time.Hour))))
-			require.NoError(t, s.Feedback.Append(ctx, verdict("r2", feedback.VerdictApprove, monday.Add(4*time.Hour))))
+			require.NoError(t, s.Traces.Append(ctx, sessionRun(t, "r1", 1, "nodloop").Record()))
+			require.NoError(t, s.Traces.Append(ctx, sessionRun(t, "r2", 3, "nodloop").Record()))
+			require.NoError(t, s.Feedback.Append(ctx, verdict("r1", feedback.VerdictApprove, monday.Add(time.Hour)).Record()))
+			require.NoError(t, s.Feedback.Append(ctx, verdict("r2", feedback.VerdictApprove, monday.Add(4*time.Hour)).Record()))
 
 			h, err := loop.Load(ctx, s.Traces, s.Feedback, s.Outcomes, s.Ledger, tc.args)
 
