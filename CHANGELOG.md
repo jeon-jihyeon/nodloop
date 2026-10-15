@@ -2,7 +2,7 @@
 
 Every release tag publishes the plugin, the darwin and linux binaries of `nodloop` and, from 0.7.0, `nodloop-server`, and both SDKs under one version. Versions before 0.6.0 reviewed incident data, which left this repository in 0.6.0.
 
-## Unreleased
+## 0.9.0 - 2026-10-15
 
 ### Added
 - A producer outside Claude Code joins the holdout: `holdout_key` on the MCP tool `knowledge_for` and on `run`, `knowledge for --holdout-key` and `run record --withheld --holdout-key`, `Draw`, `WithHoldout` and `Run.HoldoutKey` in Go, and `holdout_key` in Python and `holdoutKey` in TypeScript on `knowledge`, `record` and the adapters. A drawn run records its `unit`, a hash of the key, so every run of one key counts as one draw
