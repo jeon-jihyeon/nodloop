@@ -19,6 +19,7 @@ import (
 
 	"github.com/jeon-jihyeon/nodloop/internal/classify"
 	"github.com/jeon-jihyeon/nodloop/internal/consolidate"
+	"github.com/jeon-jihyeon/nodloop/internal/curate"
 	"github.com/jeon-jihyeon/nodloop/internal/extract"
 	"github.com/jeon-jihyeon/nodloop/internal/feedback"
 	"github.com/jeon-jihyeon/nodloop/internal/guard"
@@ -97,6 +98,33 @@ var publishedKinds = kindTable{
 	traceKind(trace.NameTurn, "The start of a turn of a session", reflect.TypeFor[struct{}](), nil, []string{"session_id"}, []string{}),
 	traceKind(trace.NameCompact, "One drafting of a compaction through a model",
 		reflect.TypeFor[struct{}](), nil, []string{"session_id", "subject"}, []string{}),
+	traceKind(trace.NameInstructions, "A rules file a session loaded with the HMAC of its content",
+		reflect.TypeFor[instructionsInput](), nil, []string{"session_id"}, []string{"input.path"}),
+	traceKind(trace.NameCapture, "One pass of the capture over a transcript of a session with the records it wrote",
+		reflect.TypeFor[captureInput](), reflect.TypeFor[captureOutput](),
+		[]string{"session_id", "output.runs", "output.records", "output.classify"}, []string{}),
+	traceKind(trace.NameDecide, "One change curate judged with the audit draw of the decision",
+		reflect.TypeFor[curate.Change](), reflect.TypeFor[curate.Decision](),
+		[]string{
+			"ref", "source", "draw.cycle_id", "input.id", "input.version", "input.compaction", "input.old", "input.extract", "input.signal",
+			"input.anchor", "output.judge",
+		},
+		[]string{}).withEnvelope("draw", "source"),
+	traceKind(trace.NameKnob, "The knobs, the seed and the judge of a cycle at its start or at a narrowing inside it",
+		reflect.TypeFor[curate.KnobEvent](), nil,
+		[]string{"subject", "input.cycle_id", "input.policy_version", "input.before", "input.judge.sets"}, []string{}),
+	traceKind(trace.NameAnchor, "One version of the judgment of the person on record that curate reads",
+		reflect.TypeFor[curate.AnchorVersion](), nil, []string{"input.version", "input.refs", "input.cause"}, []string{"input.files.path"}),
+	traceKind(trace.NameExpose, "A question or a notice shown to the person",
+		reflect.TypeFor[curate.Exposure](), nil,
+		[]string{"session_id", "ref", "source", "draw.cycle_id", "input.change", "input.run"}, []string{}).withEnvelope("draw", "source"),
+	traceKind(trace.NameAnswer, "The answer of the person to a question or no answer after its second round",
+		reflect.TypeFor[curate.Answer](), reflect.TypeFor[curate.AnswerOutput](),
+		[]string{
+			"session_id", "ref", "source", "draw.cycle_id", "input.decide", "input.change", "input.overturn", "input.authority",
+			"input.proof", "output.records",
+		},
+		[]string{}).withEnvelope("draw", "source"),
 	traceKind(trace.NameIntervention, "One action of a person or an agent with the proof of its caller and the records it wrote",
 		reflect.TypeFor[trace.Intervention](), reflect.TypeFor[trace.InterventionOutput](),
 		[]string{"session_id", "source", "input.id", "input.version", "input.compaction", "input.authority", "input.proof", "output.records"},
@@ -131,20 +159,31 @@ var publishedKinds = kindTable{
 // The schemas of the typed strings with a valid set and of the types that encode to something else than their Go shape
 func typeSchemas() map[reflect.Type]*jsonschema.Schema {
 	return map[reflect.Type]*jsonschema.Schema{
-		reflect.TypeFor[json.RawMessage]():  {},
-		reflect.TypeFor[time.Time]():        {Type: "string", Format: "date-time"},
-		reflect.TypeFor[feedback.Verdict](): enum(feedback.Verdicts()),
-		reflect.TypeFor[feedback.Result]():  enum(feedback.Results()),
-		reflect.TypeFor[trace.Proof]():      enum(trace.Proofs()),
-		reflect.TypeFor[trace.Authority]():  enum(trace.Authorities()),
-		reflect.TypeFor[trace.Action]():     enum(trace.Actions()),
-		reflect.TypeFor[trace.Choice]():     enum(trace.Choices()),
-		reflect.TypeFor[trace.Source]():     enum(trace.Sources()),
-		reflect.TypeFor[knowledge.Kind]():   enum(knowledge.Kinds()),
-		reflect.TypeFor[knowledge.Status](): enum(knowledge.Statuses()),
-		reflect.TypeFor[knowledge.Basis]():  enum(knowledge.Bases()),
-		reflect.TypeFor[knowledge.Reason](): enum(knowledge.Reasons()),
-		reflect.TypeFor[veto.Action]():      enum(veto.Actions()),
+		reflect.TypeFor[json.RawMessage]():     {},
+		reflect.TypeFor[time.Time]():           {Type: "string", Format: "date-time"},
+		reflect.TypeFor[feedback.Verdict]():    enum(feedback.Verdicts()),
+		reflect.TypeFor[feedback.Result]():     enum(feedback.Results()),
+		reflect.TypeFor[trace.Proof]():         enum(trace.Proofs()),
+		reflect.TypeFor[trace.Authority]():     enum(trace.Authorities()),
+		reflect.TypeFor[trace.Action]():        enum(trace.Actions()),
+		reflect.TypeFor[trace.Choice]():        enum(trace.Choices()),
+		reflect.TypeFor[trace.Source]():        enum(trace.Sources()),
+		reflect.TypeFor[knowledge.Kind]():      enum(knowledge.Kinds()),
+		reflect.TypeFor[knowledge.Status]():    enum(knowledge.Statuses()),
+		reflect.TypeFor[knowledge.Basis]():     enum(knowledge.Bases()),
+		reflect.TypeFor[knowledge.Reason]():    enum(knowledge.Reasons()),
+		reflect.TypeFor[veto.Action]():         enum(veto.Actions()),
+		reflect.TypeFor[curate.ChangeKind]():   enum(curate.ChangeKinds()),
+		reflect.TypeFor[curate.RuleCode]():     enum(curate.RuleCodes()),
+		reflect.TypeFor[curate.Action]():       enum(curate.Actions()),
+		reflect.TypeFor[curate.FailureClass](): enum(curate.FailureClasses()),
+		reflect.TypeFor[curate.Reopen]():       enum(curate.Reopens()),
+		reflect.TypeFor[curate.Outcome]():      enum(curate.Outcomes()),
+		reflect.TypeFor[curate.Bin]():          enum(curate.Bins()),
+		reflect.TypeFor[curate.QuestionKind](): enum(curate.QuestionKinds()),
+		reflect.TypeFor[curate.Surface]():      enum(curate.Surfaces()),
+		reflect.TypeFor[curate.Choice]():       enum(curate.Choices()),
+		reflect.TypeFor[curate.KnobCause]():    enum(curate.KnobCauses()),
 	}
 }
 

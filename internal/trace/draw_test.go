@@ -112,13 +112,13 @@ func TestDrawRoundTrip(t *testing.T) {
 	}{
 		{
 			"a decision keeps its draw",
-			trace.Trace{ID: "d1", Name: "decide", Time: at, Input: json.RawMessage(`{}`), Draw: &pushed, Source: trace.SourcePush},
+			trace.Trace{ID: "d1", Name: trace.NameDecide, Time: at, Input: json.RawMessage(`{}`), Draw: &pushed, Source: trace.SourcePush},
 			`"draw":{"cycle_id":"2026-09-21","policy_version":"0.10.0+1a2b3c4d","unit":"d1","seed":"seed","draw_id":"1d87ed65a2835e3c",` +
 				`"p":0.15,"drawn":true},"source":"push"`,
 		},
 		{
 			"a manual answer has no probability",
-			trace.Trace{ID: "a1", Name: "answer", Time: at, Input: json.RawMessage(`{}`), Draw: &manual, Source: trace.SourceManual},
+			trace.Trace{ID: "a1", Name: trace.NameAnswer, Time: at, Input: json.RawMessage(`{}`), Draw: &manual, Source: trace.SourceManual},
 			`"draw":{"cycle_id":"2026-09-21","policy_version":"0.10.0+1a2b3c4d","drawn":false},"source":"manual"`,
 		},
 	}

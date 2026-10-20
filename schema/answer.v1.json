@@ -1,0 +1,271 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/jeon-jihyeon/nodloop/schema/answer.v1.json",
+  "title": "answer",
+  "description": "The answer of the person to a question or no answer after its second round",
+  "type": "object",
+  "properties": {
+    "record_kind": {
+      "type": "string",
+      "const": "answer"
+    },
+    "record_id": {
+      "type": "string"
+    },
+    "id": {
+      "type": "string"
+    },
+    "name": {
+      "type": "string",
+      "const": "answer"
+    },
+    "session_id": {
+      "type": "string"
+    },
+    "subject": {
+      "type": "string"
+    },
+    "ref": {
+      "type": "string"
+    },
+    "time": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "model": {
+      "type": "string"
+    },
+    "input": {
+      "type": "object",
+      "properties": {
+        "choice": {
+          "type": "string",
+          "enum": [
+            "keep",
+            "drop",
+            "merge",
+            "separate",
+            "mine",
+            "review",
+            "yes",
+            "notyet",
+            "same",
+            "undo",
+            "no_answer"
+          ]
+        },
+        "decide": {
+          "type": "string"
+        },
+        "change": {
+          "type": [
+            "null",
+            "object"
+          ],
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "version": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "id",
+            "version"
+          ]
+        },
+        "hidden": {
+          "type": "boolean"
+        },
+        "delay_ms": {
+          "type": "integer"
+        },
+        "overturn": {
+          "type": "boolean"
+        },
+        "authority": {
+          "type": "string",
+          "enum": [
+            "person",
+            "agent"
+          ]
+        },
+        "proof": {
+          "type": "string",
+          "enum": [
+            "key",
+            "terminal",
+            "elicitation",
+            "reply",
+            "none"
+          ]
+        },
+        "person": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "choice",
+        "hidden",
+        "delay_ms",
+        "overturn",
+        "authority",
+        "proof"
+      ]
+    },
+    "output": {
+      "type": "object",
+      "properties": {
+        "records": {
+          "type": [
+            "null",
+            "array"
+          ],
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "version": {
+                "type": "integer"
+              },
+              "status": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "version",
+              "status"
+            ]
+          }
+        }
+      },
+      "required": [
+        "records"
+      ]
+    },
+    "error": {
+      "type": "string"
+    },
+    "usage": {
+      "type": "object",
+      "properties": {
+        "input_tokens": {
+          "type": "integer"
+        },
+        "output_tokens": {
+          "type": "integer"
+        },
+        "thinking_tokens": {
+          "type": "integer"
+        },
+        "cache_read": {
+          "type": "integer"
+        },
+        "cache_create": {
+          "type": "integer"
+        },
+        "cost_usd": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "input_tokens",
+        "output_tokens",
+        "cache_read",
+        "cache_create",
+        "cost_usd"
+      ]
+    },
+    "duration_ms": {
+      "type": "integer"
+    },
+    "tags": {
+      "type": [
+        "null",
+        "array"
+      ],
+      "items": {
+        "type": "string"
+      }
+    },
+    "producer": {
+      "type": "string"
+    },
+    "labels": {
+      "type": "object",
+      "additionalProperties": {
+        "type": [
+          "null",
+          "array"
+        ],
+        "items": {
+          "type": "string"
+        }
+      }
+    },
+    "draw": {
+      "type": [
+        "null",
+        "object"
+      ],
+      "properties": {
+        "cycle_id": {
+          "type": "string"
+        },
+        "policy_version": {
+          "type": "string"
+        },
+        "unit": {
+          "type": "string"
+        },
+        "seed": {
+          "type": "string"
+        },
+        "draw_id": {
+          "type": "string"
+        },
+        "p": {
+          "type": [
+            "null",
+            "number"
+          ]
+        },
+        "drawn": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "cycle_id",
+        "policy_version",
+        "drawn"
+      ]
+    },
+    "source": {
+      "type": "string",
+      "enum": [
+        "push",
+        "manual",
+        "command"
+      ]
+    },
+    "schema_version": {
+      "type": "integer",
+      "const": 1
+    }
+  },
+  "required": [
+    "record_kind",
+    "record_id",
+    "id",
+    "name",
+    "time",
+    "input",
+    "usage",
+    "duration_ms",
+    "schema_version"
+  ]
+}

@@ -28,6 +28,8 @@ var (
 	errExecutableTemporary = errors.New("the executable is a temporary go build. Install from a built binary such as one from go install")
 	// A command that names or decides for the person runs only with the terminal proof
 	errPersonOnly = errors.New("only a person at an interactive terminal outside an agent session can run this")
+	// A trace of a session hook that does not hold together
+	errSessionTrace = errors.New("invalid session trace")
 )
 
 // A command that cannot run as asked

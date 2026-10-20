@@ -11,4 +11,14 @@ var (
 	ErrShotUnknown = errors.New("curate: few-shot decision not found")
 	// curate.json exists and cannot be read
 	ErrMark = errors.New("curate: mark unreadable")
+	// A decide whose change, decision or draw does not hold together
+	ErrDecideInvalid = errors.New("curate: invalid decide")
+	// A knob event outside the boundaries or the ranges of the knobs
+	ErrKnobInvalid = errors.New("curate: invalid knob event")
+	// An anchor version without its number, its cause or the HMAC of a file
+	ErrAnchorInvalid = errors.New("curate: invalid anchor version")
+	// A question shown without its kind, its key, its choices or what it asks about
+	ErrExposeInvalid = errors.New("curate: invalid expose")
+	// An answer whose choice, proof or person does not hold together
+	ErrReplyInvalid = errors.New("curate: invalid answer to a question")
 )
