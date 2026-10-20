@@ -92,12 +92,13 @@ func RestoreDecide(t trace.Trace) (Decided, bool) {
 	return d, true
 }
 
-// What the decide is about: the version of a candidate, the signal of a withdrawal or the kind and bin an offer opens
-// A newer decide of the same subject replaces an older one
+// What the decide is about: the version of a candidate, the signal of a withdrawal on its version or the kind and bin an offer opens
+// 1. a newer decide of the same subject replaces an older one
+// 2. one capture may read the person's words asking to drop several versions so a signal names its version too
 func (d Decided) subject() string {
 	switch {
 	case d.Change.Kind == ChangeWithdraw:
-		return "signal " + d.Change.Signal
+		return fmt.Sprintf("signal %s on %s v%d", d.Change.Signal, d.Change.ID, d.Change.Version)
 	case d.Change.Kind == ChangeIntervention:
 		return "proposal " + d.Change.Proposal
 	case d.Change.Opens != nil:
@@ -299,7 +300,8 @@ func (p *pass) recover(ctx context.Context) error {
 // Whether what the decide is about is still in the state the decide found it in
 // 1. a widening finds its kind and bin closed and the activation finds the shadow on
 // 2. a proposal waits until the person answers or dismisses its question
-// 3. a withdrawal finds a version nodloop approved and every other change a waiting candidate
+// 3. a withdrawal finds a version nodloop approved or a version a person approved when the withdrawal asks the person
+// 4. every other change finds a waiting candidate
 func (p *pass) waits(d Decided) bool {
 	switch {
 	case d.Change.Opens != nil:
@@ -311,30 +313,100 @@ func (p *pass) waits(d Decided) bool {
 	}
 	k, err := p.all.Version(d.Change.ID, d.Change.Version)
 	if d.Change.Kind == ChangeWithdraw {
-		return err == nil && k.Status == knowledge.StatusApproved && k.Approver == knowledge.ApproverNodloop
+		return err == nil && k.Status == knowledge.StatusApproved && (k.Approver == knowledge.ApproverNodloop || d.Decision.Action == ActionAsk)
 	}
 	return err == nil && k.Status == knowledge.StatusCandidate
 }
 
-// The withdrawals of the conflicts the extractions of the window found with a version nodloop approved in the order they were found
-// A conflict with a version a person approved needs nothing here since the extraction drafted its next version and that version asks the person
+// One signal of the window that names a version with the trace that found it and the run it cites
+type signal struct {
+	trace, run string
+	ref        knowledge.Ref
+	// conflict for an extraction and words for a capture
+	reason knowledge.Reason
+}
+
+// The withdrawals the signals of the window ask for in the order they were found, each decided once
 func (p *pass) withdrawals(ctx context.Context) error {
-	extracts, err := p.list(ctx, record.TraceFilter{Name: string(trace.NameExtract), Since: p.s.Window})
+	signals, err := p.signals(ctx)
 	if err != nil {
 		return err
 	}
 	latest := p.decides.latest()
 	var errs []error
-	for _, t := range slices.Backward(extracts) {
-		ref, ok := conflicted(t)
-		c := Change{Kind: ChangeWithdraw, ID: ref.ID, Version: ref.Version, Signal: t.ID, Anchor: p.s.Version.Version}
+	for _, s := range signals {
+		c := Change{Kind: ChangeWithdraw, ID: s.ref.ID, Version: s.ref.Version, Signal: s.trace, Anchor: p.s.Version.Version}
 		d, decided := latest[(Decided{Change: c}).subject()]
-		if !ok || decided && !p.unshadowed(d) || !p.waits(Decided{Change: c}) {
+		decision, asks := p.signaled(s)
+		if !asks || decided && !p.unshadowed(d) {
 			continue
 		}
-		errs = append(errs, p.settle(ctx, t.Ref, ruling{change: c, decision: p.event.Knobs.withdrawal()}))
+		errs = append(errs, p.settle(ctx, s.run, ruling{change: c, decision: decision}))
 	}
 	return errors.Join(errs...)
+}
+
+// The conflicts the extractions of the window found and the versions the captures read the person's words asking to drop
+// Extractions come first and each kind in the order it was recorded
+func (p *pass) signals(ctx context.Context) ([]signal, error) {
+	extracts, err := p.list(ctx, record.TraceFilter{Name: string(trace.NameExtract), Since: p.s.Window})
+	if err != nil {
+		return nil, err
+	}
+	captures, err := p.list(ctx, record.TraceFilter{Name: string(trace.NameCapture), Since: p.s.Window})
+	if err != nil {
+		return nil, err
+	}
+	var out []signal
+	for _, t := range slices.Backward(extracts) {
+		if ref, ok := conflicted(t); ok {
+			out = append(out, signal{trace: t.ID, run: t.Ref, ref: ref, reason: knowledge.ReasonConflict})
+		}
+	}
+	for _, t := range slices.Backward(captures) {
+		for _, s := range stopped(t) {
+			out = append(out, signal{trace: t.ID, run: s.Run, ref: s.Ref, reason: knowledge.ReasonWords})
+		}
+	}
+	return out, nil
+}
+
+// How the signal on its version is decided and false when it asks nothing of the pass
+// 1. a version nodloop approved is withdrawn under the knobs since that only returns the place to what the person confirmed
+// 2. the person's words on a version a person approved ask the person since only the person retires it
+// 3. a conflict with a version a person approved needs nothing here
+// The extraction drafted its next version and that version asks the person
+// So one correction never asks twice
+// 4. a version no longer approved has nothing to withdraw
+func (p *pass) signaled(s signal) (Decision, bool) {
+	k, err := p.all.Version(s.ref.ID, s.ref.Version)
+	switch {
+	case err != nil || k.Status != knowledge.StatusApproved:
+		return Decision{}, false
+	case k.Approver == knowledge.ApproverNodloop:
+		return p.event.Knobs.withdrawal(s.reason), true
+	case s.reason == knowledge.ReasonWords:
+		return Decision{Tier: topTier, RuleCode: RulePersonItem, Action: ActionAsk}, true
+	}
+	return Decision{}, false
+}
+
+// A version the person's words asked to stop following as the capture records it with the run the words followed
+type Stop struct {
+	knowledge.Ref
+	Run string `json:"run"`
+}
+
+// The versions a capture trace names
+// Read as a record of its own since curate never imports the composition root that writes it
+func stopped(t trace.Trace) []Stop {
+	var out struct {
+		Stops []Stop `json:"stops"`
+	}
+	if json.Unmarshal(t.Output, &out) != nil {
+		return nil
+	}
+	return out.Stops
 }
 
 // The version a conflict of an extract trace names

@@ -179,17 +179,17 @@ func (k Knobs) tier(kind ChangeKind, outcome Outcome, bin Bin) (int, RuleCode, A
 	return 1, "", ActionApply
 }
 
-// How a withdrawal on a signal that names a version nodloop approved is decided
+// How a withdrawal on a signal that names a version nodloop approved is decided with the reason of its signal
 // It asks no judge since it only returns the place to what the person confirmed
 // So it has no bin
-func (k Knobs) withdrawal() Decision {
+func (k Knobs) withdrawal(reason knowledge.Reason) Decision {
 	switch {
 	case !k.Opens(Opening{Kind: ChangeWithdraw}):
 		return Decision{Tier: topTier, RuleCode: RuleKindClosed, Action: ActionAsk}
 	case !k.Activated:
 		return Decision{Tier: 1, Action: ActionShadow}
 	}
-	return Decision{Tier: 1, Action: ActionWithdraw, Reason: knowledge.ReasonConflict, Failure: FailureUnderexplored, Reopen: ReopenOtherSession}
+	return Decision{Tier: 1, Action: ActionWithdraw, Reason: reason, Failure: FailureUnderexplored, Reopen: ReopenOtherSession}
 }
 
 // What the judge reads of the change in its place

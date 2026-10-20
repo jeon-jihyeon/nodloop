@@ -2,6 +2,7 @@ package curate
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"slices"
 	"strconv"
@@ -116,18 +117,34 @@ type state struct {
 	// The decides and the exposes by id
 	decides map[string]Decided
 	exposes map[string]trace.Trace
+	// The draw each decide was recorded under by its id
+	draws map[string]trace.Draw
+	// The exposes newest first with what each showed
+	shown []shownExpose
 	// The newest anchor version
-	anchor int
+	anchor  int
+	anchors AnchorVersion
+}
+
+// The traces every intervention reads
+var interveneNames = []trace.Name{
+	trace.NameIntervention, trace.NameAnswer, trace.NameDecide, trace.NameExpose, trace.NameKnob, trace.NameAnchor, trace.NameRun,
 }
 
 func (iv *Intervener) read(ctx context.Context) (state, error) {
+	return iv.readOf(ctx, interveneNames)
+}
+
+// The state of the traces of the names
+// The stop reads no run since a question never needs one and a record directory holds thousands
+func (iv *Intervener) readOf(ctx context.Context, names []trace.Name) (state, error) {
 	all, err := iv.ledger.All(ctx)
 	if err != nil {
 		return state{}, err
 	}
-	s := state{all: all, decides: map[string]Decided{}, exposes: map[string]trace.Trace{}}
+	s := state{all: all, decides: map[string]Decided{}, exposes: map[string]trace.Trace{}, draws: map[string]trace.Draw{}}
 	var folded trace.Traces
-	for _, name := range []trace.Name{trace.NameIntervention, trace.NameAnswer, trace.NameDecide, trace.NameExpose, trace.NameKnob, trace.NameAnchor, trace.NameRun} {
+	for _, name := range names {
 		found, err := iv.traces.List(ctx, record.TraceFilter{Name: string(name)})
 		if err != nil {
 			return state{}, err
@@ -146,19 +163,27 @@ func (s *state) add(name trace.Name, ts trace.Traces) {
 	switch name {
 	case trace.NameDecide:
 		for _, t := range ts {
-			if d, ok := RestoreDecide(t); ok {
+			d, ok := RestoreDecide(t)
+			if ok {
 				s.decides[d.ID] = d
+			}
+			if ok && t.Draw != nil {
+				s.draws[d.ID] = *t.Draw
 			}
 		}
 	case trace.NameExpose:
 		for _, t := range ts {
 			s.exposes[t.ID] = t
+			var x Exposure
+			if json.Unmarshal(t.Input, &x) == nil && t.Draw != nil {
+				s.shown = append(s.shown, shownExpose{Trace: t, Exposure: x})
+			}
 		}
 	case trace.NameKnob:
 		s.knobs = knobTraces(ts)
 	case trace.NameAnchor:
 		if a, err := RestoreAnchor(ts.Newest()); err == nil {
-			s.anchor = a.Version
+			s.anchor, s.anchors = a.Version, a
 		}
 	case trace.NameRun:
 		s.runs = ts

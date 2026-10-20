@@ -1,7 +1,9 @@
 package curate_test
 
 import (
+	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -213,4 +215,73 @@ func TestEventAnswerFields(t *testing.T) {
 
 	assert.Equal(t, []any{trace.NameAnswer, "s1", "x1", "same", trace.SourcePush}, []any{got.Name, got.SessionID, got.Ref, got.Subject, got.Source})
 	assert.NoError(t, schema.Validate(string(trace.NameAnswer), got.Record()))
+}
+
+// A question reads as the lines of SPEC-curate within 600 runes with no id
+// 1. quoted lessons and words go on one line and shrink together until the text fits so the reply line always shows
+// 2. a question with nothing else prepared still has its Prepared line
+func TestQuestionText(t *testing.T) {
+	long := strings.Repeat("run the tests with the race detector ", 20)
+	type args struct {
+		q curate.Question
+	}
+	type want struct {
+		start, end string
+		runes      int
+	}
+	add := curate.Question{
+		Choices: [2]curate.Choice{curate.ChoiceKeep, curate.ChoiceDrop}, Change: "add the lesson %s in repo acme", Why: "it reaches a place you have not decided on",
+	}
+	with := func(change func(*curate.Question)) curate.Question {
+		q := add
+		change(&q)
+		return q
+	}
+	tcs := []struct {
+		name string
+		args args
+		want want
+	}{
+		{
+			"the lines with the person's words quoted",
+			args{with(func(q *curate.Question) {
+				q.Lessons, q.Words, q.Prepared = []string{"Name the\nfailing test first"}, []string{"you skipped it again"}, []string{"no related lesson yet"}
+			})},
+			want{
+				"One decision for you: add the lesson \"Name the failing test first\" in repo acme\nWhy you: it reaches a place you have not decided on\n" +
+					"Prepared: your words \"you skipped it again\" · no related lesson yet\nReply keep or drop", "Reply keep or drop", 218,
+			},
+		},
+		{
+			"long quotes shrink together and the reply line shows",
+			args{with(func(q *curate.Question) { q.Lessons, q.Words = []string{long, long}, []string{long} })},
+			want{"One decision for you: add the lesson \"run the tests", "Reply keep or drop", 586},
+		},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := tc.args.q.Text()
+
+			assert.Equal(t, []any{true, true, tc.want.runes}, []any{strings.HasPrefix(got, tc.want.start), strings.HasSuffix(got, tc.want.end), utf8.RuneCountInString(got)})
+			assert.LessOrEqual(t, utf8.RuneCountInString(got), curate.MaxRunes)
+		})
+	}
+}
+
+// The block puts the heading before the question and the instruction to copy its lines into one AskUserQuestion call after it
+func TestQuestionBlock(t *testing.T) {
+	q := curate.Question{
+		Key: "k7q2", Choices: [2]curate.Choice{curate.ChoiceKeep, curate.ChoiceDrop}, Change: "add the lesson %s in repo acme", Lessons: []string{"Name the failing test first"},
+		Why: "it reaches a place you have not decided on", Words: []string{"you skipped it again"},
+	}
+
+	got := q.Block()
+
+	assert.Equal(t, "nodloop question for you\n"+q.Text()+"\n"+
+		`Ask this in one AskUserQuestion call with header "nodloop k7q2", the two choices keep and drop, `+
+		"and as its question the lines from One decision to Prepared copied word for word, keeping every quote. "+
+		"Where that tool does not exist, end your answer with those lines and the reply keys keep or drop. "+
+		"Record nothing and decide nothing yourself.", got)
 }

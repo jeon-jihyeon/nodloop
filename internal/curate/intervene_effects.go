@@ -116,36 +116,45 @@ func (iv *Intervener) compaction(ctx context.Context, ledger *knowledge.Ledger, 
 // Carries out the choice of an open question under the person's name and records the answer
 // The answer names the expose that showed the question when one did and the decide alone otherwise
 func (iv *Intervener) answer(ctx context.Context, in trace.Intervention, session string, by Submitter, s state) (Intervened, error) {
-	d := s.decides[in.Decide]
-	id := trace.NewID(iv.now())
-	choice := Choice(in.Choice)
-	a := Answer{Choice: choice, Decide: d.ID, Hidden: true, Overturn: d.overturned(choice), Proof: in.Proof, Person: in.Person}
+	draw, err := s.selfDraw()
+	if err != nil {
+		return Intervened{}, err
+	}
+	x, shown := s.exposeOf(in.Target, in.Decide)
+	return iv.answered(ctx, s.decides[in.Decide], Choice(in.Choice), Event{Session: session, Source: by.Source, Draw: draw}, x, shown, by, s)
+}
+
+// Carries out the choice of the question of the decide and appends its answer under the event
+// 1. the answer is checked before the ledger write so a refused answer writes nothing
+// 2. the ledger write comes next and names the answer in decision
+// 3. the answer names the expose that showed the question when one did with the delay since it
+func (iv *Intervener) answered(
+	ctx context.Context, d Decided, choice Choice, ev Event, x trace.Trace, shown bool, by Submitter, s state,
+) (Intervened, error) {
+	ev.ID = trace.NewID(iv.now())
+	a := Answer{Choice: choice, Decide: d.ID, Hidden: true, Overturn: d.overturned(choice), Proof: by.Proof, Person: by.Person}
 	if d.Change.ID != "" {
 		a.Change = &knowledge.Ref{ID: d.Change.ID, Version: d.Change.Version}
 	}
-	res, err := iv.chosen(ctx, id, d, choice, session, by, s)
+	if shown {
+		ev.Ref, a.DelayMS = x.ID, iv.now().Sub(x.Time).Milliseconds()
+	}
+	if _, err := ev.Answer(a, AnswerOutput{}, iv.now()); err != nil {
+		return Intervened{}, err
+	}
+	res, err := iv.chosen(ctx, ev.ID, d, choice, ev.Session, by, s)
 	if err != nil && !errors.Is(err, knowledge.ErrExport) {
 		return Intervened{}, err
 	}
 	if choice == ChoiceMine {
 		a.Refs = s.reanchored(d)
 	}
-	draw, derr := s.selfDraw()
-	if derr != nil {
-		return Intervened{}, derr
-	}
-	ev := Event{ID: id, Session: session, Source: by.Source, Draw: draw}
-	if x, ok := s.exposeOf(in.Target, d.ID); ok {
-		ev.Ref, a.DelayMS = x.ID, iv.now().Sub(x.Time).Milliseconds()
-	}
-	tr, terr := ev.Answer(a, AnswerOutput{Records: res.Wrote.Written(), Carried: res.Trace.ID}, iv.now())
-	if terr != nil {
-		return Intervened{}, terr
-	}
+	// The same answer passed its check above and its output holds only the records and the intervention written
+	tr, _ := ev.Answer(a, AnswerOutput{Records: res.Wrote.Written(), Carried: res.Trace.ID}, iv.now())
 	if terr := iv.traces.Append(ctx, tr.Record()); terr != nil {
 		return Intervened{}, terr
 	}
-	return Intervened{Wrote: res.Wrote, Answer: id}, err
+	return Intervened{Wrote: res.Wrote, Answer: ev.ID}, err
 }
 
 // What the choice writes under the answer
