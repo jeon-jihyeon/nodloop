@@ -188,8 +188,10 @@ func (f knowledgeFlags) runRecords(ctx context.Context, action, id string, a app
 		return cmd.show(ctx, id)
 	case "overlaps":
 		return cmd.overlaps(ctx, id)
-	case "for", "waiting", "ask":
-		return f.runPlace(ctx, action, cmd)
+	case "for":
+		return cmd.forRun(ctx, f.producer, trace.Labels(f.labels), f.holdoutKey)
+	case "waiting":
+		return cmd.waiting(ctx, f.producer, trace.Labels(f.labels))
 	case "approve":
 		approve, err := f.approval(cmd)
 		if err != nil {
@@ -223,19 +225,6 @@ func (f knowledgeFlags) approval(cmd knowledgeCommand) (func(context.Context, st
 		return cmd.approveIn(trace.Labels(f.labels)), nil
 	}
 	return cmd.ledger.Approve, nil
-}
-
-// The actions that read what a run of the producer with the labels receives or would receive
-func (f knowledgeFlags) runPlace(ctx context.Context, action string, cmd knowledgeCommand) error {
-	labels := trace.Labels(f.labels)
-	switch action {
-	case "for":
-		return cmd.forRun(ctx, f.producer, labels, f.holdoutKey)
-	case "waiting":
-		return cmd.waiting(ctx, f.producer, labels)
-	default:
-		return cmd.ask(ctx, f.producer, labels)
-	}
 }
 
 // The actions that read how the reviews of a version held up and the ones that act on it

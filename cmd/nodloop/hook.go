@@ -55,6 +55,7 @@ func runHook(args []string, getenv func(string) string, start starter, now func(
 		fmt.Fprintln(stderr, "nodloop hook:", errNoAction)
 		return 0
 	}
+	action := args[0]
 	a, err := recordFlags{}.app(getenv, now)
 	if err != nil {
 		fmt.Fprintln(stderr, "nodloop hook:", err)
@@ -77,27 +78,31 @@ func runHook(args []string, getenv func(string) string, start starter, now func(
 		app: a, detach: start, out: stdout, mode: mode,
 		plugin: cmp.Or(getenv(envPluginVersion), buildVersion()), holdout: a.cfg.holdout,
 	}
-	if args[0] == "prompt" {
+	if action == "prompt" {
 		if cmd.reaction, err = a.plan(classify.PointReaction, conversation{}, getenv, reactionTimeout); err != nil {
 			fmt.Fprintln(stderr, "nodloop hook:", err)
 		}
 	}
 	labels := workDir(in.Cwd).within(workDir(getenv(envProjectDir))).labels()
-	ctx := context.Background()
-	switch args[0] {
-	case "prompt":
-		err = cmd.prompt(ctx, in.SessionID, in.Prompt, labels)
-	case "stop":
-		err = cmd.stop(ctx, in.SessionID, labels, reply(in.LastAssistantMessage))
-	case "start":
-		err = cmd.start(ctx, in.Source, labels)
-	default:
-		err = fmt.Errorf("%w %q", errUnknownAction, args[0])
-	}
-	if err != nil {
+	if err := cmd.run(context.Background(), action, in, labels); err != nil {
 		fmt.Fprintln(stderr, "nodloop hook:", err)
 	}
 	return 0
+}
+
+func (c hookCommand) run(ctx context.Context, action string, in hookInput, labels trace.Labels) error {
+	switch action {
+	case "prompt":
+		return c.prompt(ctx, in.SessionID, in.Prompt, labels)
+	case "stop":
+		return c.stop(ctx, in.SessionID, labels, reply(in.LastAssistantMessage))
+	case "start":
+		return c.start(ctx, in.SessionID, in.Source, labels)
+	case "subagent":
+		_, err := c.addItems(ctx, "SubagentStart", in.SessionID, labels)
+		return err
+	}
+	return fmt.Errorf("%w %q", errUnknownAction, action)
 }
 
 // The fields of the Claude Code hook input the hooks read
@@ -123,24 +128,29 @@ type hookCommand struct {
 	reaction *classify.Plan
 }
 
-// The approved items of this place and the session note added to the prompt as context, or nothing when neither has a line
+// The approved items of this place the context lacks and the session note as context of the prompt
+// Nothing when neither has a line
 // 1. a failed read of the runs still adds the items
 // 2. a corrupt line in the records leaves out that record and the rest still reach the prompt
 // 3. a turn of a session the holdout draws gets the note and no item
+// 4. the two newest runs of the session and its newest refill tell which items are in the context already
 func (c hookCommand) prompt(ctx context.Context, sessionID, message string, labels trace.Labels) error {
 	all, allErr := c.all(ctx)
 	if allErr != nil && !errors.Is(allErr, knowledgefile.ErrCorrupt) {
 		return allErr
 	}
-	previous, runsErr := c.previousRun(ctx, sessionID)
+	runs, runsErr := c.sessionRuns(ctx, sessionID, 2)
+	refill, refillErr := c.refill(ctx, sessionID)
+	runsErr = errors.Join(runsErr, refillErr)
+	previous := trace.Traces(runs).Newest()
 	items := hookItems(all.For(sessionProducer, labels))
 	if c.holdout.WithholdsRun(sessionProducer, sessionID) {
 		items = nil
 	}
 	recorded, reactErr := c.react(ctx, turn{run: previous, message: message})
-	note := c.note(sessionID, labels, all, previous)
+	note := c.note(sessionID, previous)
 	note.recorded = recorded
-	text := items.context(note)
+	text := items.context(runs.inContext(knowledge.Set(items), refill), note)
 	runsErr = errors.Join(allErr, runsErr, reactErr)
 	if text == "" {
 		return runsErr
@@ -158,47 +168,79 @@ func (c hookCommand) addContext(event, text string) error {
 	}})
 }
 
-// The previous run of the session and the candidates drafted since its answer
-// 1. only immediate mode counts drafts in the turn so each is asked about once in the session that corrected it
-// 2. every candidate waiting is counted when Claude Code starts instead
-// 3. a mode that infers nothing and a prompt without a session id get no note
-func (c hookCommand) note(sessionID string, labels trace.Labels, all knowledge.Set, run trace.Trace) sessionNote {
+// The note on the previous run of the session
+// A mode that infers nothing and a prompt without a session id get no note
+func (c hookCommand) note(sessionID string, run trace.Trace) sessionNote {
 	if !c.mode.infers() || sessionID == "" {
 		return sessionNote{}
 	}
-	note := sessionNote{mode: c.mode, run: run.ID}
-	if c.mode.inTurn() && run.ID != "" {
-		note.waiting = len(all.Waiting(sessionProducer, labels).Since(run.Time))
-	}
-	return note
+	return sessionNote{run: run.ID}
 }
 
-// The SessionStart sources that are the user starting Claude Code
-// clear and compact empty the context of a session at work and a fork copies one
-var startSources = []string{"startup", "resume"}
+// The SessionStart sources that empty the context of a session at work
+// startup and resume add nothing since the first prompt adds the items
+var refillSources = []string{"compact", "clear"}
 
-// Every candidate waiting in the place as context when the user starts or resumes Claude Code
-// 1. other sources and a mode that infers nothing add nothing
-// 2. a corrupt line leaves out that record and the rest are still counted
-func (c hookCommand) start(ctx context.Context, source string, labels trace.Labels) error {
-	if !c.mode.infers() || !slices.Contains(startSources, source) {
+// Every fitting item of the place again after a compaction or a clear emptied the context
+// The items added are recorded as a refill of the session so the next prompt adds none of them again
+// A clear starts a new session id with no run so without the refill that prompt would add every item a second time
+func (c hookCommand) start(ctx context.Context, sessionID, source string, labels trace.Labels) error {
+	if !slices.Contains(refillSources, source) {
 		return nil
+	}
+	added, err := c.addItems(ctx, "SessionStart", sessionID, labels)
+	if sessionID == "" || len(added) == 0 {
+		return err
+	}
+	return errors.Join(err, c.recordRefill(ctx, sessionID, added))
+}
+
+// Every fitting item of the place as context of the hook event and the items it added
+// 1. a session the holdout withholds gets no item as from every other hook
+// A subagent carries the session id of its conversation so it lands in the same arm
+// 2. a corrupt line leaves out that record and the rest are still added
+// 3. no prompt hook runs inside a subagent so its start is the only way an item reaches it
+func (c hookCommand) addItems(ctx context.Context, event, sessionID string, labels trace.Labels) (knowledge.Set, error) {
+	if c.holdout.WithholdsRun(sessionProducer, sessionID) {
+		return nil, nil
 	}
 	all, err := c.all(ctx)
 	if err != nil && !errors.Is(err, knowledgefile.ErrCorrupt) {
-		return err
+		return nil, err
 	}
-	waiting := len(all.Waiting(sessionProducer, labels))
-	if waiting == 0 {
-		return err
+	items := hookItems(all.For(sessionProducer, labels))
+	text := items.context(nil, sessionNote{})
+	if text == "" {
+		return nil, err
 	}
-	return errors.Join(c.addContext("SessionStart", sessionNote{waiting: waiting}.text()), err)
+	if addErr := c.addContext(event, text); addErr != nil {
+		return nil, errors.Join(addErr, err)
+	}
+	added, _ := items.fitting()
+	return added, err
 }
 
-// The newest run of the session within sessionWindow or none
-// 1. an empty id would match the runs of every session so it has none
-// 2. a corrupt line returns the run found with the error
-func (c hookCommand) previousRun(ctx context.Context, sessionID string) (trace.Trace, error) {
+// The items a session start added as a refill trace of the session
+func (c hookCommand) recordRefill(ctx context.Context, sessionID string, added knowledge.Set) error {
+	in, err := knowledge.NewRunInput(added.Refs(), nil, c.plugin)
+	if err != nil {
+		return err
+	}
+	input, err := json.Marshal(in)
+	if err != nil {
+		return err
+	}
+	store, err := c.app.traces()
+	if err != nil {
+		return err
+	}
+	now := c.app.now()
+	tr := trace.Trace{ID: trace.NewID(now), Name: trace.NameRefill, SessionID: sessionID, Time: now, Input: input}
+	return store.Append(ctx, tr.Record())
+}
+
+// The newest refill of the session within sessionWindow or none
+func (c hookCommand) refill(ctx context.Context, sessionID string) (trace.Trace, error) {
 	if sessionID == "" {
 		return trace.Trace{}, nil
 	}
@@ -207,8 +249,64 @@ func (c hookCommand) previousRun(ctx context.Context, sessionID string) (trace.T
 		return trace.Trace{}, err
 	}
 	since := c.app.now().Add(-sessionWindow)
-	runs, err := store.List(ctx, record.TraceFilter{Name: string(trace.NameRun), SessionID: sessionID, Since: since, Limit: 1})
-	return trace.RestoreAll(runs).Newest(), err
+	found, err := store.List(ctx, record.TraceFilter{Name: string(trace.NameRefill), SessionID: sessionID, Since: since, Limit: 1})
+	return trace.Traces(trace.RestoreAll(found)).Newest(), err
+}
+
+// The newest run of the session within sessionWindow or none
+func (c hookCommand) previousRun(ctx context.Context, sessionID string) (trace.Trace, error) {
+	runs, err := c.sessionRuns(ctx, sessionID, 1)
+	return trace.Traces(runs).Newest(), err
+}
+
+// At most limit runs of the session within sessionWindow newest first
+// 1. an empty id would match the runs of every session so it has none
+// 2. a corrupt line returns the runs found with the error
+func (c hookCommand) sessionRuns(ctx context.Context, sessionID string, limit int) (sessionTurns, error) {
+	if sessionID == "" {
+		return nil, nil
+	}
+	store, err := c.app.traces()
+	if err != nil {
+		return nil, err
+	}
+	since := c.app.now().Add(-sessionWindow)
+	runs, err := store.List(ctx, record.TraceFilter{Name: string(trace.NameRun), SessionID: sessionID, Since: since, Limit: limit})
+	return sessionTurns(trace.RestoreAll(runs)), err
+}
+
+// The runs of a session newest first
+type sessionTurns trace.Traces
+
+// The versions of the items that are in the context of the session already
+// 1. the newest run recorded the fitting items of its stop as applied since each was in the context then
+// 2. a version approved after the run before it may have come during that turn after its prompt
+// Its stop recorded it though no hook added it so it counts as missing and the next prompt adds it
+// 3. a first turn has no run before it so a version approved during it counts as in the context
+// 4. an unreadable input names none so every fitting item is added again
+// 5. a refill after the newest run added every fitting item of its time so its refs are the context
+func (ts sessionTurns) inContext(items knowledge.Set, refill trace.Trace) []knowledge.Ref {
+	if refill.ID != "" && (len(ts) == 0 || refill.Time.After(ts[0].Time)) {
+		var in knowledge.RunInput
+		if err := json.Unmarshal(refill.Input, &in); err != nil {
+			return nil
+		}
+		return in.Applied
+	}
+	if len(ts) == 0 {
+		return nil
+	}
+	var in knowledge.RunInput
+	if err := json.Unmarshal(ts[0].Input, &in); err != nil {
+		return nil
+	}
+	if len(ts) == 1 {
+		return in.Applied
+	}
+	return slices.DeleteFunc(in.Applied, func(r knowledge.Ref) bool {
+		k, err := items.Version(r.ID, r.Version)
+		return err == nil && k.ApprovedAt.After(ts[1].Time)
+	})
 }
 
 // The answer as a run of the conversation with the items its prompt received, then the lesson of the previous run
@@ -326,13 +424,22 @@ func (c hookCommand) all(ctx context.Context) (knowledge.Set, error) {
 // The approved items a prompt receives
 type hookItems knowledge.Set
 
-// One line per item under the lead, then the session note
-// 1. the items are cut at promptRunes with the count left out so the model knows the list is partial
-// 2. the note is left out when it would pass contextRunes
-func (items hookItems) context(note sessionNote) string {
+// The fitting items the context lacks one line each under their lead and the session note after them
+// 1. after versions in the context only the fitting ones not among them come under DeltaLead
+// A new version of an item in the context comes as a line that replaces its earlier one
+// 2. with none in the context every fitting item comes under PromptLead
+// The items are cut at promptRunes with the count left out so the model knows the list is partial
+// 3. the note is left out when it would pass contextRunes
+func (items hookItems) context(inContext []knowledge.Ref, note sessionNote) string {
 	var b strings.Builder
-	if len(items) > 0 {
-		shown, lines := items.fitting()
+	shown, lines := items.fitting()
+	switch added := shown.Without(inContext); {
+	case len(inContext) > 0 && len(added) > 0:
+		b.WriteString(knowledge.DeltaLead)
+		for _, k := range added {
+			b.WriteString(k.PromptLine())
+		}
+	case len(inContext) == 0 && len(items) > 0:
 		b.WriteString(knowledge.PromptLead)
 		for _, line := range lines {
 			b.WriteString(line)
@@ -366,103 +473,82 @@ func (items hookItems) fitting() (knowledge.Set, []string) {
 
 // What the prompt hook tells the conversation about its session
 type sessionNote struct {
-	mode sessionMode
 	// The previous run of the session, empty on its first prompt
 	run string
-	// Candidates waiting for approval in the place
-	waiting int
 	// The verdict the reaction point recorded on the previous run and empty when the conversation judges it
 	recorded feedback.Verdict
 }
 
 // The reaction a conversation records is an inferred verdict, so only words that judge the previous answer count
 // The verdict is recorded without a word to the user and its lesson is drafted after the turn so a discussion goes on undisturbed
-const deferredReactionNote = "nodloop: your previous answer in this conversation is run %s. " +
+const reactionNote = "nodloop: your previous answer in this conversation is run %s. " +
 	"If the user's message says that answer was wrong or right, call the nodloop feedback tool on trace %s with reviewer session: " +
 	"verdict reject with what was wrong in the user's words and a reason code, or approve. " +
-	"Do it without telling the user and go on with what they asked. Its lesson is drafted after the turn and reviewed in a later session. " +
+	"Do it without telling the user and go on with what they asked. Its lesson is drafted after the turn. " +
 	"Skip it for a new request, a follow up, a change of topic, or when the user calls /nodloop:nod.\n"
 
-// In immediate mode a correction is drafted in the same turn so the user is asked while the correction is fresh
-const reactionNote = "nodloop: your previous answer in this conversation is run %s. " +
-	"If the user's message says that answer was wrong or right, first call the nodloop feedback tool on trace %s with reviewer session: " +
-	"verdict reject with what was wrong in the user's words and a reason code, or approve. " +
-	"After a reject or an edit, do what the user asked, then invoke the nodloop:nod skill and follow its section Draft the correction of this turn. " +
-	"Skip all of it for a new request, a follow up, a change of topic, or when the user calls /nodloop:nod.\n"
-
-// The review starts without /nodloop:nod and only the user's answer approves or retires a draft
-const waitingNote = "nodloop: knowledge candidates for this place wait for approval: %d. " +
-	"After your answer, review them without waiting for /nodloop:nod: invoke the nodloop:nod skill and follow its section " +
-	"Review the waiting drafts, which asks the user about each draft.\n"
-
 // The reaction point already recorded a reject so the conversation records nothing more
-const deferredRecordedNote = "nodloop: the user's message was recorded as a reject of your previous answer, run %s. " +
-	"Do what the user asked. Its lesson is drafted after the turn and reviewed in a later session.\n"
-
-// In immediate mode the conversation drafts the correction the reaction point recorded
 const recordedNote = "nodloop: the user's message was recorded as a reject of your previous answer, run %s. " +
-	"Do what the user asked, then invoke the nodloop:nod skill and follow its section Draft the correction of this turn.\n"
+	"Do what the user asked. Its lesson is drafted after the turn.\n"
 
 func (n sessionNote) text() string {
-	reaction, recorded := deferredReactionNote, deferredRecordedNote
-	if n.mode.inTurn() {
-		reaction, recorded = reactionNote, recordedNote
-	}
-	var b strings.Builder
 	switch {
 	case n.run == "", n.recorded == feedback.VerdictApprove:
+		return ""
 	case n.recorded == feedback.VerdictReject:
-		fmt.Fprintf(&b, recorded, n.run)
-	default:
-		fmt.Fprintf(&b, reaction, n.run, n.run)
+		return fmt.Sprintf(recordedNote, n.run)
 	}
-	if n.waiting > 0 {
-		fmt.Fprintf(&b, waitingNote, n.waiting)
-	}
-	return b.String()
+	return fmt.Sprintf(reactionNote, n.run, n.run)
 }
 
-// How a conversation records and reviews the verdicts it infers
+// How a conversation records the verdicts it infers
 type sessionMode string
 
 const (
-	sessionDeferred  sessionMode = "deferred"  // infers each verdict silently, drafts after the turn and asks when Claude Code starts
-	sessionImmediate sessionMode = "immediate" // drafts a correction and asks about it in the same turn
-	sessionManual    sessionMode = "manual"    // records answers and items and leaves every verdict to an explicit nod
-	sessionOff       sessionMode = "off"       // records nothing
+	sessionDeferred sessionMode = "deferred" // infers each verdict silently and drafts its lesson after the turn
+	sessionManual   sessionMode = "manual"   // records answers and items and leaves every verdict to an explicit nod
+	sessionOff      sessionMode = "off"      // records nothing
+	// A mode of an earlier release that drafted a correction in its turn
+	// It reads as deferred so a setting that still names it keeps recording
+	sessionImmediate sessionMode = "immediate"
 )
 
-var sessionModes = []sessionMode{sessionDeferred, sessionImmediate, sessionManual, sessionOff}
+var sessionModes = []sessionMode{sessionDeferred, sessionManual, sessionOff}
 
-const sessionModeHint = "Use deferred, immediate, manual or off"
+const sessionModeHint = "Use deferred, manual or off"
 
 func (m sessionMode) valid() bool {
 	return slices.Contains(sessionModes, m)
 }
 
-// Whether the conversation records the verdicts it reads and the stop hook drafts their lessons
-func (m sessionMode) infers() bool {
-	return m == sessionDeferred || m == sessionImmediate
+// The mode a value of the env or config.json reads as
+func (m sessionMode) read() sessionMode {
+	if m == sessionImmediate {
+		return sessionDeferred
+	}
+	return m
 }
 
-// Whether a correction is drafted and asked about in the turn that recorded it
-func (m sessionMode) inTurn() bool {
-	return m == sessionImmediate
+// Whether the conversation records the verdicts it reads and the stop hook drafts their lessons
+func (m sessionMode) infers() bool {
+	return m == sessionDeferred
 }
 
 // The mode of the process
 // 1. NODLOOP_SESSION wins, then session_mode in config.json, then deferred
 // 2. a value outside the set is refused with where it came from so the hooks record nothing the user did not choose
 func sessionModeOf(env, configured string) (sessionMode, error) {
-	switch {
-	case env != "" && !sessionMode(env).valid():
+	switch fromEnv, fromConfig := sessionMode(env).read(), sessionMode(configured).read(); {
+	case env != "" && !fromEnv.valid():
 		return "", fmt.Errorf("%w: %s is %q. %s", errSessionModeUnknown, envSession, env, sessionModeHint)
 	case env != "":
-		return sessionMode(env), nil
-	case configured != "" && !sessionMode(configured).valid():
+		return fromEnv, nil
+	case configured != "" && !fromConfig.valid():
 		return "", fmt.Errorf("%w: session_mode in %s is %q. %s", errSessionModeUnknown, configFile, configured, sessionModeHint)
+	case configured != "":
+		return fromConfig, nil
 	}
-	return cmp.Or(sessionMode(configured), sessionDeferred), nil
+	return sessionDeferred, nil
 }
 
 // The last answer of a turn

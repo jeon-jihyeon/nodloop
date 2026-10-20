@@ -22,18 +22,17 @@ commands:
                             Record one output of any producer as a run and print its id for feedback.
                             Output that is not JSON is kept as text. --withheld names the items knowledge for printed as
                             withheld and --holdout-key the key it drew with so report effect counts the run in its arm
-  hook start | hook prompt | hook stop
-                            The Claude Code conversation hooks the plugin registers. start counts the candidates waiting
-                            for approval in the place when Claude Code starts or resumes a session, not after clear or
-                            compact. prompt adds the approved items of producer session for the repo and dir of the place
-                            as context. The place is cwd while it lies inside CLAUDE_PROJECT_DIR and that directory
-                            otherwise. It then names the previous run of the session so the conversation records the
-                            user's verdict on it. stop records the answer as a run and in the background drafts the lesson
-                            of the previous run when the conversation recorded a correction no record cites. All always
-                            exit 0. The session mode is NODLOOP_SESSION, then config session_mode, then deferred: deferred
-                            records verdicts silently and asks about every waiting draft when Claude Code starts,
-                            immediate also drafts a correction and asks about it in the same turn, manual leaves out the
-                            note and off records nothing
+  hook start | hook prompt | hook stop | hook subagent
+                            The Claude Code conversation hooks the plugin registers. prompt adds the approved items of
+                            producer session for the repo and dir of the place that the context lacks, so each version is
+                            added once per conversation. The place is cwd while it lies inside CLAUDE_PROJECT_DIR and that
+                            directory otherwise. It then names the previous run of the session so the conversation records
+                            the user's verdict on it. start adds every item again after a compact or a clear and subagent
+                            adds them to a subagent. stop records the answer as a run and drafts the lesson of the previous
+                            run in the background when the conversation recorded a correction no record cites. All exit 0.
+                            The session mode is NODLOOP_SESSION, then config session_mode, then deferred: deferred records
+                            verdicts silently and drafts their lessons after the turn, manual leaves out the note and off
+                            records nothing. immediate of an earlier release reads as deferred
   feedback list [--trace <id>] [--verdict <v>] [--reviewer <r>] [--limit <n>]
                             List feedback newest first with the reason code or a dash after the verdict
   feedback add --trace <id> --verdict <v> [--reason-code <c>] [--reason <r>] [--edited <file>] [--reviewer <r>] [--audit]
@@ -69,11 +68,8 @@ commands:
                             holdout key a share of runs gets a withheld line per item and no item. Pass the same key and
                             those refs to run record
   knowledge waiting --producer <p> [--label <key=value>]
-                            The candidates a run of the producer with these labels would receive once approved, with the
-                            runs whose verdicts taught them
-  knowledge ask --producer <p> [--label <key=value>]
-                            One JSON line per waiting candidate with the AskUserQuestion questions that decide it: the
-                            content, its scope and what the user said on each run that taught it
+                            The candidates a run of the producer with these labels would receive once approved, newest per
+                            id and those taught by more runs first, with the runs whose verdicts taught them
   knowledge list [--status <s>] [--kind <k>] [--stale]
                             Current version per id with a stale column. --status lists every version of that status
   knowledge show <id>       Every record of one id
@@ -182,8 +178,8 @@ commands:
                             keeps every run and fewer than 7 is refused. Reports then read the runs of that window and
                             the text of report loop, critic and effect names its start in a first window line
   config session_mode [<mode>]
-                            Print or save how a conversation records the verdicts it infers: deferred, immediate, manual
-                            or off. deferred by default and NODLOOP_SESSION overrides it
+                            Print or save how a conversation records the verdicts it infers: deferred, manual or off.
+                            deferred by default and NODLOOP_SESSION overrides it
   classifier set <point> --url <u> [--model <m>] [--key-env <ENV>]
                             Ask an endpoint of the Jev wire format the README shows at a decision point before claude,
                             such as http://localhost:8000/v1/classify. claude answers when the endpoint fails or is less

@@ -232,6 +232,7 @@ func (c configCommand) retention(value string) error {
 }
 
 // Prints the saved mode or deferred, or saves the one given
+// A mode of an earlier release still reads but is never saved again
 func (c configCommand) sessionMode(value string) error {
 	if value == "" {
 		uc, err := c.home.readConfig()

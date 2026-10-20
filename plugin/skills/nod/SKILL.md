@@ -1,6 +1,6 @@
 ---
 name: nod
-description: Record the user's verdict on an earlier Claude Code answer as nodloop feedback and turn a correction into approved knowledge that the next prompt in the same repository receives. Also reviews the lessons the plugin drafted from corrections the conversation recorded. Use when the user calls /nodloop:nod, says an earlier answer in this conversation was right or wrong and asks to remember it, asks to review the waiting drafts, or when the nodloop prompt context says knowledge candidates wait for approval.
+description: Record the user's verdict on an earlier Claude Code answer as nodloop feedback and turn a correction into approved knowledge that the next prompt in the same repository receives. Also reviews the lessons the plugin drafted from corrections the conversation recorded. Use when the user calls /nodloop:nod, says an earlier answer in this conversation was right or wrong and asks to remember it, or asks to review the waiting drafts.
 ---
 
 # Nod on an answer
@@ -9,7 +9,7 @@ The plugin records every answer of this conversation as a run of producer `sessi
 
 Every question below goes through AskUserQuestion, because the user can always pick Other and type an answer. Run nodloop through `~/.nodloop/bin/nodloop`, the link the plugin keeps to the binary its server runs. When that link is missing, run `${CLAUDE_PLUGIN_ROOT}/bin/nodloop version` once to create it.
 
-When the user calls `/nodloop:nod` with nothing to say about an answer, or when the nodloop prompt context says knowledge candidates wait for approval, review the drafts that wait in this place as in the section Review the waiting drafts. Otherwise follow the steps.
+When the user calls `/nodloop:nod` with nothing to say about an answer, or asks what drafts wait, review the drafts that wait in this place as in the section Review the waiting drafts. Otherwise follow the steps.
 
 ## Steps
 
@@ -21,23 +21,14 @@ When the user calls `/nodloop:nod` with nothing to say about an answer, or when 
 6. When the correction forbids a tool call that its input alone decides, such as a shell command pattern or a file path, propose it as a judgment with `veto`: the tool, the conditions on `tool_input` fields and an example input the veto must block. For Bash match the field `commands`, one line per simple command the guard derives from the command, so a pattern anchored with `(?m)^` reads command starts. Show the user the veto that `propose` returns before they approve it. Once approved it blocks the call through the guard hook, which `~/.nodloop/bin/nodloop guard install` registers
 7. When an approval would make one run of this place carry more than 9000 chars, or when the user asks to merge the items of this place, offer a compaction only when the user wants it: call `compaction` with the item id, write new items by the rules it returns so nothing is said twice and nothing is lost, call `propose_compaction`, then call `check_compaction` with each old item read against the new ones, and call `approve_compaction` only when the check passed and the user agrees, under the name of step 5
 
-## Draft the correction of this turn
-
-In session mode `immediate` the prompt hook asks for this after the conversation recorded a reject or an edit with reviewer `session`, so the user decides on the lesson in the same turn as the correction. In the default mode `deferred` the hook never asks for it, and the lesson is drafted after the turn and reviewed in a later session.
-
-1. Call `extraction` with `from` set to the trace id of the corrected run without asking. Draft and answer the critic questions as in step 4 of the steps, then call `propose_extraction`
-2. When it answers a candidate, end the answer with one AskUserQuestion: quote the user's words that made the correction, show the content and the scope, and offer approve, retire and leave it waiting, with the question of the section Where it applies beside it. Use the name of step 5 of the steps
-3. Call `approve` or run `knowledge retire` as in step 5 of the section Review the waiting drafts
-4. When it is refused twice, a duplicate or a conflict, say so in one line. A refused one is drafted again in the background after the turn and asked about on the next prompt
-
 ## Review the waiting drafts
 
-The conversation records a verdict with reviewer `session` when the user says an answer was wrong or right. A correction it did not draft in the turn is drafted after the turn in the background. Drafts wait as candidates until a person approves them. In the default session mode `deferred` the session start hook names every waiting draft when the user starts or resumes Claude Code, not after `/clear` or `/compact`, so the review comes away from the discussion that made it. In mode `immediate` the prompt hook also names the drafts made since the previous answer.
+The conversation records a verdict with reviewer `session` when the user says an answer was wrong or right, and its lesson is drafted after the turn in the background. Drafts wait as candidates until a person approves them, and no hook asks about them.
 
 1. Run `~/.nodloop/bin/nodloop knowledge waiting --producer session --label repo=<repo> --label dir=<dir>` through Bash without asking, with the labels as the hook sets them. Each line is a candidate with its kind, content, scope and the runs it came from. When there is none, say so and stop
 2. For each candidate and each run it came from, run `~/.nodloop/bin/nodloop feedback list --trace <run>` and `~/.nodloop/bin/nodloop trace show <run>`. Show the content and the scope, quote the user's words from the reason, and show the first line of the answer they corrected, because the review may come a session after the correction
 3. For each candidate whose line ends in `replay none`, run `~/.nodloop/bin/nodloop knowledge replay <id> --version <n>` through Bash without asking. It judges the lesson in one model call against the corrected answers it cites and the newest approved answers in its scope. Show its last line, and for a case marked wrong its reason: a missed correction means the lesson does not say what the user corrected, and an overreach means it would have changed an answer the user approved, so suggest narrowing its words or its scope before approving. The replay advises and never blocks. When it fails with no recorded output to judge, say so in one line and go on
-4. Take the name to approve under as in step 5 of the steps, then ask for each candidate whether to approve it, retire it, leave it waiting, or call it not a correction when the user's words never judged the answer, such as a redirect in a discussion, and with it where it applies as in the section Where it applies. Run `~/.nodloop/bin/nodloop knowledge ask --producer session --label repo=<repo> --label dir=<dir>` through Bash without asking. Each line is one candidate's id, version and `questions`. Pass those questions to AskUserQuestion as printed, with the question of the section Where it applies added beside them, so one AskUserQuestion holds the two questions of one candidate. Ask the candidates in turn, never as one choice over the whole list, and never name a candidate by a number the user cannot see on screen
+4. Take the name to approve under as in step 5 of the steps, then ask for each candidate whether to approve it, retire it, leave it waiting, or call it not a correction when the user's words never judged the answer, such as a redirect in a discussion, and with it where it applies as in the section Where it applies. Ask each candidate in one AskUserQuestion with the question of the section Where it applies beside it. Ask the candidates in turn, never as one choice over the whole list, and never name a candidate by a number the user cannot see on screen
 5. Call `approve` for each one the user approves, with that name and the scope the user picked. Run `~/.nodloop/bin/nodloop knowledge retire <id> --version <n> --approver <name>` for each one the user rejects. For each one that is not a correction, call `feedback` with verdict `withdraw` on every run it came from, that name as reviewer and the user's words as reason, then retire it the same way. The withdraw leaves the run without a verdict, so `report loop` no longer counts it as a correction. Leave the rest
 6. When an approval would make one run carry more than 9000 chars, continue with step 7 of the steps
 

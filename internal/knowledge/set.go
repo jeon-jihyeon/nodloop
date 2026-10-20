@@ -102,6 +102,17 @@ func (s Set) Refs() []Ref {
 	return out
 }
 
+// The records in set order whose version none of the refs names
+func (s Set) Without(refs []Ref) Set {
+	out := Set{}
+	for _, k := range s {
+		if !slices.ContainsFunc(refs, func(r Ref) bool { return r.names(k) }) {
+			out = append(out, k)
+		}
+	}
+	return out
+}
+
 // The vetoes of the approved items in id order
 // The source names the version and the approver so a reader of the veto file can trace a block back
 func (s Set) Vetoes() []veto.Spec {

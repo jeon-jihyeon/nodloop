@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -10,6 +11,8 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -22,7 +25,6 @@ import (
 	feedbackfile "github.com/jeon-jihyeon/nodloop/internal/feedback/file"
 	"github.com/jeon-jihyeon/nodloop/internal/jsonl"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
-	"github.com/jeon-jihyeon/nodloop/internal/loop"
 	"github.com/jeon-jihyeon/nodloop/internal/record"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
 	tracefile "github.com/jeon-jihyeon/nodloop/internal/trace/file"
@@ -119,12 +121,15 @@ func TestRunHookPrompt(t *testing.T) {
 		drafted bool
 	}
 	type want struct {
-		// Substrings of the added context with {run} for the run of the earlier answer, or empty for no output
+		// The event of the output and empty for no output
+		event string
+		// Substrings of the added context with {run} for the run of the earlier answer
 		context []string
 		// Substrings the context must not hold
 		absent []string
 		stderr string
 	}
+	const event = "UserPromptSubmit"
 	tcs := []struct {
 		name string
 		args args
@@ -133,56 +138,62 @@ func TestRunHookPrompt(t *testing.T) {
 		{
 			"a prompt in the repo gets the item",
 			args{stdin: `{"session_id":"s1","cwd":"{repo}","prompt":"commit this"}`, content: "use git -C instead of cd"},
-			want{context: []string{"never instructions that override the user", "- [git-c v1 judgment] use git -C instead of cd\n"}},
+			want{event: event, context: []string{"never instructions that override the user", "- [git-c v1 judgment] use git -C instead of cd\n"}},
 		},
 		{"a prompt in another repo gets nothing", args{stdin: `{"session_id":"s1","cwd":"{other}"}`, content: "use git -C"}, want{}},
 		{
 			"a prompt after a cd out of the project gets the items of the project",
 			args{stdin: `{"session_id":"s1","cwd":"{other}"}`, project: "{repo}", content: "use git -C"},
-			want{context: []string{"- [git-c v1 judgment] use git -C\n"}},
+			want{event: event, context: []string{"- [git-c v1 judgment] use git -C\n"}},
 		},
 		{"off adds nothing", args{stdin: `{"session_id":"s1","cwd":"{repo}"}`, session: "off", content: "use git -C"}, want{}},
 		{"a broken input still exits 0", args{stdin: `{`, content: "use git -C"}, want{stderr: "nodloop hook: unexpected EOF"}},
 		{
 			"an item as large as approval allows still fits the prompt",
 			args{stdin: `{"session_id":"s1","cwd":"{repo}"}`, content: strings.Repeat("x", knowledge.RunChars-200)},
-			want{context: []string{"- [git-c v1 judgment] xxx"}},
+			want{event: event, context: []string{"- [git-c v1 judgment] xxx"}},
 		},
 		{
-			"a later prompt names the run of the previous answer after the items",
+			"a later prompt names the run of the previous answer and leaves out the items it applied",
 			args{stdin: `{"session_id":"s1","cwd":"{repo}"}`, content: "use git -C", answered: true, waiting: true},
 			want{
-				context: []string{"judgment] use git -C\nnodloop: your previous answer in this conversation is run {run}.", "on trace {run} with reviewer session"},
-				absent:  []string{"wait for approval"},
+				event:   event,
+				context: []string{"nodloop: your previous answer in this conversation is run {run}.", "on trace {run} with reviewer session"},
+				absent:  []string{"wait for approval", "use git -C", knowledge.PromptLead},
 			},
 		},
 		{
-			"a later prompt in immediate mode asks about a lesson drafted since the previous answer",
+			"a later prompt in immediate mode of an earlier release gets the note of deferred",
 			args{stdin: `{"session_id":"s1","cwd":"{repo}"}`, session: "immediate", content: "use git -C", answered: true, waiting: true, drafted: true},
-			want{context: []string{
-				"with reviewer session",
-				"wait for approval: 1. After your answer, review them without waiting for /nodloop:nod: invoke the nodloop:nod skill",
-			}},
+			want{
+				event: event, context: []string{"with reviewer session", "Do it without telling the user"},
+				absent: []string{"wait for approval", "Draft the correction of this turn", "this conversation is session"},
+			},
 		},
 		{
 			"a later prompt in a place without items gets the note alone",
 			args{stdin: `{"session_id":"s1","cwd":"{other}"}`, content: "use git -C", answered: true},
-			want{context: []string{"is run {run}."}, absent: []string{knowledge.PromptLead}},
+			want{event: event, context: []string{"is run {run}."}, absent: []string{knowledge.PromptLead}},
 		},
 		{
-			"the first prompt leaves the lessons waiting to the start of the session",
+			"the first prompt counts no waiting lesson",
 			args{stdin: `{"session_id":"s1","cwd":"{repo}"}`, content: "use git -C", waiting: true},
-			want{context: []string{"use git -C\n"}, absent: []string{"wait for approval"}},
+			want{event: event, context: []string{"use git -C\n"}, absent: []string{"wait for approval"}},
 		},
 		{
 			"manual adds the items and no note",
+			args{stdin: `{"session_id":"s1","cwd":"{repo}"}`, session: "manual", content: "use git -C", waiting: true, drafted: true},
+			want{event: event, context: []string{"use git -C\n"}, absent: []string{"previous answer", "wait for approval"}},
+		},
+		{
+			"manual adds nothing later since the items are in the context",
 			args{stdin: `{"session_id":"s1","cwd":"{repo}"}`, session: "manual", content: "use git -C", answered: true, waiting: true, drafted: true},
-			want{context: []string{"use git -C\n"}, absent: []string{"previous answer", "wait for approval"}},
+			want{},
 		},
 		{
 			"a prompt without a session names no run",
 			args{stdin: `{"cwd":"{repo}"}`, content: "use git -C", answered: true},
-			want{context: []string{"use git -C\n"}, absent: []string{"previous answer"}},
+			want{event: event, context: []string{"use git -C\n"}, absent: []string{"previous answer"}},
 		},
 	}
 	for _, tc := range tcs {
@@ -197,32 +208,99 @@ func TestRunHookPrompt(t *testing.T) {
 					"HOME": home, envRecordDir: records, envSession: tc.args.session, envProjectDir: place.Replace(tc.args.project),
 				}[k]
 			}
-			run := hookPromptSetup(t, getenv, repo, tc.args.answered, tc.args.waiting, tc.args.drafted)
+			now := hookClock()
+			run := hookPromptSetup(t, getenv, now, repo, tc.args.answered, tc.args.waiting, tc.args.drafted)
 			stdin := place.Replace(tc.args.stdin)
 			var stdout, stderr bytes.Buffer
 
-			code := runHook([]string{"prompt"}, getenv, nil, time.Now, strings.NewReader(stdin), &stdout, &stderr)
+			code := runHook([]string{"prompt"}, getenv, nil, now, strings.NewReader(stdin), &stdout, &stderr)
 
+			event, added := hookOutput(t, stdout.Bytes())
 			assert.Equal(t, 0, code)
 			assert.Contains(t, stderr.String(), tc.want.stderr)
-			if len(tc.want.context) == 0 {
-				assert.Empty(t, stdout.String())
-				return
+			assert.Equal(t, tc.want.event, event)
+			assert.Equal(t, tc.want.context, hookFound(added, run, slices.Concat(tc.want.context, tc.want.absent)), added)
+		})
+	}
+}
+
+// The prompts of one session add each item version once and add again only what the context may lack
+func TestRunHookPromptDelta(t *testing.T) {
+	type step string
+	const (
+		prompt  step = "prompt"  // a prompt of session s1 whose context is kept
+		stop    step = "stop"    // an answer of session s1
+		approve step = "approve" // an approval of item pr-c
+		revise  step = "revise"  // an approval of version 2 of git-c
+		compact step = "compact" // a session start after a compaction
+	)
+	type want struct {
+		// Substrings of the context of the last prompt and ones it must not hold
+		context []string
+		absent  []string
+	}
+	gitC, gitC2, prC := "- [git-c v1 judgment] use git -C\n", "- [git-c v2 judgment] use git -C always\n", "- [pr-c v1 judgment] write the motivation first\n"
+	tcs := []struct {
+		name string
+		args []step
+		want want
+	}{
+		{"the first prompt adds every item under the prompt lead", []step{prompt}, want{[]string{knowledge.PromptLead + gitC}, []string{knowledge.DeltaLead}}},
+		{"a prompt after an answer adds no item", []step{prompt, stop, prompt}, want{nil, []string{"[git-c", knowledge.PromptLead, knowledge.DeltaLead}}},
+		{"an item approved after an answer comes under the delta lead", []step{prompt, stop, approve, prompt},
+			want{[]string{knowledge.DeltaLead + prC}, []string{"[git-c", knowledge.PromptLead}}},
+		{"a new version comes under the delta lead", []step{prompt, stop, revise, prompt}, want{[]string{knowledge.DeltaLead + gitC2}, []string{gitC}}},
+		{"an item approved during a turn is added at the next prompt", []step{prompt, stop, prompt, approve, stop, prompt},
+			want{[]string{knowledge.DeltaLead + prC}, []string{"[git-c"}}},
+		{"an item approved between turns is added again once and then never", []step{prompt, stop, approve, prompt, stop, prompt, stop, prompt},
+			want{nil, []string{"[pr-c", "[git-c"}}},
+		{"a prompt after a compaction adds no item since the start added them", []step{prompt, stop, compact, prompt},
+			want{nil, []string{"[git-c", knowledge.PromptLead}}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			home, records, repo := hookHome(t, "use git -C")
+			getenv := func(k string) string { return map[string]string{"HOME": home, envRecordDir: records}[k] }
+			now := hookClock()
+			store, err := tracefile.New(records)
+			require.NoError(t, err)
+			knowledgeOf := func(args ...string) {
+				var stderr bytes.Buffer
+				require.Equal(t, 0, runKnowledge(args, getenv, nil, now, &bytes.Buffer{}, &stderr), stderr.String())
 			}
-			var got struct {
-				Out struct {
-					Event   string `json:"hookEventName"`
-					Context string `json:"additionalContext"`
-				} `json:"hookSpecificOutput"`
+			propose := func(id, content string, version string) func() string {
+				return func() string {
+					runs, err := store.List(context.Background(), record.TraceFilter{Name: string(trace.NameRun), Limit: 1})
+					require.NoError(t, err)
+					knowledgeOf("propose", "--id", id, "--kind", "judgment", "--content", content,
+						"--trace", runs[0].ID, "--producer", sessionProducer, "--label", "repo=nodloop")
+					knowledgeOf("approve", id, "--version", version, "--approver", "ann")
+					return ""
+				}
 			}
-			require.NoError(t, json.Unmarshal(stdout.Bytes(), &got), stdout.String())
-			assert.Equal(t, "UserPromptSubmit", got.Out.Event)
-			for _, want := range tc.want.context {
-				assert.Contains(t, got.Out.Context, strings.ReplaceAll(want, "{run}", run))
+			hook := func(action string) func() string {
+				return func() string {
+					var stdout, stderr bytes.Buffer
+					stdin := `{"session_id":"s1","cwd":"` + repo + `","source":"compact","last_assistant_message":"done"}`
+					require.Equal(t, 0, runHook([]string{action}, getenv, nil, now, strings.NewReader(stdin), &stdout, &stderr))
+					require.Empty(t, stderr.String())
+					return stdout.String()
+				}
 			}
-			for _, absent := range tc.want.absent {
-				assert.NotContains(t, got.Out.Context, absent)
+			steps := map[step]func() string{
+				prompt: hook("prompt"), stop: hook("stop"), compact: hook("start"),
+				approve: propose("pr-c", "write the motivation first", "1"), revise: propose("git-c", "use git -C always", "2"),
 			}
+			// The output of the last run of each step
+			outputs := map[step]string{}
+			for _, s := range tc.args {
+				outputs[s] = steps[s]()
+			}
+
+			event, added := hookOutput(t, []byte(outputs[prompt]))
+			assert.Equal(t, "UserPromptSubmit", event)
+			assert.Equal(t, tc.want.context, hookFound(added, "", slices.Concat(tc.want.context, tc.want.absent)), added)
 		})
 	}
 }
@@ -240,67 +318,70 @@ func TestRunHookPromptModes(t *testing.T) {
 		turn turn
 	}
 	type want struct {
+		// The event of the output and empty for no output
+		event string
 		// Substrings of the added context and ones it must not hold
 		context []string
 		absent  []string
 	}
 	reaction, draft, waiting := "call the nodloop feedback tool on trace {run}", "Draft the correction of this turn", "wait for approval: "
 	silent, rejected := "Do it without telling the user", "was recorded as a reject of your previous answer, run {run}"
+	session := "this conversation is session s1"
+	const event = "UserPromptSubmit"
 	tcs := []struct {
 		name string
 		args args
 		want want
 	}{
-		{"deferred adds items alone on the first prompt", args{"deferred", first}, want{[]string{"use git -C\n"}, []string{waiting, reaction}}},
-		{"deferred records silently later and asks nothing", args{"deferred", later}, want{[]string{reaction, silent}, []string{draft, waiting}}},
-		{"deferred drafts nothing in the turn of a recorded reject", args{"deferred", recorded}, want{[]string{rejected, "drafted after the turn"}, []string{draft, reaction}}},
-		{"immediate adds items alone on the first prompt", args{"immediate", first}, want{[]string{"use git -C\n"}, []string{waiting, reaction}}},
-		{"immediate drafts in the turn and asks about the new draft later", args{"immediate", later}, want{[]string{reaction, draft, waiting + "1."}, []string{silent}}},
-		{"immediate drafts the recorded reject in the turn", args{"immediate", recorded}, want{[]string{rejected, draft}, []string{reaction}}},
-		{"manual adds items alone on the first prompt", args{"manual", first}, want{[]string{"use git -C\n"}, []string{waiting}}},
-		{"manual adds items alone later", args{"manual", later}, want{[]string{"use git -C\n"}, []string{reaction, waiting}}},
-		{"manual asks no reaction point", args{"manual", recorded}, want{[]string{"use git -C\n"}, []string{rejected, reaction}}},
+		{"deferred adds items alone on the first prompt", args{"deferred", first}, want{event, []string{"use git -C\n"}, []string{waiting, reaction}}},
+		{"deferred records silently later and asks nothing", args{"deferred", later}, want{event, []string{reaction, silent}, []string{draft, waiting, session}}},
+		{"deferred drafts nothing in the turn of a recorded reject", args{"deferred", recorded},
+			want{event, []string{rejected, "drafted after the turn"}, []string{draft, reaction}}},
+		{"immediate of an earlier release adds items alone on the first prompt", args{"immediate", first},
+			want{event, []string{"use git -C\n"}, []string{waiting, reaction}}},
+		{"immediate of an earlier release records silently later like deferred", args{"immediate", later},
+			want{event, []string{reaction, silent}, []string{draft, waiting, session}}},
+		{"immediate of an earlier release drafts nothing in the turn of a recorded reject", args{"immediate", recorded},
+			want{event, []string{rejected, "drafted after the turn"}, []string{draft, reaction, session}}},
+		{"manual adds items alone on the first prompt", args{"manual", first}, want{event, []string{"use git -C\n"}, []string{waiting}}},
+		{"manual adds nothing later since the items are in the context", args{"manual", later}, want{}},
+		{"manual asks no reaction point", args{"manual", recorded}, want{}},
 		{"off adds nothing on the first prompt", args{"off", first}, want{}},
 		{"off adds nothing later", args{"off", later}, want{}},
 		{"off adds nothing after a correction", args{"off", recorded}, want{}},
+	}
+	// Only the recorded turn has a reaction point and its endpoint is sure of a correction
+	points := map[turn]func(t *testing.T, getenv func(string) string, now func() time.Time){
+		first: func(*testing.T, func(string) string, func() time.Time) {},
+		later: func(*testing.T, func(string) string, func() time.Time) {},
+		recorded: func(t *testing.T, getenv func(string) string, now func() time.Time) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = w.Write([]byte(`{"answers":{"corrects":{"noul":0.95},"approves":{"noul":0.05}}}`))
+			}))
+			t.Cleanup(srv.Close)
+			require.Equal(t, 0, runClassifier([]string{"set", "reaction", "--url", srv.URL}, getenv, now, &bytes.Buffer{}, &bytes.Buffer{}))
+		},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			home, records, repo := hookHome(t, "use git -C")
 			getenv := func(k string) string { return map[string]string{"HOME": home, envRecordDir: records}[k] }
-			if tc.args.turn == recorded {
-				srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-					_, _ = w.Write([]byte(`{"answers":{"corrects":{"noul":0.95},"approves":{"noul":0.05}}}`))
-				}))
-				t.Cleanup(srv.Close)
-				require.Equal(t, 0, runClassifier([]string{"set", "reaction", "--url", srv.URL}, getenv, time.Now, &bytes.Buffer{}, &bytes.Buffer{}))
-			}
-			run := hookPromptSetup(t, getenv, repo, tc.args.turn != first, true, tc.args.turn == later)
-			require.Equal(t, 0, runConfig([]string{"session_mode", tc.args.mode}, getenv, &bytes.Buffer{}, &bytes.Buffer{}))
+			now := hookClock()
+			points[tc.args.turn](t, getenv, now)
+			run := hookPromptSetup(t, getenv, now, repo, tc.args.turn != first, true, tc.args.turn == later)
+			// The env names the mode since config session_mode saves no mode of an earlier release
+			inMode := envOf(map[string]string{"HOME": home, envRecordDir: records, envSession: tc.args.mode})
 			stdin := `{"session_id":"s1","cwd":"` + repo + `","prompt":"that was wrong"}`
 			var stdout, stderr bytes.Buffer
 
-			code := runHook([]string{"prompt"}, getenv, nil, time.Now, strings.NewReader(stdin), &stdout, &stderr)
+			code := runHook([]string{"prompt"}, inMode, nil, now, strings.NewReader(stdin), &stdout, &stderr)
 
+			event, added := hookOutput(t, stdout.Bytes())
 			assert.Equal(t, 0, code)
 			assert.Empty(t, stderr.String())
-			if len(tc.want.context) == 0 {
-				assert.Empty(t, stdout.String())
-				return
-			}
-			var got struct {
-				Out struct {
-					Context string `json:"additionalContext"`
-				} `json:"hookSpecificOutput"`
-			}
-			require.NoError(t, json.Unmarshal(stdout.Bytes(), &got), stdout.String())
-			for _, want := range tc.want.context {
-				assert.Contains(t, got.Out.Context, strings.ReplaceAll(want, "{run}", run))
-			}
-			for _, absent := range tc.want.absent {
-				assert.NotContains(t, got.Out.Context, strings.ReplaceAll(absent, "{run}", run))
-			}
+			assert.Equal(t, tc.want.event, event)
+			assert.Equal(t, tc.want.context, hookFound(added, run, slices.Concat(tc.want.context, tc.want.absent)), added)
 		})
 	}
 }
@@ -308,7 +389,8 @@ func TestRunHookPromptModes(t *testing.T) {
 // The mode comes from NODLOOP_SESSION, then session_mode in config.json, then deferred, and an unknown one records nothing
 func TestRunHookSessionMode(t *testing.T) {
 	type args struct {
-		env   string
+		env string
+		// config.json and none when empty
 		saved string
 	}
 	type want struct {
@@ -323,7 +405,9 @@ func TestRunHookSessionMode(t *testing.T) {
 	}{
 		{"nothing set is deferred", args{"", ""}, want{note: true}},
 		{"the config sets the mode", args{"", `{"session_mode":"manual"}`}, want{}},
-		{"the env wins over the config", args{"immediate", `{"session_mode":"manual"}`}, want{note: true}},
+		{"the env wins over the config", args{"deferred", `{"session_mode":"manual"}`}, want{note: true}},
+		{"immediate of an earlier release in the env runs as deferred", args{"immediate", `{"session_mode":"manual"}`}, want{note: true}},
+		{"immediate of an earlier release in the config runs as deferred", args{"", `{"session_mode":"immediate"}`}, want{note: true}},
 		{"an unknown mode in the config names config.json", args{"", `{"session_mode":"later"}`},
 			want{stderr: `nodloop hook: unknown session mode: session_mode in config.json is "later"`}},
 		{"an unknown mode in the env names the env", args{"on", ""}, want{stderr: `nodloop hook: unknown session mode: NODLOOP_SESSION is "on"`}},
@@ -335,15 +419,13 @@ func TestRunHookSessionMode(t *testing.T) {
 			getenv := func(k string) string {
 				return map[string]string{"HOME": home, envRecordDir: records, envSession: tc.args.env}[k]
 			}
-			hookPromptSetup(t, func(k string) string { return map[string]string{"HOME": home, envRecordDir: records}[k] }, repo, true, false, false)
-			if tc.args.saved != "" {
-				require.NoError(t, os.MkdirAll(homeDir(home).dir(), 0o755))
-				require.NoError(t, os.WriteFile(homeDir(home).config().ConfigPath(), []byte(tc.args.saved), 0o600))
-			}
+			now := hookClock()
+			hookPromptSetup(t, func(k string) string { return map[string]string{"HOME": home, envRecordDir: records}[k] }, now, repo, true, false, false)
+			hookSaveConfig(t, home, tc.args.saved)
 			stdin := `{"session_id":"s1","cwd":"` + repo + `"}`
 			var stdout, stderr bytes.Buffer
 
-			code := runHook([]string{"prompt"}, getenv, nil, time.Now, strings.NewReader(stdin), &stdout, &stderr)
+			code := runHook([]string{"prompt"}, getenv, nil, now, strings.NewReader(stdin), &stdout, &stderr)
 
 			assert.Equal(t, 0, code)
 			assert.True(t, strings.HasPrefix(stderr.String(), tc.want.stderr), stderr.String())
@@ -352,38 +434,51 @@ func TestRunHookSessionMode(t *testing.T) {
 	}
 }
 
-// Starting or resuming Claude Code names every draft waiting in the place and nothing else starts a review
+// A compaction or a clear adds every fitting item of the place again and a subagent start adds them while no start names a waiting draft
 func TestRunHookStart(t *testing.T) {
 	type args struct {
+		// The hook action and start when empty
+		action string
 		source string
 		mode   string
-		// The repo of the draft or another one
+		// Another repo than the one of the item
 		other bool
 		// A broken line follows the knowledge records
 		corrupt bool
+		// The holdout withholds session s1
+		withheld bool
 	}
 	type want struct {
 		// The event and context of the output, both empty for none
 		event, context string
 		stderr         string
 	}
-	named := want{event: "SessionStart", context: sessionNote{waiting: 1}.text()}
+	items := want{event: "SessionStart", context: knowledge.PromptLead + "- [git-c v1 judgment] use git -C\n"}
+	subagent := want{event: "SubagentStart", context: items.context}
 	tcs := []struct {
 		name string
 		args args
 		want want
 	}{
-		{"a startup names the draft", args{source: "startup"}, named},
-		{"a resume names the draft", args{source: "resume"}, named},
-		{"immediate names the draft on a resume", args{source: "resume", mode: "immediate"}, named},
-		{"a corrupt line leaves the other records counted", args{source: "startup", corrupt: true},
-			want{event: named.event, context: named.context, stderr: "knowledge.jsonl has corrupt lines"}},
-		{"a clear names nothing", args{source: "clear"}, want{}},
-		{"a compact names nothing", args{source: "compact"}, want{}},
-		{"a fork names nothing", args{source: "fork"}, want{}},
-		{"another repo has nothing waiting", args{source: "startup", other: true}, want{}},
-		{"manual names nothing", args{source: "startup", mode: "manual"}, want{}},
-		{"off names nothing", args{source: "startup", mode: "off"}, want{}},
+		{"a compact adds the items", args{source: "compact"}, items},
+		{"a clear adds the items", args{source: "clear"}, items},
+		{"manual adds the items", args{source: "compact", mode: "manual"}, items},
+		{"a corrupt line leaves the other records added", args{source: "clear", corrupt: true},
+			want{event: items.event, context: items.context, stderr: "knowledge.jsonl has corrupt lines"}},
+		{"a startup adds nothing since the first prompt does", args{source: "startup"}, want{}},
+		{"a resume adds nothing", args{source: "resume"}, want{}},
+		{"a fork adds nothing", args{source: "fork"}, want{}},
+		{"another repo has no item", args{source: "compact", other: true}, want{}},
+		{"a withheld session gets no item", args{source: "compact", withheld: true}, want{}},
+		{"off adds nothing", args{source: "compact", mode: "off"}, want{}},
+		{"a subagent gets the items", args{action: "subagent"}, subagent},
+		{"a subagent in manual gets the items", args{action: "subagent", mode: "manual"}, subagent},
+		{"a subagent gets the items whatever the source", args{action: "subagent", source: "startup"}, subagent},
+		{"a subagent with a corrupt line gets the other records", args{action: "subagent", corrupt: true},
+			want{event: subagent.event, context: subagent.context, stderr: "knowledge.jsonl has corrupt lines"}},
+		{"a subagent in another repo gets nothing", args{action: "subagent", other: true}, want{}},
+		{"a subagent of a withheld session gets no item", args{action: "subagent", withheld: true}, want{}},
+		{"a subagent in off gets nothing", args{action: "subagent", mode: "off"}, want{}},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
@@ -392,39 +487,63 @@ func TestRunHookStart(t *testing.T) {
 			getenv := func(k string) string {
 				return map[string]string{"HOME": home, envRecordDir: records, envSession: tc.args.mode}[k]
 			}
-			hookPromptSetup(t, getenv, repo, false, true, false)
-			if tc.args.corrupt {
-				f, err := os.OpenFile(filepath.Join(records, "knowledge.jsonl"), os.O_APPEND|os.O_WRONLY, 0o600)
-				require.NoError(t, err)
-				_, err = f.WriteString("not json\n")
-				require.NoError(t, err)
-				require.NoError(t, f.Close())
-			}
+			now := hookClock()
+			hookPromptSetup(t, getenv, now, repo, false, true, false)
+			// A share of 0 withholds no session like no holdout at all
+			share := map[bool]string{false: "0", true: "0.999"}[tc.args.withheld]
+			require.Equal(t, 0, runConfig([]string{"holdout", share}, getenv, &bytes.Buffer{}, &bytes.Buffer{}))
+			hookAppend(t, filepath.Join(records, "knowledge.jsonl"), map[bool]string{true: "not json\n"}[tc.args.corrupt])
 			cwd := map[bool]string{false: repo, true: filepath.Join(t.TempDir(), "other")}[tc.args.other]
 			require.NoError(t, os.MkdirAll(filepath.Join(cwd, ".git"), 0o755))
 			stdin := `{"session_id":"s1","cwd":"` + cwd + `","source":"` + tc.args.source + `"}`
 			var stdout, stderr bytes.Buffer
 
-			code := runHook([]string{"start"}, getenv, nil, time.Now, strings.NewReader(stdin), &stdout, &stderr)
+			code := runHook([]string{cmp.Or(tc.args.action, "start")}, getenv, nil, now, strings.NewReader(stdin), &stdout, &stderr)
 
-			var got struct {
-				Out struct {
-					Event   string `json:"hookEventName"`
-					Context string `json:"additionalContext"`
-				} `json:"hookSpecificOutput"`
-			}
-			// No output decodes as nothing so every case reads the same way
-			_ = json.Unmarshal(stdout.Bytes(), &got)
+			event, added := hookOutput(t, stdout.Bytes())
 			assert.Equal(t, 0, code)
-			assert.Equal(t, tc.want.event, got.Out.Event)
-			assert.Equal(t, tc.want.context, got.Out.Context)
+			assert.Equal(t, tc.want.event, event)
+			assert.Equal(t, tc.want.context, added)
 			assert.Contains(t, stderr.String(), tc.want.stderr)
 		})
 	}
 }
 
+// The first prompt after a start counts the items the start added as in the context
+// A clear gives the conversation a new session id with no run so only the refill tells the prompt what it holds
+func TestRunHookPromptAfterStart(t *testing.T) {
+	tcs := []struct {
+		name string
+		args string
+		// The context the prompt adds
+		want string
+	}{
+		{"a clear leaves nothing to add", "clear", ""},
+		{"a compact leaves nothing to add", "compact", ""},
+		{"a startup leaves every item to the prompt", "startup", knowledge.PromptLead + "- [git-c v1 judgment] use git -C\n"},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			home, records, repo := hookHome(t, "use git -C")
+			getenv := envOf(map[string]string{"HOME": home, envRecordDir: records, envSession: "manual"})
+			now := hookClock()
+			start := `{"session_id":"s2","cwd":"` + repo + `","source":"` + tc.args + `"}`
+			require.Equal(t, 0, runHook([]string{"start"}, getenv, nil, now, strings.NewReader(start), &bytes.Buffer{}, &bytes.Buffer{}))
+			var stdout, stderr bytes.Buffer
+
+			code := runHook([]string{"prompt"}, getenv, nil, now, strings.NewReader(`{"session_id":"s2","cwd":"`+repo+`"}`), &stdout, &stderr)
+
+			_, added := hookOutput(t, stdout.Bytes())
+			assert.Equal(t, 0, code)
+			assert.Empty(t, stderr.String())
+			assert.Equal(t, tc.want, added)
+		})
+	}
+}
+
 // The run of an answer of session s1 in the repo when answered, with a candidate for the repo before it when waiting and after it when drafted
-func hookPromptSetup(t *testing.T, getenv func(string) string, repo string, answered, waiting, drafted bool) string {
+func hookPromptSetup(t *testing.T, getenv func(string) string, now func() time.Time, repo string, answered, waiting, drafted bool) string {
 	t.Helper()
 	store, err := tracefile.New(getenv(envRecordDir))
 	require.NoError(t, err)
@@ -435,7 +554,7 @@ func hookPromptSetup(t *testing.T, getenv func(string) string, repo string, answ
 		require.Equal(t, 0, runKnowledge([]string{
 			"propose", "--id", id, "--kind", "judgment", "--content", content,
 			"--trace", runs[0].ID, "--producer", sessionProducer, "--label", "repo=nodloop",
-		}, getenv, nil, time.Now, &bytes.Buffer{}, &stderr), stderr.String())
+		}, getenv, nil, now, &bytes.Buffer{}, &stderr), stderr.String())
 	}
 	if waiting {
 		propose("short-msg", "keep commit messages to one line")
@@ -444,7 +563,7 @@ func hookPromptSetup(t *testing.T, getenv func(string) string, repo string, answ
 		return ""
 	}
 	stdin := `{"session_id":"s1","cwd":"` + repo + `","last_assistant_message":"done"}`
-	require.Equal(t, 0, runHook([]string{"stop"}, getenv, nil, time.Now, strings.NewReader(stdin), &bytes.Buffer{}, &bytes.Buffer{}))
+	require.Equal(t, 0, runHook([]string{"stop"}, getenv, nil, now, strings.NewReader(stdin), &bytes.Buffer{}, &bytes.Buffer{}))
 	runs, err := store.List(context.Background(), record.TraceFilter{Name: string(trace.NameRun), SessionID: "s1"})
 	require.NoError(t, err)
 	require.Len(t, runs, 1)
@@ -452,6 +571,63 @@ func hookPromptSetup(t *testing.T, getenv func(string) string, repo string, answ
 		propose("pr-body", "write the motivation of a pull request first")
 	}
 	return runs[0].ID
+}
+
+// A fake clock an hour after the records of hookHome
+// It steps a second on every read so the records keep the order of the calls
+func hookClock() func() time.Time {
+	at := time.Date(2026, 10, 2, 1, 0, 0, 0, time.UTC)
+	return func() time.Time {
+		at = at.Add(time.Second)
+		return at
+	}
+}
+
+// The event and the added context of a hook output and both empty for no output
+func hookOutput(t *testing.T, stdout []byte) (event, added string) {
+	t.Helper()
+	if len(stdout) == 0 {
+		return "", ""
+	}
+	var got struct {
+		Out struct {
+			Event   string `json:"hookEventName"`
+			Context string `json:"additionalContext"`
+		} `json:"hookSpecificOutput"`
+	}
+	require.NoError(t, json.Unmarshal(stdout, &got), string(stdout))
+	return got.Out.Event, got.Out.Context
+}
+
+// The substrings the context holds in their order with {run} standing for the run
+func hookFound(added, run string, subs []string) []string {
+	var found []string
+	for _, s := range subs {
+		if strings.Contains(added, strings.ReplaceAll(s, "{run}", run)) {
+			found = append(found, s)
+		}
+	}
+	return found
+}
+
+// Writes config.json of the home and nothing when saved is empty
+func hookSaveConfig(t *testing.T, home, saved string) {
+	t.Helper()
+	if saved == "" {
+		return
+	}
+	require.NoError(t, os.MkdirAll(homeDir(home).dir(), 0o755))
+	require.NoError(t, os.WriteFile(homeDir(home).config().ConfigPath(), []byte(saved), 0o600))
+}
+
+// Appends the line to a record file and an empty line leaves it as it is
+func hookAppend(t *testing.T, path, line string) {
+	t.Helper()
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o600)
+	require.NoError(t, err)
+	_, err = f.WriteString(line)
+	require.NoError(t, err)
+	require.NoError(t, f.Close())
 }
 
 func TestRunHookStop(t *testing.T) {
@@ -512,60 +688,76 @@ func TestRunHookStop(t *testing.T) {
 // The stop hook starts the extraction of the previous run only when the conversation inferred a correction of it
 func TestRunHookStopExtract(t *testing.T) {
 	type args struct {
-		// The reviewer of a reject on the first answer
-		// None when empty
-		reviewer string
-		// The verdict of a person recorded on the first answer before that reject
-		person  string
-		session string
+		// The feedback flags recorded in order on the first answer
+		verdicts [][]string
+		session  string
 		// Answers after the first one
 		stops int
-		// The start fails
-		fails bool
-		// A person withdraws the reject
-		withdrawn bool
+		// The error of the start and none when nil
+		startErr error
 		// The conversation drafted the lesson of the reject in its turn
 		drafted bool
+		// The mode of the trace records before the later answers and unchanged when 0
+		mode os.FileMode
 	}
 	type want struct {
+		// Runs of session s1 recorded
+		runs     int
 		extracts bool
 		stderr   string
 	}
+	reject := func(reviewer string) []string {
+		return []string{"--verdict", "reject", "--reason-code", "form", "--reason", "the message was too long", "--reviewer", reviewer}
+	}
+	inferred := [][]string{reject("session")}
 	tcs := []struct {
 		name string
 		args args
 		want want
 	}{
-		{"an inferred correction of the previous answer is extracted", args{reviewer: "session", stops: 1}, want{extracts: true}},
-		{"a later answer does not extract it again", args{reviewer: "session", stops: 2}, want{extracts: true}},
-		{"a person's verdict is left to the nod skill", args{reviewer: "ann", stops: 1}, want{}},
-		{"a person's approve wins over a later inferred reject", args{reviewer: "session", person: "approve", stops: 1}, want{}},
-		{"an answer without a verdict extracts nothing", args{stops: 1}, want{}},
-		{"manual extracts nothing", args{reviewer: "session", session: "manual", stops: 1}, want{}},
-		{"immediate extracts like deferred", args{reviewer: "session", session: "immediate", stops: 1}, want{extracts: true}},
-		{"a reject a person withdrew is not extracted", args{reviewer: "session", stops: 1, withdrawn: true}, want{}},
-		{"a correction the turn already drafted is not extracted again", args{reviewer: "session", stops: 1, drafted: true}, want{}},
-		{"a failed start still records the answer", args{reviewer: "session", stops: 1, fails: true}, want{extracts: true, stderr: "nodloop hook: no process"}},
+		{"an inferred correction of the previous answer is extracted", args{verdicts: inferred, stops: 1}, want{runs: 2, extracts: true}},
+		{"a later answer does not extract it again", args{verdicts: inferred, stops: 2}, want{runs: 3, extracts: true}},
+		{"a person's verdict is left to the nod skill", args{verdicts: [][]string{reject("ann")}, stops: 1}, want{runs: 2}},
+		{
+			"a person's approve wins over a later inferred reject",
+			args{verdicts: [][]string{{"--verdict", "approve", "--reviewer", "ann"}, reject("session")}, stops: 1},
+			want{runs: 2},
+		},
+		{"an answer without a verdict extracts nothing", args{stops: 1}, want{runs: 2}},
+		{"manual extracts nothing", args{verdicts: inferred, session: "manual", stops: 1}, want{runs: 2}},
+		{"immediate of an earlier release extracts like deferred", args{verdicts: inferred, session: "immediate", stops: 1}, want{runs: 2, extracts: true}},
+		{
+			"a reject a person withdrew is not extracted",
+			args{verdicts: [][]string{reject("session"), {"--verdict", "withdraw", "--reviewer", "ann"}}, stops: 1},
+			want{runs: 2},
+		},
+		{"a correction the turn already drafted is not extracted again", args{verdicts: inferred, stops: 1, drafted: true}, want{runs: 2}},
+		{
+			"a failed start still records the answer",
+			args{verdicts: inferred, stops: 1, startErr: errors.New("no process")},
+			want{runs: 2, extracts: true, stderr: "nodloop hook: no process"},
+		},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
+			if tc.args.mode != 0 && (runtime.GOOS == "windows" || os.Geteuid() == 0) {
+				t.Skip("a read only file stops no write on windows or as root")
+			}
 			home, records, repo := hookHome(t, "use git -C")
 			getenv := func(k string) string {
 				return map[string]string{"HOME": home, envRecordDir: records, envSession: tc.args.session}[k]
 			}
+			now := hookClock()
 			var started [][]string
 			start := func(args []string) error {
 				started = append(started, args)
-				if tc.args.fails {
-					return errors.New("no process")
-				}
-				return nil
+				return tc.args.startErr
 			}
 			stop := func(answer string) string {
 				var stderr bytes.Buffer
 				stdin := `{"session_id":"s1","cwd":"` + repo + `","last_assistant_message":"` + answer + `"}`
-				require.Equal(t, 0, runHook([]string{"stop"}, getenv, start, time.Now, strings.NewReader(stdin), &bytes.Buffer{}, &stderr))
+				require.Equal(t, 0, runHook([]string{"stop"}, getenv, start, now, strings.NewReader(stdin), &bytes.Buffer{}, &stderr))
 				return stderr.String()
 			}
 			stop("committed with a long message")
@@ -574,42 +766,30 @@ func TestRunHookStopExtract(t *testing.T) {
 			first, err := store.List(context.Background(), record.TraceFilter{Name: string(trace.NameRun), SessionID: "s1"})
 			require.NoError(t, err)
 			require.Len(t, first, 1)
-			if tc.args.person != "" {
+			for _, flags := range tc.args.verdicts {
 				var stderr bytes.Buffer
-				require.Equal(t, 0, runFeedback([]string{"add", "--trace", first[0].ID, "--verdict", tc.args.person, "--reviewer", "ann"},
-					getenv, time.Now, &bytes.Buffer{}, &stderr), stderr.String())
+				require.Equal(t, 0, runFeedback(slices.Concat([]string{"add", "--trace", first[0].ID}, flags), getenv, now, &bytes.Buffer{}, &stderr), stderr.String())
 			}
-			if tc.args.reviewer != "" {
+			drafts := map[bool][][]string{true: {{
+				"propose", "--id", "short-msg", "--kind", "judgment", "--content", "keep commit messages to one line",
+				"--trace", first[0].ID, "--producer", sessionProducer, "--label", "repo=nodloop",
+			}}}[tc.args.drafted]
+			for _, draft := range drafts {
 				var stderr bytes.Buffer
-				require.Equal(t, 0, runFeedback([]string{"add", "--trace", first[0].ID, "--verdict", "reject", "--reason-code", "form",
-					"--reason", "the message was too long", "--reviewer", tc.args.reviewer}, getenv, time.Now, &bytes.Buffer{}, &stderr), stderr.String())
+				require.Equal(t, 0, runKnowledge(draft, getenv, nil, now, &bytes.Buffer{}, &stderr), stderr.String())
 			}
-			if tc.args.withdrawn {
-				var stderr bytes.Buffer
-				require.Equal(t, 0, runFeedback([]string{"add", "--trace", first[0].ID, "--verdict", "withdraw", "--reviewer", "ann"},
-					getenv, time.Now, &bytes.Buffer{}, &stderr), stderr.String())
-			}
-			if tc.args.drafted {
-				var stderr bytes.Buffer
-				require.Equal(t, 0, runKnowledge([]string{
-					"propose", "--id", "short-msg", "--kind", "judgment", "--content", "keep commit messages to one line",
-					"--trace", first[0].ID, "--producer", sessionProducer, "--label", "repo=nodloop",
-				}, getenv, nil, time.Now, &bytes.Buffer{}, &stderr), stderr.String())
-			}
+			require.NoError(t, os.Chmod(filepath.Join(records, "traces.jsonl"), cmp.Or(tc.args.mode, 0o600)))
 			var stderr string
 			for i := range tc.args.stops {
 				stderr += stop(fmt.Sprintf("answer %d", i))
 			}
 
-			assert.Contains(t, stderr, tc.want.stderr)
 			runs, err := store.List(context.Background(), record.TraceFilter{Name: string(trace.NameRun), SessionID: "s1"})
 			require.NoError(t, err)
-			assert.Len(t, runs, 1+tc.args.stops)
-			if !tc.want.extracts {
-				assert.Empty(t, started)
-				return
-			}
-			assert.Equal(t, [][]string{{"knowledge", "extract", "--from", first[0].ID}}, started)
+			extracted := map[bool][][]string{true: {{"knowledge", "extract", "--from", first[0].ID}}}[tc.want.extracts]
+			assert.Contains(t, stderr, tc.want.stderr)
+			assert.Len(t, runs, tc.want.runs)
+			assert.Equal(t, extracted, started)
 		})
 	}
 }
@@ -689,32 +869,57 @@ func TestReplyText(t *testing.T) {
 
 // A run the stop hook recorded with the item and a person's approve on it show in the loop report
 func TestRunReportLoop(t *testing.T) {
-	home, records, repo := hookHome(t, "use git -C")
-	getenv := func(k string) string { return map[string]string{"HOME": home, envRecordDir: records}[k] }
-	stdin := `{"session_id":"s2","cwd":"` + repo + `","last_assistant_message":"git -C repo status"}`
-	require.Equal(t, 0, runHook([]string{"stop"}, getenv, nil, time.Now, strings.NewReader(stdin), &bytes.Buffer{}, &bytes.Buffer{}))
-	store, err := tracefile.New(records)
-	require.NoError(t, err)
-	runs, err := store.List(context.Background(), record.TraceFilter{Name: string(trace.NameRun), SessionID: "s2"})
-	require.NoError(t, err)
-	require.Len(t, runs, 1)
-	var stderr bytes.Buffer
-	require.Equal(t, 0, runFeedback([]string{"add", "--trace", runs[0].ID, "--verdict", "approve"}, getenv, time.Now, &bytes.Buffer{}, &stderr), stderr.String())
-	var stdout bytes.Buffer
+	type want struct {
+		code   int
+		stdout string
+		stderr string
+	}
+	tcs := []struct {
+		name string
+		args []string
+		want want
+	}{
+		{
+			"the text report counts the run and the item it followed",
+			[]string{"loop"},
+			want{stdout: "window\tall\nloop\truns 2\tjudged 1\tinferred 0\tcorrected 0\twaiting 0\tapproved 1\n" +
+				"scope\tunknown\titems 1\tsingle session 0\tnever applied 0\n" +
+				"git-c\tv1\tapplied 1\tfollowed 1 of 1\trepeat 0\tinferred followed 0 of 0\tinferred repeat 0\tsettle -\n" +
+				"misapplied\tnot measured: no label says which runs an item should have reached\n"},
+		},
+		{
+			"the JSON report holds the same totals and item",
+			[]string{"loop", "--json"},
+			want{stdout: `{"totals":{"runs":2,"judged":1,"inferred":0,"corrected":0,"waiting":0,"approved":1},` +
+				`"scopes":[{"version":"unknown","items":1,"single_session":0,"never_applied":0}],"drafts":[],` +
+				`"items":[{"id":"git-c","version":1,"applied":1,"judged":1,"followed":1,"repeat":0,` +
+				`"inferred_judged":0,"inferred_followed":0,"inferred_repeat":0,"settle_ns":0}]}` + "\n"},
+		},
+		{"an unknown flag fails", []string{"loop", "--nope"}, want{code: 1, stderr: "flag provided but not defined: -nope"}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			home, records, repo := hookHome(t, "use git -C")
+			getenv := func(k string) string { return map[string]string{"HOME": home, envRecordDir: records}[k] }
+			now := hookClock()
+			stdin := `{"session_id":"s2","cwd":"` + repo + `","last_assistant_message":"git -C repo status"}`
+			require.Equal(t, 0, runHook([]string{"stop"}, getenv, nil, now, strings.NewReader(stdin), &bytes.Buffer{}, &bytes.Buffer{}))
+			store, err := tracefile.New(records)
+			require.NoError(t, err)
+			runs, err := store.List(context.Background(), record.TraceFilter{Name: string(trace.NameRun), SessionID: "s2"})
+			require.NoError(t, err)
+			require.Len(t, runs, 1)
+			var stdout, stderr bytes.Buffer
+			require.Equal(t, 0, runFeedback([]string{"add", "--trace", runs[0].ID, "--verdict", "approve", "--reviewer", "ann"}, getenv, now, &bytes.Buffer{}, &stderr), stderr.String())
 
-	code := runReport([]string{"loop"}, getenv, time.Now, &stdout, &stderr)
+			code := runReport(tc.args, getenv, now, &stdout, &stderr)
 
-	require.Equal(t, 0, code, stderr.String())
-	assert.Equal(t, "window\tall\nloop\truns 2\tjudged 1\tinferred 0\tcorrected 0\twaiting 0\tapproved 1\n"+
-		"scope\tunknown\titems 1\tsingle session 0\tnever applied 0\n"+
-		"git-c\tv1\tapplied 1\tfollowed 1 of 1\trepeat 0\tinferred followed 0 of 0\tinferred repeat 0\tsettle -\n"+
-		"misapplied\tnot measured: no label says which runs an item should have reached\n", stdout.String())
-	var asJSON bytes.Buffer
-	require.Equal(t, 0, runReport([]string{"loop", "--json"}, getenv, time.Now, &asJSON, &stderr), stderr.String())
-	var report loop.LoopReport
-	require.NoError(t, json.Unmarshal(asJSON.Bytes(), &report))
-	assert.Equal(t, loop.Totals{Runs: 2, Judged: 1, Approved: 1}, report.Totals)
-	assert.Equal(t, []loop.RunItem{{ID: "git-c", Version: 1, Applied: 1, Judged: 1, Followed: 1}}, report.Items)
+			assert.Equal(t, tc.want.code, code, stderr.String())
+			assert.Equal(t, tc.want.stdout, stdout.String())
+			assert.Contains(t, stderr.String(), tc.want.stderr)
+		})
+	}
 }
 
 // A run item narrows by the dir of its refuted run and promotes on its confirmed run, all on the records alone
@@ -732,7 +937,7 @@ func TestRunKnowledgeLifecycle(t *testing.T) {
 	refuted, confirmed := record("docs"), record(".")
 	for id, result := range map[string]string{refuted: "refuted", confirmed: "confirmed"} {
 		var stderr bytes.Buffer
-		require.Equal(t, 0, runFeedback([]string{"outcome", "--trace", id, "--result", result}, getenv, time.Now, &bytes.Buffer{}, &stderr), stderr.String())
+		require.Equal(t, 0, runFeedback([]string{"outcome", "--trace", id, "--result", result, "--reviewer", "ann"}, getenv, time.Now, &bytes.Buffer{}, &stderr), stderr.String())
 	}
 	knowledgeRun := func(args ...string) (int, string, string) {
 		var stdout, stderr bytes.Buffer
@@ -758,14 +963,158 @@ func TestHookItemsFitting(t *testing.T) {
 	item := func(id string, size int) knowledge.Knowledge {
 		return knowledge.Knowledge{ID: id, Version: 1, Kind: knowledge.KindJudgment, Content: strings.Repeat("x", size)}
 	}
-	items := hookItems{item("a", 6000), item("b", 6000), item("c", 10)}
+	type want struct {
+		// The ids of the items shown and recorded
+		shown []string
+		// The count line of the items left out and empty for none
+		leftOut string
+	}
+	counted := regexp.MustCompile(`- \d+ more items left out over the size cap\n`)
+	tcs := []struct {
+		name string
+		args hookItems
+		want want
+	}{
+		{"items past the cap are left out and counted", hookItems{item("a", 6000), item("b", 6000), item("c", 10)},
+			want{[]string{"a"}, "- 2 more items left out over the size cap\n"}},
+		{"items under the cap are all shown and none counted", hookItems{item("a", 10), item("b", 10)}, want{[]string{"a", "b"}, ""}},
+		{"no items show nothing", nil, want{}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			shown, lines := tc.args.fitting()
+			text := tc.args.context(nil, sessionNote{})
 
-	shown, _ := items.fitting()
+			var ids []string
+			for _, k := range shown {
+				ids = append(ids, k.ID)
+			}
+			assert.Equal(t, tc.want.shown, ids)
+			assert.Len(t, lines, len(tc.want.shown))
+			assert.Equal(t, tc.want.leftOut, counted.FindString(text))
+			assert.Less(t, len([]rune(text)), 10_000)
+		})
+	}
+}
 
-	require.Len(t, shown, 1)
-	assert.Equal(t, "a", shown[0].ID)
-	assert.Contains(t, items.context(sessionNote{}), "- 2 more items left out over the size cap\n")
-	assert.Less(t, len([]rune(items.context(sessionNote{}))), 10_000)
+// A prompt after versions in the context adds only the fitting versions not among them
+func TestHookItemsContextDelta(t *testing.T) {
+	item := func(id string, version, size int) knowledge.Knowledge {
+		return knowledge.Knowledge{ID: id, Version: version, Kind: knowledge.KindJudgment, Content: strings.Repeat("x", size)}
+	}
+	type args struct {
+		items     hookItems
+		inContext []knowledge.Ref
+	}
+	note := sessionNote{run: "run-1"}
+	tcs := []struct {
+		name string
+		args args
+		// The whole context with {note} for the note text
+		want string
+	}{
+		{
+			"none in the context adds every item under the prompt lead",
+			args{hookItems{item("a", 1, 3), item("b", 1, 3)}, nil},
+			knowledge.PromptLead + "- [a v1 judgment] xxx\n- [b v1 judgment] xxx\n{note}",
+		},
+		{
+			"every version in the context adds the note alone",
+			args{hookItems{item("a", 1, 3)}, []knowledge.Ref{{ID: "a", Version: 1}}},
+			"{note}",
+		},
+		{
+			"a new item comes under the delta lead",
+			args{hookItems{item("a", 1, 3), item("b", 1, 3)}, []knowledge.Ref{{ID: "a", Version: 1}}},
+			knowledge.DeltaLead + "- [b v1 judgment] xxx\n{note}",
+		},
+		{
+			"a new version comes under the delta lead to replace the earlier line",
+			args{hookItems{item("a", 2, 3)}, []knowledge.Ref{{ID: "a", Version: 1}}},
+			knowledge.DeltaLead + "- [a v2 judgment] xxx\n{note}",
+		},
+		{
+			"an item past the cap is never added and never counted again",
+			args{hookItems{item("a", 1, 6000), item("b", 1, 6000)}, []knowledge.Ref{{ID: "a", Version: 1}}},
+			"{note}",
+		},
+		{
+			"versions of items no longer in the place add nothing",
+			args{nil, []knowledge.Ref{{ID: "a", Version: 1}}},
+			"{note}",
+		},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := tc.args.items.context(tc.args.inContext, note)
+
+			assert.Equal(t, strings.ReplaceAll(tc.want, "{note}", note.text()), got)
+		})
+	}
+}
+
+// The versions in the context are what the previous run applied less the ones approved during its turn or what a later refill added
+func TestSessionTurnsInContext(t *testing.T) {
+	before := time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)
+	run := func(input string, at time.Time) trace.Trace {
+		return trace.Trace{ID: "r", Name: trace.NameRun, Input: json.RawMessage(input), Time: at}
+	}
+	refill := func(input string, at time.Time) trace.Trace {
+		return trace.Trace{ID: "f", Name: trace.NameRefill, Input: json.RawMessage(input), Time: at}
+	}
+	applied := `{"applied":[{"id":"a","version":1},{"id":"b","version":1}]}`
+	refilled := `{"applied":[{"id":"c","version":2}]}`
+	items := knowledge.Set{
+		{ID: "a", Version: 1, Status: knowledge.StatusApproved, ApprovedAt: before.Add(-time.Hour)},
+		{ID: "b", Version: 1, Status: knowledge.StatusApproved, ApprovedAt: before.Add(time.Minute)},
+	}
+	type args struct {
+		runs   sessionTurns
+		refill trace.Trace
+	}
+	tcs := []struct {
+		name string
+		args args
+		want []knowledge.Ref
+	}{
+		{"no run has nothing in the context", args{nil, trace.Trace{}}, nil},
+		{
+			"a first run counts all it applied",
+			args{sessionTurns{run(applied, before.Add(2*time.Minute))}, trace.Trace{}},
+			[]knowledge.Ref{{ID: "a", Version: 1}, {ID: "b", Version: 1}},
+		},
+		{
+			"a version approved after the run before is added again",
+			args{sessionTurns{run(applied, before.Add(2*time.Minute)), run(applied, before)}, trace.Trace{}},
+			[]knowledge.Ref{{ID: "a", Version: 1}},
+		},
+		{
+			"a version no longer in the place stays in the context",
+			args{sessionTurns{run(`{"applied":[{"id":"c","version":1}]}`, before.Add(time.Minute)), run(applied, before)}, trace.Trace{}},
+			[]knowledge.Ref{{ID: "c", Version: 1}},
+		},
+		{"an unreadable input names nothing", args{sessionTurns{run(`{"applied":7}`, before)}, trace.Trace{}}, nil},
+		{"a refill of a cleared session with no run is the context", args{nil, refill(refilled, before)}, []knowledge.Ref{{ID: "c", Version: 2}}},
+		{
+			"a refill after the newest run is the context",
+			args{sessionTurns{run(applied, before)}, refill(refilled, before.Add(time.Minute))},
+			[]knowledge.Ref{{ID: "c", Version: 2}},
+		},
+		{
+			"a run after the refill applied what the context holds",
+			args{sessionTurns{run(applied, before.Add(2*time.Minute))}, refill(refilled, before.Add(time.Minute))},
+			[]knowledge.Ref{{ID: "a", Version: 1}, {ID: "b", Version: 1}},
+		},
+		{"an unreadable refill names nothing", args{nil, refill(`{"applied":7}`, before)}, nil},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.want, tc.args.runs.inContext(items, tc.args.refill))
+		})
+	}
 }
 
 // The note follows the items only in the room left under the context limit
@@ -774,23 +1123,29 @@ func TestHookItemsContextNote(t *testing.T) {
 		return hookItems{{ID: "a", Version: 1, Kind: knowledge.KindJudgment, Content: strings.Repeat("x", size)}}
 	}
 	note := sessionNote{run: "run-1"}
+	type want struct {
+		// The context holds the note
+		note bool
+		// The context opens with the prompt lead
+		lead bool
+	}
 	tcs := []struct {
-		name  string
-		items hookItems
-		want  bool
+		name string
+		args hookItems
+		want want
 	}{
-		{"no items leaves the note alone", nil, true},
-		{"a small item leaves room", item(100), true},
-		{"an item at the prompt cap leaves none", item(promptRunes - 250), false},
+		{"no items leaves the note alone", nil, want{note: true}},
+		{"a small item leaves room", item(100), want{note: true, lead: true}},
+		{"an item at the prompt cap leaves none", item(promptRunes - 250), want{lead: true}},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got := tc.items.context(note)
+			got := tc.args.context(nil, note)
 
-			assert.Equal(t, tc.want, strings.Contains(got, note.text()))
+			assert.Equal(t, tc.want.note, strings.Contains(got, note.text()))
 			assert.LessOrEqual(t, len([]rune(got)), contextRunes)
-			assert.Equal(t, len(tc.items) > 0, strings.HasPrefix(got, knowledge.PromptLead))
+			assert.Equal(t, tc.want.lead, strings.HasPrefix(got, knowledge.PromptLead))
 		})
 	}
 }
@@ -815,29 +1170,39 @@ func TestRepoName(t *testing.T) {
 func TestRunKnowledgeWaiting(t *testing.T) {
 	home, records, repo := hookHome(t, "use git -C")
 	getenv := func(k string) string { return map[string]string{"HOME": home, envRecordDir: records}[k] }
-	run := hookPromptSetup(t, getenv, repo, false, true, false)
+	run := hookPromptSetup(t, getenv, hookClock(), repo, false, true, false)
 	require.Empty(t, run)
 	store, err := tracefile.New(records)
 	require.NoError(t, err)
 	runs, err := store.List(context.Background(), record.TraceFilter{Name: string(trace.NameRun)})
 	require.NoError(t, err)
+	type want struct {
+		code   int
+		stdout string
+		stderr string
+	}
 	tcs := []struct {
 		name string
 		args []string
-		want string
+		want want
 	}{
 		{"the repo waits for the candidate", []string{"waiting", "--producer", "session", "--label", "repo=nodloop"},
-			"short-msg\tv1\tjudgment\tkeep commit messages to one line\tscope runs of session. repo=nodloop\tfrom " + runs[0].ID + "\treplay none\n"},
-		{"another repo waits for nothing", []string{"waiting", "--producer", "session", "--label", "repo=other"}, ""},
+			want{stdout: "short-msg\tv1\tjudgment\tkeep commit messages to one line\tscope runs of session. repo=nodloop\tfrom " + runs[0].ID +
+				"\treplay none\n"}},
+		{"another repo waits for nothing", []string{"waiting", "--producer", "session", "--label", "repo=other"}, want{}},
+		{"no producer is refused", []string{"waiting", "--label", "repo=nodloop"}, want{code: 1, stderr: "waiting: --producer"}},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
+			// The cases only read the records they share
+			t.Parallel()
 			var stdout, stderr bytes.Buffer
 
-			code := runKnowledge(tc.args, getenv, nil, time.Now, &stdout, &stderr)
+			code := runKnowledge(tc.args, getenv, nil, hookClock(), &stdout, &stderr)
 
-			require.Equal(t, 0, code, stderr.String())
-			assert.Equal(t, tc.want, stdout.String())
+			assert.Equal(t, tc.want.code, code, stderr.String())
+			assert.Equal(t, tc.want.stdout, stdout.String())
+			assert.Contains(t, stderr.String(), tc.want.stderr)
 		})
 	}
 }
@@ -869,7 +1234,7 @@ func TestRunKnowledgeApproveIn(t *testing.T) {
 			t.Parallel()
 			home, records, repo := hookHome(t, "use git -C")
 			getenv := func(k string) string { return map[string]string{"HOME": home, envRecordDir: records}[k] }
-			hookPromptSetup(t, getenv, repo, false, true, false)
+			hookPromptSetup(t, getenv, time.Now, repo, false, true, false)
 			var stdout, stderr bytes.Buffer
 
 			code := runKnowledge(slices.Concat([]string{"approve", "short-msg", "--version", "1", "--approver", "ann"}, tc.args.flags),
@@ -887,35 +1252,64 @@ func TestRunKnowledgeApproveIn(t *testing.T) {
 // A session the holdout draws gets no item in any prompt and every run of it records them as withheld with its draw
 func TestRunHookHoldout(t *testing.T) {
 	require.True(t, knowledge.Holdout(0.999).WithholdsRun(sessionProducer, "s1"))
-	home, records, repo := hookHome(t, "use git -C")
-	require.Equal(t, 0, runConfig([]string{"holdout", "0.999"}, func(k string) string { return map[string]string{"HOME": home}[k] }, &bytes.Buffer{}, &bytes.Buffer{}))
-	getenv := func(k string) string { return map[string]string{"HOME": home, envRecordDir: records}[k] }
-	var prompts bytes.Buffer
-	for _, session := range []string{"s1", "s1", ""} {
-		stdin := `{"session_id":"` + session + `","cwd":"` + repo + `","last_assistant_message":"done"}`
-		require.Equal(t, 0, runHook([]string{"prompt"}, getenv, nil, time.Now, strings.NewReader(stdin), &prompts, &bytes.Buffer{}))
-		require.Equal(t, 0, runHook([]string{"stop"}, getenv, nil, time.Now, strings.NewReader(stdin), &bytes.Buffer{}, &bytes.Buffer{}))
-	}
-
-	store, err := tracefile.New(records)
-	require.NoError(t, err)
-	runs, err := store.List(context.Background(), record.TraceFilter{Name: string(trace.NameRun)})
-	require.NoError(t, err)
-	require.Len(t, runs, 4, "the three turns after the run of the home")
-	var got []knowledge.RunInput
-	for _, run := range runs[:3] {
-		var in knowledge.RunInput
-		require.NoError(t, json.Unmarshal(run.Input, &in))
-		in.Plugin = ""
-		got = append(got, in)
-	}
 	gitC := []knowledge.Ref{{ID: "git-c", Version: 1}}
-	assert.Equal(t, []knowledge.RunInput{
-		{Applied: gitC},
-		{Applied: []knowledge.Ref{}, Withheld: gitC, Drawn: true, Share: 0.999, Scheme: knowledge.DrawScheme, Unit: "d698df9d2c5b9655"},
-		{Applied: []knowledge.Ref{}, Withheld: gitC, Drawn: true, Share: 0.999, Scheme: knowledge.DrawScheme, Unit: "d698df9d2c5b9655"},
-	}, got, "both turns of the session are withheld in one unit and a turn without a session is never drawn")
-	assert.Equal(t, 1, strings.Count(prompts.String(), "use git -C"), "only the prompt without a session gets the item")
+	type want struct {
+		// The inputs of the three turns newest first without the plugin version
+		inputs []knowledge.RunInput
+		// The prompts that got the item
+		items int
+	}
+	tcs := []struct {
+		name string
+		// The holdout share
+		args string
+		want want
+	}{
+		{
+			"both turns of a drawn session are withheld in one unit and a turn without a session is never drawn",
+			"0.999",
+			want{[]knowledge.RunInput{
+				{Applied: gitC},
+				{Applied: []knowledge.Ref{}, Withheld: gitC, Drawn: true, Share: 0.999, Scheme: knowledge.DrawScheme, Unit: "d698df9d2c5b9655"},
+				{Applied: []knowledge.Ref{}, Withheld: gitC, Drawn: true, Share: 0.999, Scheme: knowledge.DrawScheme, Unit: "d698df9d2c5b9655"},
+			}, 1},
+		},
+		{
+			"no holdout applies the item in every turn and draws none",
+			"0",
+			want{[]knowledge.RunInput{{Applied: gitC}, {Applied: gitC}, {Applied: gitC}}, 2},
+		},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			home, records, repo := hookHome(t, "use git -C")
+			require.Equal(t, 0, runConfig([]string{"holdout", tc.args}, func(k string) string { return map[string]string{"HOME": home}[k] }, &bytes.Buffer{}, &bytes.Buffer{}))
+			getenv := func(k string) string { return map[string]string{"HOME": home, envRecordDir: records}[k] }
+			now := hookClock()
+			var prompts bytes.Buffer
+			for _, session := range []string{"s1", "s1", ""} {
+				stdin := `{"session_id":"` + session + `","cwd":"` + repo + `","last_assistant_message":"done"}`
+				require.Equal(t, 0, runHook([]string{"prompt"}, getenv, nil, now, strings.NewReader(stdin), &prompts, &bytes.Buffer{}))
+				require.Equal(t, 0, runHook([]string{"stop"}, getenv, nil, now, strings.NewReader(stdin), &bytes.Buffer{}, &bytes.Buffer{}))
+			}
+
+			store, err := tracefile.New(records)
+			require.NoError(t, err)
+			runs, err := store.List(context.Background(), record.TraceFilter{Name: string(trace.NameRun)})
+			require.NoError(t, err)
+			require.Len(t, runs, 4, "the three turns after the run of the home")
+			var got []knowledge.RunInput
+			for _, run := range runs[:3] {
+				var in knowledge.RunInput
+				require.NoError(t, json.Unmarshal(run.Input, &in))
+				in.Plugin = ""
+				got = append(got, in)
+			}
+			assert.Equal(t, tc.want.inputs, got)
+			assert.Equal(t, tc.want.items, strings.Count(prompts.String(), "use git -C"))
+		})
+	}
 }
 
 // The reaction point judges the user's message on the previous answer before the conversation does
@@ -924,30 +1318,38 @@ func TestRunHookReaction(t *testing.T) {
 		// The answer of the endpoint and empty for one that fails
 		answer string
 	}
-	type want struct {
+	// The latest verdict on the previous answer
+	type verdict struct {
 		verdict feedback.Verdict
 		reason  string
+	}
+	type want struct {
+		// The latest verdicts and none when nil
+		verdicts []verdict
+		// The event of the output and empty for no output
+		event string
 		// A substring of the added context and one it must not hold
 		context string
 		absent  string
 		stderr  string
 	}
 	message := "that was wrong, use git -C"
+	const event = "UserPromptSubmit"
 	tcs := []struct {
 		name string
 		args args
 		want want
 	}{
 		{"a sure correction is recorded as a reject with the message", args{`{"answers":{"corrects":{"noul":0.9},"approves":{"noul":0.1}}}`},
-			want{feedback.VerdictReject, message, "was recorded as a reject of your previous answer", "call the nodloop feedback tool", ""}},
-		{"a sure approval is recorded and asks nothing", args{`{"answers":{"corrects":{"noul":0.1},"approves":{"noul":0.9}}}`},
-			want{feedback.VerdictApprove, "", "use git -C", "previous answer", ""}},
+			want{[]verdict{{feedback.VerdictReject, message}}, event, "was recorded as a reject of your previous answer", "call the nodloop feedback tool", ""}},
+		{"a sure approval is recorded and adds nothing", args{`{"answers":{"corrects":{"noul":0.1},"approves":{"noul":0.9}}}`},
+			want{[]verdict{{feedback.VerdictApprove, ""}}, "", "", "previous answer", ""}},
 		{"an answer that says both leaves the conversation to judge", args{`{"answers":{"corrects":{"noul":0.9},"approves":{"noul":0.9}}}`},
-			want{"", "", "call the nodloop feedback tool", "recorded as a reject", ""}},
+			want{nil, event, "call the nodloop feedback tool", "recorded as a reject", ""}},
 		{"an unsure answer defers to the conversation", args{`{"answers":{"corrects":{"noul":0.6},"approves":{"noul":0.3}}}`},
-			want{"", "", "call the nodloop feedback tool", "recorded as a reject", ""}},
+			want{nil, event, "call the nodloop feedback tool", "recorded as a reject", ""}},
 		{"a failing endpoint defers to the conversation without a warning", args{""},
-			want{"", "", "call the nodloop feedback tool", "recorded as a reject", ""}},
+			want{nil, event, "call the nodloop feedback tool", "recorded as a reject", ""}},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
@@ -968,66 +1370,84 @@ func TestRunHookReaction(t *testing.T) {
 			t.Cleanup(srv.Close)
 			home, records, repo := hookHome(t, "use git -C")
 			getenv := func(k string) string { return map[string]string{"HOME": home, envRecordDir: records}[k] }
+			now := hookClock()
 			var setStderr bytes.Buffer
-			require.Equal(t, 0, runClassifier([]string{"set", "reaction", "--url", srv.URL}, getenv, time.Now, &bytes.Buffer{}, &setStderr), setStderr.String())
-			run := hookPromptSetup(t, getenv, repo, true, false, false)
+			require.Equal(t, 0, runClassifier([]string{"set", "reaction", "--url", srv.URL}, getenv, now, &bytes.Buffer{}, &setStderr), setStderr.String())
+			run := hookPromptSetup(t, getenv, now, repo, true, false, false)
 			stdin := `{"session_id":"s1","cwd":"` + repo + `","prompt":"` + message + `"}`
 			var stdout, stderr bytes.Buffer
 
-			code := runHook([]string{"prompt"}, getenv, nil, time.Now, strings.NewReader(stdin), &stdout, &stderr)
+			code := runHook([]string{"prompt"}, getenv, nil, now, strings.NewReader(stdin), &stdout, &stderr)
 
+			event, added := hookOutput(t, stdout.Bytes())
+			store, err := feedbackfile.New(records)
+			require.NoError(t, err)
+			recorded, err := store.List(context.Background(), record.FeedbackFilter{TraceID: run})
+			require.NoError(t, err)
+			var latest []verdict
+			for _, f := range feedback.RestoreAll(recorded).Latest() {
+				latest = append(latest, verdict{f.Verdict, f.Reason})
+			}
 			assert.Equal(t, 0, code)
 			assert.True(t, strings.HasPrefix(<-states, "## User message\n\n"+message), "a truncating endpoint still reads the message")
-			var got struct {
-				Out struct {
-					Context string `json:"additionalContext"`
-				} `json:"hookSpecificOutput"`
-			}
-			require.NoError(t, json.Unmarshal(stdout.Bytes(), &got), stdout.String())
-			assert.Contains(t, got.Out.Context, tc.want.context)
-			assert.NotContains(t, got.Out.Context, tc.want.absent)
+			assert.Equal(t, tc.want.event, event)
+			assert.Contains(t, added, tc.want.context)
+			assert.NotContains(t, added, tc.want.absent)
 			assert.Equal(t, tc.want.stderr, stderr.String())
-			verdicts, err := feedbackfile.New(records)
-			require.NoError(t, err)
-			recorded, err := verdicts.List(context.Background(), record.FeedbackFilter{TraceID: run})
-			require.NoError(t, err)
-			var latest struct {
-				verdict feedback.Verdict
-				reason  string
-			}
-			if newest := feedback.RestoreAll(recorded).Latest(); len(newest) > 0 {
-				latest.verdict, latest.reason = newest[0].Verdict, newest[0].Reason
-			}
-			assert.Equal(t, tc.want.verdict, latest.verdict)
-			assert.Equal(t, tc.want.reason, latest.reason)
+			assert.Equal(t, tc.want.verdicts, latest)
 		})
 	}
 }
 
 // A corrupt line in the records leaves out its record and the hooks go on with the rest
 func TestRunHookCorruptLine(t *testing.T) {
-	home, records, repo := hookHome(t, "use git -C")
-	for _, name := range []string{"knowledge.jsonl", "traces.jsonl"} {
-		f, err := os.OpenFile(filepath.Join(records, name), os.O_APPEND|os.O_WRONLY, 0o600)
-		require.NoError(t, err)
-		_, err = f.WriteString("not json\n")
-		require.NoError(t, err)
-		require.NoError(t, f.Close())
+	type args struct {
+		// The lines appended to knowledge.jsonl and traces.jsonl
+		knowledge, traces string
 	}
-	getenv := func(k string) string { return map[string]string{"HOME": home, envRecordDir: records}[k] }
-	now := func() time.Time { return time.Date(2026, 10, 2, 1, 0, 0, 0, time.UTC) }
-	stdin := `{"session_id":"s1","cwd":"` + repo + `","last_assistant_message":"done"}`
-	var prompt, promptErr, stopErr bytes.Buffer
+	type want struct {
+		// Substrings of stderr of the prompt and the stop hook
+		promptErr, stopErr string
+		listErr            error
+	}
+	const corrupt = "not json\n"
+	tcs := []struct {
+		name string
+		args args
+		want want
+	}{
+		{
+			"corrupt lines in both files are named and the hooks go on",
+			args{corrupt, corrupt},
+			want{"knowledge.jsonl has corrupt lines", "traces.jsonl has corrupt lines", jsonl.ErrCorrupt},
+		},
+		{"a corrupt knowledge line leaves the traces whole", args{knowledge: corrupt}, want{"knowledge.jsonl has corrupt lines", "knowledge.jsonl has corrupt lines", nil}},
+		{"a corrupt trace line leaves the items whole", args{traces: corrupt}, want{"traces.jsonl has corrupt lines", "traces.jsonl has corrupt lines", jsonl.ErrCorrupt}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			home, records, repo := hookHome(t, "use git -C")
+			hookAppend(t, filepath.Join(records, "knowledge.jsonl"), tc.args.knowledge)
+			hookAppend(t, filepath.Join(records, "traces.jsonl"), tc.args.traces)
+			getenv := func(k string) string { return map[string]string{"HOME": home, envRecordDir: records}[k] }
+			now := hookClock()
+			stdin := `{"session_id":"s1","cwd":"` + repo + `","last_assistant_message":"done"}`
+			var prompt, promptErr, stopErr bytes.Buffer
 
-	require.Equal(t, 0, runHook([]string{"prompt"}, getenv, nil, now, strings.NewReader(stdin), &prompt, &promptErr))
-	require.Equal(t, 0, runHook([]string{"stop"}, getenv, nil, now, strings.NewReader(stdin), &bytes.Buffer{}, &stopErr))
+			promptCode := runHook([]string{"prompt"}, getenv, nil, now, strings.NewReader(stdin), &prompt, &promptErr)
+			stopCode := runHook([]string{"stop"}, getenv, nil, now, strings.NewReader(stdin), &bytes.Buffer{}, &stopErr)
 
-	assert.Contains(t, prompt.String(), "use git -C")
-	assert.Contains(t, promptErr.String(), "knowledge.jsonl has corrupt lines")
-	assert.Contains(t, stopErr.String(), "traces.jsonl has corrupt lines")
-	store, err := tracefile.New(records)
-	require.NoError(t, err)
-	runs, err := store.List(context.Background(), record.TraceFilter{Name: string(trace.NameRun), SessionID: "s1"})
-	assert.ErrorIs(t, err, jsonl.ErrCorrupt)
-	assert.Len(t, runs, 1, "the stop hook still records the answer")
+			store, err := tracefile.New(records)
+			require.NoError(t, err)
+			runs, err := store.List(context.Background(), record.TraceFilter{Name: string(trace.NameRun), SessionID: "s1"})
+			assert.Equal(t, 0, promptCode)
+			assert.Equal(t, 0, stopCode)
+			assert.Contains(t, prompt.String(), "use git -C")
+			assert.Contains(t, promptErr.String(), tc.want.promptErr)
+			assert.Contains(t, stopErr.String(), tc.want.stopErr)
+			assert.ErrorIs(t, err, tc.want.listErr)
+			assert.Len(t, runs, 1, "the stop hook still records the answer")
+		})
+	}
 }

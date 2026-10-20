@@ -54,12 +54,13 @@ const (
 	NameExtract     Name = "extract"     // one extraction of a lesson from a corrected run with its drafts and conclusion
 	NameReplay      Name = "replay"      // a lesson judged against the recorded outputs it should and should not catch
 	NameConsolidate Name = "consolidate" // groups of waiting candidates of one producer that may say the same lesson
+	NameRefill      Name = "refill"      // the items a session start added again after the context of the session was emptied
 	NameCompact     Name = "compact"     // one drafting of a compaction through a model
 )
 
 // Every name in a fixed order for messages
 func Names() []Name {
-	return []Name{NameRun, NameCheck, NameClassify, NameExtract, NameReplay, NameConsolidate, NameCompact}
+	return []Name{NameRun, NameCheck, NameClassify, NameExtract, NameReplay, NameConsolidate, NameRefill, NameCompact}
 }
 
 func (n Name) Valid() bool {
