@@ -140,6 +140,7 @@ type Change struct {
 	ID      string `json:"id,omitempty"`
 	Version int    `json:"version,omitempty"`
 	// The prepared compaction a change of kind compaction approves with the old items it merges
+	// A join names in old the older candidate it adds the evidence to
 	Compaction string          `json:"compaction,omitempty"`
 	Old        []knowledge.Ref `json:"old,omitempty"`
 	// The extract trace that drafted the change
@@ -161,6 +162,8 @@ func (c Change) check() error {
 		return fmt.Errorf("%w: a %s names its item version", ErrDecideInvalid, c.Kind)
 	case c.Kind == ChangeCompaction && c.Compaction == "":
 		return fmt.Errorf("%w: a compaction names the compaction it approves", ErrDecideInvalid)
+	case c.Kind == ChangeJoin && len(c.Old) != 1:
+		return fmt.Errorf("%w: a join names the one older candidate it adds the evidence to", ErrDecideInvalid)
 	}
 	return nil
 }

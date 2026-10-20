@@ -142,6 +142,30 @@ func (a Anchor) Designated() []AnchorFile {
 	return a.designated
 }
 
+// The person's own decisions as they stood before start that the few-shot sets of a judge started then are drawn from
+// in the order of the records
+// 1. an approval of a drafted lesson as drafted and a retire a person gave for the direction of the lesson
+// 2. only the newest decision of each version before start counts so a lesson approved and then retired never shows as approved
+// and one retired after start still shows as the set drew it
+// 3. a version nodloop decided and an approval of a text a person rewrote are no example of the person's judgment
+func (a Anchor) Shots(start time.Time) Shots {
+	seen := map[knowledge.Ref]bool{}
+	var out Shots
+	for _, k := range a.all {
+		ref := knowledge.Ref{ID: k.ID, Version: k.Version}
+		kept := k.Status == knowledge.StatusApproved && k.Drafted
+		refused := k.Status == knowledge.StatusRetired && k.Reason == knowledge.ReasonPerson
+		if seen[ref] || !k.Decided() || !k.Time.Before(start) {
+			continue
+		}
+		seen[ref] = true
+		if k.Approver != knowledge.ApproverNodloop && (kept || refused) {
+			out = append(out, Shot{Ref: ref, At: k.Time, Content: k.Content, Kept: kept})
+		}
+	}
+	return out
+}
+
 // The anchor as the version after newest and false when nothing it holds differs
 // 1. it differs when a ref differs or a path or the HMAC of a file
 // 2. a change of the refs names the decision of the newest record of a ref that entered or left

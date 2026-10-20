@@ -335,6 +335,52 @@ func TestRecordsHuman(t *testing.T) {
 	}
 }
 
+func TestRecordsWords(t *testing.T) {
+	base := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
+	verdict := func(id, reviewer string, proof trace.Proof, reason string) feedback.Feedback {
+		return feedback.Feedback{TraceID: id, Time: base, Verdict: feedback.VerdictReject, Reason: reason, Reviewer: reviewer, Proof: proof}
+	}
+	type args struct {
+		records feedback.Records
+		traces  []string
+	}
+	tcs := []struct {
+		name string
+		args args
+		want []string
+	}{
+		{"no records give nothing", args{nil, []string{"t1"}}, nil},
+		{
+			"a verdict a person proved and one the capture read give their reasons in input order",
+			args{feedback.Records{
+				verdict("t1", feedback.ReviewerNodloop, "", "lint first"), verdict("t2", "ann", trace.ProofTerminal, "keep the scope narrow"),
+			}, []string{"t1", "t2"}},
+			[]string{"lint first", "keep the scope narrow"},
+		},
+		{
+			"the conversation's reason never counts as the person's words",
+			args{feedback.Records{verdict("t1", feedback.ReviewerSession, "", "the user wants linting")}, []string{"t1"}},
+			nil,
+		},
+		{
+			"a named verdict without a proof is no person's word",
+			args{feedback.Records{verdict("t1", "ann", trace.ProofNone, "lint first"), verdict("t1", "ann", "", "lint again")}, []string{"t1"}},
+			nil,
+		},
+		{
+			"a run the change does not cite and a verdict without a reason give nothing",
+			args{feedback.Records{verdict("t2", feedback.ReviewerNodloop, "", "lint first"), verdict("t1", "ann", trace.ProofKey, "")}, []string{"t1"}},
+			nil,
+		},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.want, tc.args.records.Words(tc.args.traces))
+		})
+	}
+}
+
 func TestRecordsInferred(t *testing.T) {
 	base := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
 	at := func(reviewer, id string, v feedback.Verdict, after time.Duration) feedback.Feedback {
@@ -400,6 +446,42 @@ func TestRecordsInferred(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			assert.Equal(t, tc.want, tc.args.Inferred())
+		})
+	}
+}
+
+// A person's verdict wins per trace and else the inferred one Inferred leaves
+func TestRecordsReconciled(t *testing.T) {
+	base := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
+	at := func(reviewer, id string, v feedback.Verdict, after time.Duration) feedback.Feedback {
+		return feedback.Feedback{TraceID: id, Time: base.Add(after), Verdict: v, Reviewer: reviewer}
+	}
+	tcs := []struct {
+		name string
+		args feedback.Records
+		want feedback.Records
+	}{
+		{"no records give nothing", nil, nil},
+		{
+			"a person's older verdict wins over a later inferred one",
+			feedback.Records{at(feedback.ReviewerSession, "t1", feedback.VerdictApprove, time.Hour), at("ann", "t1", feedback.VerdictReject, 0)},
+			feedback.Records{at("ann", "t1", feedback.VerdictReject, 0)},
+		},
+		{
+			"an inferred verdict stands where no person judged",
+			feedback.Records{at(feedback.ReviewerNodloop, "t2", feedback.VerdictEdit, 0), at("ann", "t1", feedback.VerdictApprove, 0)},
+			feedback.Records{at("ann", "t1", feedback.VerdictApprove, 0), at(feedback.ReviewerNodloop, "t2", feedback.VerdictEdit, 0)},
+		},
+		{
+			"a disputed run has none",
+			feedback.Records{at(feedback.ReviewerSession, "t1", feedback.VerdictReject, 0), at(feedback.ReviewerNodloop, "t1", feedback.VerdictApprove, 0)},
+			nil,
+		},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.want, tc.args.Reconciled())
 		})
 	}
 }

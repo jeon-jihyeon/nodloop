@@ -23,7 +23,7 @@ func NewMarker(dir string) Marker {
 
 // The mark one export holds until Release
 type Held struct {
-	held *markfile.Held
+	held *markfile.Held[record.Mark]
 	// The newest record the last export sent and zero before the first
 	At time.Time
 }
@@ -32,7 +32,7 @@ type Held struct {
 // 1. nil without an error when another export holds it so the caller ends at once
 // 2. a mark that does not decode reads as no export so far
 func (m Marker) Hold() (*Held, error) {
-	held, err := markfile.Hold(filepath.Join(m.dir, MarkFile))
+	held, err := markfile.Hold[record.Mark](filepath.Join(m.dir, MarkFile))
 	if err != nil || held == nil {
 		return nil, markErr(err)
 	}

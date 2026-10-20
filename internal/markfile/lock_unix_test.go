@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeon-jihyeon/nodloop/internal/markfile"
+	"github.com/jeon-jihyeon/nodloop/internal/record"
 )
 
 // A process that finds the file locked gets no hold at once
@@ -34,14 +35,14 @@ func TestHoldSkipsAHeldLock(t *testing.T) {
 			t.Cleanup(func() { _ = other.Close() })
 			require.NoError(t, syscall.Flock(int(other.Fd()), tc.args))
 			type result struct {
-				held *markfile.Held
+				held *markfile.Held[record.Mark]
 				err  error
 			}
 			done := make(chan result, 1)
 
 			// The hold runs aside so a hold that waits for the lock fails the test instead of hanging it
 			go func() {
-				held, err := markfile.Hold(path)
+				held, err := markfile.Hold[record.Mark](path)
 				done <- result{held, err}
 			}()
 			var got result

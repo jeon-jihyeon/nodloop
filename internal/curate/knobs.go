@@ -22,6 +22,14 @@ type Knobs struct {
 	// The weeks a cycle lasts from its start
 	// retain closes a cycle by it so the cycle ends even when no later pass starts the next one
 	CycleWeeks int `json:"cycle_weeks,omitempty"`
+	// The kinds and bins tier 1 carries out
+	// A narrowing takes one out and only the person's yes to a widen question puts one back
+	Open []Opening `json:"open,omitempty"`
+	// The audit p of each tier that carries out
+	Audit Audit `json:"audit,omitzero"`
+	// The differ rate tier 1 stays below and the error its bound allows
+	Target Target `json:"target,omitzero"`
+	CUSUM  CUSUM  `json:"cusum,omitzero"`
 }
 
 // The weeks a person may set a cycle to
@@ -102,4 +110,13 @@ func (k KnobEvent) Trace(build string, now time.Time) (trace.Trace, error) {
 	// A knob event of strings, numbers, times and refs always encodes
 	input, _ := json.Marshal(k)
 	return trace.Trace{ID: trace.NewID(now), Name: trace.NameKnob, Subject: k.CycleID, Time: now, Input: input}, nil
+}
+
+// The knob event a knob trace holds and false for a trace that does not decode
+func RestoreKnob(t trace.Trace) (KnobEvent, bool) {
+	var k KnobEvent
+	if t.Name != trace.NameKnob || json.Unmarshal(t.Input, &k) != nil || k.CycleID == "" {
+		return KnobEvent{}, false
+	}
+	return k, true
 }

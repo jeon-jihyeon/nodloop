@@ -34,7 +34,9 @@ func TestLiveJudge(t *testing.T) {
 		{Ref: ref("k-r0"), At: now.Add(-24 * time.Hour), Content: "Skip the tests when a change only touches comments"},
 	}
 	meter := llm.NewMeter(llm.NewClaudeCLI(os.Getenv("NODLOOP_CLAUDE_BIN"), "", "", 0))
-	cfg := curate.JudgeConfig{}.Next(cmp.Or(os.Getenv("NODLOOP_LLM_MODEL"), "claude-sonnet-5-5"), curate.JudgeEffort, decisions, now)
+	settings := curate.DefaultJudge
+	settings.Model = cmp.Or(os.Getenv("NODLOOP_LLM_MODEL"), "claude-sonnet-5-5")
+	cfg := curate.JudgeConfig{}.Next(settings, decisions, now)
 	members, err := cfg.Members(meter, decisions)
 	require.NoError(t, err)
 	traces, err := tracefile.New(t.TempDir())
@@ -48,6 +50,7 @@ func TestLiveJudge(t *testing.T) {
 	got, err := judge.Judge(ctx, "run-live", curate.Case{
 		Change: "add: run golangci-lint before go test when a Go file changed",
 		Anchor: []string{"Run the linter before the tests in every change", "Never push to the main branch directly"},
+		Words:  []string{"lint the Go files before you run go test"},
 	})
 
 	require.NoError(t, err)

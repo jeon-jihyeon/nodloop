@@ -59,7 +59,7 @@ func (m Marker) path() string {
 // 2. a marker that does not decode reads as no prune so far
 // 3. the marker is written in place and a torn write reads as no prune so far and costs one more prune
 func (m Marker) Claim(_ context.Context, at, cutoff time.Time, every time.Duration) (bool, error) {
-	held, err := markfile.Hold(m.path())
+	held, err := markfile.Hold[record.Mark](m.path())
 	if err != nil {
 		return false, fmt.Errorf("%w: %w", ErrMarker, err)
 	}

@@ -93,6 +93,24 @@ func (s Set) Cites(traceID string) bool {
 	return slices.ContainsFunc(s, func(k Knowledge) bool { return slices.Contains(k.Evidence.FeedbackTraceIDs, traceID) })
 }
 
+// Whether a record names the trace as the decision behind it
+// So curate tells a decide it carried out from one a crash left before its write
+func (s Set) HasDecision(traceID string) bool {
+	return traceID != "" && slices.ContainsFunc(s, func(k Knowledge) bool { return k.Decision == traceID })
+}
+
+// When the first record of the version was written and the zero time for a version the set lacks
+// A corroborate appends the candidate again so only the first record tells when it was proposed
+func (s Set) ProposedAt(ref Ref) time.Time {
+	var first time.Time
+	for _, k := range s {
+		if ref.names(k) && (first.IsZero() || k.Time.Before(first)) {
+			first = k.Time
+		}
+	}
+	return first
+}
+
 // The version of each item in set order
 func (s Set) Refs() []Ref {
 	out := make([]Ref, 0, len(s))

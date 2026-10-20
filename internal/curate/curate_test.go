@@ -87,6 +87,19 @@ func TestEventDecide(t *testing.T) {
 		{"an unknown kind is refused", args{decided("d5", 1), curate.Change{Kind: "merge"}, applied, nil}, want{err: curate.ErrDecideInvalid}},
 		{"a change of a version without it is refused", args{decided("d5", 1), curate.Change{Kind: curate.ChangeAdd, ID: "k-2"}, applied, nil}, want{err: curate.ErrDecideInvalid}},
 		{"a compaction without its id is refused", args{decided("d5", 1), curate.Change{Kind: curate.ChangeCompaction}, applied, nil}, want{err: curate.ErrDecideInvalid}},
+		{
+			"a join that names no older candidate is refused",
+			args{decided("d5", 1), curate.Change{Kind: curate.ChangeJoin, ID: "k-2", Version: 1}, applied, nil}, want{err: curate.ErrDecideInvalid},
+		},
+		{
+			"a join names the older candidate it adds the evidence to",
+			args{decided("d6", 1), curate.Change{Kind: curate.ChangeJoin, ID: "k-2", Version: 1, Old: []knowledge.Ref{{ID: "k-1", Version: 1}}, Anchor: 3},
+				curate.Decision{RuleCode: curate.RuleSameAsCandidate, Action: curate.ActionJoin, Reason: knowledge.ReasonDuplicate}, nil},
+			want{
+				`{"kind":"join","id":"k-2","version":1,"old":[{"id":"k-1","version":1}],"anchor":3}`,
+				`{"tier":0,"rule_code":"same_as_candidate","action":"join","reason":"duplicate"}`, "", nil,
+			},
+		},
 		{"an unknown action is refused", args{decided("d5", 1), add, with(applied, func(d *curate.Decision) { d.Action = "approve" }), nil}, want{err: curate.ErrDecideInvalid}},
 		{"a tier past 2 is refused", args{decided("d5", 1), add, with(applied, func(d *curate.Decision) { d.Tier = 3 }), nil}, want{err: curate.ErrDecideInvalid}},
 		{"an unknown rule code is refused", args{decided("d5", 1), add, with(applied, func(d *curate.Decision) { d.RuleCode = "close" }), nil}, want{err: curate.ErrDecideInvalid}},

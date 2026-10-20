@@ -62,6 +62,92 @@
             },
             "cycle_weeks": {
               "type": "integer"
+            },
+            "open": {
+              "type": [
+                "null",
+                "array"
+              ],
+              "items": {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "add",
+                      "update",
+                      "join",
+                      "drop",
+                      "withdraw",
+                      "compaction",
+                      "reanchor",
+                      "widen",
+                      "activate"
+                    ]
+                  },
+                  "bin": {
+                    "type": "string",
+                    "enum": [
+                      "b1",
+                      "b2",
+                      "b3",
+                      "b4"
+                    ]
+                  }
+                },
+                "required": [
+                  "kind"
+                ]
+              }
+            },
+            "audit": {
+              "type": "object",
+              "properties": {
+                "tier0": {
+                  "type": "number"
+                },
+                "tier1": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "tier0",
+                "tier1"
+              ]
+            },
+            "target": {
+              "type": "object",
+              "properties": {
+                "rate": {
+                  "type": "number"
+                },
+                "alpha": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "rate",
+                "alpha"
+              ]
+            },
+            "cusum": {
+              "type": "object",
+              "properties": {
+                "p0": {
+                  "type": "number"
+                },
+                "p1": {
+                  "type": "number"
+                },
+                "h": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "p0",
+                "p1",
+                "h"
+              ]
             }
           },
           "required": [
@@ -111,6 +197,12 @@
                   ]
                 }
               }
+            },
+            "kept": {
+              "type": "integer"
+            },
+            "refused": {
+              "type": "integer"
             }
           },
           "required": [

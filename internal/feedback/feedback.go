@@ -235,6 +235,20 @@ func (rs Records) Latest() Records {
 	return Records(listing[Feedback](rs).Latest())
 }
 
+// The reasons in the person's own words on the traces in the order the input has them
+// 1. a verdict with a proof of a person keeps the person's reason as written
+// 2. the capture keeps the person's message from the transcript as its reason
+// 3. the conversation words its reason itself so a verdict of reviewer session never counts
+func (rs Records) Words(traceIDs []string) []string {
+	var out []string
+	for _, r := range rs {
+		if r.Reason != "" && (r.Proven() || r.Reviewer == ReviewerNodloop) && slices.Contains(traceIDs, r.TraceID) {
+			out = append(out, r.Reason)
+		}
+	}
+	return out
+}
+
 // The verdict per trace the conversation and the capture leave together in the order the input has them
 // 1. the conversation records with reviewer session and the capture with reviewer nodloop
 // 2. a withdraw of anyone takes back the inferred verdicts before it so a withdrawn run has none until a later verdict
@@ -259,6 +273,23 @@ func (rs Records) Inferred() Records {
 			out = append(out, said)
 		case read:
 			out = append(out, heard)
+		}
+	}
+	return out
+}
+
+// The verdict per trace a reader of the person's judgment takes in the order of the person's verdicts first
+// 1. a person's latest verdict wins over an inferred one whatever their order
+// 2. else the verdict Inferred leaves so a disputed trace has none
+func (rs Records) Reconciled() Records {
+	out := rs.Human().Latest()
+	seen := map[string]bool{}
+	for _, r := range out {
+		seen[r.TraceID] = true
+	}
+	for _, r := range rs.Inferred() {
+		if !seen[r.TraceID] {
+			out = append(out, r)
 		}
 	}
 	return out
