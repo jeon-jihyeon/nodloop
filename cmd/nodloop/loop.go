@@ -81,12 +81,13 @@ func (c knowledgeCommand) reaffirm(ctx context.Context, id string, version int, 
 		}
 		return c.proposal(ctx, "reaffirm", judgment)
 	}
-	k, err := c.ledger.Reaffirm(ctx, id, version, judgment.Person)
+	decision := trace.NewID(c.app.now())
+	k, err := c.ledger.Under(decision).Reaffirm(ctx, id, version, judgment.Person)
 	if err != nil {
 		return err
 	}
 	fmt.Fprintf(c.out, "%s\tv%d\treaffirmed\t%s\n", k.ID, k.Version, k.Approver)
-	return c.intervened(ctx, judgment, knowledge.Set{k})
+	return c.intervened(ctx, decision, judgment, knowledge.Set{k})
 }
 
 // Proposes the next version that excepts the values of the key its refuted runs carried

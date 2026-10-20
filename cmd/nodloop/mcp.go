@@ -10,6 +10,7 @@ import (
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/jeon-jihyeon/nodloop/internal/curate"
 	"github.com/jeon-jihyeon/nodloop/internal/extract"
 	"github.com/jeon-jihyeon/nodloop/internal/mcp"
 	"github.com/jeon-jihyeon/nodloop/internal/retain"
@@ -139,7 +140,10 @@ func (o mcpOpen) open(context.Context) (*mcp.Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	policy := mcp.Policy{Holdout: a.cfg.holdout, Retention: a.cfg.retention, Marks: retain.NewMarker(dir), AfterRun: a.afterRun(o.log)}
+	policy := mcp.Policy{
+		Holdout: a.cfg.holdout, Retention: a.cfg.retention, Marks: retain.NewMarker(dir), AfterRun: a.afterRun(o.log),
+		Approver: a.cfg.approver, Curate: curate.NewMarker(dir), Build: buildVersion(),
+	}
 	if o.export != nil && a.cfg.otel != nil {
 		policy.AfterRun = a.afterRunExport(o.export, o.log)
 		policy.AfterVerdict = a.afterVerdict(o.export, o.log)

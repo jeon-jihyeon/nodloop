@@ -82,6 +82,8 @@ const (
 	actionAsk         = "ask"
 	// An intervention action a release may add that the overturns count
 	actionPause = "pause"
+	// The intervention a person asks for to see what was prepared, which counts as a touchpoint whatever its proof
+	actionDigest = "digest"
 )
 
 // The actions of a decide that carry a change out
@@ -447,7 +449,7 @@ func (e events) touchpoints() []Touchpoints {
 		at(a.Time, func(row *touch) { row.answer(a) })
 	}
 	for _, in := range e.interventions {
-		if in.in.Authority == trace.AuthorityPerson {
+		if in.in.Authority == trace.AuthorityPerson || in.in.Action == actionDigest {
 			at(in.Time, func(row *touch) { row.row.Interventions[in.in.Action]++ })
 		}
 	}

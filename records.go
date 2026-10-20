@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/jeon-jihyeon/nodloop/internal/curate"
 	"github.com/jeon-jihyeon/nodloop/internal/feedback"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	"github.com/jeon-jihyeon/nodloop/internal/loop"
@@ -59,11 +60,27 @@ const (
 	KindJudgment = knowledge.KindJudgment // what to do or not do
 	KindMeaning  = knowledge.KindMeaning  // how to read something in this place
 
-	InterventionJudge = trace.ActionJudge // keep, undo or scope one knowledge version
+	InterventionJudge    = trace.ActionJudge    // keep, undo or scope one knowledge version
+	InterventionAnswer   = trace.ActionAnswer   // one choice of an open question
+	InterventionDismiss  = trace.ActionDismiss  // close an open question with no decision
+	InterventionPause    = trace.ActionPause    // send every change of a kind or a scope to the person
+	InterventionResume   = trace.ActionResume   // end a pause
+	InterventionKnob     = trace.ActionKnob     // set one knob within its range
+	InterventionReanchor = trace.ActionReanchor // take the versions nodloop approved in a place as the person's own
+	InterventionDigest   = trace.ActionDigest   // the cursor since the person's last judgment
+	InterventionReverse  = trace.ActionReverse  // take back an earlier intervention
 
-	ChoiceKeep  = trace.ChoiceKeep  // approve a candidate or reaffirm an approved version
-	ChoiceUndo  = trace.ChoiceUndo  // retire a version
-	ChoiceScope = trace.ChoiceScope // approve a candidate in the labels picked
+	ChoiceKeep     = trace.ChoiceKeep     // approve a candidate, reaffirm an approved version or restore a retired one
+	ChoiceUndo     = trace.ChoiceUndo     // retire a version or reverse what curate carried out
+	ChoiceScope    = trace.ChoiceScope    // approve a candidate in the labels picked
+	ChoiceDrop     = trace.ChoiceDrop     // retire the candidate a question names
+	ChoiceMerge    = trace.ChoiceMerge    // apply the prepared compaction and then the change
+	ChoiceSeparate = trace.ChoiceSeparate // leave the items and the change as they are
+	ChoiceMine     = trace.ChoiceMine     // take the versions nodloop approved in the place as the person's own
+	ChoiceReview   = trace.ChoiceReview   // look at the digest instead
+	ChoiceYes      = trace.ChoiceYes      // open the kind, end the shadow or carry out a proposal
+	ChoiceNotYet   = trace.ChoiceNotYet   // keep it as it is
+	ChoiceSame     = trace.ChoiceSame     // keep what curate carried out
 
 	AuthorityPerson = trace.AuthorityPerson // a proof shows the person made the call so it decided
 	AuthorityAgent  = trace.AuthorityAgent  // no proof so the call is a proposal the person is asked about
@@ -244,6 +261,9 @@ func (c *Client) Records(ctx context.Context, q Query) (Page, error) {
 }
 
 // One report of the records as JSON in the shape the MCP tool report and nodloop report --json answer
+//
+// Deprecated: Records carries the published contract, so page the raw records instead. Report is removed in the next release
+//
 // 1. a name that names no report fails with ErrReportUnknown
 // 2. the runs are read from the later of the WithRetention cutoff and the cutoff of the last prune of the directory
 func (c *Client) Report(ctx context.Context, name string) (json.RawMessage, error) {
@@ -435,7 +455,7 @@ func (c *Client) fromRun(ctx context.Context, id string, draft knowledge.Knowled
 // 2. an empty name fails with ErrApproverRequired and the reserved name with ErrApproverReserved
 // 3. an unknown version fails with ErrNotFound
 func (c *Client) Approve(ctx context.Context, id string, version int, approver string) (Intervention, error) {
-	return c.proposal(ctx, trace.Intervention{ID: id, Version: version, Choice: trace.ChoiceKeep}, approver)
+	return c.proposal(ctx, id, version, trace.ChoiceKeep, nil, approver)
 }
 
 // Records the approval of a candidate in the labels the person picked as an agent proposal and returns it
@@ -453,51 +473,59 @@ func (c *Client) ApproveIn(ctx context.Context, id string, version int, labels L
 	if err := scope.Recorded(trace.RestoreAll(runs).Vocabulary(scope.Producer)); err != nil {
 		return Intervention{}, err
 	}
-	return c.proposal(ctx, trace.Intervention{ID: id, Version: version, Choice: trace.ChoiceScope, Labels: labels}, approver)
+	return c.proposal(ctx, id, version, trace.ChoiceScope, labels, approver)
 }
 
 // Records the retire of a version as an agent proposal and returns it
 func (c *Client) Retire(ctx context.Context, id string, version int, approver string) (Intervention, error) {
-	return c.proposal(ctx, trace.Intervention{ID: id, Version: version, Choice: trace.ChoiceUndo}, approver)
+	return c.proposal(ctx, id, version, trace.ChoiceUndo, nil, approver)
 }
 
-// One judgment on a knowledge version as the records keep it
-// The package records every judgment as an agent proposal since a call in process proves no person
+// One intervention of the write side as a caller submits it and as the records keep it
+// The package records every intervention but a digest as an agent proposal since a call in process proves no person
 type Intervention struct {
-	// The trace id of the intervention record
+	// The trace id of the intervention record, set on what Intervene answers
 	ID     string
 	Action InterventionAction
-	// The version it acts on
+	// What it acts on as Target names it: an item version as id:version, a compaction, the decide of a question, the change kind of a pause,
+	// the pause a resume ends, a knob, the producer of the place of a reanchor or a digest, or the intervention a reverse takes back
+	Target string
+	// The version it acts on, set on what Intervene answers when it names one
 	Ref    Ref
 	Choice Choice
-	// Where a scope choice approves the candidate
-	Labels    Labels
+	// The labels of a scope choice, a pause, a reanchor or a digest
+	Labels Labels
+	// The value of a knob
+	Value *float64
+	// The session a proposal is asked in
+	Session string
+	// The cursor a digest answers to pass as Query Since
+	Since     string
 	Authority Authority
 	Proof     Proof
 }
 
-// The intervention of the target recorded once the name passes and the version is found
-func (c *Client) proposal(ctx context.Context, target trace.Intervention, approver string) (Intervention, error) {
+// Records any action of the write side as an agent proposal the person is asked about by the next curate pass over the directory
+// 1. a digest needs no proof and answers the cursor since the person's last judgment in Since
+// 2. a target the records do not hold or a knob value outside its range fails and records nothing
+func (c *Client) Intervene(ctx context.Context, in Intervention) (Intervention, error) {
+	r := curate.Request{Action: in.Action, Target: in.Target, Choice: in.Choice, Labels: in.Labels, Value: in.Value, Session: in.Session}
+	res, err := c.intervener.Intervene(ctx, r, curate.Submitter{Proof: trace.ProofNone, Source: trace.SourceManual})
+	if err != nil {
+		return Intervention{}, err
+	}
+	var rec trace.Intervention
+	// A recorded intervention always decodes
+	_ = json.Unmarshal(res.Trace.Input, &rec)
+	in.ID, in.Ref, in.Since, in.Authority, in.Proof = res.Trace.ID, Ref{ID: rec.ID, Version: rec.Version}, res.Since, rec.Authority, rec.Proof
+	return in, nil
+}
+
+// The judgment of one version recorded as an agent proposal once the name passes
+func (c *Client) proposal(ctx context.Context, id string, version int, choice Choice, labels Labels, approver string) (Intervention, error) {
 	if err := knowledge.CheckApprover(approver); err != nil {
 		return Intervention{}, err
 	}
-	all, err := c.ledger.All(ctx)
-	if err != nil {
-		return Intervention{}, err
-	}
-	if _, err := all.Version(target.ID, target.Version); err != nil {
-		return Intervention{}, err
-	}
-	target.Action, target.Proof = trace.ActionJudge, trace.ProofNone
-	tr, err := target.Trace("", "", trace.SourceManual, trace.InterventionOutput{}, c.now())
-	if err != nil {
-		return Intervention{}, err
-	}
-	if err := c.traces.Append(ctx, tr.Record()); err != nil {
-		return Intervention{}, err
-	}
-	return Intervention{
-		ID: tr.ID, Action: target.Action, Ref: Ref{ID: target.ID, Version: target.Version}, Choice: target.Choice, Labels: target.Labels,
-		Authority: target.Proof.Authority(), Proof: target.Proof,
-	}, nil
+	target := fmt.Sprintf("%s:%d", id, version)
+	return c.Intervene(ctx, Intervention{Action: trace.ActionJudge, Target: target, Choice: choice, Labels: labels})
 }

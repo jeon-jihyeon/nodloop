@@ -6,6 +6,8 @@ import (
 	"sync"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"github.com/jeon-jihyeon/nodloop/internal/curate"
 )
 
 // Opens the server over the config resolved at the moment of the call
@@ -24,10 +26,24 @@ type Host struct {
 	// Empty sends none
 	instructions string
 	mu           sync.Mutex
+	// The confirm forms of intervene sent and not yet answered, kept across calls since the server opens per call
+	forms forms
 }
 
 func NewHost(open Open, version, instructions string) *Host {
-	return &Host{open: open, version: version, instructions: instructions}
+	return &Host{open: open, version: version, instructions: instructions, forms: forms{}}
+}
+
+// Records one intervention under the call lock as POST /v1/interventions submits it
+// The key proves a person or the call is a proposal, so no form is sent
+func (h *Host) Intervene(ctx context.Context, r curate.Request) (InterveneAnswer, error) {
+	var answer InterveneAnswer
+	err := h.call(ctx, func(s *Server) error {
+		var err error
+		answer, err = s.Intervene(ctx, r, s.submitter())
+		return err
+	})
+	return answer, err
 }
 
 func (h *Host) ServeTransport(ctx context.Context, t sdk.Transport) error {
@@ -60,5 +76,6 @@ func (h *Host) call(ctx context.Context, run func(*Server) error) error {
 	if err != nil {
 		return err
 	}
+	s.forms = h.forms
 	return run(s)
 }

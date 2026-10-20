@@ -117,7 +117,7 @@ var publishedKinds = kindTable{
 		reflect.TypeFor[curate.Change](), reflect.TypeFor[curate.Decision](),
 		[]string{
 			"ref", "source", "draw.cycle_id", "input.id", "input.version", "input.compaction", "input.old", "input.extract", "input.signal",
-			"input.anchor", "output.judge",
+			"input.anchor", "input.proposal", "output.judge",
 		},
 		[]string{}).withEnvelope("draw", "source").withRef(trace.NameRun),
 	traceKind(trace.NameKnob, "The knobs, the seed and the judge of a cycle at its start or at a narrowing inside it",
@@ -133,12 +133,15 @@ var publishedKinds = kindTable{
 		reflect.TypeFor[curate.Answer](), reflect.TypeFor[curate.AnswerOutput](),
 		[]string{
 			"session_id", "ref", "source", "draw.cycle_id", "input.decide", "input.change", "input.overturn", "input.authority",
-			"input.proof", "output.records",
+			"input.proof", "input.refs", "output.records", "output.carried",
 		},
 		[]string{}).withEnvelope("draw", "source").withRef(trace.NameExpose),
 	traceKind(trace.NameIntervention, "One action of a person or an agent with the proof of its caller and the records it wrote",
 		reflect.TypeFor[trace.Intervention](), reflect.TypeFor[trace.InterventionOutput](),
-		[]string{"session_id", "source", "input.id", "input.version", "input.compaction", "input.authority", "input.proof", "output.records"},
+		[]string{
+			"session_id", "source", "input.target", "input.id", "input.version", "input.compaction", "input.decide", "input.refs", "input.reverses",
+			"input.authority", "input.proof", "output.records", "output.answer",
+		},
 		[]string{}).withEnvelope("source"),
 	traceKind(trace.NameRollup, "The counts of a closed cycle the reports read once a prune may remove its runs",
 		reflect.TypeFor[loop.Rollup](), nil,

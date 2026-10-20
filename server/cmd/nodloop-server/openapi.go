@@ -8,6 +8,7 @@ import (
 
 	"github.com/jeon-jihyeon/nodloop/internal/loop"
 	"github.com/jeon-jihyeon/nodloop/internal/schema"
+	"github.com/jeon-jihyeon/nodloop/internal/trace"
 )
 
 // The OpenAPI version of the document
@@ -83,11 +84,12 @@ func openAPIDocument(files schema.Files, version string) (json.RawMessage, error
 	for _, n := range loop.ReportNames() {
 		reports = append(reports, string(n))
 	}
+	components["intervene"], components["intervened"] = interveneSchemas()
 	doc := map[string]any{
 		"openapi": openAPIVersion,
 		"info": map[string]any{
 			"title": "nodloop-server", "version": version,
-			"description": "The raw records of nodloop in their published schemas and the MCP tools of a key's role",
+			"description": "The raw records of nodloop in their published schemas, the interventions of the write side and the MCP tools of a key's role",
 		},
 		"security": []any{map[string]any{"key": []any{}}},
 		"paths":    paths(names, reports),
@@ -99,29 +101,96 @@ func openAPIDocument(files schema.Files, version string) (json.RawMessage, error
 	return json.Marshal(doc)
 }
 
+// The payload of POST /v1/interventions and its answer, whose intervention is the published record of its kind
+// The enums come from the record types the published schemas are generated from
+func interveneSchemas() (map[string]any, map[string]any) {
+	actions := make([]any, 0, len(trace.Actions()))
+	for _, a := range trace.Actions() {
+		actions = append(actions, string(a))
+	}
+	choices := make([]any, 0, len(trace.Choices()))
+	for _, c := range trace.Choices() {
+		choices = append(choices, string(c))
+	}
+	str := func(description string) map[string]any {
+		return map[string]any{"type": "string", "description": description}
+	}
+	labels := map[string]any{"type": "object", "additionalProperties": map[string]any{"type": "array", "items": map[string]any{"type": "string"}}}
+	payload := map[string]any{
+		"type": "object", "required": []string{"action"}, "additionalProperties": false,
+		"properties": map[string]any{
+			"action": map[string]any{"type": "string", "enum": actions},
+			"target": str("an item version as id:version, a compaction, the decide or expose of a question, a change kind, a pause, a knob, " +
+				"the producer of a place or an earlier intervention"),
+			"choice":  map[string]any{"type": "string", "enum": choices},
+			"labels":  labels,
+			"value":   map[string]any{"type": "number", "description": "the value of a knob within its range"},
+			"session": str("the session a proposal is asked in"),
+		},
+	}
+	written := map[string]any{
+		"type": "object", "required": []string{"id", "version", "status"},
+		"properties": map[string]any{"id": str("knowledge id"), "version": map[string]any{"type": "integer"}, "status": str("its status")},
+	}
+	answer := map[string]any{
+		"type": "object", "required": []string{"records"},
+		"properties": map[string]any{
+			"intervention": map[string]any{"$ref": "#/components/schemas/intervention"},
+			"authority":    str("person or agent"), "proof": str("key or none"),
+			"records":      map[string]any{"type": "array", "items": written},
+			"answer":       str("the answer event an answer wrote"),
+			"since":        str("the cursor a digest answers"),
+			"question":     str("the decide that asks the person about a proposal"),
+			"declined":     map[string]any{"type": "boolean"},
+			"export_error": str("why approved.md or the veto file was not written while the intervention stands"),
+		},
+	}
+	return payload, answer
+}
+
+func text(description string) map[string]any {
+	return map[string]any{"description": description, "content": map[string]any{"text/plain": map[string]any{"schema": map[string]any{"type": "string"}}}}
+}
+
+func jsonOf(description string, s any) map[string]any {
+	return map[string]any{"description": description, "content": map[string]any{"application/json": map[string]any{"schema": s}}}
+}
+
+// The answers of a route behind a key with the answers of its own
+func keyed(ok map[string]any, more map[string]any) map[string]any {
+	out := map[string]any{
+		"200": ok, "401": text("no key or an unknown key"), "403": text("a role that may not read it"), "404": text("a name the route does not know"),
+		"500": text("an internal failure"),
+	}
+	for code, answer := range more {
+		out[code] = answer
+	}
+	return out
+}
+
+// The route of the write side
+func interventionsPath() map[string]any {
+	ref := func(name string) map[string]any { return map[string]any{"$ref": "#/components/schemas/" + name} }
+	return map[string]any{"post": map[string]any{
+		"summary": "One intervention of the write side on the records of the tenant of the key",
+		"description": "Under a key of role approver added with --person it is the person's judgment and takes effect at once. " +
+			"Under any other key it records an agent proposal a curate pass over the same records asks the person about. A digest needs no proof",
+		"requestBody": map[string]any{"required": true, "content": map[string]any{"application/json": map[string]any{"schema": ref("intervene")}}},
+		"responses": keyed(jsonOf("the intervention as recorded with the records it wrote", ref("intervened")), map[string]any{
+			"400": text("a body that is no payload"),
+			"422": text("a payload that names nothing the records hold, a refused change or a value outside the range of its knob"),
+		}),
+	}}
+}
+
 // The routes of the handler with their parameters and answers
 func paths(kindNames, reports []any) map[string]any {
-	text := func(description string) map[string]any {
-		return map[string]any{"description": description, "content": map[string]any{"text/plain": map[string]any{"schema": map[string]any{"type": "string"}}}}
-	}
-	jsonOf := func(description string, s any) map[string]any {
-		return map[string]any{"description": description, "content": map[string]any{"application/json": map[string]any{"schema": s}}}
-	}
-	// The answers of a route behind a key with the answers of its own
-	answers := func(ok map[string]any, more map[string]any) map[string]any {
-		out := map[string]any{
-			"200": ok, "401": text("no key or an unknown key"), "403": text("a role that may not read it"), "404": text("a name the route does not know"),
-			"500": text("an internal failure"),
-		}
-		for code, answer := range more {
-			out[code] = answer
-		}
-		return out
-	}
+	answers := keyed
 	query := func(name, description string, s map[string]any) map[string]any {
 		return map[string]any{"name": name, "in": "query", "description": description, "schema": s}
 	}
 	return map[string]any{
+		"/v1/interventions": interventionsPath(),
 		"/healthz": map[string]any{"get": map[string]any{
 			"summary": "Whether the server runs", "security": []any{}, "responses": map[string]any{"200": text("ok")},
 		}},

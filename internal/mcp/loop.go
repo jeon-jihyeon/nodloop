@@ -126,17 +126,18 @@ func (s *Server) reaffirm(ctx context.Context, _ *sdk.CallToolRequest, in reaffi
 	var k knowledge.Knowledge
 	var err error
 	var wrote knowledge.Set
+	id := trace.NewID(s.now())
 	if judgment.Proof == trace.ProofNone {
 		k, err = s.ledger.Approved(ctx, in.ID, in.Version)
 	} else {
 		judgment.Person = approver
-		k, err = s.ledger.Reaffirm(ctx, in.ID, in.Version, approver)
+		k, err = s.ledger.Under(id).Reaffirm(ctx, in.ID, in.Version, approver)
 		wrote = knowledge.Set{k}
 	}
 	if err != nil {
 		return nil, reaffirmAnswer{}, err
 	}
-	id, err := s.intervened(ctx, judgment, wrote)
+	id, err = s.intervened(ctx, id, judgment, wrote)
 	if err != nil {
 		return nil, reaffirmAnswer{}, err
 	}

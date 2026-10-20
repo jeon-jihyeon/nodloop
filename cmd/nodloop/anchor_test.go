@@ -21,6 +21,7 @@ import (
 )
 
 // The number and cause of every anchor version oldest first
+// A cause that names a trace reads as the name of that trace, such as the intervention of an approval
 func anchorVersions(t *testing.T, records string) []string {
 	t.Helper()
 	store, err := tracefile.New(records)
@@ -32,7 +33,11 @@ func anchorVersions(t *testing.T, records string) []string {
 		require.NoError(t, schema.Validate(string(trace.NameAnchor), tr))
 		v, err := curate.RestoreAnchor(trace.Restore(tr))
 		require.NoError(t, err)
-		out = append(out, fmt.Sprintf("v%d %s", v.Version, v.Cause))
+		cause := v.Cause
+		if named, err := store.Get(context.Background(), cause); err == nil {
+			cause = named.Name
+		}
+		out = append(out, fmt.Sprintf("v%d %s", v.Version, cause))
 	}
 	return out
 }
@@ -66,22 +71,22 @@ func TestRunAnchor(t *testing.T) {
 		{
 			"the anchor holds the lesson a person approved",
 			args{proof: trace.ProofNone},
-			want{stdout: []string{"anchor\tv1\tcause approval\t1 lessons you approved\t0 files\n"}, versions: []string{"v1 approval"}},
+			want{stdout: []string{"anchor\tv1\tcause ", "\t1 lessons you approved\t0 files\n"}, versions: []string{"v1 intervention"}},
 		},
 		{
 			"a second listing records no second version",
 			args{before: [][]string{nil}, proof: trace.ProofNone},
-			want{stdout: []string{"anchor\tv1\tcause approval"}, versions: []string{"v1 approval"}},
+			want{stdout: []string{"anchor\tv1\tcause "}, versions: []string{"v1 intervention"}},
 		},
 		{
 			"a file added at the terminal is designated and names the files as the cause",
 			args{before: [][]string{nil}, proof: atTerminal, command: add},
 			want{
 				stdout: []string{"anchor\tv2\tcause files\t1 lessons you approved\t1 files\n", "designated\t{plan}\tevery place\n"},
-				saved:  []string{"{plan}"}, versions: []string{"v1 approval", "v2 files"},
+				saved:  []string{"{plan}"}, versions: []string{"v1 intervention", "v2 files"},
 			},
 		},
-		{"a file added twice is designated once", args{before: [][]string{add}, proof: atTerminal, command: add}, want{saved: []string{"{plan}"}, versions: []string{"v1 approval"}}},
+		{"a file added twice is designated once", args{before: [][]string{add}, proof: atTerminal, command: add}, want{saved: []string{"{plan}"}, versions: []string{"v1 intervention"}}},
 		{
 			"an add from a script is refused",
 			args{proof: trace.ProofNone, command: add},
@@ -90,12 +95,12 @@ func TestRunAnchor(t *testing.T) {
 		{
 			"a remove from a script is refused",
 			args{before: [][]string{add}, proof: trace.ProofNone, command: []string{"remove", "{plan}"}},
-			want{code: 1, stderr: errPersonOnly.Error(), saved: []string{"{plan}"}, versions: []string{"v1 approval"}},
+			want{code: 1, stderr: errPersonOnly.Error(), saved: []string{"{plan}"}, versions: []string{"v1 intervention"}},
 		},
 		{
 			"a removed file leaves the key and names the files as the cause",
 			args{before: [][]string{add}, proof: atTerminal, command: []string{"remove", "{plan}"}},
-			want{stdout: []string{"anchor\tv2\tcause files\t1 lessons you approved\t0 files\n"}, versions: []string{"v1 approval", "v2 files"}},
+			want{stdout: []string{"anchor\tv2\tcause files\t1 lessons you approved\t0 files\n"}, versions: []string{"v1 intervention", "v2 files"}},
 		},
 		{
 			"a remove of a file that is not designated is refused",
@@ -112,7 +117,7 @@ func TestRunAnchor(t *testing.T) {
 			args{saved: []string{"{dir}/gone.md"}, proof: trace.ProofNone},
 			want{
 				stdout: []string{"absent\t{dir}/gone.md\tcannot be read so it decides nothing\n"}, saved: []string{"{dir}/gone.md"},
-				versions: []string{"v1 approval"},
+				versions: []string{"v1 intervention"},
 			},
 		},
 	}

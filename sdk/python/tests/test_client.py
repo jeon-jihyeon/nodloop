@@ -114,6 +114,46 @@ async def test_server(server: tuple[str, str, str]) -> None:
     assert [i.id for i in acme.items] == ["refund-window"]
 
 
+async def test_intervene_under_a_person_key(server: tuple[str, str, str]) -> None:
+    """An intervention under a key a person holds decides at once, its reverse takes it back and a key of a service only proposes"""
+    url, key, service = server
+    async with Client(url=url, key=service) as c:
+        run = await c.record("support-bot", "Here are the refund steps", labels=ACME)
+        await c.judge(run, "reject", "ci", reason="the refund window was missing")
+        proposed = await c.propose("judgment", "Quote the refund window", from_run=run, item_id="refund-window")
+        proposal = await c.intervene("judge", f"{proposed.id}:{proposed.version}", choice="keep")
+    async with Client(url=url, key=key) as c:
+        kept = await c.intervene("judge", f"{proposed.id}:{proposed.version}", choice="keep")
+        received = await c.knowledge("support-bot", ACME)
+        assert kept.intervention is not None
+        back = await c.intervene("reverse", kept.intervention["id"])
+        after = await c.knowledge("support-bot", ACME)
+
+    assert (proposal.authority, proposal.records) == ("agent", [])
+    assert (kept.authority, kept.proof, kept.records) == ("person", "key", [{"id": "refund-window", "version": 1, "status": "approved"}])
+    assert kept.intervention["record_kind"] == "intervention"
+    assert [i.id for i in received.items] == ["refund-window"]
+    assert [r["status"] for r in back.records] == ["retired", "candidate"]
+    assert after.items == []
+
+
+async def test_intervene_over_stdio(binary: str, records: str) -> None:
+    """Over stdio an intervention is a proposal, a digest answers its cursor and a knob outside its range is a ToolError"""
+    async with Client(record_dir=records, binary_path=binary) as c:
+        run = await c.record("support-bot", "Here are the refund steps", labels=ACME)
+        await c.judge(run, "reject", "ann", reason="the refund window was missing")
+        proposed = await c.propose("judgment", "Quote the refund window", from_run=run, item_id="refund-window")
+        proposal = await c.intervene("judge", f"{proposed.id}:{proposed.version}", choice="keep", session="s-1")
+        digest = await c.intervene("digest", "support-bot", labels=ACME)
+        with pytest.raises(ToolError, match="names no target"):
+            await c.intervene("knob", "audit_tier1", value=0.9)
+        received = await c.knowledge("support-bot", ACME)
+
+    assert (proposal.authority, proposal.proof, proposal.records, proposal.declined) == ("agent", "none", [], False)
+    assert (digest.authority, digest.since) == ("agent", "")
+    assert received.items == []
+
+
 async def test_server_refuses_a_wrong_key(server: tuple[str, str, str]) -> None:
     url, _, _ = server
     with pytest.raises(MCPError):

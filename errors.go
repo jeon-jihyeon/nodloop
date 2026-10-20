@@ -1,6 +1,7 @@
 package nodloop
 
 import (
+	"github.com/jeon-jihyeon/nodloop/internal/curate"
 	"github.com/jeon-jihyeon/nodloop/internal/feedback"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	"github.com/jeon-jihyeon/nodloop/internal/loop"
@@ -43,4 +44,6 @@ var (
 	ErrCursorInvalid = schema.ErrCursorInvalid
 	// A Query of a kind kept outside the record directory such as the guard log of a machine
 	ErrNotServed = schema.ErrNotServed
+	// An Intervene whose target the records do not hold or whose knob value lies outside its range
+	ErrInterventionRefused = curate.ErrTargetInvalid
 )

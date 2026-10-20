@@ -5,7 +5,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { resolve } from "node:path";
 import { find } from "./binary.ts";
-import type { AnyRecord, RecordKind, Records } from "./records.ts";
+import type { AnyRecord, InterventionRecord, RecordKind, Records } from "./records.ts";
 
 /** The binary release the client fetches when no nodloop is installed */
 export const version = "0.9.0";
@@ -104,10 +104,57 @@ export interface Run {
   durationMs?: number;
 }
 
-/** The reports report reads */
+/** The actions of the write side */
+export type InterventionAction = "judge" | "answer" | "dismiss" | "pause" | "resume" | "knob" | "reanchor" | "digest" | "reverse";
+
+/** One intervention of the write side as MCP intervene and POST /v1/interventions take it */
+export interface InterventionRequest {
+  action: InterventionAction;
+  /**
+   * What it acts on: an item version as id:version, a compaction, the decide of a question, a change kind of a pause,
+   * the pause a resume ends, a knob such as audit_tier1, the producer of a place or the intervention a reverse takes back
+   */
+  target?: string;
+  /** keep, undo or scope for judge, or one of the two choices of the question for answer */
+  choice?: string;
+  /** The labels of a scope choice, a pause, a reanchor or a digest */
+  labels?: Labels;
+  /** The value of a knob within its range */
+  value?: number;
+  /** The session a proposal is asked in */
+  session?: string;
+}
+
+/** What one intervention recorded */
+export interface Intervention {
+  /** The intervention record in its published schema, absent when the person declined the form */
+  intervention?: InterventionRecord;
+  /** person when a key that proves a person decided, agent for a proposal the person is asked about */
+  authority?: "person" | "agent";
+  proof?: string;
+  /** The knowledge records it wrote */
+  records: { id: string; version: number; status: string }[];
+  /** The answer event an answer wrote */
+  answer?: string;
+  /** The cursor of a digest to pass as since to the records of answer, intervention, decide, expose and knowledge */
+  since?: string;
+  /** The decide that asks the person about a proposal */
+  question?: string;
+  /** The person declined the form so nothing was recorded */
+  declined?: boolean;
+  exportError?: string;
+}
+
+/**
+ * The reports report reads
+ * @deprecated Page the raw records with records instead, which carry the published contract. report is removed in the next release
+ */
 export type ReportName = "loop" | "extract" | "critic" | "effect" | "health" | "replay";
 
-/** One report of the records with the start of the runs it read */
+/**
+ * One report of the records with the start of the runs it read
+ * @deprecated Page the raw records with records instead
+ */
 export interface Report {
   /** The report as JSON */
   report: any;
@@ -267,7 +314,10 @@ export class Client {
     await this.call("outcome", args);
   }
 
-  /** One report of the records as JSON with the start of the window it read */
+  /**
+   * One report of the records as JSON with the start of the window it read
+   * @deprecated Page the raw records with records instead, which carry the published contract. report is removed in the next release
+   */
   async report(name: ReportName): Promise<Report> {
     const { report, since } = await this.call("report", { name });
     return since ? { report, since } : { report };
@@ -321,6 +371,21 @@ export class Client {
       folderError: answer.folder_error ?? "",
       proposal: answer.proposal ?? "",
     };
+  }
+
+  /**
+   * Submits one intervention of the write side: judge, answer, dismiss, pause, resume, knob, reanchor, digest or reverse
+   * Under a key of nodloop-server that a person holds it is the person's decision at once
+   * Any other call such as one over stdio records an agent proposal the person is asked about and changes nothing
+   * A digest needs no proof and answers since, the cursor after the person's last decision
+   */
+  async intervene(request: InterventionRequest): Promise<Intervention> {
+    const args: Record<string, unknown> = { action: request.action };
+    for (const key of ["target", "choice", "labels", "value", "session"] as const) {
+      if (request[key] !== undefined) args[key] = request[key];
+    }
+    const { export_error: exportError, ...answer } = await this.call("intervene", args);
+    return exportError ? { ...answer, records: answer.records ?? [], exportError } : { ...answer, records: answer.records ?? [] };
   }
 
   /**

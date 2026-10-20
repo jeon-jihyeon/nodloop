@@ -223,7 +223,7 @@ func (f knowledgeFlags) runJudge(ctx context.Context, action, id string, cmd kno
 		return fmt.Errorf("%s: an id and --version %w", action, errRequired)
 	}
 	target := trace.Intervention{ID: id, Version: f.version, Choice: trace.ChoiceUndo}
-	var move mover = cmd.ledger.Retire
+	var move mover = (*knowledge.Ledger).Retire
 	if action == "approve" {
 		var err error
 		if target, move, err = f.approval(cmd, id); err != nil {
@@ -243,8 +243,8 @@ func (f knowledgeFlags) runJudge(ctx context.Context, action, id string, cmd kno
 	return cmd.folder(ctx, id, f.version)
 }
 
-// One version moved to a new status under a name
-type mover func(ctx context.Context, id string, version int, approver string) (knowledge.Knowledge, error)
+// One version moved to a new status under a name through the ledger that names the intervention
+type mover func(ledger *knowledge.Ledger, ctx context.Context, id string, version int, approver string) (knowledge.Knowledge, error)
 
 // The approval of the flags and the target it records
 // 1. as proposed without --label and --everywhere
@@ -263,7 +263,7 @@ func (f knowledgeFlags) approval(cmd knowledgeCommand, id string) (trace.Interve
 		scoped.Labels = trace.Labels(f.labels)
 		return scoped, cmd.approveIn(scoped.Labels), nil
 	}
-	return target, cmd.ledger.Approve, nil
+	return target, (*knowledge.Ledger).Approve, nil
 }
 
 // The actions that read how the reviews of a version held up and the ones that act on it
@@ -381,16 +381,16 @@ func (c knowledgeCommand) recorded(ctx context.Context, run knowledge.RunScope) 
 }
 
 // Approves in the labels once a recorded run of the producer of the version carries each of them
-func (c knowledgeCommand) approveIn(labels trace.Labels) func(context.Context, string, int, string) (knowledge.Knowledge, error) {
-	return func(ctx context.Context, id string, version int, approver string) (knowledge.Knowledge, error) {
-		scope, err := c.ledger.ScopeIn(ctx, id, version, labels)
+func (c knowledgeCommand) approveIn(labels trace.Labels) mover {
+	return func(ledger *knowledge.Ledger, ctx context.Context, id string, version int, approver string) (knowledge.Knowledge, error) {
+		scope, err := ledger.ScopeIn(ctx, id, version, labels)
 		if err != nil {
 			return knowledge.Knowledge{}, err
 		}
 		if err := c.recorded(ctx, scope); err != nil {
 			return knowledge.Knowledge{}, err
 		}
-		return c.ledger.ApproveIn(ctx, id, version, labels, approver)
+		return ledger.ApproveIn(ctx, id, version, labels, approver)
 	}
 }
 
@@ -527,7 +527,7 @@ func (c knowledgeCommand) overlaps(ctx context.Context, id string) error {
 // Approve and retire move one version to a new status under the person's name
 // 1. without the terminal proof the call records an agent proposal once the version is found and changes nothing
 // 2. a failed export still prints the status line because the record is written and the error follows
-// 3. the intervention follows the record since it names the record written
+// 3. the intervention follows the record since it names the record written, and the record names the intervention
 // 4. the veto line appears only when the export worked and the approved vetoes changed
 func (c knowledgeCommand) transition(ctx context.Context, action string, move mover, judgment trace.Intervention) error {
 	if judgment.Proof == trace.ProofNone {
@@ -540,12 +540,13 @@ func (c knowledgeCommand) transition(ctx context.Context, action string, move mo
 	if err != nil {
 		return err
 	}
-	k, err := move(ctx, judgment.ID, judgment.Version, judgment.Person)
+	id := trace.NewID(c.app.now())
+	k, err := move(c.ledger.Under(id), ctx, judgment.ID, judgment.Version, judgment.Person)
 	if err != nil && !errors.Is(err, knowledge.ErrExport) {
 		return err
 	}
 	fmt.Fprintf(c.out, "%s\tv%d\t%s\t%s\n", k.ID, k.Version, k.Status, k.Approver)
-	if ierr := c.intervened(ctx, judgment, knowledge.Set{k}); ierr != nil || err != nil {
+	if ierr := c.intervened(ctx, id, judgment, knowledge.Set{k}); ierr != nil || err != nil {
 		return errors.Join(err, ierr)
 	}
 	after, err := c.ledger.All(ctx)
@@ -574,9 +575,10 @@ func (c knowledgeCommand) judgment(target trace.Intervention, approver string) (
 	return target, nil
 }
 
-// Records the intervention of a judgment with the records it wrote
-func (c knowledgeCommand) intervened(ctx context.Context, judgment trace.Intervention, wrote knowledge.Set) error {
-	tr, err := judgment.Trace("", "", trace.SourceCommand, trace.InterventionOutput{Records: wrote.Written()}, c.app.now())
+// Records the intervention of a judgment under the id its records name with the records it wrote
+// A command of the person is its source whatever the proof
+func (c knowledgeCommand) intervened(ctx context.Context, id string, judgment trace.Intervention, wrote knowledge.Set) error {
+	tr, err := judgment.Trace(id, "", trace.SourceCommand, trace.InterventionOutput{Records: wrote.Written()}, c.app.now())
 	if err != nil {
 		return err
 	}
@@ -590,7 +592,7 @@ func (c knowledgeCommand) intervened(ctx context.Context, judgment trace.Interve
 // Records the judgment as an agent proposal and says so
 // Nothing changes until the person answers the question made of it
 func (c knowledgeCommand) proposal(ctx context.Context, action string, judgment trace.Intervention) error {
-	if err := c.intervened(ctx, judgment, nil); err != nil {
+	if err := c.intervened(ctx, "", judgment, nil); err != nil {
 		return err
 	}
 	target := judgment.Compaction

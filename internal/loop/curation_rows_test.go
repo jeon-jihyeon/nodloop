@@ -41,7 +41,7 @@ func decideTrace(t *testing.T, id, action string, at time.Time) trace.Trace {
 	return tr
 }
 
-// Touchpoints per cycle and per week with notices, proposals and the interventions of an agent apart, and the overturns of the person
+// Touchpoints per cycle and per week with notices, proposals and the interventions of an agent apart but every digest, and the overturns of the person
 func TestCurationTouchpoints(t *testing.T) {
 	day := func(d int) time.Time { return cycleAt(0).AddDate(0, 0, d).Add(10 * time.Hour) }
 	push, manual := trace.SourcePush, trace.SourceManual
@@ -65,7 +65,7 @@ func TestCurationTouchpoints(t *testing.T) {
 		expose("x4", "d1", "s3", "notice", 40, day(1), push),
 		intervene("i1", "judge", "k-9", "keep", "agent"), expose("x5", "i1", "s4", "direction", 200, day(2), push),
 		decideTrace(t, "d5", "apply", day(2)), expose("x6", "d5", "s1", "audit", 150, day(2), push), answer("a6", "x6", "no_answer", false, day(3), push),
-		intervene("i2", "judge", "k-1", "undo", "person"), intervene("i3", "judge", "k-2", "undo", "person"), intervene("i4", "pause", "", "", "person"),
+		intervene("i2", "judge", "k-1", "undo", "person"), intervene("i3", "judge", "k-2", "undo", "person"), intervene("i4", "pause", "", "", "person"), intervene("i5", "digest", "", "", "agent"),
 		decideTrace(t, "d4", "shadow", day(8)), expose("x7", "d4", "s5", "shadow", 500, day(8), push), answer("a7", "x7", "drop", true, day(8), push),
 		answer("a8", "x-gone", "same", false, day(2), push),
 		decideTrace(t, "d6", "ask", day(2)), drawless(expose("x8", "d6", "s1", "direction", 250, day(2), push)), answer("a9", "x8", "drop", true, day(2), push),
@@ -85,12 +85,12 @@ func TestCurationTouchpoints(t *testing.T) {
 			Period: "cycle", Start: "2026-09-21", Questions: map[string]map[string]int{
 				"audit": {"push": 2}, "direction": {"push": 2, "manual": 1}, "shadow": {"push": 1},
 			},
-			Notices: 1, Proposals: 1, Sessions: 4, Answers: 6, NoAnswer: 1, Interventions: map[string]int{"judge": 2, "pause": 1},
+			Notices: 1, Proposals: 1, Sessions: 4, Answers: 6, NoAnswer: 1, Interventions: map[string]int{"judge": 2, "pause": 1, "digest": 1},
 			RunesMedian: median(225), RunesMax: 500,
 		},
 		{
 			Period: "week", Start: "2026-09-21", Questions: map[string]map[string]int{"audit": {"push": 2}, "direction": {"push": 2, "manual": 1}},
-			Notices: 1, Proposals: 1, Sessions: 3, Answers: 5, NoAnswer: 1, Interventions: map[string]int{"judge": 2, "pause": 1},
+			Notices: 1, Proposals: 1, Sessions: 3, Answers: 5, NoAnswer: 1, Interventions: map[string]int{"judge": 2, "pause": 1, "digest": 1},
 			RunesMedian: median(200), RunesMax: 300,
 		},
 		{
