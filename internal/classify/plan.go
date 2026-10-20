@@ -29,6 +29,7 @@ type TraceStore interface {
 
 // The endpoint of a point and the built in member it falls back to
 // A point asks a plan as it would ask one classifier
+// An endpoint with no classifier leaves the built in member alone, as the capture asks it with no endpoint set
 type Plan struct {
 	point    Point
 	endpoint Member
@@ -86,12 +87,21 @@ func (p *Plan) Classify(ctx context.Context, req Request) (Answers, error) {
 // 1. the endpoint answers alone when every answer reaches the threshold
 // 2. the built in member answers when the endpoint fails or is unsure
 // 3. a failure of both members returns both errors and the trace still names them
+// 4. a plan without an endpoint asks the built in member alone and its trace names that member alone
 func (p *Plan) Rule(ctx context.Context, req Request) (Ruling, error) {
 	start := p.now()
-	reply, first, err := p.endpoint.ask(ctx, req, p.now)
-	all := []Asked{first}
-	var model string
-	if err != nil || !reply.Answers.Sure() {
+	var (
+		reply Reply
+		all   []Asked
+		model string
+		err   error
+	)
+	if p.endpoint.Classifier != nil {
+		var first Asked
+		reply, first, err = p.endpoint.ask(ctx, req, p.now)
+		all = append(all, first)
+	}
+	if p.endpoint.Classifier == nil || err != nil || !reply.Answers.Sure() {
 		endpointErr := err
 		var fallback Asked
 		reply, fallback, err = p.builtin.ask(ctx, req, p.now)

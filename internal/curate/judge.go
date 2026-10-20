@@ -281,12 +281,17 @@ func (j *Judge) Judge(ctx context.Context, ref string, c Case) (Judgment, error)
 	if err != nil {
 		return Judgment{}, err
 	}
-	votes := Votes(ballot.Votes)
-	judged := Judgment{Outcome: votes.Outcome(), Share: votes.Share(), Bin: votes.Bin(), Trace: ballot.TraceID, Err: votes.Err()}
-	if mean, ok := votes.Confidence(); ok {
+	return Votes(ballot.Votes).Judgment(ballot.TraceID), nil
+}
+
+// What the votes recorded in the classify trace of the id found
+// The export reads the same from a trace that a pass read from the call
+func (vs Votes) Judgment(traceID string) Judgment {
+	judged := Judgment{Outcome: vs.Outcome(), Share: vs.Share(), Bin: vs.Bin(), Trace: traceID, Err: vs.Err()}
+	if mean, ok := vs.Confidence(); ok {
 		judged.Confidence = &mean
 	}
-	return judged, nil
+	return judged
 }
 
 // One decision of the person a variant shows as an example

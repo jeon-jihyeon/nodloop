@@ -34,20 +34,19 @@ func RunSpan(runID string) SpanRef {
 	return spanOf(runID)
 }
 
-// The span of a model step trace
-func CallSpan(traceID string) SpanRef {
+// The span keyed by a trace id: the root of a model step and the carrier of an answer, an intervention or a decide
+func TraceSpan(traceID string) SpanRef {
 	return spanOf(traceID)
 }
 
-// The span of a review question
-// 1. inside the trace of the run of its turn when the records hold one
-// 2. else the root of a trace of its own keyed by the session
-func ReviewSpan(runID, sessionID string, candidate Ref, at time.Time) SpanRef {
-	key := ":review:" + candidate.ID + ":" + strconv.Itoa(candidate.Version) + ":" + nanos(at)
+// The span of the question an expose trace records
+// 1. inside the trace of the run the expose names
+// 2. else the root of a trace of its own keyed by the expose
+func QuestionSpan(runID, exposeID string) SpanRef {
 	if runID == "" {
-		return spanOf(sessionID + key)
+		return spanOf(exposeID)
 	}
-	return RunSpan(runID).child(runID + key)
+	return RunSpan(runID).child(runID + ":question:" + exposeID)
 }
 
 // The carrier span of a verdict on a run

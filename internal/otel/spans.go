@@ -92,19 +92,29 @@ func (r Run) holdout() []attribute {
 	return append(out, str("nodloop.holdout.arm", "withheld"))
 }
 
-// The review question as a span of no length at the moment the stop asked it
-func (r Review) span(content bool) span {
-	ids := ReviewSpan(r.Run, r.SessionID, r.Candidate, r.Time)
+// The question as a span of no length at the moment it was shown under the turn of the run it followed
+// The kind, the source and the draw go along so a tool counts the questions of each kind and source without the text
+func (q Question) span(content bool) span {
+	ids := QuestionSpan(q.Run, q.ID)
 	s := span{
-		TraceID: ids.TraceID, SpanID: ids.SpanID, Name: "nodloop.review " + r.Candidate.ID, Kind: kindInternal,
-		Start: nanos(r.Time), End: nanos(r.Time),
-		Attributes: append([]attribute{str(keyKind, "CHAIN"), str("nodloop.knowledge.candidate", r.Candidate.ref())}, session(r.SessionID)...),
+		TraceID: ids.TraceID, SpanID: ids.SpanID, Name: "nodloop.question " + q.Kind, Kind: kindInternal,
+		Start: nanos(q.Time), End: nanos(q.Time),
+		Attributes: append([]attribute{str(keyKind, "CHAIN"), str("nodloop.question.kind", q.Kind)}, session(q.SessionID)...),
 	}
-	if r.Run != "" {
-		s.Parent = RunSpan(r.Run).SpanID
+	if q.Run != "" {
+		s.Parent = RunSpan(q.Run).SpanID
+	}
+	s.Attributes = appendStr(s.Attributes, "nodloop.question.source", q.Source)
+	s.Attributes = appendInt(s.Attributes, "nodloop.question.round", q.Round)
+	if q.Candidate != nil {
+		s.Attributes = append(s.Attributes, str("nodloop.knowledge.candidate", q.Candidate.ref()))
+	}
+	s.Attributes = appendStr(s.Attributes, "nodloop.cycle", q.Cycle)
+	if q.P != nil {
+		s.Attributes = append(s.Attributes, double("nodloop.draw.p", *q.P))
 	}
 	if content {
-		s.Attributes = appendStr(s.Attributes, "nodloop.knowledge.content", r.Content)
+		s.Attributes = appendStr(s.Attributes, "nodloop.knowledge.content", q.Content)
 	}
 	return s
 }
@@ -127,7 +137,7 @@ func (e Evaluation) span(content bool) span {
 // 1. the root names the step in the trace list of every tool
 // 2. the child is the inference span whose usage and cost the tools read
 func (c Call) spans() []span {
-	ids := CallSpan(c.ID)
+	ids := TraceSpan(c.ID)
 	agent := "nodloop." + c.Name
 	root := span{
 		TraceID: ids.TraceID, SpanID: ids.SpanID, Name: operationTurn + " " + agent, Kind: kindInternal,
@@ -142,6 +152,7 @@ func (c Call) spans() []span {
 	if c.Candidate != nil {
 		root.Attributes = append(root.Attributes, str("nodloop.knowledge.candidate", c.Candidate.ref()))
 	}
+	root.Attributes = append(root.Attributes, c.Judge.attributes()...)
 	for _, l := range c.Links {
 		root.Links = append(root.Links, link(l))
 	}
@@ -154,10 +165,23 @@ func (c Call) spans() []span {
 	return []span{root, c.inference(root)}
 }
 
+// The model and the effort of each member as arrays in the order of the members with what the judge found
+// A trace of any other point carries none
+func (j *Judge) attributes() []attribute {
+	if j == nil {
+		return nil
+	}
+	attrs := []attribute{
+		strs("gen_ai.request.model", j.Models), strs("nodloop.judge.effort", j.Efforts), str("nodloop.judge.outcome", j.Outcome),
+		double("nodloop.judge.votes", j.Votes),
+	}
+	return appendStr(attrs, "nodloop.judge.bin", j.Bin)
+}
+
 // The inference span of the conventions under the root of the step
 // Input tokens count the cache read and write as the Anthropic rule of the conventions does
 func (c Call) inference(root span) span {
-	ids := CallSpan(c.ID).chat(c.ID)
+	ids := TraceSpan(c.ID).chat(c.ID)
 	s := span{
 		TraceID: ids.TraceID, SpanID: ids.SpanID, Parent: root.SpanID, Name: strings.TrimSpace(operationChat + " " + c.Model), Kind: kindClient,
 		Start: root.Start, End: root.End,

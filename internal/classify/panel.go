@@ -2,7 +2,11 @@ package classify
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"time"
+
+	"github.com/jeon-jihyeon/nodloop/internal/trace"
 )
 
 // Every member of a point asked in order with no combined answer
@@ -48,6 +52,24 @@ func (p *Panel) Classify(ctx context.Context, req Request) (Ballot, error) {
 	}
 	id, err := p.record(ctx, req, all, start)
 	return Ballot{TraceID: id, Votes: votes}, err
+}
+
+// The ballot a panel trace records with each member that failed as a vote of ErrMemberFailed
+// False for a trace of another name or an output that does not decode
+func RestoreBallot(t trace.Trace) (Ballot, bool) {
+	var out TraceOutput
+	if t.Name != trace.NameClassify || json.Unmarshal(t.Output, &out) != nil {
+		return Ballot{}, false
+	}
+	b := Ballot{TraceID: t.ID, Votes: make([]Vote, 0, len(out.Members))}
+	for _, m := range out.Members {
+		v := Vote{Member: m.Name, Reply: Reply{Answers: m.Answers, Model: m.Model, Effort: m.Effort}}
+		if m.Error != "" {
+			v.Err = fmt.Errorf("%w: %s", ErrMemberFailed, m.Error)
+		}
+		b.Votes = append(b.Votes, v)
+	}
+	return b, true
 }
 
 // The trace of one call and its id with no top level answers since a panel combines none

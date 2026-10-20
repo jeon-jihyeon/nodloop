@@ -53,3 +53,45 @@ func TestAnswersSure(t *testing.T) {
 		})
 	}
 }
+
+func TestAnswerSure(t *testing.T) {
+	tcs := []struct {
+		name string
+		args classify.Answer
+		want bool
+	}{
+		{"a yes at 0.8", classify.Answer{Yes: 0.8}, true},
+		{"a no at 0.8", classify.Answer{Yes: 0.2}, true},
+		{"a yes below 0.8", classify.Answer{Yes: 0.79}, false},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.want, tc.args.Sure())
+		})
+	}
+}
+
+// The capture reads its reaction answers apart from the stops answers it asked beside them
+func TestAnswersOf(t *testing.T) {
+	stops := classify.Answer{Yes: 0.6}
+	tcs := []struct {
+		name string
+		args classify.Answers
+		want classify.Answers
+	}{
+		{
+			"the stops answers are left out",
+			classify.Answers{"corrects": {Yes: 0.9}, "approves": {Yes: 0.1}, "stops:k-1:v1": stops},
+			classify.Answers{"corrects": {Yes: 0.9}, "approves": {Yes: 0.1}},
+		},
+		{"a question with no answer is left out", classify.Answers{"corrects": {Yes: 0.9}}, classify.Answers{"corrects": {Yes: 0.9}}},
+		{"no answer gives none", nil, classify.Answers{}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.want, tc.args.Of(classify.ReactionQuestions))
+		})
+	}
+}

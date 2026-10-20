@@ -83,6 +83,7 @@ type attribute struct {
 // An integer is a decimal string as OTLP JSON encodes 64 bit integers
 type value struct {
 	String *string  `json:"stringValue,omitempty"`
+	Bool   *bool    `json:"boolValue,omitempty"`
 	Int    *string  `json:"intValue,omitempty"`
 	Double *float64 `json:"doubleValue,omitempty"`
 	Array  *array   `json:"arrayValue,omitempty"`
@@ -94,6 +95,10 @@ type array struct {
 
 func str(key, s string) attribute {
 	return attribute{Key: key, Value: value{String: &s}}
+}
+
+func boolean(key string, b bool) attribute {
+	return attribute{Key: key, Value: value{Bool: &b}}
 }
 
 func integer(key string, n int64) attribute {

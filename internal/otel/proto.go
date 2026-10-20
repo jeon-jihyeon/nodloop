@@ -165,13 +165,16 @@ func (a attribute) proto(b *pb) {
 }
 
 // The AnyValue with the one field that is set
-// An empty string is still written since the oneof would read as no value without it
+// An empty string and false are still written since the oneof would read as no value without them
 func (v value) proto(b *pb) {
 	switch {
 	case v.String != nil:
 		b.tag(1, wireBytes)
 		b.varint(uint64(len(*v.String)))
 		*b = append(*b, *v.String...)
+	case v.Bool != nil:
+		b.tag(2, wireVarint)
+		b.varint(map[bool]uint64{false: 0, true: 1}[*v.Bool])
 	case v.Int != nil:
 		n, _ := strconv.ParseInt(*v.Int, 10, 64)
 		b.tag(3, wireVarint)

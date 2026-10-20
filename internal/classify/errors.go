@@ -15,4 +15,6 @@ var (
 	ErrResponseInvalid = errors.New("classify: endpoint answer is not valid")
 	// A question left without an answer
 	ErrAnswerMissing = errors.New("classify: question not answered")
+	// A member a panel trace records with the error it failed on
+	ErrMemberFailed = errors.New("classify: member gave no answer")
 )
