@@ -49,5 +49,6 @@ var (
 	errOTelEndpoint       = errors.New("invalid otel endpoint")
 	errOTelProtocol       = errors.New("unknown otel protocol")
 	errUnknownTraceName   = errors.New("unknown trace name")
+	errSchemaPath         = errors.New("a link or text path of a record kind")
 	errNoAction           = fmt.Errorf("an action %w", errRequired)
 )

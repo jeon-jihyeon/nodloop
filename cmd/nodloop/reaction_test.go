@@ -16,6 +16,7 @@ import (
 
 	"github.com/jeon-jihyeon/nodloop/internal/classify"
 	"github.com/jeon-jihyeon/nodloop/internal/record"
+	"github.com/jeon-jihyeon/nodloop/internal/schema"
 	"github.com/jeon-jihyeon/nodloop/internal/textkey"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
 	tracefile "github.com/jeon-jihyeon/nodloop/internal/trace/file"
@@ -82,6 +83,7 @@ func TestRunHookReactionKeepsNoWords(t *testing.T) {
 			assert.Equal(t, []any{"approves", "corrects"}, in.Questions)
 			assert.Equal(t, tc.want, members)
 			assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+			assert.NoError(t, schema.Validate(string(trace.NameClassify), found[0]))
 		})
 	}
 }

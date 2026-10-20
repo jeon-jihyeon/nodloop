@@ -266,9 +266,16 @@ func (r *Replayer) failed(ctx context.Context, item knowledge.Knowledge, res llm
 	return err
 }
 
+// The input of a replay trace: the version judged and its text
+type TraceInput struct {
+	ID      string `json:"id"`
+	Version int    `json:"version"`
+	Content string `json:"content"`
+}
+
 // The output is the judgment or empty when failure names why there is none
 func (r *Replayer) record(ctx context.Context, item knowledge.Knowledge, res llm.Response, output json.RawMessage, failure string) error {
-	input, err := json.Marshal(map[string]any{"id": item.ID, "version": item.Version, "content": item.Content})
+	input, err := json.Marshal(TraceInput{ID: item.ID, Version: item.Version, Content: item.Content})
 	if err != nil {
 		return err
 	}

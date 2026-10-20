@@ -1,0 +1,240 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/jeon-jihyeon/nodloop/schema/knowledge.v1.json",
+  "title": "knowledge",
+  "description": "One status record of a knowledge version, compaction records included",
+  "type": "object",
+  "properties": {
+    "record_kind": {
+      "type": "string",
+      "const": "knowledge"
+    },
+    "record_id": {
+      "type": "string"
+    },
+    "id": {
+      "type": "string"
+    },
+    "version": {
+      "type": "integer"
+    },
+    "kind": {
+      "type": "string",
+      "enum": [
+        "meaning",
+        "judgment"
+      ]
+    },
+    "content": {
+      "type": "string"
+    },
+    "run": {
+      "type": [
+        "null",
+        "object"
+      ],
+      "properties": {
+        "producer": {
+          "type": "string"
+        },
+        "labels": {
+          "type": "object",
+          "additionalProperties": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "except": {
+          "type": "object",
+          "additionalProperties": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "required": [
+        "producer"
+      ]
+    },
+    "evidence": {
+      "type": "object",
+      "properties": {
+        "feedback_trace_ids": {
+          "type": [
+            "null",
+            "array"
+          ],
+          "items": {
+            "type": "string"
+          }
+        },
+        "outcome_trace_ids": {
+          "type": [
+            "null",
+            "array"
+          ],
+          "items": {
+            "type": "string"
+          }
+        },
+        "paragraph_ids": {
+          "type": [
+            "null",
+            "array"
+          ],
+          "items": {
+            "type": "string"
+          }
+        },
+        "knowledge": {
+          "type": [
+            "null",
+            "array"
+          ],
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "version": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "id",
+              "version"
+            ]
+          }
+        }
+      }
+    },
+    "basis": {
+      "type": "string",
+      "enum": [
+        "stated",
+        "verified"
+      ]
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "candidate",
+        "approved",
+        "retired",
+        "superseded"
+      ]
+    },
+    "approver": {
+      "type": "string"
+    },
+    "approved_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "reviewed_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "supersedes": {
+      "type": "integer"
+    },
+    "base": {
+      "type": "integer"
+    },
+    "time": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "author": {
+      "type": "string"
+    },
+    "drafted": {
+      "type": "boolean"
+    },
+    "new_labels": {
+      "type": "boolean"
+    },
+    "veto": {
+      "type": [
+        "null",
+        "object"
+      ],
+      "properties": {
+        "tool": {
+          "type": "string"
+        },
+        "when": {
+          "type": [
+            "null",
+            "array"
+          ],
+          "items": {
+            "type": "object",
+            "properties": {
+              "field": {
+                "type": "string"
+              },
+              "match": {
+                "type": "string"
+              },
+              "unless": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "field",
+              "match"
+            ]
+          }
+        },
+        "example": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      },
+      "required": [
+        "tool",
+        "when",
+        "example"
+      ]
+    },
+    "compaction": {
+      "type": "string"
+    },
+    "compaction_size": {
+      "type": "integer"
+    },
+    "deferred_in": {
+      "type": "string"
+    },
+    "schema_version": {
+      "type": "integer",
+      "const": 1
+    }
+  },
+  "required": [
+    "record_kind",
+    "record_id",
+    "id",
+    "version",
+    "kind",
+    "content",
+    "evidence",
+    "basis",
+    "status",
+    "time",
+    "author",
+    "schema_version"
+  ]
+}

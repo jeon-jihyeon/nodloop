@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/jeon-jihyeon/nodloop/schema/outcome.v1.json",
+  "title": "outcome",
+  "description": "What a later check of a run found",
+  "type": "object",
+  "properties": {
+    "record_kind": {
+      "type": "string",
+      "const": "outcome"
+    },
+    "record_id": {
+      "type": "string"
+    },
+    "trace_id": {
+      "type": "string"
+    },
+    "time": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "result": {
+      "type": "string",
+      "enum": [
+        "confirmed",
+        "refuted",
+        "inconclusive"
+      ]
+    },
+    "confirmed_cause": {
+      "type": "string"
+    },
+    "note": {
+      "type": "string"
+    },
+    "reviewer": {
+      "type": "string"
+    },
+    "schema_version": {
+      "type": "integer",
+      "const": 1
+    }
+  },
+  "required": [
+    "record_kind",
+    "record_id",
+    "trace_id",
+    "time",
+    "result",
+    "reviewer",
+    "schema_version"
+  ]
+}

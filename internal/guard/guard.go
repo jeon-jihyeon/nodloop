@@ -22,6 +22,9 @@ type input struct {
 	Cwd       string         `json:"cwd"`
 }
 
+// The version of the published schema guard
+const SchemaVersion = 1
+
 // One line of the decision log
 // The tool input never enters it so a secret in a command never lands in the log
 type Entry struct {
@@ -31,6 +34,8 @@ type Entry struct {
 	Tool    string      `json:"tool"`
 	Veto    string      `json:"veto"`
 	Action  veto.Action `json:"action"`
+	// A line of an earlier release lacks it and reads as version 1
+	SchemaVersion int `json:"schema_version,omitempty"`
 }
 
 // What the hook decided on one call
@@ -91,7 +96,9 @@ func Run(stdin io.Reader, stdout, stderr io.Writer, load Loader, named string, n
 		fmt.Fprintf(stderr, "nodloop guard: failed to load vetoes, skipped: %v\n", err)
 	}
 	if v := vetoes.Match(in.ToolName, in.ToolInput); v != nil {
-		entry := &Entry{Time: now.UTC(), Session: in.SessionID, Cwd: in.Cwd, Tool: in.ToolName, Veto: v.ID(), Action: v.Action()}
+		entry := &Entry{
+			Time: now.UTC(), Session: in.SessionID, Cwd: in.Cwd, Tool: in.ToolName, Veto: v.ID(), Action: v.Action(), SchemaVersion: SchemaVersion,
+		}
 		if v.Action() == veto.ActionAsk {
 			var out askOutput
 			out.HookSpecificOutput.HookEventName, out.HookSpecificOutput.PermissionDecision = "PreToolUse", "ask"

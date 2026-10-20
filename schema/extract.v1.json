@@ -1,0 +1,284 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/jeon-jihyeon/nodloop/schema/extract.v1.json",
+  "title": "extract",
+  "description": "One extraction of a lesson from a corrected run with its drafts and conclusion",
+  "type": "object",
+  "properties": {
+    "record_kind": {
+      "type": "string",
+      "const": "extract"
+    },
+    "record_id": {
+      "type": "string"
+    },
+    "id": {
+      "type": "string"
+    },
+    "name": {
+      "type": "string",
+      "const": "extract"
+    },
+    "session_id": {
+      "type": "string"
+    },
+    "subject": {
+      "type": "string"
+    },
+    "ref": {
+      "type": "string"
+    },
+    "time": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "model": {
+      "type": "string"
+    },
+    "input": {
+      "type": "object",
+      "properties": {
+        "verdict": {
+          "type": "string"
+        },
+        "reason_code": {
+          "type": "string"
+        },
+        "reviewer": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "verdict"
+      ]
+    },
+    "output": {
+      "type": "object",
+      "properties": {
+        "attempts": {
+          "type": [
+            "null",
+            "array"
+          ],
+          "items": {
+            "type": "object",
+            "properties": {
+              "draft": {
+                "type": "object",
+                "properties": {
+                  "relation": {
+                    "type": "string",
+                    "description": "add or update or duplicate or conflict"
+                  },
+                  "relates_to": {
+                    "type": "string",
+                    "description": "the id of the approved item or waiting candidate an update or a duplicate or a conflict names. Empty for add"
+                  },
+                  "kind": {
+                    "type": "string",
+                    "description": "meaning or judgment"
+                  },
+                  "content": {
+                    "type": "string",
+                    "description": "one sentence of what the correction taught"
+                  },
+                  "keys": {
+                    "type": [
+                      "null",
+                      "array"
+                    ],
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "label keys of the run the lesson needs. Empty reaches every run of the producer"
+                  }
+                },
+                "required": [
+                  "relation",
+                  "kind",
+                  "content"
+                ]
+              },
+              "critique": {
+                "type": [
+                  "null",
+                  "object"
+                ],
+                "properties": {
+                  "states": {
+                    "type": "boolean",
+                    "description": "the sentence states what the person corrected and nothing else"
+                  },
+                  "holds": {
+                    "type": "boolean",
+                    "description": "it applies to the next run in this place and not only to this output"
+                  },
+                  "fits": {
+                    "type": "boolean",
+                    "description": "the relation is right against the items and candidates shown"
+                  },
+                  "why": {
+                    "type": "string",
+                    "description": "one sentence"
+                  }
+                },
+                "required": [
+                  "states",
+                  "holds",
+                  "fits",
+                  "why"
+                ]
+              },
+              "refusal": {
+                "type": "string"
+              },
+              "questions": {
+                "type": [
+                  "null",
+                  "array"
+                ],
+                "items": {
+                  "type": "string"
+                }
+              },
+              "error": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "draft"
+            ]
+          }
+        },
+        "conclusion": {
+          "type": "string"
+        },
+        "candidate": {
+          "type": [
+            "null",
+            "object"
+          ],
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "version": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "id",
+            "version"
+          ]
+        },
+        "related": {
+          "type": [
+            "null",
+            "object"
+          ],
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "version": {
+              "type": "integer"
+            },
+            "status": {
+              "type": "string",
+              "enum": [
+                "candidate",
+                "approved",
+                "retired",
+                "superseded"
+              ]
+            }
+          },
+          "required": [
+            "id",
+            "version",
+            "status"
+          ]
+        }
+      },
+      "required": [
+        "attempts",
+        "conclusion"
+      ]
+    },
+    "error": {
+      "type": "string"
+    },
+    "usage": {
+      "type": "object",
+      "properties": {
+        "input_tokens": {
+          "type": "integer"
+        },
+        "output_tokens": {
+          "type": "integer"
+        },
+        "thinking_tokens": {
+          "type": "integer"
+        },
+        "cache_read": {
+          "type": "integer"
+        },
+        "cache_create": {
+          "type": "integer"
+        },
+        "cost_usd": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "input_tokens",
+        "output_tokens",
+        "cache_read",
+        "cache_create",
+        "cost_usd"
+      ]
+    },
+    "duration_ms": {
+      "type": "integer"
+    },
+    "tags": {
+      "type": [
+        "null",
+        "array"
+      ],
+      "items": {
+        "type": "string"
+      }
+    },
+    "producer": {
+      "type": "string"
+    },
+    "labels": {
+      "type": "object",
+      "additionalProperties": {
+        "type": [
+          "null",
+          "array"
+        ],
+        "items": {
+          "type": "string"
+        }
+      }
+    },
+    "schema_version": {
+      "type": "integer",
+      "const": 1
+    }
+  },
+  "required": [
+    "record_kind",
+    "record_id",
+    "id",
+    "name",
+    "time",
+    "input",
+    "usage",
+    "duration_ms",
+    "schema_version"
+  ]
+}

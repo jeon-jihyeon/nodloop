@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeon-jihyeon/nodloop/internal/schema"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
 )
 
@@ -279,6 +280,17 @@ func TestNewRun(t *testing.T) {
 			assert.NoError(t, got.CheckRun())
 		})
 	}
+}
+
+// A run of the input every writer builds validates against the published schema of run
+func TestNewRunValidates(t *testing.T) {
+	got, err := trace.NewRun("session", "commit", trace.Labels{"repo": {"acme"}}, json.RawMessage(`{"applied":[{"id":"git-c","version":1}],"plugin":"0.9.0"}`),
+		[]byte("use git -C"), time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC))
+	require.NoError(t, err)
+
+	err = schema.Validate(string(trace.NameRun), got.Record())
+
+	assert.NoError(t, err)
 }
 
 func TestLabelsHas(t *testing.T) {

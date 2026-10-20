@@ -2,6 +2,7 @@ package feedback_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"testing"
 	"time"
 
@@ -10,6 +11,7 @@ import (
 
 	"github.com/jeon-jihyeon/nodloop/internal/feedback"
 	"github.com/jeon-jihyeon/nodloop/internal/record"
+	"github.com/jeon-jihyeon/nodloop/internal/schema"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
 )
 
@@ -32,11 +34,12 @@ func TestFeedbackRecord(t *testing.T) {
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			want, err := json.Marshal(tc.args)
+			model, err := json.Marshal(tc.args)
 			require.NoError(t, err)
+			want := fmt.Sprintf(`%s,"schema_version":%d}`, model[:len(model)-1], feedback.VerdictVersion)
 			got, err := json.Marshal(tc.args.Record())
 			require.NoError(t, err)
-			assert.Equal(t, string(want), string(got), "the line encodes to the bytes of the verdict")
+			assert.Equal(t, want, string(got), "the line encodes to the bytes of the verdict and the version of its schema")
 			assert.Equal(t, tc.args, feedback.Restore(tc.args.Record()))
 		})
 	}
@@ -60,11 +63,12 @@ func TestOutcomeRecord(t *testing.T) {
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			want, err := json.Marshal(tc.args)
+			model, err := json.Marshal(tc.args)
 			require.NoError(t, err)
+			want := fmt.Sprintf(`%s,"schema_version":%d}`, model[:len(model)-1], feedback.OutcomeVersion)
 			got, err := json.Marshal(tc.args.Record())
 			require.NoError(t, err)
-			assert.Equal(t, string(want), string(got), "the line encodes to the bytes of the outcome")
+			assert.Equal(t, want, string(got), "the line encodes to the bytes of the outcome and the version of its schema")
 			assert.Equal(t, tc.args, feedback.RestoreOutcome(tc.args.Record()))
 		})
 	}
@@ -116,4 +120,23 @@ func TestRestoreOutcomes(t *testing.T) {
 			assert.Equal(t, tc.want, feedback.RestoreOutcomes(lines))
 		})
 	}
+}
+
+// A verdict, a captured verdict and an outcome of the constructors validate against their published schemas
+func TestRecordsValidate(t *testing.T) {
+	at := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
+	edited, err := feedback.New("t1", feedback.VerdictEdit, feedback.ReasonScope, "reorder", json.RawMessage(`{"order":["db"]}`), "ann", at)
+	require.NoError(t, err)
+	captured, err := feedback.NewCaptured("t1", feedback.VerdictReject, feedback.ReasonOther, "no, quote the window", at)
+	require.NoError(t, err)
+	checked, err := feedback.NewOutcome("t1", feedback.ResultConfirmed, "disk full", "checked", "ann", at)
+	require.NoError(t, err)
+
+	verdict := schema.Validate("verdict", edited.WithProof(trace.ProofTerminal).Record())
+	capture := schema.Validate("verdict", captured.Record())
+	outcome := schema.Validate("outcome", checked.Record())
+
+	assert.NoError(t, verdict)
+	assert.NoError(t, capture)
+	assert.NoError(t, outcome)
 }

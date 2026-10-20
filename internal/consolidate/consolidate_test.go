@@ -17,6 +17,7 @@ import (
 	"github.com/jeon-jihyeon/nodloop/internal/llm"
 	"github.com/jeon-jihyeon/nodloop/internal/llm/llmmock"
 	"github.com/jeon-jihyeon/nodloop/internal/record"
+	"github.com/jeon-jihyeon/nodloop/internal/schema"
 	"github.com/jeon-jihyeon/nodloop/internal/testkit"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
 	vetofile "github.com/jeon-jihyeon/nodloop/internal/veto/file"
@@ -42,6 +43,9 @@ func consolidateTraces(t *testing.T, st testkit.Stores) trace.Traces {
 	t.Helper()
 	found, err := st.Traces.List(context.Background(), record.TraceFilter{Name: string(trace.NameConsolidate)})
 	require.NoError(t, err)
+	for _, tr := range found {
+		require.NoError(t, schema.Validate(string(trace.NameConsolidate), tr))
+	}
 	return trace.RestoreAll(found)
 }
 

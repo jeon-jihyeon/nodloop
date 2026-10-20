@@ -1,0 +1,258 @@
+{
+  "kinds": [
+    {
+      "kind": "run",
+      "version": 1,
+      "versions": [
+        1
+      ],
+      "store": "traces.jsonl",
+      "schema": "https://github.com/jeon-jihyeon/nodloop/schema/run.v1.json",
+      "description": "An output a producer recorded with the items it applied or a holdout withheld",
+      "links": [
+        "session_id",
+        "input.applied",
+        "input.withheld",
+        "input.unit",
+        "input.continued"
+      ],
+      "text": [
+        "output"
+      ]
+    },
+    {
+      "kind": "check",
+      "version": 1,
+      "versions": [
+        1
+      ],
+      "store": "traces.jsonl",
+      "schema": "https://github.com/jeon-jihyeon/nodloop/schema/check.v1.json",
+      "description": "The coverage check of a compaction",
+      "links": [
+        "session_id",
+        "output.items.old",
+        "output.items.covered_by"
+      ],
+      "text": [
+        "output.items.lost"
+      ]
+    },
+    {
+      "kind": "classify",
+      "version": 1,
+      "versions": [
+        1
+      ],
+      "store": "traces.jsonl",
+      "schema": "https://github.com/jeon-jihyeon/nodloop/schema/classify.v1.json",
+      "description": "The answers of every member a decision point asked",
+      "links": [
+        "ref",
+        "subject"
+      ],
+      "text": [
+        "input.state"
+      ]
+    },
+    {
+      "kind": "extract",
+      "version": 1,
+      "versions": [
+        1
+      ],
+      "store": "traces.jsonl",
+      "schema": "https://github.com/jeon-jihyeon/nodloop/schema/extract.v1.json",
+      "description": "One extraction of a lesson from a corrected run with its drafts and conclusion",
+      "links": [
+        "ref",
+        "output.candidate",
+        "output.related"
+      ],
+      "text": [
+        "output.attempts.draft",
+        "output.attempts.critique",
+        "output.attempts.error"
+      ]
+    },
+    {
+      "kind": "replay",
+      "version": 1,
+      "versions": [
+        1
+      ],
+      "store": "traces.jsonl",
+      "schema": "https://github.com/jeon-jihyeon/nodloop/schema/replay.v1.json",
+      "description": "A lesson judged against the recorded outputs it should and should not change",
+      "links": [
+        "subject",
+        "input.id",
+        "input.version",
+        "output.cases.run"
+      ],
+      "text": [
+        "input.content",
+        "output.cases.why"
+      ]
+    },
+    {
+      "kind": "consolidate",
+      "version": 1,
+      "versions": [
+        1
+      ],
+      "store": "traces.jsonl",
+      "schema": "https://github.com/jeon-jihyeon/nodloop/schema/consolidate.v1.json",
+      "description": "Groups of waiting candidates of one producer that may say the same lesson",
+      "links": [
+        "subject",
+        "input.clusters",
+        "output.groups.members"
+      ],
+      "text": [
+        "output.groups.why"
+      ]
+    },
+    {
+      "kind": "refill",
+      "version": 1,
+      "versions": [
+        1
+      ],
+      "store": "traces.jsonl",
+      "schema": "https://github.com/jeon-jihyeon/nodloop/schema/refill.v1.json",
+      "description": "The items a session start added again after the context of the session was emptied",
+      "links": [
+        "session_id",
+        "input.applied"
+      ],
+      "text": []
+    },
+    {
+      "kind": "turn",
+      "version": 1,
+      "versions": [
+        1
+      ],
+      "store": "traces.jsonl",
+      "schema": "https://github.com/jeon-jihyeon/nodloop/schema/turn.v1.json",
+      "description": "The start of a turn of a session",
+      "links": [
+        "session_id"
+      ],
+      "text": []
+    },
+    {
+      "kind": "compact",
+      "version": 1,
+      "versions": [
+        1
+      ],
+      "store": "traces.jsonl",
+      "schema": "https://github.com/jeon-jihyeon/nodloop/schema/compact.v1.json",
+      "description": "One drafting of a compaction through a model",
+      "links": [
+        "session_id",
+        "subject"
+      ],
+      "text": []
+    },
+    {
+      "kind": "intervention",
+      "version": 1,
+      "versions": [
+        1
+      ],
+      "store": "traces.jsonl",
+      "schema": "https://github.com/jeon-jihyeon/nodloop/schema/intervention.v1.json",
+      "description": "One action of a person or an agent with the proof of its caller and the records it wrote",
+      "links": [
+        "session_id",
+        "input.id",
+        "input.version",
+        "input.compaction",
+        "input.authority",
+        "input.proof",
+        "output.records"
+      ],
+      "text": []
+    },
+    {
+      "kind": "verdict",
+      "version": 1,
+      "versions": [
+        1
+      ],
+      "store": "feedback.jsonl",
+      "schema": "https://github.com/jeon-jihyeon/nodloop/schema/verdict.v1.json",
+      "description": "A verdict on a run: approve, edit, reject or withdraw",
+      "links": [
+        "trace_id",
+        "reviewer"
+      ],
+      "text": [
+        "reason",
+        "edited"
+      ]
+    },
+    {
+      "kind": "outcome",
+      "version": 1,
+      "versions": [
+        1
+      ],
+      "store": "outcomes.jsonl",
+      "schema": "https://github.com/jeon-jihyeon/nodloop/schema/outcome.v1.json",
+      "description": "What a later check of a run found",
+      "links": [
+        "trace_id"
+      ],
+      "text": [
+        "confirmed_cause",
+        "note"
+      ]
+    },
+    {
+      "kind": "knowledge",
+      "version": 1,
+      "versions": [
+        1
+      ],
+      "store": "knowledge.jsonl",
+      "schema": "https://github.com/jeon-jihyeon/nodloop/schema/knowledge.v1.json",
+      "description": "One status record of a knowledge version, compaction records included",
+      "links": [
+        "id",
+        "version",
+        "base",
+        "supersedes",
+        "evidence.feedback_trace_ids",
+        "evidence.outcome_trace_ids",
+        "evidence.knowledge",
+        "compaction",
+        "approver"
+      ],
+      "text": [
+        "content",
+        "veto.example"
+      ]
+    },
+    {
+      "kind": "guard",
+      "version": 1,
+      "versions": [
+        1
+      ],
+      "store": "guard.jsonl",
+      "schema": "https://github.com/jeon-jihyeon/nodloop/schema/guard.v1.json",
+      "description": "A tool call the guard blocked or handed to the person",
+      "links": [
+        "session_id",
+        "veto"
+      ],
+      "text": [
+        "cwd"
+      ]
+    }
+  ]
+}
