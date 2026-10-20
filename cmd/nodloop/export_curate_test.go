@@ -530,46 +530,37 @@ func TestRunExportOtelCuratePending(t *testing.T) {
 	assert.Len(t, c.logs, 20, "a verdict, three decisions, fifteen judgments and the judge once each")
 }
 
-// A curate record whose cause the traces cannot read fails the export and leaves the mark
-// The corrupt line lies before the mark so the records after it read and only the lookup of the cause reaches it
-func TestRunExportOtelCurateUnreadable(t *testing.T) {
+// A corrupt line of any store before the mark fails the export and leaves the mark since an export reads every store whole
+// A read that stopped at the mark would have skipped a record appended late with an older time
+func TestRunExportOtelCorruptBeforeMark(t *testing.T) {
 	const mark = `{"at":"2026-10-07T09:01:00Z"}`
 	tcs := []struct {
 		name string
-		// Writes the record after the mark that names a trace the records lack
-		args func(t *testing.T, records string, at time.Time)
+		// The record file whose first line is corrupt
+		args string
 	}{
-		{"an answer naming an expose", func(t *testing.T, records string, at time.Time) {
-			traces, err := (app{cfg: config{recordDir: records}}).traces()
-			require.NoError(t, err)
-			tr, err := curate.Event{Session: "s1", Ref: trace.NewID(exportAt), Source: trace.SourceManual,
-				Draw: trace.Draw{CycleID: curateCycle, PolicyVersion: curatePolicy}}.
-				Answer(curate.Answer{Choice: curate.ChoiceKeep, Proof: trace.ProofReply, Person: "ann"}, curate.AnswerOutput{}, at)
-			require.NoError(t, err)
-			require.NoError(t, traces.Append(t.Context(), tr.Record()))
-		}},
-		{"a decision naming its decide", func(t *testing.T, records string, at time.Time) {
-			items, err := knowledgefile.New(records)
-			require.NoError(t, err)
-			k := knowledge.Knowledge{
-				ID: "dropped", Version: 1, Kind: knowledge.KindJudgment, Content: "Lesson", Status: knowledge.StatusRetired, Approver: knowledge.ApproverNodloop,
-				Reason: knowledge.ReasonTempScope, Decision: trace.NewID(exportAt), Time: at, Author: "claude",
-			}
-			require.NoError(t, items.Append(t.Context(), k.Record()))
-		}},
+		{"a run line", "traces.jsonl"},
+		{"a verdict line", "feedback.jsonl"},
+		{"an outcome line", "outcomes.jsonl"},
+		{"a knowledge line", "knowledge.jsonl"},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			records := t.TempDir()
-			exportRecordFile(t, records, "traces.jsonl", "not json\n")
-			traces, err := (app{cfg: config{recordDir: records}}).traces()
+			exportRecordFile(t, records, tc.args, "not json\n")
+			a := app{cfg: config{recordDir: records}}
+			traces, err := a.traces()
 			require.NoError(t, err)
 			run, err := trace.NewRun("bot", "", nil, nil, []byte("steps"), exportAt)
 			require.NoError(t, err)
 			require.NoError(t, traces.Append(t.Context(), run.Record()))
+			verdicts, err := a.feedback()
+			require.NoError(t, err)
+			fb, err := feedback.New(run.ID, feedback.VerdictApprove, "", "", nil, "ann", exportAt.Add(2*time.Minute))
+			require.NoError(t, err)
+			require.NoError(t, verdicts.Append(t.Context(), fb.Record()))
 			exportRecordFile(t, records, otel.MarkFile, mark)
-			tc.args(t, records, exportAt.Add(2*time.Minute))
 			c := &curateCollector{}
 			srv := httptest.NewServer(c)
 			t.Cleanup(srv.Close)
@@ -581,7 +572,7 @@ func TestRunExportOtelCurateUnreadable(t *testing.T) {
 			code := runExport([]string{"otel", "--pending"}, getenv, time.Now, &bytes.Buffer{}, &stderr)
 
 			assert.Equal(t, 1, code)
-			assert.Contains(t, stderr.String(), "traces.jsonl has corrupt lines")
+			assert.Contains(t, stderr.String(), tc.args+" has corrupt lines")
 			b, err := os.ReadFile(filepath.Join(records, otel.MarkFile))
 			require.NoError(t, err)
 			assert.Equal(t, mark, string(b))

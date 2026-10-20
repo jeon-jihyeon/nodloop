@@ -108,6 +108,16 @@ func TestEventDecide(t *testing.T) {
 			args{decided("d5", 1), curate.Change{Kind: curate.ChangeActivate, Anchor: 3, Opens: &update}, curate.Decision{Tier: 2, Action: curate.ActionAsk}, nil},
 			want{err: curate.ErrDecideInvalid},
 		},
+		{
+			"a proposal without the intervention it asks about is refused",
+			args{decided("d5", 1), curate.Change{Kind: curate.ChangeIntervention, Anchor: 3}, curate.Decision{Tier: 2, RuleCode: curate.RuleProposal, Action: curate.ActionAsk}, nil},
+			want{err: curate.ErrDecideInvalid},
+		},
+		{
+			"another change naming a proposal is refused",
+			args{decided("d5", 1), curate.Change{Kind: curate.ChangeAdd, ID: "k-2", Version: 1, Anchor: 3, Proposal: "i-1"}, applied, nil},
+			want{err: curate.ErrDecideInvalid},
+		},
 		{"a confidence past 1 is refused", args{decided("d5", 1), add, with(applied, func(d *curate.Decision) { d.Confidence = &over }), nil}, want{err: curate.ErrDecideInvalid}},
 		{"an unknown kind is refused", args{decided("d5", 1), curate.Change{Kind: "merge"}, applied, nil}, want{err: curate.ErrDecideInvalid}},
 		{"a change of a version without it is refused", args{decided("d5", 1), curate.Change{Kind: curate.ChangeAdd, ID: "k-2"}, applied, nil}, want{err: curate.ErrDecideInvalid}},

@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeon-jihyeon/nodloop/internal/jsonl"
 	"github.com/jeon-jihyeon/nodloop/internal/veto"
 	vetofile "github.com/jeon-jihyeon/nodloop/internal/veto/file"
 )
@@ -676,6 +677,47 @@ func TestRunGuardCall(t *testing.T) {
 			assert.Equal(t, tc.want.stdout, stdout.String())
 			line, _, _ := strings.Cut(stderr.String(), "\n")
 			assert.True(t, strings.HasPrefix(line, tc.want.stderr), stderr.String())
+		})
+	}
+}
+
+// The decision log as the raw record pages read it, newest first and nothing for a home without one
+func TestGuardLogList(t *testing.T) {
+	type want struct {
+		lines []string
+		err   error
+	}
+	tcs := []struct {
+		name string
+		// Builds the home under the temp directory and answers the home the log is read from
+		args func(t *testing.T, dir string) homeDir
+		want want
+	}{
+		{"no home lists nothing", func(*testing.T, string) homeDir { return "" }, want{[]string{}, nil}},
+		{"a home without the nodloop directory lists nothing", func(_ *testing.T, dir string) homeDir { return homeDir(dir) }, want{[]string{}, nil}},
+		{"a nodloop path that is a file fails", func(t *testing.T, dir string) homeDir {
+			require.NoError(t, os.WriteFile(homeDir(dir).dir(), nil, 0o600))
+			return homeDir(dir)
+		}, want{[]string{}, jsonl.ErrNotDirectory}},
+		{"every logged decision newest first", func(t *testing.T, dir string) homeDir {
+			require.NoError(t, os.MkdirAll(homeDir(dir).dir(), 0o700))
+			require.NoError(t, os.WriteFile(filepath.Join(homeDir(dir).dir(), decisionLog), []byte(`{"veto":"a"}`+"\n"+`{"veto":"b"}`+"\n"), 0o600))
+			return homeDir(dir)
+		}, want{[]string{`{"veto":"b"}`, `{"veto":"a"}`}, nil}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			home := tc.args(t, t.TempDir())
+
+			got, err := guardLog{home}.List(t.Context())
+
+			lines := []string{}
+			for _, line := range got {
+				lines = append(lines, string(line))
+			}
+			assert.Equal(t, tc.want.lines, lines)
+			assert.ErrorIs(t, err, tc.want.err)
 		})
 	}
 }

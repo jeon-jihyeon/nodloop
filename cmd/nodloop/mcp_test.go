@@ -113,25 +113,32 @@ func TestMCPOpen(t *testing.T) {
 		env map[string]string
 		// Files written under home before the call keyed by their relative path
 		files map[string]string
+		// A directory made under the records in place of the backup of a record file so that file cannot open
+		backup string
 	}
+	named := map[string]string{envRecordDir: "{records}"}
 	tcs := []struct {
 		name string
 		args args
 		// Regexp matched against the error or empty when the server opens
 		want string
 	}{
-		{"records default under home", args{map[string]string{"HOME": "{home}"}, nil}, ""},
-		{"the env names the records", args{map[string]string{envRecordDir: "{records}"}, nil}, ""},
-		{"an old config with a data dir still opens", args{map[string]string{"HOME": "{home}"}, map[string]string{".nodloop/config.json": `{"file_dir":"/gone"}`}}, ""},
-		{"a broken config is named", args{map[string]string{"HOME": "{home}"}, map[string]string{".nodloop/config.json": "{broken"}}, `^config.json is not valid JSON: .*` + fix},
-		{"nothing configured without a home names the record dir", args{nil, nil}, `^home directory unknown`},
-		{"a record dir that is a file is named", args{map[string]string{envRecordDir: "{records}/regular"}, nil}, "^record dir: "},
+		{"records default under home", args{map[string]string{"HOME": "{home}"}, nil, ""}, ""},
+		{"the env names the records", args{named, nil, ""}, ""},
+		{"an old config with a data dir still opens", args{map[string]string{"HOME": "{home}"}, map[string]string{".nodloop/config.json": `{"file_dir":"/gone"}`}, ""}, ""},
+		{"a broken config is named", args{map[string]string{"HOME": "{home}"}, map[string]string{".nodloop/config.json": "{broken"}, ""}, `^config.json is not valid JSON: .*` + fix},
+		{"nothing configured without a home names the record dir", args{nil, nil, ""}, `^home directory unknown`},
+		{"a record dir that is a file is named", args{map[string]string{envRecordDir: "{records}/regular"}, nil, ""}, "^record dir: "},
+		{"a verdict file that cannot open is named", args{named, nil, "feedback.jsonl.bak"}, "^feedback file: .*feedback.jsonl.bak"},
+		{"an outcome file that cannot open is named", args{named, nil, "outcomes.jsonl.bak"}, "^feedback file: .*outcomes.jsonl.bak"},
+		{"a knowledge file that cannot open is named", args{named, nil, "knowledge.jsonl.bak"}, "^knowledge file: .*knowledge.jsonl.bak"},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			home, records := t.TempDir(), t.TempDir()
 			require.NoError(t, os.WriteFile(filepath.Join(records, "regular"), nil, 0o600))
+			require.NoError(t, os.MkdirAll(filepath.Join(records, tc.args.backup), 0o755))
 			for rel, content := range tc.args.files {
 				path := filepath.Join(home, rel)
 				require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
@@ -201,8 +208,8 @@ func TestMCPOpenPolicy(t *testing.T) {
 	assert.NotNil(t, answer.Withheld, "the holdout of config.json draws the call")
 }
 
-// A verdict through the MCP server starts the pending export of its record directory and a run starts none
-// A start that fails goes to the log and the verdict still stands
+// A run and a verdict through the MCP server each start the pending export of its record directory
+// A start that fails goes to the log and the record still stands
 func TestMCPOpenExport(t *testing.T) {
 	type args struct {
 		// The otel key of config.json and none when empty
@@ -211,20 +218,22 @@ func TestMCPOpenExport(t *testing.T) {
 		err error
 	}
 	type want struct {
-		starts int
+		// The commands started with {records} for the record dir
+		starts []string
 		// The log after the verdict
 		log string
 	}
 	saved := `{"endpoint":"http://192.0.2.1:4318"}`
 	failed := "nodloop: export: " + errExecutableTemporary.Error() + "\n"
+	export := "export otel --pending --record-dir {records}"
 	tcs := []struct {
 		name string
 		args args
 		want want
 	}{
-		{"a run and a verdict each start the export", args{saved, nil}, want{2, ""}},
-		{"no saved target starts nothing", args{"", nil}, want{0, ""}},
-		{"a start that fails is logged", args{saved, errExecutableTemporary}, want{2, failed + failed}},
+		{"a run and a verdict each start the export", args{saved, nil}, want{[]string{export, export}, ""}},
+		{"no saved target starts nothing", args{"", nil}, want{nil, ""}},
+		{"a start that fails is logged", args{saved, errExecutableTemporary}, want{[]string{export, export}, failed + failed}},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
@@ -234,9 +243,9 @@ func TestMCPOpenExport(t *testing.T) {
 			getenv := func(k string) string { return map[string]string{envRecordDir: records, "HOME": home}[k] }
 			now := func() time.Time { return time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC) }
 			var log bytes.Buffer
-			var starts [][]string
+			var starts []string
 			start := func(args []string) error {
-				starts = append(starts, args)
+				starts = append(starts, strings.ReplaceAll(strings.Join(args, " "), records, "{records}"))
 				return tc.args.err
 			}
 			open := mcpOpen{getenv: getenv, now: now, session: mcp.NewSession(now()), log: &log, export: start}.open
@@ -248,10 +257,7 @@ func TestMCPOpenExport(t *testing.T) {
 			require.NoError(t, c.Call(t, "run", map[string]any{"producer": "bot", "output": "x"}, &run))
 			require.NoError(t, c.Run(t, "feedback", map[string]any{"trace_id": run.TraceID, "verdict": "approve", "reviewer": "ann"}))
 
-			assert.Len(t, starts, tc.want.starts)
-			for _, s := range starts {
-				assert.Equal(t, []string{"export", "otel", "--pending", "--record-dir", records}, s)
-			}
+			assert.Equal(t, tc.want.starts, starts)
 			assert.Equal(t, tc.want.log, log.String())
 		})
 	}

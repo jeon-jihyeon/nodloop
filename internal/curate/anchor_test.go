@@ -3,6 +3,7 @@ package curate_test
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -260,4 +261,58 @@ func TestAnchorPlaces(t *testing.T) {
 		{"runs of session. dir=.. repo=nodloop", []knowledge.Ref{{ID: "k-codex", Version: 1}, {ID: "k-repo", Version: 1}}, []string{"/nodloop/CLAUDE.md"}},
 	}, out)
 	assert.Equal(t, []curate.AnchorFile{plan}, curate.NewAnchor(all, []curate.AnchorFile{plan}, loaded).Designated())
+}
+
+// The few-shot pool is the person's own newest decision of each version as an approval as drafted or a retire for its direction
+func TestAnchorShots(t *testing.T) {
+	approved, retired := knowledge.StatusApproved, knowledge.StatusRetired
+	rec := func(id string, status knowledge.Status, approver string, drafted bool, reason knowledge.Reason, at time.Time) knowledge.Knowledge {
+		k := lesson(id, 1, "lesson "+id, acme("acme"), status, approver)
+		k.Drafted, k.Reason, k.Time = drafted, reason, at
+		if status == approved {
+			k.ApprovedAt = at
+		}
+		return k
+	}
+	later := written.Add(time.Hour)
+	reaffirmed := rec("k-reaffirmed", approved, "ann", true, "", later)
+	reaffirmed.ApprovedAt = written
+	all := knowledge.Set{
+		rec("k-later", retired, "ann", true, knowledge.ReasonPerson, later),
+		rec("k-later", approved, "ann", true, "", written),
+		rec("k-legacy", retired, "ann", true, "", later),
+		rec("k-legacy", approved, "ann", true, "", written),
+		rec("k-kept", approved, "ann", true, "", written),
+		rec("k-rewritten", approved, "ann", false, "", written),
+		rec("k-carried", approved, knowledge.ApproverNodloop, true, "", written),
+		rec("k-dropped", retired, knowledge.ApproverNodloop, true, knowledge.ReasonDuplicate, written),
+		reaffirmed,
+		rec("k-reaffirmed", approved, "ann", true, "", written),
+	}
+
+	tcs := []struct {
+		name string
+		// The start of the configuration the pool is drawn for
+		args time.Time
+		want curate.Shots
+	}{
+		{"a start after every decision reads the newest decision of each version", later.Add(time.Minute), curate.Shots{
+			{Ref: ref("k-later"), At: later, Content: "lesson k-later"},
+			{Ref: ref("k-kept"), At: written, Content: "lesson k-kept", Kept: true},
+			{Ref: ref("k-reaffirmed"), At: written, Content: "lesson k-reaffirmed", Kept: true},
+		}},
+		{"a version retired after the start still shows as approved as drafted", written.Add(time.Minute), curate.Shots{
+			{Ref: ref("k-later"), At: written, Content: "lesson k-later", Kept: true},
+			{Ref: ref("k-legacy"), At: written, Content: "lesson k-legacy", Kept: true},
+			{Ref: ref("k-kept"), At: written, Content: "lesson k-kept", Kept: true},
+			{Ref: ref("k-reaffirmed"), At: written, Content: "lesson k-reaffirmed", Kept: true},
+		}},
+		{"a start before every decision reads none", written, nil},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.want, curate.NewAnchor(all, nil, nil).Shots(tc.args))
+		})
+	}
 }

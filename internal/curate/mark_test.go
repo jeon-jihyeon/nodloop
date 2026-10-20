@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -63,24 +64,16 @@ func TestMarkerHold(t *testing.T) {
 		CycleID: "2026-09-21", PolicyVersion: "0.10.0+1a2b3c4d", Seed: "5eed", Knobs: curate.StartKnobs(),
 		Due: []curate.Due{{Kind: curate.QuestionShadow, Decide: "d1", Change: curate.ChangeAdd, Ref: ref("k-a"), Run: "r-1", At: written}},
 	}
-	type want struct {
-		before   curate.Mark
-		second   bool
-		writeErr error
-		read     curate.Mark
-	}
 	tcs := []struct {
 		name string
 		// The content of curate.json before the hold
 		args string
-		want want
+		// The mark the hold reads
+		want curate.Mark
 	}{
-		{"no mark holds the zero mark and writes the new one", "", want{curate.Mark{}, false, nil, left}},
-		{"a torn mark holds the zero mark", `{"knobs":`, want{curate.Mark{}, false, nil, left}},
-		{
-			"a mark holds what the last pass left", `{"at":"2026-09-20T09:00:00Z","knobs":{"activated":true}}`,
-			want{curate.Mark{At: written, Knobs: curate.Knobs{Activated: true}}, false, nil, left},
-		},
+		{"no mark holds the zero mark and writes the new one", "", curate.Mark{}},
+		{"a torn mark holds the zero mark", `{"knobs":`, curate.Mark{}},
+		{"a mark holds what the last pass left", `{"at":"2026-09-20T09:00:00Z","knobs":{"activated":true}}`, curate.Mark{At: written, Knobs: curate.Knobs{Activated: true}}},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
@@ -100,12 +93,12 @@ func TestMarkerHold(t *testing.T) {
 			read, readErr := curate.ReadMark(dir)
 
 			assert.NoError(t, secondErr)
-			assert.Equal(t, tc.want.second, second != nil)
-			assert.Equal(t, tc.want.before, before)
-			assert.ErrorIs(t, writeErr, tc.want.writeErr)
+			assert.Nil(t, second, "a second pass gets no mark while one holds it")
+			assert.Equal(t, tc.want, before)
+			assert.NoError(t, writeErr)
 			assert.NoError(t, releaseErr)
 			assert.NoError(t, readErr)
-			assert.Equal(t, tc.want.read, read)
+			assert.Equal(t, left, read)
 			assert.Equal(t, left, held.Mark)
 		})
 	}
@@ -127,4 +120,25 @@ func TestMarkerFails(t *testing.T) {
 	assert.ErrorIs(t, writeErr, curate.ErrMark)
 	assert.ErrorIs(t, releaseErr, curate.ErrMark)
 	assert.Equal(t, curate.Mark{}, released.Mark)
+}
+
+// The mark keeps the time of the last daily pass and a day after it the next one is due
+func TestMarkDaily(t *testing.T) {
+	at := time.Date(2026, 9, 22, 9, 0, 0, 0, time.UTC)
+	tcs := []struct {
+		name string
+		args curate.Mark
+		want bool
+	}{
+		{"no daily pass yet", curate.Mark{}, true},
+		{"a pass an hour ago", curate.Mark{At: at.Add(-time.Hour)}, false},
+		{"a pass a day ago", curate.Mark{At: at.Add(-24 * time.Hour)}, true},
+		{"a pass in the future of a clock set back", curate.Mark{At: at.Add(time.Hour)}, true},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.want, tc.args.Daily(at))
+		})
+	}
 }

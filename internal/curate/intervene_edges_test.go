@@ -2,8 +2,8 @@ package curate_test
 
 import (
 	"context"
-	"encoding/hex"
 	"encoding/json"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -11,11 +11,12 @@ import (
 
 	"github.com/jeon-jihyeon/nodloop/internal/curate"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
+	"github.com/jeon-jihyeon/nodloop/internal/record"
 	"github.com/jeon-jihyeon/nodloop/internal/testkit"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
 )
 
-// An answer through the expose that showed the question names it and the delay since, and one through the decide names the newest expose
+// An answer through the expose that showed the question names it with the delay since and one through the decide names the newest expose
 func TestIntervenerAnswerExpose(t *testing.T) {
 	ctx := context.Background()
 	type args struct {
@@ -34,16 +35,10 @@ func TestIntervenerAnswerExpose(t *testing.T) {
 			t.Parallel()
 			d := newDesk(t)
 			decide := d.decideOf(t, "k-ask")
-			shown := curate.Event{Session: "s-1", Ref: decide, Source: trace.SourcePush, Draw: d.first.Event.AuditDraw("s-1", 1)}
-			x, err := shown.Expose(curate.Exposure{
-				Kind: curate.QuestionDirection, Key: "ab12", Surface: curate.SurfaceContext, Rules: curate.QuestionRules,
-				Choices: []curate.Choice{curate.ChoiceKeep, curate.ChoiceDrop}, Text: hex.EncodeToString(make([]byte, 32)), Round: 1,
-			}, d.stores.Clock.Now())
-			require.NoError(t, err)
-			require.NoError(t, d.stores.Traces.Append(ctx, x.Record()))
+			x := d.expose(t, decide)
 			target := decide
 			if tc.args.byExpose {
-				target = x.ID
+				target = x
 			}
 
 			got, err := d.iv.Intervene(ctx, curate.Request{Action: trace.ActionAnswer, Target: target, Choice: trace.ChoiceDrop}, person)
@@ -51,7 +46,7 @@ func TestIntervenerAnswerExpose(t *testing.T) {
 			require.NoError(t, err)
 			answer, err := d.stores.Traces.Get(ctx, got.Answer)
 			require.NoError(t, err)
-			assert.Equal(t, x.ID, answer.Ref)
+			assert.Equal(t, x, answer.Ref)
 		})
 	}
 }
@@ -94,6 +89,9 @@ func TestIntervenerAnswerRefused(t *testing.T) {
 		{"a merge of a compaction no record names", args{func(t *testing.T, d desk) string {
 			return d.asking(t, "r-k-add", curate.Change{Kind: curate.ChangeCompaction, Compaction: "c-gone", Anchor: 1}, "")
 		}, trace.ChoiceMerge}, knowledge.ErrNotFound},
+		{"a merge of a change whose version the records lack", args{func(t *testing.T, d desk) string {
+			return d.asking(t, "r-k-add", curate.Change{Kind: curate.ChangeAdd, ID: "k-gone", Version: 1, Anchor: 1}, curate.RuleRoom)
+		}, trace.ChoiceMerge}, knowledge.ErrNotFound},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
@@ -127,7 +125,7 @@ func TestIntervenerAnswerWithoutCycle(t *testing.T) {
 	assert.ErrorIs(t, err, curate.ErrTargetInvalid)
 }
 
-// A knob set before any cycle names the start value as the one it had, and a digest with no cursor at hand answers none
+// A knob set before any cycle names the start value as the one it had and a digest with no cursor at hand answers none
 func TestIntervenerBeforeAnyCycle(t *testing.T) {
 	ctx := context.Background()
 	b := newBench(t, nil, nil, nil)
@@ -144,62 +142,33 @@ func TestIntervenerBeforeAnyCycle(t *testing.T) {
 	assert.Equal(t, []any{0.15, ""}, []any{*in.Before, digest.Since})
 }
 
-// A form of an answer to a question about an offer names no lesson, and one of a judgment of a compaction names the merge
-func TestIntervenerDescribeNoLesson(t *testing.T) {
-	ctx := context.Background()
-	d := newDesk(t)
-	widen := d.asking(t, "", curate.Change{Kind: curate.ChangeWiden, Opens: &curate.Opening{Kind: curate.ChangeUpdate, Bin: curate.Bin1}, Anchor: 1}, "")
-	merge := d.asking(t, "r-k-add", curate.Change{Kind: curate.ChangeCompaction, Compaction: "c-1", Anchor: 1}, "")
-	tcs := []struct {
-		name string
-		args curate.Request
-		want string
-	}{
-		{"an offer", curate.Request{Action: trace.ActionAnswer, Target: widen, Choice: trace.ChoiceYes}, "Answer yes to the question about a change nodloop prepared"},
-		{"a compaction", curate.Request{Action: trace.ActionAnswer, Target: merge, Choice: trace.ChoiceMerge},
-			"Answer merge to the question about the merge of lessons that was prepared"},
-	}
-	for _, tc := range tcs {
-		t.Run(tc.name, func(t *testing.T) {
-			got, err := d.iv.Describe(ctx, tc.args)
-
-			require.NoError(t, err)
-			assert.Equal(t, tc.want, got)
-		})
-	}
-	_, err := curate.NewIntervener(d.stores.Ledger, &testkit.FlakyTraces{Store: d.stores.Traces, Lists: failing(0)}, curate.InterveneSetting{}, d.stores.Clock.Now).
-		Describe(ctx, curate.Request{Action: trace.ActionDigest})
-	assert.ErrorIs(t, err, assert.AnError)
-}
-
-// The choices of each question and whether an answer overturns what curate carried out or what the judge predicted
+// The two choices each question offers with the one curate prepared first
 func TestDecidedChoices(t *testing.T) {
-	type want struct {
-		choices [2]curate.Choice
-		// The choice that overturns and empty where none does
-		overturns curate.Choice
-	}
 	tcs := []struct {
 		name string
 		args curate.Decided
-		want want
+		want [2]curate.Choice
 	}{
-		{"an audit", curate.Decided{Decision: curate.Decision{Action: curate.ActionApply}}, want{[2]curate.Choice{curate.ChoiceSame, curate.ChoiceUndo}, ""}},
+		{"an audit", curate.Decided{Decision: curate.Decision{Action: curate.ActionApply}}, [2]curate.Choice{curate.ChoiceSame, curate.ChoiceUndo}},
 		{"a widening", curate.Decided{Change: curate.Change{Kind: curate.ChangeWiden}, Decision: curate.Decision{Action: curate.ActionAsk}},
-			want{[2]curate.Choice{curate.ChoiceYes, curate.ChoiceNotYet}, ""}},
+			[2]curate.Choice{curate.ChoiceYes, curate.ChoiceNotYet}},
 		{"a proposal", curate.Decided{Change: curate.Change{Kind: curate.ChangeIntervention}, Decision: curate.Decision{Action: curate.ActionAsk}},
-			want{[2]curate.Choice{curate.ChoiceYes, curate.ChoiceNotYet}, ""}},
+			[2]curate.Choice{curate.ChoiceYes, curate.ChoiceNotYet}},
 		{"drift", curate.Decided{Change: curate.Change{Kind: curate.ChangeAdd}, Decision: curate.Decision{RuleCode: curate.RuleDrift, Action: curate.ActionAsk}},
-			want{[2]curate.Choice{curate.ChoiceMine, curate.ChoiceReview}, ""}},
+			[2]curate.Choice{curate.ChoiceMine, curate.ChoiceReview}},
+		{"a reanchor of no rule", curate.Decided{Change: curate.Change{Kind: curate.ChangeReanchor}, Decision: curate.Decision{Tier: 2, Action: curate.ActionAsk}},
+			[2]curate.Choice{curate.ChoiceMine, curate.ChoiceReview}},
+		{"a compaction", curate.Decided{Change: curate.Change{Kind: curate.ChangeCompaction}, Decision: curate.Decision{Tier: 2, Action: curate.ActionAsk}},
+			[2]curate.Choice{curate.ChoiceMerge, curate.ChoiceSeparate}},
 		{"room", curate.Decided{Change: curate.Change{Kind: curate.ChangeAdd}, Decision: curate.Decision{RuleCode: curate.RuleRoom, Action: curate.ActionAsk}},
-			want{[2]curate.Choice{curate.ChoiceMerge, curate.ChoiceSeparate}, ""}},
+			[2]curate.Choice{curate.ChoiceMerge, curate.ChoiceSeparate}},
 		{"a change the judge found against", curate.Decided{Change: curate.Change{Kind: curate.ChangeAdd},
-			Decision: curate.Decision{Outcome: curate.OutcomeAgainst, Action: curate.ActionAsk}}, want{[2]curate.Choice{curate.ChoiceKeep, curate.ChoiceDrop}, ""}},
+			Decision: curate.Decision{Outcome: curate.OutcomeAgainst, Action: curate.ActionAsk}}, [2]curate.Choice{curate.ChoiceKeep, curate.ChoiceDrop}},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			assert.Equal(t, tc.want.choices, tc.args.Choices())
+			assert.Equal(t, tc.want, tc.args.Choices())
 		})
 	}
 }
@@ -220,6 +189,36 @@ func TestIntervenerOverturn(t *testing.T) {
 	var a curate.Answer
 	require.NoError(t, json.Unmarshal(answer.Input, &a))
 	assert.True(t, a.Overturn)
+}
+
+// A mine takes the versions nodloop approved in the place of the run its question cites and nothing for a run no record holds
+func TestIntervenerMine(t *testing.T) {
+	ctx := context.Background()
+	tcs := []struct {
+		name string
+		// The run the drift question cites
+		args string
+		want []knowledge.Ref
+	}{
+		{"a run of the place", "r-k-carried", []knowledge.Ref{{ID: "k-carried", Version: 1}}},
+		{"a run no record holds", "r-gone", nil},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			d := newDesk(t)
+			decide := d.asking(t, tc.args, curate.Change{Kind: curate.ChangeAdd, ID: "k-add", Version: 1, Anchor: 1}, curate.RuleDrift)
+
+			got, err := d.iv.Intervene(ctx, curate.Request{Action: trace.ActionAnswer, Target: decide, Choice: trace.ChoiceMine}, person)
+
+			require.NoError(t, err)
+			answer, err := d.stores.Traces.Get(ctx, got.Answer)
+			require.NoError(t, err)
+			var a curate.Answer
+			require.NoError(t, json.Unmarshal(answer.Input, &a))
+			assert.Equal(t, tc.want, a.Refs)
+		})
+	}
 }
 
 // A version nodloop approved that the person took joins the anchor and its version names what took it
@@ -257,6 +256,147 @@ func TestAnchorTaking(t *testing.T) {
 			}
 			assert.Equal(t, tc.want.items, ids)
 			assert.Equal(t, tc.want.cause, next.Cause)
+		})
+	}
+}
+
+// A person's write whose event fails to append after its ledger write is recorded once by its retry
+// The retry takes the ledger write of the earlier try so the ledger and the event each hold it once and name each other
+func TestIntervenerRetryAfterEvent(t *testing.T) {
+	ctx := context.Background()
+	type args struct {
+		// The person's write through the intervener
+		write func(iv *curate.Intervener) error
+		// The trace the write records
+		event trace.Name
+	}
+	reply := func(iv *curate.Intervener) error {
+		_, err := iv.Reply(ctx, curate.Reply{Session: "s-new", Run: "run-s-new", Word: "keep", Person: "ann"})
+		return err
+	}
+	judge := func(iv *curate.Intervener) error {
+		_, err := iv.Intervene(ctx, curate.Request{Action: trace.ActionJudge, Target: "k-ask:1", Choice: trace.ChoiceKeep}, person)
+		return err
+	}
+	type want struct {
+		// The records of the ledger and the events that name the decision of k-ask
+		records, events int
+		status          string
+	}
+	tcs := []struct {
+		name string
+		args args
+		want want
+	}{
+		{"a reply to a question", args{reply, trace.NameAnswer}, want{1, 1, "approved"}},
+		{"a judgment of the manual path", args{judge, trace.NameIntervention}, want{1, 1, "approved"}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			d := newDesk(t)
+			_, err := d.iv.Ask(ctx, d.stopIn(t, "s-new", "svc", true))
+			require.NoError(t, err)
+			require.ErrorIs(t, tc.args.write(d.flakyIntervener(-1, 0)), assert.AnError)
+
+			err = tc.args.write(d.iv)
+
+			require.NoError(t, err)
+			all, err := d.stores.Ledger.All(ctx)
+			require.NoError(t, err)
+			k, err := all.Version("k-ask", 1)
+			require.NoError(t, err)
+			named := slices.DeleteFunc(slices.Clone(all), func(r knowledge.Knowledge) bool { return r.Decision != k.Decision })
+			found, err := d.stores.Traces.List(ctx, record.TraceFilter{Name: string(tc.args.event)})
+			require.NoError(t, err)
+			events := slices.DeleteFunc(slices.Clone(found), func(tr record.Trace) bool { return tr.ID != k.Decision })
+			assert.Equal(t, tc.want, want{len(named), len(events), string(k.Status)})
+			assert.Len(t, found, 1, "the retry recorded no second event")
+		})
+	}
+}
+
+// An undo of a compaction curate applied reverses it whole so runs receive the items it merged as before
+func TestIntervenerUndoCompaction(t *testing.T) {
+	ctx := context.Background()
+	approved := knowledge.StatusApproved
+	b := newBench(t, nil, []knowledge.Knowledge{
+		lesson("k-a", 1, "rule a", acme("work"), approved, knowledge.ApproverNodloop), lesson("k-b", 1, "rule b", acme("work"), approved, knowledge.ApproverNodloop),
+	}, nil)
+	b.knobs(t, func(*curate.Knobs) {})
+	before := b.received(t)
+	c, err := b.stores.Ledger.ProposeCompaction(ctx, "k-a", []knowledge.Knowledge{{
+		Kind: knowledge.KindMeaning, Content: "rule a and rule b", Run: acme("work"), Author: "claude",
+		Evidence: knowledge.Evidence{Knowledge: []knowledge.Ref{{ID: "k-a", Version: 1}, {ID: "k-b", Version: 1}}},
+	}})
+	require.NoError(t, err)
+	cov, err := b.coverage(ctx, c.ID)
+	require.NoError(t, err)
+	id := trace.NewID(written)
+	require.NoError(t, testkit.Err(b.stores.Ledger.ApplyCompaction(ctx, c.ID, id, cov)))
+	event := curate.Event{ID: id, Ref: "r-k-a", Source: trace.SourcePush, Draw: trace.NewDraw("2026-09-21", "0.10.0+1a2b3c4d", "5eed", id, "audit", 1)}
+	tr, err := event.Decide(curate.Change{Kind: curate.ChangeCompaction, Compaction: c.ID, Anchor: 1}, curate.Decision{Tier: 1, Action: curate.ActionApply}, nil, written)
+	require.NoError(t, err)
+	require.NoError(t, b.stores.Traces.Append(ctx, tr.Record()))
+	merged := b.received(t)
+
+	got, err := b.intervener(nil).Intervene(ctx, curate.Request{Action: trace.ActionAnswer, Target: id, Choice: trace.ChoiceUndo}, person)
+
+	require.NoError(t, err)
+	require.NotEqual(t, before, merged, "the compaction changed what runs receive")
+	assert.Equal(t, before, b.received(t))
+	assert.NotEmpty(t, got.Wrote)
+}
+
+// A write of the person takes no earlier write a recorded event names and none that a later write changed
+func TestIntervenerRetryTakesOnlyItsOwnWrite(t *testing.T) {
+	ctx := context.Background()
+	keep := curate.Reply{Session: "s-new", Run: "run-s-new", Word: "keep", Person: "ann"}
+	judge := func(choice trace.Choice) curate.Request {
+		return curate.Request{Action: trace.ActionJudge, Target: "k-ask:1", Choice: choice}
+	}
+	type args struct {
+		// Whether the first reply fails to append its answer
+		lost bool
+		// The judgment of the person after the first reply
+		then trace.Choice
+	}
+	type want struct {
+		// Whether the last reply fails and the answers recorded
+		failed  bool
+		answers []string
+		status  string
+	}
+	tcs := []struct {
+		name string
+		args args
+		want want
+	}{
+		{"a reaffirm after an answer writes under its own intervention", args{false, trace.ChoiceKeep}, want{false, []string{"keep reply push ann"}, "approved"}},
+		{"a reply after a judgment changed the version takes no earlier write", args{true, trace.ChoiceUndo}, want{true, []string{}, "retired"}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			d := newDesk(t)
+			_, err := d.iv.Ask(ctx, d.stopIn(t, "s-new", "svc", true))
+			require.NoError(t, err)
+			first := d.iv
+			if tc.args.lost {
+				first = d.flakyIntervener(-1, 0)
+			}
+			_ = testkit.Err(first.Reply(ctx, keep))
+			judged, err := d.iv.Intervene(ctx, judge(tc.args.then), person)
+			require.NoError(t, err)
+
+			_, err = d.iv.Reply(ctx, keep)
+
+			all, lerr := d.stores.Ledger.All(ctx)
+			require.NoError(t, lerr)
+			k, lerr := all.Version("k-ask", 1)
+			require.NoError(t, lerr)
+			assert.Equal(t, tc.want, want{err != nil, d.answers(t), string(k.Status)})
+			assert.Equal(t, judged.Trace.ID, k.Decision, "the judgment wrote under its own intervention")
 		})
 	}
 }

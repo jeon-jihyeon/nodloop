@@ -250,6 +250,7 @@ func TestExportPackageRefuses(t *testing.T) {
 		{"a descriptor with a cursor no page answered", []string{"--out", filepath.Join(base, "d"), "--since", badCursor}, schema.ErrCursorInvalid.Error()},
 		{"a folder that is not empty", []string{"--out", full}, datapackage.ErrFolderNotEmpty.Error()},
 		{"a flag it does not know", []string{"--nope"}, "flag provided but not defined"},
+		{"a record dir that is a file", []string{"--out", filepath.Join(base, "e"), "--record-dir", notJSON}, "record dir: "},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
@@ -261,6 +262,20 @@ func TestExportPackageRefuses(t *testing.T) {
 	}
 	assert.NoDirExists(t, filepath.Join(base, "a"))
 	assert.NoDirExists(t, filepath.Join(base, "d"))
+	assert.NoDirExists(t, filepath.Join(base, "e"))
+}
+
+// A config.json that does not decode fails the export before it makes the folder
+func TestExportPackageBrokenConfig(t *testing.T) {
+	home, folder := t.TempDir(), filepath.Join(t.TempDir(), "out")
+	hookSaveConfig(t, home, "{broken")
+	var stderr bytes.Buffer
+
+	code := runExport([]string{"package", "--out", folder}, envOf(map[string]string{"HOME": home}), time.Now, &bytes.Buffer{}, &stderr)
+
+	assert.Equal(t, 1, code)
+	assert.Contains(t, stderr.String(), "config.json is not valid JSON")
+	assert.NoDirExists(t, folder)
 }
 
 // A store that fails halfway leaves the tables written before it with complete false, the error and their cursors

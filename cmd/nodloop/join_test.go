@@ -121,7 +121,7 @@ func joinedAnswer(t *testing.T, records string, at time.Time, run string, k know
 }
 
 // The id of the later run of the place that applied the version the person approved through the answer
-// The approval naming the answer in decision is imported since the ledger write of an answer comes with the question path
+// The approval naming the answer in decision is imported as the answer writes it, since the join reads records and no pass
 func joinedLaterRun(t *testing.T, getenv func(string) string, now func() time.Time, out, answer string) string {
 	t.Helper()
 	approved := newestKnowledge(t, getenv(envRecordDir))

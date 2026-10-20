@@ -188,7 +188,7 @@ func TestRunKnowledgeConsolidate(t *testing.T) {
 	}
 }
 
-// A mark that cannot open or a record dir that cannot be made stops the command before any call
+// A mark that cannot open, a record dir that cannot be made or a record file that cannot open stops the command before any call
 func TestRunKnowledgeConsolidateMarkFails(t *testing.T) {
 	type args struct {
 		// A directory made under the records
@@ -204,6 +204,8 @@ func TestRunKnowledgeConsolidateMarkFails(t *testing.T) {
 	}{
 		{"a mark that is a directory fails", args{consolidate.MarkFile, "."}, consolidate.ErrMark.Error()},
 		{"a record dir that is a file fails", args{"unused", "regular"}, "regular"},
+		{"a knowledge file whose backup cannot be read fails", args{"knowledge.jsonl.bak", "."}, "knowledge file: "},
+		{"a run file whose backup cannot be read fails", args{"traces.jsonl.bak", "."}, "trace file: open failed"},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {

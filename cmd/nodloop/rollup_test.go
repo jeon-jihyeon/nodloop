@@ -20,6 +20,7 @@ import (
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	knowledgefile "github.com/jeon-jihyeon/nodloop/internal/knowledge/file"
 	"github.com/jeon-jihyeon/nodloop/internal/record"
+	"github.com/jeon-jihyeon/nodloop/internal/testkit"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
 	tracefile "github.com/jeon-jihyeon/nodloop/internal/trace/file"
 	vetofile "github.com/jeon-jihyeon/nodloop/internal/veto/file"
@@ -100,16 +101,12 @@ func newEffectRecords(t *testing.T, retention string, k knobbed) effectRecords {
 	require.NoError(t, err)
 	approved := pruneNow.Add(-44 * 24 * time.Hour)
 	ledger := knowledge.NewLedger(items, vetofile.NewApprovedFile(home, records), func() time.Time { return pruneNow }, knowledge.NewIDs(time.Now))
-	require.NoError(t, errOf(ledger.Import(ctx, []knowledge.Knowledge{{
+	require.NoError(t, testkit.Err(ledger.Import(ctx, []knowledge.Knowledge{{
 		ID: "git-c", Version: 1, Kind: knowledge.KindJudgment, Content: "use git -C", Run: &knowledge.RunScope{Producer: sessionProducer},
 		Evidence: knowledge.Evidence{FeedbackTraceIDs: []string{r.ids[45]}}, Basis: knowledge.BasisStated, Status: knowledge.StatusApproved,
 		Approver: "ann", ApprovedAt: approved, Time: approved, Author: "ann",
 	}})))
 	return r
-}
-
-func errOf[T any](_ T, err error) error {
-	return err
 }
 
 // The knob trace a pass appended on the morning of the start of the cycle and none without a date
