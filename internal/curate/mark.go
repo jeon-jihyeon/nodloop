@@ -54,6 +54,10 @@ type Due struct {
 	Place *knowledge.RunScope `json:"place,omitempty"`
 	// When curate decided it so the oldest is asked first
 	At time.Time `json:"at"`
+	// The intervention of an agent a question of a proposal asks the person to carry out
+	Proposal string `json:"proposal,omitempty"`
+	// The session that submitted the proposal so the stop of its turn asks it
+	Session string `json:"session,omitempty"`
 }
 
 // The mark of the last pass over one record directory

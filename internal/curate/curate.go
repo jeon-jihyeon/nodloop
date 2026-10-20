@@ -24,11 +24,14 @@ const (
 	ChangeReanchor   ChangeKind = "reanchor"   // ask the person to take the versions nodloop approved in a place as their own
 	ChangeWiden      ChangeKind = "widen"      // ask the person to let curate carry out one more kind or bin
 	ChangeActivate   ChangeKind = "activate"   // ask the person to end the shadow
+	// ask the person to carry out an intervention an agent proposed
+	ChangeIntervention ChangeKind = "intervention"
 )
 
 func ChangeKinds() []ChangeKind {
 	return []ChangeKind{
 		ChangeAdd, ChangeUpdate, ChangeJoin, ChangeDrop, ChangeWithdraw, ChangeCompaction, ChangeReanchor, ChangeWiden, ChangeActivate,
+		ChangeIntervention,
 	}
 }
 
@@ -44,6 +47,12 @@ func (k ChangeKind) versioned() bool {
 // Whether the knobs offer the change from the numbers of a cycle so it cites no run
 func (k ChangeKind) offered() bool {
 	return k == ChangeWiden || k == ChangeActivate
+}
+
+// Whether the change cites the run it comes from
+// An offer of the knobs and an agent's proposal come from no run
+func (k ChangeKind) cites() bool {
+	return !k.offered() && k != ChangeIntervention
 }
 
 // The rule that sent a change to its tier
@@ -159,12 +168,15 @@ type Change struct {
 	Diff string `json:"diff,omitempty"`
 	// The kind and bin a widening asks to open
 	Opens *Opening `json:"opens,omitempty"`
+	// The intervention of an agent the question asks the person to carry out
+	Proposal string `json:"proposal,omitempty"`
 }
 
 // 1. a change of one version names it
 // 2. a compaction names the compaction it approves
 // 3. a join names the one older candidate it adds the evidence to
 // 4. only a widening names the kind and bin it opens
+// 5. only a proposal names the intervention it asks about
 func (c Change) check() error {
 	switch {
 	case !c.Kind.Valid():
@@ -177,6 +189,8 @@ func (c Change) check() error {
 		return fmt.Errorf("%w: a join names the one older candidate it adds the evidence to", ErrDecideInvalid)
 	case (c.Kind == ChangeWiden) != (c.Opens != nil) || c.Opens != nil && !c.Opens.Valid():
 		return fmt.Errorf("%w: a widening names the kind and bin it opens and no other change names one", ErrDecideInvalid)
+	case (c.Kind == ChangeIntervention) != (c.Proposal != ""):
+		return fmt.Errorf("%w: a proposal names the intervention it asks about and no other change names one", ErrDecideInvalid)
 	}
 	return nil
 }
@@ -266,7 +280,7 @@ func (e Event) trace(name trace.Name, subject string, input, output any, now tim
 // 3. a retry carries the error of the judge call that failed and no other action carries one
 func (e Event) Decide(c Change, d Decision, failed error, now time.Time) (trace.Trace, error) {
 	switch {
-	case e.ID == "" || e.Ref == "" && !c.Kind.offered():
+	case e.ID == "" || e.Ref == "" && c.Kind.cites():
 		return trace.Trace{}, fmt.Errorf("%w: a decide names its id and the run of the change", ErrDecideInvalid)
 	case e.Source != trace.SourcePush || e.Draw.Unit != e.ID:
 		return trace.Trace{}, fmt.Errorf("%w: a decision of curate is pushed and drawn on its own id", ErrDecideInvalid)

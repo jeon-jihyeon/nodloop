@@ -49,7 +49,8 @@
             "compaction",
             "reanchor",
             "widen",
-            "activate"
+            "activate",
+            "intervention"
           ]
         },
         "id": {
@@ -111,7 +112,8 @@
                 "compaction",
                 "reanchor",
                 "widen",
-                "activate"
+                "activate",
+                "intervention"
               ]
             },
             "bin": {
@@ -127,6 +129,9 @@
           "required": [
             "kind"
           ]
+        },
+        "proposal": {
+          "type": "string"
         }
       },
       "required": [

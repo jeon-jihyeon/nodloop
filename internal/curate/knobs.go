@@ -175,6 +175,17 @@ func (ts knobTraces) next(now time.Time, seed string, settings JudgeSettings, sh
 	return ev, !before.Judge.keeps(settings)
 }
 
+// When the newest cycle started and the zero time before the first
+// The person's settings after it move the knobs at the next cycle start
+func (ts knobTraces) started() time.Time {
+	for _, t := range ts {
+		if k, ok := RestoreKnob(t); ok && k.Cause == KnobStart {
+			return t.Time
+		}
+	}
+	return time.Time{}
+}
+
 // 00:00 UTC on the Monday of the week of t
 func monday(t time.Time) time.Time {
 	day := t.UTC().Truncate(24 * time.Hour)

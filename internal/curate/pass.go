@@ -98,6 +98,8 @@ func (d Decided) subject() string {
 	switch {
 	case d.Change.Kind == ChangeWithdraw:
 		return "signal " + d.Change.Signal
+	case d.Change.Kind == ChangeIntervention:
+		return "proposal " + d.Change.Proposal
 	case d.Change.Opens != nil:
 		return fmt.Sprintf("widen %s %s", d.Change.Opens.Kind, d.Change.Opens.Bin)
 	case d.Change.Kind.offered():
@@ -147,8 +149,10 @@ type pass struct {
 	decides Decides
 	// The decides of this pass in their order
 	made []Decided
-	// The decides an answer settled
+	// The decides an answer that holds settled
 	answered map[string]bool
+	// The interventions and the answers of the records as curate keeps their effect
+	ints Interventions
 	// The runs of the window by id and the anchor of their places
 	runs   map[string]trace.Trace
 	places []AnchorPlace
@@ -161,15 +165,16 @@ type pass struct {
 // 2. the knobs move on the numbers of loop before anything is decided so a narrowing holds for the whole pass
 // 3. a decide a crash left without its ledger write is carried out first under the same decide
 // 4. each widening and the activation the knobs offered is prepared as a question
-// 5. a conflict an extraction found with a version nodloop approved is decided once as a withdrawal
-// 6. each waiting candidate version is decided once and again only after a retry, after corroborate joined new evidence or once the shadow ended
-// 7. a failure on one change joins the error and the pass goes on with the next
+// 5. each proposal of an agent that no decide asks about yet is prepared as a question
+// 6. a conflict an extraction found with a version nodloop approved is decided once as a withdrawal
+// 7. each waiting candidate version is decided once and again only after a retry, after corroborate joined new evidence or once the shadow ended
+// 8. a failure on one change joins the error and the pass goes on with the next
 func (c *Curator) Pass(ctx context.Context, s Setting) (Result, error) {
 	p, err := c.open(ctx, s)
 	if err != nil {
 		return Result{}, err
 	}
-	failed := errors.Join(p.recover(ctx), p.offered(ctx), p.withdrawals(ctx), p.candidates(ctx))
+	failed := errors.Join(p.recover(ctx), p.offered(ctx), p.proposals(ctx), p.withdrawals(ctx), p.candidates(ctx))
 	return Result{Event: p.event, Decided: p.made, Due: p.due()}, failed
 }
 
@@ -188,6 +193,10 @@ func (c *Curator) open(ctx context.Context, s Setting) (*pass, error) {
 	if err != nil {
 		return nil, err
 	}
+	interventions, err := c.list(ctx, record.TraceFilter{Name: string(trace.NameIntervention)})
+	if err != nil {
+		return nil, err
+	}
 	runs, err := c.list(ctx, record.TraceFilter{Name: string(trace.NameRun), Since: s.Window})
 	if err != nil {
 		return nil, err
@@ -197,9 +206,10 @@ func (c *Curator) open(ctx context.Context, s Setting) (*pass, error) {
 			p.decides = append(p.decides, d)
 		}
 	}
+	p.ints = RestoreInterventions(slices.Concat(interventions, answers, decides))
 	for _, t := range answers {
 		var a Answer
-		if json.Unmarshal(t.Input, &a) == nil && a.Decide != "" {
+		if json.Unmarshal(t.Input, &a) == nil && a.Decide != "" && !p.ints.Reversed(t.ID) {
 			p.answered[a.Decide] = true
 		}
 	}
@@ -240,6 +250,7 @@ func (p *pass) cycle(ctx context.Context, knobs knobTraces) error {
 		return p.append(ctx, ev, move, now)
 	}
 	ev, started := knobs.next(now, p.s.Seed, p.s.Judge, p.s.Anchor.Shots(p.s.Judge.StartAt(now)))
+	ev.Knobs = p.ints.Knobs(ev.Knobs, knobs.started())
 	numbers := p.s.Numbers
 	if started {
 		numbers = Numbers{}
@@ -287,13 +298,16 @@ func (p *pass) recover(ctx context.Context) error {
 
 // Whether what the decide is about is still in the state the decide found it in
 // 1. a widening finds its kind and bin closed and the activation finds the shadow on
-// 2. a withdrawal finds a version nodloop approved and every other change a waiting candidate
+// 2. a proposal waits until the person answers or dismisses its question
+// 3. a withdrawal finds a version nodloop approved and every other change a waiting candidate
 func (p *pass) waits(d Decided) bool {
 	switch {
 	case d.Change.Opens != nil:
 		return !p.event.Knobs.Opens(*d.Change.Opens)
 	case d.Change.Kind == ChangeActivate:
 		return !p.event.Knobs.Activated
+	case d.Change.Kind == ChangeIntervention:
+		return true
 	}
 	k, err := p.all.Version(d.Change.ID, d.Change.Version)
 	if d.Change.Kind == ChangeWithdraw {
@@ -376,13 +390,17 @@ type ruling struct {
 // Whether the candidate version is due a decision and whether its last one was a retry
 // 1. a version no decide named yet
 // 2. a retry after a judge call that failed
-// 3. a version corroborate joined new evidence to after its decide
+// 3. a version corroborate joined new evidence to after its decide, or after the person dismissed its question
 // 4. a version decided in shadow that no answer settled once the shadow ended
+// A dismissed question stays closed without new evidence so nodloop never carries it out
 func (p *pass) pending(k knowledge.Knowledge, latest map[string]Decided) (retried, due bool) {
 	d, ok := latest[(Decided{Change: Change{ID: k.ID, Version: k.Version}}).subject()]
+	dismissed, closed := p.ints.Dismissed(d.ID)
 	switch {
 	case !ok:
 		return false, true
+	case closed:
+		return false, k.Time.After(dismissed)
 	case d.Decision.Action == ActionRetry:
 		return true, true
 	case k.Time.After(d.Time):
@@ -393,7 +411,34 @@ func (p *pass) pending(k knowledge.Knowledge, latest map[string]Decided) (retrie
 
 // Whether the decide was made in shadow, no answer settled it and the shadow has ended so it is decided again
 func (p *pass) unshadowed(d Decided) bool {
-	return d.Decision.Action == ActionShadow && p.event.Knobs.Activated && !p.answered[d.ID]
+	_, dismissed := p.ints.Dismissed(d.ID)
+	return d.Decision.Action == ActionShadow && p.event.Knobs.Activated && !p.answered[d.ID] && !dismissed
+}
+
+// Prepares each proposal of an agent no decide asks about yet as one question of the person in the order they were made
+// The decide carries out nothing since only the person's answer carries out a proposal
+func (p *pass) proposals(ctx context.Context) error {
+	asked := map[string]bool{}
+	for _, d := range p.decides {
+		asked[d.Change.Proposal] = true
+	}
+	var errs []error
+	for _, prop := range p.ints.proposed() {
+		if asked[prop.ID] {
+			continue
+		}
+		tr, _, err := p.event.proposal(prop, p.s.Version.Version, p.all, p.now())
+		if err == nil {
+			err = p.traces.Append(ctx, tr.Record())
+		}
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		d, _ := RestoreDecide(tr)
+		p.made, p.decides = append(p.made, d), slices.Concat(Decides{d}, p.decides)
+	}
+	return errors.Join(errs...)
 }
 
 // The change a candidate version makes and the decision of its tier
@@ -401,10 +446,7 @@ func (p *pass) unshadowed(d Decided) bool {
 // 2. tier 2 code rules send what only the person decides to a question before any judge call
 // 3. the judge predicts the rest
 func (p *pass) sort(ctx context.Context, k knowledge.Knowledge, ref string, retried bool) (ruling, error) {
-	r := ruling{change: Change{Kind: ChangeAdd, ID: k.ID, Version: k.Version, Extract: k.Extract, Anchor: p.s.Version.Version}}
-	if _, ok := p.all.Approved().Find(k.ID); ok {
-		r.change.Kind = ChangeUpdate
-	}
+	r := ruling{change: Change{Kind: p.kindOf(k), ID: k.ID, Version: k.Version, Extract: k.Extract, Anchor: p.s.Version.Version}}
 	d, older, settled, err := p.settled(ctx, k)
 	switch {
 	case err != nil:
@@ -573,21 +615,23 @@ func (p *pass) verdictsOf(ctx context.Context, run string) (feedback.Records, er
 }
 
 // The questions the decides leave for the person in the order they were decided
-// 1. the newest decide of each subject stands and an answer to it settles it
+// 1. the newest decide of each subject stands and an answer to it or a dismiss of it settles it
 // 2. a drawn change that was carried out is due as an audit question
 // 3. a question of a change asks while the version is in the state the decide found
+// 4. a question of a proposal names it and the session that made it so the stop of that turn asks it
 func (p *pass) due() []Due {
 	latest := p.decides.latest()
 	out := []Due{}
 	for _, key := range slices.Sorted(maps.Keys(latest)) {
 		d := latest[key]
 		kind, ok := p.question(d)
-		if !ok || p.answered[d.ID] {
+		_, dismissed := p.ints.Dismissed(d.ID)
+		if !ok || p.answered[d.ID] || dismissed {
 			continue
 		}
 		due := Due{
 			Kind: kind, Decide: d.ID, Change: d.Change.Kind, Ref: knowledge.Ref{ID: d.Change.ID, Version: d.Change.Version},
-			Rule: d.Decision.RuleCode, Run: d.Ref, At: d.Time,
+			Rule: d.Decision.RuleCode, Run: d.Ref, At: d.Time, Proposal: d.Change.Proposal, Session: p.ints.session(d.Change.Proposal),
 		}
 		if k, err := p.all.Version(d.Change.ID, d.Change.Version); err == nil {
 			due.Place = k.Run
@@ -599,16 +643,11 @@ func (p *pass) due() []Due {
 }
 
 // The kind of question a decide leaves and false for one that leaves none
+// A question of a change that is not carried out asks only while what it is about waits
 func (p *pass) question(d Decided) (QuestionKind, bool) {
-	switch {
-	case d.Decision.carries():
-		return QuestionAudit, d.Drawn
-	case !p.waits(d):
+	kind, ok := d.asks()
+	if !ok || kind != QuestionAudit && !p.waits(d) {
 		return "", false
-	case d.Decision.Action == ActionAsk:
-		return QuestionDirection, true
-	case d.Decision.Action == ActionShadow:
-		return QuestionShadow, true
 	}
-	return "", false
+	return kind, true
 }

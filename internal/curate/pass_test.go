@@ -757,7 +757,7 @@ func TestCuratorPassFails(t *testing.T) {
 		},
 		{
 			"extractions that cannot be read fail the withdrawals and the candidates are still decided",
-			args{lessons: []knowledge.Knowledge{dup}, appends: -1, lists: 4, reads: -1, seed: "5eed"},
+			args{lessons: []knowledge.Knowledge{dup}, appends: -1, lists: 5, reads: -1, seed: "5eed"},
 			want{assert.AnError, []string{"k-dup v1 retired nodloop duplicate"}, 1},
 		},
 		{
