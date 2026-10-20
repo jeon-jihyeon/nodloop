@@ -786,12 +786,22 @@ export interface InterventionRecord {
   time: string;
   model?: string;
   input: {
-    action: "judge";
+    action: "judge" | "answer" | "dismiss" | "pause" | "resume" | "knob" | "reanchor" | "digest" | "reverse";
+    target?: string;
     id?: string;
     version?: number;
     compaction?: string;
-    choice: "keep" | "undo" | "scope";
+    decide?: string;
+    choice?: "keep" | "undo" | "scope" | "drop" | "merge" | "separate" | "mine" | "review" | "yes" | "notyet" | "same";
     labels?: Record<string, string[] | null>;
+    knob?: string;
+    value?: number | null;
+    before?: number | null;
+    refs?: {
+      id: string;
+      version: number;
+    }[] | null;
+    reverses?: string;
     authority: "person" | "agent";
     proof: "key" | "terminal" | "elicitation" | "reply" | "none";
     person?: string;
@@ -802,6 +812,8 @@ export interface InterventionRecord {
       version: number;
       status: string;
     }[] | null;
+    answer?: string;
+    since?: string;
   };
   error?: string;
   usage: {

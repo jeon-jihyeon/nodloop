@@ -118,10 +118,13 @@ func otlpEndpoints(getenv func(string) string) (string, string) {
 	return traces, logs
 }
 
-// export otel sends the records to an OTLP collector
+// export otel sends the records to an OTLP collector and export package writes them as a Data Package folder
 func runExport(args []string, getenv func(string) string, now func() time.Time, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		return fail(stderr, "export", errNoAction)
+	}
+	if args[0] == "package" {
+		return runPackage(args[1:], getenv, now, stdout, stderr)
 	}
 	if args[0] != "otel" {
 		return fail(stderr, "export", fmt.Errorf("%w %q", errUnknownAction, args[0]))

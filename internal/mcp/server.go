@@ -153,7 +153,7 @@ func (s *Server) proof() trace.Proof {
 // Records the intervention of a judgment with the records it wrote and returns its trace id
 // A judgment without a proof wrote nothing so its intervention is an agent proposal the person is asked about
 func (s *Server) intervened(ctx context.Context, in trace.Intervention, wrote knowledge.Set) (string, error) {
-	tr, err := in.Trace(wrote.Written(), s.session, s.now())
+	tr, err := in.Trace("", s.session, trace.SourceManual, trace.InterventionOutput{Records: wrote.Written()}, s.now())
 	if err != nil {
 		return "", err
 	}

@@ -57,6 +57,8 @@ type Ledger struct {
 	vetoes VetoSink
 	now    func() time.Time
 	newID  func(prefix string) string
+	// The trace of the person's decision every record of a write names and empty outside Under
+	decision string
 }
 
 func NewLedger(
@@ -92,14 +94,15 @@ func (l *Ledger) All(ctx context.Context) (Set, error) {
 }
 
 // Appends what decide returns for the records under the store lock
-// A refusal of decide comes back as it is
+// 1. a refusal of decide comes back as it is
+// 2. under a person's decision every record that names none names it
 func (l *Ledger) appendDecided(ctx context.Context, decide func(all Set) ([]Knowledge, error)) error {
 	return l.store.AppendDecided(ctx, func(all []record.Knowledge) ([]record.Knowledge, error) {
 		records, err := decide(RestoreAll(all))
 		if err != nil {
 			return nil, err
 		}
-		return Set(records).Records(), nil
+		return Set(l.stamp(records)).Records(), nil
 	})
 }
 

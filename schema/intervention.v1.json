@@ -41,8 +41,19 @@
         "action": {
           "type": "string",
           "enum": [
-            "judge"
+            "judge",
+            "answer",
+            "dismiss",
+            "pause",
+            "resume",
+            "knob",
+            "reanchor",
+            "digest",
+            "reverse"
           ]
+        },
+        "target": {
+          "type": "string"
         },
         "id": {
           "type": "string"
@@ -53,12 +64,23 @@
         "compaction": {
           "type": "string"
         },
+        "decide": {
+          "type": "string"
+        },
         "choice": {
           "type": "string",
           "enum": [
             "keep",
             "undo",
-            "scope"
+            "scope",
+            "drop",
+            "merge",
+            "separate",
+            "mine",
+            "review",
+            "yes",
+            "notyet",
+            "same"
           ]
         },
         "labels": {
@@ -72,6 +94,45 @@
               "type": "string"
             }
           }
+        },
+        "knob": {
+          "type": "string"
+        },
+        "value": {
+          "type": [
+            "null",
+            "number"
+          ]
+        },
+        "before": {
+          "type": [
+            "null",
+            "number"
+          ]
+        },
+        "refs": {
+          "type": [
+            "null",
+            "array"
+          ],
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "version": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "id",
+              "version"
+            ]
+          }
+        },
+        "reverses": {
+          "type": "string"
         },
         "authority": {
           "type": "string",
@@ -96,7 +157,6 @@
       },
       "required": [
         "action",
-        "choice",
         "authority",
         "proof"
       ]
@@ -128,6 +188,12 @@
               "status"
             ]
           }
+        },
+        "answer": {
+          "type": "string"
+        },
+        "since": {
+          "type": "string"
         }
       },
       "required": [

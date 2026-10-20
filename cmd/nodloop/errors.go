@@ -58,5 +58,6 @@ var (
 	errOTelProtocol       = errors.New("unknown otel protocol")
 	errUnknownTraceName   = errors.New("unknown trace name")
 	errSchemaPath         = errors.New("a link or text path of a record kind")
+	errSinceInvalid       = errors.New("--since names no descriptor of an export")
 	errNoAction           = fmt.Errorf("an action %w", errRequired)
 )

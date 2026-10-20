@@ -171,6 +171,16 @@ var publishedKinds = kindTable{
 	},
 }
 
+// The fields of the kind that name a record of one other kind with that kind
+func (kt kindTable) foreign(name string) map[string]string {
+	for _, k := range kt {
+		if k.name == name {
+			return k.foreign
+		}
+	}
+	return nil
+}
+
 // The schemas of the typed strings with a valid set and of the types that encode to something else than their Go shape
 func typeSchemas() map[reflect.Type]*jsonschema.Schema {
 	return map[reflect.Type]*jsonschema.Schema{

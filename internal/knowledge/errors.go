@@ -48,6 +48,8 @@ var (
 	ErrPersonDecides = errors.New("knowledge: only a person decides this")
 	// A write of nodloop names the decide trace behind it
 	ErrDecisionRequired = errors.New("knowledge: a write of nodloop names the decision behind it")
+	// A reverse of a write whose id another write changed since so the person decides that change apart
+	ErrReverseStale = errors.New("knowledge: the version changed since the write a reverse would take back")
 	// A run either received its items or a holdout kept them from it so the arms of report effect never share a run
 	ErrWithheldApplied = errors.New("knowledge: a run carries applied or withheld items and never both")
 )

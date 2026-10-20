@@ -1159,18 +1159,30 @@ class AnswerRecord(_AnswerRecordRequired, total=False):
     source: Literal["push", "manual", "command"]
 
 
+class InterventionRecordInputRefs(TypedDict):
+    id: str
+    version: int
+
+
 class _InterventionRecordInputRequired(TypedDict):
-    action: Literal["judge"]
-    choice: Literal["keep", "undo", "scope"]
+    action: Literal["judge", "answer", "dismiss", "pause", "resume", "knob", "reanchor", "digest", "reverse"]
     authority: Literal["person", "agent"]
     proof: Literal["key", "terminal", "elicitation", "reply", "none"]
 
 
 class InterventionRecordInput(_InterventionRecordInputRequired, total=False):
+    target: str
     id: str
     version: int
     compaction: str
+    decide: str
+    choice: Literal["keep", "undo", "scope", "drop", "merge", "separate", "mine", "review", "yes", "notyet", "same"]
     labels: dict[str, list[str] | None]
+    knob: str
+    value: float | None
+    before: float | None
+    refs: list[InterventionRecordInputRefs] | None
+    reverses: str
     person: str
 
 
@@ -1180,8 +1192,13 @@ class InterventionRecordOutputRecords(TypedDict):
     status: str
 
 
-class InterventionRecordOutput(TypedDict):
+class _InterventionRecordOutputRequired(TypedDict):
     records: list[InterventionRecordOutputRecords] | None
+
+
+class InterventionRecordOutput(_InterventionRecordOutputRequired, total=False):
+    answer: str
+    since: str
 
 
 class _InterventionRecordUsageRequired(TypedDict):
