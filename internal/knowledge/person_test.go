@@ -210,7 +210,7 @@ func TestSetPersonReaches(t *testing.T) {
 		{"a scope that lifts the exception", knowledge.RunScope{Producer: "session", Labels: trace.Labels{"repo": {"nodloop"}}}, false},
 		{"two places two versions reach only together", knowledge.RunScope{Producer: "session", Labels: trace.Labels{"repo": {"acme", "svc"}}}, false},
 		{"every run of the producer which only nodloop reaches", knowledge.RunScope{Producer: "session"}, false},
-		{"another producer", knowledge.RunScope{Producer: "tep", Labels: trace.Labels{"repo": {"acme"}}}, false},
+		{"another producer", knowledge.RunScope{Producer: "bot", Labels: trace.Labels{"repo": {"acme"}}}, false},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {

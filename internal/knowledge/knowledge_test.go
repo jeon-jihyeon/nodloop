@@ -137,6 +137,36 @@ func TestKnowledgeValidate(t *testing.T) {
 	}
 }
 
+func TestKnowledgeDecided(t *testing.T) {
+	at := time.Date(2026, 10, 12, 9, 0, 0, 0, time.UTC)
+	tcs := []struct {
+		name string
+		args knowledge.Knowledge
+		want bool
+	}{
+		{"an approval by a person", knowledge.Knowledge{Status: knowledge.StatusApproved, Approver: "ann", ApprovedAt: at, Time: at}, true},
+		{
+			"an approval nodloop carried out",
+			knowledge.Knowledge{Status: knowledge.StatusApproved, Approver: knowledge.ApproverNodloop, ApprovedAt: at, Time: at},
+			true,
+		},
+		{
+			"a reaffirm keeps the time of the approval",
+			knowledge.Knowledge{Status: knowledge.StatusApproved, Approver: "ann", ApprovedAt: at, Time: at.Add(time.Hour)},
+			false,
+		},
+		{"a retire", knowledge.Knowledge{Status: knowledge.StatusRetired, Approver: "ann", ApprovedAt: at, Time: at.Add(time.Hour)}, true},
+		{"a candidate", knowledge.Knowledge{Status: knowledge.StatusCandidate, Time: at}, false},
+		{"a superseded version", knowledge.Knowledge{Status: knowledge.StatusSuperseded, Approver: "ann", ApprovedAt: at, Time: at}, false},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.want, tc.args.Decided())
+		})
+	}
+}
+
 func TestEvidenceTraceIDs(t *testing.T) {
 	tcs := []struct {
 		name string

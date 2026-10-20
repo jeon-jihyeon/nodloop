@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"math"
+	"os"
+	"path/filepath"
 	"slices"
 	"testing"
 	"time"
@@ -178,7 +180,7 @@ func TestCurationEstimateOffers(t *testing.T) {
 }
 
 // The statistics of curation over the answers of the person
-// 1. the anytime valid bound against values computed apart, met by 43 answers with no differ and 66 with one and not by 42 or 65 with one
+// 1. the anytime valid bound against values computed apart: 43 answers with no differ and 66 with one meet it and 42 or 65 with one do not
 // 2. the Hájek estimate and the Kish size over two p values and the worst case over no answer
 // 3. a manual answer left out of every estimate and the bound and counted as an overturn
 // 4. the CUSUM of a fixed sequence alarming at its step and starting again
@@ -304,6 +306,177 @@ func TestCuration(t *testing.T) {
 				round(estimate.Rate), round(estimate.Kish), round(estimate.Worst), r.Overturns.Manual, r.Overturns.ManualOverturned,
 				alarms, shift.Shift, shift.Changed,
 			})
+		})
+	}
+}
+
+// The parts of the curation report the knobs read as numbers: the kinds, the shadow, the CUSUM and the newest closed cycle with its shift
+type knobbed struct {
+	kinds  []loop.KindRow
+	shadow loop.ShadowReport
+	cusum  loop.CUSUMReport
+	closed string
+	shift  loop.ShiftRow
+}
+
+func knobbedOf(r loop.CurationReport) knobbed {
+	out := knobbed{kinds: r.Kinds, shadow: r.Shadow, cusum: r.CUSUM}
+	for _, c := range r.Cycles {
+		if c.Closed {
+			out.closed = c.ID
+		}
+	}
+	if i := slices.IndexFunc(r.Shift, func(s loop.ShiftRow) bool { return s.Cycle == out.closed }); i >= 0 {
+		out.shift = r.Shift[i]
+	}
+	return out
+}
+
+// How the records of a knobbed fixture are written
+type knobbedFixture struct {
+	// The effort of the judge of each cycle
+	efforts []string
+	// A line that does not decode comes before every record
+	corrupt bool
+	// The knob traces name no start of their judge
+	unstarted bool
+	// The knob traces of an earlier release record no length of their cycle so they mark no cycle
+	weekless bool
+}
+
+// The knob trace following the knob event of the id as curate links every knob event but the first
+// An earlier release records no cycle length when weekless
+func linked(t *testing.T, tr trace.Trace, before string, weekless bool) trace.Trace {
+	t.Helper()
+	var in map[string]any
+	require.NoError(t, json.Unmarshal(tr.Input, &in))
+	in["before"] = before
+	if weekless {
+		delete(in["knobs"].(map[string]any), "cycle_weeks")
+	}
+	tr.Input = mustJSON(t, in)
+	return tr
+}
+
+// The records of cycles whose judge ran at the efforts with audits that alarm the CUSUM, a shadow and a direction answer
+func knobbedStores(t *testing.T, f knobbedFixture) testkit.Stores {
+	t.Helper()
+	ctx := context.Background()
+	st := testkit.Open(t)
+	if f.corrupt {
+		require.NoError(t, os.WriteFile(filepath.Join(st.Dir, "traces.jsonl"), []byte("{\n"), 0o600))
+	}
+	// A run of the time before curate
+	earlier := cycleAt(0).Add(-24 * time.Hour)
+	traces := trace.Traces{{ID: trace.NewID(earlier), Name: trace.NameRun, Producer: "session", Time: earlier, Input: json.RawMessage(`{"applied":[]}`)}}
+	judgeStart, before := cycleAt(0), ""
+	for c, effort := range f.efforts {
+		if c > 0 && effort != f.efforts[c-1] {
+			judgeStart = cycleAt(c)
+		}
+		knob := linked(t, knobTrace(t, c, effort, map[bool]time.Time{false: judgeStart}[f.unstarted], true), before, f.weekless)
+		traces, before = append(traces, knob), knob.ID
+	}
+	asks := slices.Concat(
+		repeated(3, audit(0, 0.15, "undo")), repeated(2, audit(1, 0.15, "same")), []ask{audit(1, 0.15, "undo")},
+		repeated(3, audit(2, 0.15, "undo")), []ask{audit(3, 0.15, "same")},
+		[]ask{{cycle: 2, tier: 1, kind: "add", outcome: "conform", question: "shadow", p: 0.5, choice: "keep", source: trace.SourcePush}},
+		[]ask{{cycle: 3, tier: 2, kind: "add", bin: "b2", outcome: "conform", question: "direction", p: 1, choice: "keep", source: trace.SourcePush}},
+	)
+	for i, a := range asks {
+		traces = append(traces, a.traces(t, i)...)
+	}
+	// The store reads backward and stops at the first trace older than a bound since every writer appends in time order
+	slices.SortStableFunc(traces, func(a, b trace.Trace) int { return a.Time.Compare(b.Time) })
+	for _, tr := range traces {
+		require.NoError(t, st.Traces.Append(ctx, tr.Record()))
+	}
+	return st
+}
+
+// What the knobs read from Knobbed equals what they read from the whole curation report
+// 1. Knobbed reads from the start of the cycle before the one that holds the start of the newest judge configuration
+// 2. it reads every record with no knob trace, with one that names no start and when the knob traces end before that cycle
+func TestStoresKnobbed(t *testing.T) {
+	tcs := []struct {
+		name string
+		args knobbedFixture
+	}{
+		{"one configuration over every cycle", knobbedFixture{efforts: []string{"high", "high", "high", "high"}}},
+		{"a configuration of the third cycle", knobbedFixture{efforts: []string{"high", "high", "low", "low"}}},
+		{"a configuration of the last cycle", knobbedFixture{efforts: []string{"high", "high", "high", "low"}}},
+		{"one cycle", knobbedFixture{efforts: []string{"high"}}},
+		{"a knob trace that names no start", knobbedFixture{efforts: []string{"high", "high"}, unstarted: true}},
+		{"knob traces that mark no cycle", knobbedFixture{efforts: []string{"high", "high"}, weekless: true}},
+		{"no knob trace", knobbedFixture{}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ctx := context.Background()
+			st := knobbedStores(t, tc.args)
+			stores := loop.Stores{Traces: st.Traces, Verdicts: st.Feedback, Outcomes: st.Outcomes, Items: st.Ledger}
+			now := cycleAt(len(tc.args.efforts)).AddDate(0, 0, 1)
+
+			whole, wholeErr := stores.Curation(ctx, now)
+			got, err := stores.Knobbed(ctx, now)
+
+			require.NoError(t, wholeErr)
+			require.NoError(t, err)
+			assert.Equal(t, knobbedOf(whole), knobbedOf(got))
+		})
+	}
+}
+
+// A record before the cycle before the start of the newest judge configuration is never read
+// 1. nor is a record before the first cycle when the configuration started in it
+// 2. a corrupt line there fails the whole curation report and not Knobbed
+func TestStoresKnobbedReadsFromItsStart(t *testing.T) {
+	tcs := []struct {
+		name string
+		args []string
+	}{
+		{"a configuration of the third cycle", []string{"high", "high", "low", "low"}},
+		{"one configuration over every cycle", []string{"high", "high", "high", "high"}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ctx := context.Background()
+			st := knobbedStores(t, knobbedFixture{efforts: tc.args, corrupt: true})
+			stores := loop.Stores{Traces: st.Traces, Verdicts: st.Feedback, Outcomes: st.Outcomes, Items: st.Ledger}
+			now := cycleAt(4).AddDate(0, 0, 1)
+
+			_, wholeErr := stores.Curation(ctx, now)
+			got, err := stores.Knobbed(ctx, now)
+
+			assert.Error(t, wholeErr)
+			require.NoError(t, err)
+			assert.Equal(t, cycleAt(3).Format(trace.CycleDate), knobbedOf(got).closed)
+		})
+	}
+}
+
+// A read that fails fails Knobbed: the first knob read, a doubled one and a list of the report
+func TestStoresKnobbedFails(t *testing.T) {
+	tcs := []struct {
+		name string
+		args int
+	}{
+		{"the newest knob traces", 0},
+		{"the knob traces of the cycle before", 1},
+		{"a list of the report", 2},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			st := knobbedStores(t, knobbedFixture{efforts: []string{"high", "high", "low", "low"}})
+			traces := &testkit.FlakyTraces{Store: st.Traces, Lists: testkit.Reads{Allowed: tc.args, Err: assert.AnError}}
+			stores := loop.Stores{Traces: traces, Verdicts: st.Feedback, Outcomes: st.Outcomes, Items: st.Ledger}
+
+			_, err := stores.Knobbed(context.Background(), cycleAt(4).AddDate(0, 0, 1))
+
+			assert.ErrorIs(t, err, assert.AnError)
 		})
 	}
 }

@@ -104,3 +104,26 @@ func TestClientTools(t *testing.T) {
 	})
 	assert.ElementsMatch(t, []string{"first", "second"}, c.Tools(t))
 }
+
+// A tool with a typed answer lists its output schema and one without lists none
+func TestClientOutputSchemas(t *testing.T) {
+	t.Parallel()
+	type emptyInput struct{}
+	type answer struct {
+		Text string `json:"text"`
+	}
+	c := testkit.Connect(t, func(ctx context.Context, transport sdk.Transport) error {
+		srv := sdk.NewServer(&sdk.Implementation{Name: "schemas", Version: "0"}, nil)
+		sdk.AddTool(srv, &sdk.Tool{Name: "typed"}, func(context.Context, *sdk.CallToolRequest, emptyInput) (*sdk.CallToolResult, answer, error) {
+			return nil, answer{}, nil
+		})
+		sdk.AddTool(srv, &sdk.Tool{Name: "untyped"}, func(context.Context, *sdk.CallToolRequest, emptyInput) (*sdk.CallToolResult, any, error) {
+			return nil, nil, nil
+		})
+		return srv.Run(ctx, transport)
+	})
+
+	got := c.OutputSchemas(t)
+
+	assert.Equal(t, []bool{true, false, true}, []bool{got["typed"] != nil, got["untyped"] != nil, len(got) == 2})
+}
