@@ -5,7 +5,7 @@ import { Client } from "../src/client.ts";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { acme, approve, binary, holdout, open, runs, seed, server } from "./setup.ts";
+import { acme, approve, binary, first, holdout, open, runs, second, seed, seedRecords, server } from "./setup.ts";
 
 test("a corrected run teaches an item the same tenant receives once the person approved it and another tenant never does", async () => {
   const c = await open();
@@ -15,7 +15,7 @@ test("a corrected run teaches an item the same tenant receives once the person a
     const p = await c.propose({ kind: "judgment", content: "Quote the refund window before the steps", from: run, id: "refund-window" });
     const proposal = await c.approve(p.id, p.version, "ann");
     const before = await c.knowledge("support-bot", acme);
-    approve(c.records, p.id, p.version);
+    approve(c.recordDir, p.id, p.version);
 
     const mine = await c.knowledge("support-bot", acme);
     const other = await c.knowledge("support-bot", { tenant: ["globex"] });
@@ -59,7 +59,7 @@ test("nodloop is reserved for the capture of a session, so a verdict or an outco
     const reserved = (e: unknown) => e instanceof ToolError && /reserved for what the capture reads/.test(e.message);
     await assert.rejects(c.judge(run, "reject", "nodloop", { reason: "wrong" }), reserved);
     await assert.rejects(c.outcome(run, "confirmed", { reviewer: "nodloop" }), reserved);
-    const written = ["feedback.jsonl", "outcomes.jsonl"].filter((f) => existsSync(join(c.records, f)) && readFileSync(join(c.records, f), "utf8") !== "");
+    const written = ["feedback.jsonl", "outcomes.jsonl"].filter((f) => existsSync(join(c.recordDir, f)) && readFileSync(join(c.recordDir, f), "utf8") !== "");
     assert.deepEqual(written, []);
   } finally {
     await c.close();
@@ -119,7 +119,7 @@ test("an eleventh item for the same runs under the run chars approves", async ()
     await c.judge(run, "reject", "ann", { reason: "the window was missing" });
     for (let n = 0; n < 11; n++) {
       const p = await c.propose({ kind: "judgment", content: `Refund rule number ${n}`, from: run, id: `rule-${n}` });
-      approve(c.records, p.id, p.version);
+      approve(c.recordDir, p.id, p.version);
     }
     const mine = await c.knowledge("support-bot", acme);
     assert.equal(mine.items.length, 11);
@@ -138,7 +138,7 @@ test("approve proposes the labels the person picked and the person approves them
 
     const proposal = await c.approve(p.id, p.version, "ann", { labels: {} });
     await assert.rejects(c.approve(p.id, p.version, "ann", { labels: { tenant: ["initech"] } }), ToolError);
-    approve(c.records, p.id, p.version, "--everywhere");
+    approve(c.recordDir, p.id, p.version, "--everywhere");
 
     const other = await c.knowledge("support-bot", { tenant: ["globex"] });
     assert.deepEqual([proposal.status, proposal.proposal !== ""], ["candidate", true]);
@@ -155,7 +155,7 @@ test("a holdout key withholds a share of runs and a withheld run joins the withh
     const run = await c.record({ producer: "stream-bot", output: "lag rose", labels: acme });
     await c.judge(run, "reject", "ann", { reason: "name the partition" });
     const p = await c.propose({ kind: "judgment", content: "Name the partition", from: run, id: "partition" });
-    approve(c.records, p.id, p.version);
+    approve(c.recordDir, p.id, p.version);
     const drawn = [];
     for (let n = 0; n < 200; n++) drawn.push(await c.knowledge("stream-bot", acme, `window-${n}`));
     const unkeyed = await c.knowledge("stream-bot", acme);
@@ -251,5 +251,41 @@ test("an outcome is recorded on a run and a report reads by name with its window
     assert.equal(loop.since, "2020-01-01T00:00:00Z");
   } finally {
     await c.close();
+  }
+});
+
+test("the records of a kind page oldest first across a cursor in their published schema with the text left out unless asked", async () => {
+  const c = await open();
+  seedRecords(c.recordDir);
+  try {
+    const one = await c.records("run", { limit: 1 });
+    const two = await c.records("run", { since: one.next });
+    const end = await c.records("run", { since: two.next });
+    const shown = await c.records("run", { limit: 1, content: true });
+    const verdicts = await c.records("verdict");
+
+    assert.deepEqual(one.records.map((r) => r.record_id), [first]);
+    assert.deepEqual(two.records.map((r) => r.record_id), [second]);
+    assert.deepEqual(end, { records: [], next: two.next });
+    assert.equal(one.records[0].output, undefined);
+    assert.equal(shown.records[0].output, "refund steps");
+    assert.deepEqual(verdicts.records.map((v) => [v.record_kind, v.trace_id, v.reason]), [["verdict", first, undefined]]);
+    await assert.rejects(c.records("run", { since: "%%%" }), (e) => e instanceof ToolError && /the cursor names no record/.test(e.message));
+  } finally {
+    await c.close();
+  }
+});
+
+test("a key of the server pages the records of its tenant", async () => {
+  const s = await server();
+  seedRecords(join(s.records, "tenants", "acme"));
+  const c = await Client.open({ url: s.url, key: s.key });
+  try {
+    const page = await c.records("run", { content: true });
+
+    assert.deepEqual(page.records.map((r) => [r.record_id, r.output]), [[first, "refund steps"], [second, "the window is 30 days"]]);
+  } finally {
+    await c.close();
+    s.proc.kill();
   }
 });

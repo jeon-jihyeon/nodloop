@@ -233,3 +233,62 @@ async def test_outcome_and_report(binary: str, records: str) -> None:
 
     assert isinstance(health.report, (list, dict)) and loop.report["totals"]["runs"] == 1
     assert loop.since == "2020-01-01T00:00:00Z"
+
+
+FIRST, SECOND = "019a0c8fcb9e00000001", "019a0c8fcb9e00000002"
+USAGE = {"input_tokens": 0, "output_tokens": 0, "cache_read": 0, "cache_create": 0, "cost_usd": 0}
+
+
+def seed_records(records: Path) -> None:
+    """Two runs and a verdict recorded long before the test so every page holds them, each with text a page leaves out"""
+    records.mkdir(parents=True, exist_ok=True)
+    runs = [
+        {"id": run_id, "name": "run", "time": at, "input": {"applied": []}, "output": output, "usage": USAGE, "duration_ms": 0}
+        | {"producer": "support-bot", "schema_version": 1}
+        for run_id, at, output in (
+            (FIRST, "2026-10-01T09:00:00Z", "refund steps"),
+            (SECOND, "2026-10-01T09:00:01Z", "the window is 30 days"),
+        )
+    ]
+    verdict = {
+        "trace_id": FIRST,
+        "time": "2026-10-01T09:00:02Z",
+        "verdict": "reject",
+        "reason": "the window was missing",
+        "reviewer": "ann",
+    }
+    (records / "traces.jsonl").write_text("".join(json.dumps(r) + "\n" for r in runs))
+    (records / "feedback.jsonl").write_text(json.dumps(verdict | {"proof": "none", "schema_version": 1}) + "\n")
+
+
+async def test_records_page_across_a_cursor(binary: str, records: str) -> None:
+    """The records of a kind page oldest first across a cursor in their published schema with the text left out unless asked"""
+    seed_records(Path(records))
+    async with Client(records, binary) as c:
+        first = await c.records("run", limit=1)
+        second = await c.records("run", since=first.next)
+        end = await c.records("run", since=second.next)
+        shown = await c.records("run", limit=1, content=True)
+        verdicts = await c.records("verdict")
+
+    assert [r["record_id"] for r in first.records] == [FIRST]
+    assert [r["record_id"] for r in second.records] == [SECOND]
+    assert (end.records, end.next) == ([], second.next)
+    assert "output" not in first.records[0] and shown.records[0]["output"] == "refund steps"
+    assert [(v["record_kind"], v["trace_id"], "reason" in v) for v in verdicts.records] == [("verdict", FIRST, False)]
+
+
+async def test_records_refuse_a_cursor_no_page_answered(binary: str, records: str) -> None:
+    async with Client(records, binary) as c:
+        with pytest.raises(ToolError, match="the cursor names no record"):
+            await c.records("run", since="%%%")
+
+
+async def test_records_over_the_server(server: tuple[str, str, str], tmp_path: Path) -> None:
+    """A key of the server pages the records of its tenant"""
+    url, key, _ = server
+    seed_records(tmp_path / "records" / "tenants" / "acme")
+    async with Client(url=url, key=key) as c:
+        page = await c.records("run", content=True)
+
+    assert [(r["record_id"], r["output"]) for r in page.records] == [(FIRST, "refund steps"), (SECOND, "the window is 30 days")]

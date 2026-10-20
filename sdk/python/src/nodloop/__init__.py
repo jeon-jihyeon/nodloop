@@ -1,5 +1,21 @@
 """Record AI runs and the verdicts people give on them, and hand the knowledge they approve to the next run in the same place"""
 
-from .client import Approval, Candidate, Client, Decision, Item, Knowledge, Ref, Report, ReportName, Result, ToolError
+from .client import Approval, Candidate, Client, Decision, Item, Knowledge, Page, Ref, Report, ReportName, Result, ToolError
+from .records import AnyRecord, RecordKind
 
-__all__ = ["Approval", "Candidate", "Client", "Decision", "Item", "Knowledge", "Ref", "Report", "ReportName", "Result", "ToolError"]
+__all__ = [
+    "AnyRecord",
+    "Approval",
+    "Candidate",
+    "Client",
+    "Decision",
+    "Item",
+    "Knowledge",
+    "Page",
+    "RecordKind",
+    "Ref",
+    "Report",
+    "ReportName",
+    "Result",
+    "ToolError",
+]

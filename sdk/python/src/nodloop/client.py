@@ -13,8 +13,22 @@ from mcp.client.stdio import stdio_client
 from mcp.client.streamable_http import create_mcp_http_client, streamable_http_client
 
 from . import binary
+from .records import AnyRecord, RecordKind
 
-__all__ = ["Approval", "Candidate", "Client", "Decision", "Item", "Knowledge", "Ref", "Report", "ReportName", "Result", "ToolError"]
+__all__ = [
+    "Approval",
+    "Candidate",
+    "Client",
+    "Decision",
+    "Item",
+    "Knowledge",
+    "Page",
+    "Ref",
+    "Report",
+    "ReportName",
+    "Result",
+    "ToolError",
+]
 
 # The binary release the client fetches when no nodloop is installed
 VERSION = "0.9.0"
@@ -119,6 +133,16 @@ class Report:
     report: Any
     # The RFC3339 start of the window and empty when the report read every run
     since: str = ""
+
+
+@dataclass(frozen=True)
+class Page:
+    """One page of raw records in the published schema of their kind, oldest first"""
+
+    # Each record as the TypedDict of its kind in nodloop.records
+    records: list[AnyRecord]
+    # The cursor to pass as since for the next page, the same while no newer record is settled
+    next: str = ""
 
 
 def _ref(v: Item | Ref | dict[str, Any]) -> dict[str, Any]:
@@ -285,6 +309,24 @@ class Client:
         """One report of the records as JSON with the start of the window it read"""
         answer = await self.call("report", {"name": name})
         return Report(answer["report"], answer.get("since", ""))
+
+    async def records(self, kind: RecordKind, since: str = "", limit: int = 0, content: bool = False) -> Page:
+        """One page of the raw records of a kind in its published schema, oldest first after the cursor since
+
+        Pass next back as since for the following page, which answers the same next while nothing newer is settled
+        A record younger than 10 s waits for a later page
+        limit is 100 by default and at most 1000
+        The free text of the kind such as outputs, reasons and lesson content is left out unless content is true
+        """
+        args: dict[str, Any] = {"kind": kind}
+        if since:
+            args["since"] = since
+        if limit:
+            args["limit"] = limit
+        if content:
+            args["content"] = True
+        answer = await self.call("records", args)
+        return Page(answer.get("records") or [], answer.get("next", ""))
 
     async def propose(
         self,

@@ -5,6 +5,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { resolve } from "node:path";
 import { find } from "./binary.ts";
+import type { AnyRecord, RecordKind, Records } from "./records.ts";
 
 /** The binary release the client fetches when no nodloop is installed */
 export const version = "0.9.0";
@@ -112,6 +113,23 @@ export interface Report {
   report: any;
   /** The RFC3339 start of the window and absent when the report read every run */
   since?: string;
+}
+
+/** One page of raw records in the published schema of their kind, oldest first */
+export interface Page<T = AnyRecord> {
+  records: T[];
+  /** The cursor to pass as since for the next page, the same while no newer record is settled */
+  next: string;
+}
+
+/** What a page of records asks besides its kind */
+export interface PageOptions {
+  /** The next cursor of the page before, empty for the first page */
+  since?: string;
+  /** 100 by default and at most 1000 */
+  limit?: number;
+  /** Keep the free text of the kind such as outputs, reasons and lesson content */
+  content?: boolean;
 }
 
 /** What an adapter takes besides the client and the producer */
@@ -253,6 +271,21 @@ export class Client {
   async report(name: ReportName): Promise<Report> {
     const { report, since } = await this.call("report", { name });
     return since ? { report, since } : { report };
+  }
+
+  /**
+   * One page of the raw records of a kind in its published schema, oldest first after the cursor since
+   * Pass next back as since for the following page, which answers the same next while nothing newer is settled
+   * A record younger than 10 s waits for a later page
+   * The free text of the kind such as outputs, reasons and lesson content is left out unless content is true
+   */
+  async records<K extends RecordKind>(kind: K, options: PageOptions = {}): Promise<Page<Records[K]>> {
+    const args: Record<string, unknown> = { kind };
+    if (options.since) args.since = options.since;
+    if (options.limit) args.limit = options.limit;
+    if (options.content) args.content = true;
+    const answer = await this.call("records", args);
+    return { records: answer.records ?? [], next: answer.next ?? "" };
   }
 
   /** Proposes a candidate a person approves later, from a corrected run or for a producer and labels */

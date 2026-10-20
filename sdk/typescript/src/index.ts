@@ -12,8 +12,11 @@ export {
   type Knowledge,
   type Labels,
   type Options,
+  type Page,
+  type PageOptions,
   type Ref,
   type Report,
   type ReportName,
   type Run,
 } from "./client.ts";
+export type * from "./records.ts";
