@@ -110,7 +110,7 @@ func serve(st testkit.Stores, caller mcp.Caller) func(context.Context, sdk.Trans
 // Opens one server over the stores for the caller
 func open(st testkit.Stores, caller mcp.Caller) mcp.Open {
 	compactor := compact.New(st.Ledger, st.Traces, st.Feedback, st.Traces, st.Clock.Now)
-	srv := mcp.New(st.Traces, st.Feedback, st.Outcomes, st.Ledger, compactor, extract.New(st.Ledger, st.Traces, st.Feedback, st.Clock.Now),
+	srv := mcp.New(st.Traces, st.Feedback, st.Outcomes, st.Ledger, st.Source(), compactor, extract.New(st.Ledger, st.Traces, st.Feedback, st.Clock.Now),
 		st.Clock.Now, mcp.NewSession(st.Clock.Now()), "nodloop", "", caller, mcp.Policy{})
 	return func(context.Context) (*mcp.Server, error) { return srv, nil }
 }

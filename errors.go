@@ -6,6 +6,7 @@ import (
 	"github.com/jeon-jihyeon/nodloop/internal/loop"
 	"github.com/jeon-jihyeon/nodloop/internal/record"
 	"github.com/jeon-jihyeon/nodloop/internal/retain"
+	"github.com/jeon-jihyeon/nodloop/internal/schema"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
 )
 
@@ -36,4 +37,10 @@ var (
 	ErrReviewerReserved = feedback.ErrReviewerReserved
 	// An Approve, ApproveIn or Retire under the name only what nodloop carries out is recorded under
 	ErrApproverReserved = knowledge.ErrApproverReserved
+	// A Query whose kind is no kind of the published index
+	ErrKindUnknown = schema.ErrKindUnknown
+	// A Query whose Since is no Next a page answered
+	ErrCursorInvalid = schema.ErrCursorInvalid
+	// A Query of a kind kept outside the record directory such as the guard log of a machine
+	ErrNotServed = schema.ErrNotServed
 )

@@ -223,8 +223,7 @@
       },
       "required": [
         "tool",
-        "when",
-        "example"
+        "when"
       ]
     },
     "compaction": {
@@ -247,7 +246,6 @@
     "id",
     "version",
     "kind",
-    "content",
     "evidence",
     "basis",
     "status",

@@ -22,6 +22,7 @@ import (
 	"github.com/jeon-jihyeon/nodloop/internal/loop"
 	"github.com/jeon-jihyeon/nodloop/internal/record"
 	"github.com/jeon-jihyeon/nodloop/internal/retain"
+	"github.com/jeon-jihyeon/nodloop/internal/schema"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
 )
 
@@ -54,10 +55,13 @@ type OutcomeStore interface {
 
 // Every tool checks its input against the stores it needs and then calls one method of a module and shapes the answer
 type Server struct {
-	traces    TraceStore
-	verdicts  FeedbackStore
-	outcomes  OutcomeStore
-	ledger    *knowledge.Ledger
+	traces   TraceStore
+	verdicts FeedbackStore
+	outcomes OutcomeStore
+	ledger   *knowledge.Ledger
+	// The stores the raw record pages read
+	// Only a stdio server holds the guard log of the machine
+	source    schema.Source
 	compactor *compact.Compactor
 	extractor *extract.Extractor
 	now       func() time.Time
@@ -95,11 +99,11 @@ type Policy struct {
 }
 
 func New(
-	traces TraceStore, verdicts FeedbackStore, outcomes OutcomeStore, ledger *knowledge.Ledger, compactor *compact.Compactor,
+	traces TraceStore, verdicts FeedbackStore, outcomes OutcomeStore, ledger *knowledge.Ledger, source schema.Source, compactor *compact.Compactor,
 	extractor *extract.Extractor, now func() time.Time, session, exe, recordArgs string, caller Caller, policy Policy,
 ) *Server {
 	return &Server{
-		traces: traces, verdicts: verdicts, outcomes: outcomes, ledger: ledger, compactor: compactor, extractor: extractor,
+		traces: traces, verdicts: verdicts, outcomes: outcomes, ledger: ledger, source: source, compactor: compactor, extractor: extractor,
 		now: now, session: session,
 		exe: exe, recordArgs: recordArgs, caller: caller, policy: policy,
 	}
@@ -240,6 +244,7 @@ func enums() map[reflect.Type]*jsonschema.Schema {
 	return map[reflect.Type]*jsonschema.Schema{
 		reflect.TypeFor[feedback.ReasonCode](): {Type: "string", Enum: codes},
 		reflect.TypeFor[loop.ReportName]():     {Type: "string", Enum: reports},
+		reflect.TypeFor[recordKind]():          {Type: "string", Enum: recordKinds()},
 	}
 }
 
@@ -296,6 +301,10 @@ var tools = []tool{
 	newTool("reaffirm", "Record that the person rechecked an approved knowledge version, which restarts its review deadline, "+
 		"when the call proves a person under a server key of a person. "+
 		"Any other call records an agent proposal the person is asked about, answers proposal and changes nothing", (*Server).reaffirm),
+	newTool("records", "Page the raw records of one kind in its published schema: runs, verdicts, knowledge records, decisions, questions, answers, "+
+		"interventions and every other kind, oldest first after the cursor since. The free text of the kind such as outputs, reasons and lesson content "+
+		"is left out unless content is true. A record younger than 10 s waits for a later page. Pass next back as since for the following page, "+
+		"which answers the same next while nothing newer is settled. Reads only", (*Server).records),
 }
 
 // feedback and outcome and propose take a recorded run as the trace they concern

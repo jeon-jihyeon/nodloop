@@ -150,10 +150,7 @@
               "error": {
                 "type": "string"
               }
-            },
-            "required": [
-              "draft"
-            ]
+            }
           }
         },
         "conclusion": {

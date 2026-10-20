@@ -135,13 +135,17 @@ func (o mcpOpen) open(context.Context) (*mcp.Server, error) {
 	if err != nil {
 		return nil, err
 	}
+	source, err := a.source()
+	if err != nil {
+		return nil, err
+	}
 	policy := mcp.Policy{Holdout: a.cfg.holdout, Retention: a.cfg.retention, Marks: retain.NewMarker(dir), AfterRun: a.afterRun(o.log)}
 	if o.export != nil && a.cfg.otel != nil {
 		policy.AfterRun = a.afterRunExport(o.export, o.log)
 		policy.AfterVerdict = a.afterVerdict(o.export, o.log)
 	}
 	return mcp.New(
-		traces, verdicts, outcomes, ledger, compactor, extract.New(ledger, traces, verdicts, o.now), o.now, o.session, executable(),
+		traces, verdicts, outcomes, ledger, source, compactor, extract.New(ledger, traces, verdicts, o.now), o.now, o.session, executable(),
 		a.cfg.recordArgs(), o.caller, policy,
 	), nil
 }

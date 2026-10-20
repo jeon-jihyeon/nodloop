@@ -13,6 +13,7 @@ import (
 	knowledgefile "github.com/jeon-jihyeon/nodloop/internal/knowledge/file"
 	"github.com/jeon-jihyeon/nodloop/internal/loop"
 	"github.com/jeon-jihyeon/nodloop/internal/retain"
+	"github.com/jeon-jihyeon/nodloop/internal/schema"
 	tracefile "github.com/jeon-jihyeon/nodloop/internal/trace/file"
 	"github.com/jeon-jihyeon/nodloop/internal/veto"
 	vetofile "github.com/jeon-jihyeon/nodloop/internal/veto/file"
@@ -25,9 +26,12 @@ type Client struct {
 	verdicts *feedbackfile.Store
 	outcomes *feedbackfile.OutcomeStore
 	ledger   *knowledge.Ledger
-	now      func() time.Time
-	holdout  knowledge.Holdout
-	days     retain.Days
+	// The stores the raw record pages read
+	// No guard log since the package reads one record directory
+	source  schema.Source
+	now     func() time.Time
+	holdout knowledge.Holdout
+	days    retain.Days
 	// The last prune of the directory whatever surface ran it so Report reads only runs no prune touched
 	marks retain.Marker
 	// The daily prune after Record and nil without retention
@@ -122,7 +126,8 @@ func Open(dir string, opts ...Option) (*Client, error) {
 	ledger := knowledge.NewLedger(store, sink, o.now, knowledge.NewIDs(o.now))
 	c := &Client{
 		traces: traces, verdicts: verdicts, outcomes: outcomes, ledger: ledger, now: o.now, holdout: holdout, days: days,
-		marks: retain.NewMarker(dir), pruneFailed: o.pruneFailed,
+		source: schema.Source{Traces: traces, Verdicts: verdicts, Outcomes: outcomes, Knowledge: store},
+		marks:  retain.NewMarker(dir), pruneFailed: o.pruneFailed,
 	}
 	if days == 0 {
 		return c, nil

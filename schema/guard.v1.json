@@ -44,7 +44,6 @@
     "record_kind",
     "record_id",
     "time",
-    "cwd",
     "tool",
     "veto",
     "action",

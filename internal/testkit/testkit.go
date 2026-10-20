@@ -13,6 +13,7 @@ import (
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	knowledgefile "github.com/jeon-jihyeon/nodloop/internal/knowledge/file"
 	"github.com/jeon-jihyeon/nodloop/internal/record"
+	"github.com/jeon-jihyeon/nodloop/internal/schema"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
 	tracefile "github.com/jeon-jihyeon/nodloop/internal/trace/file"
 	vetofile "github.com/jeon-jihyeon/nodloop/internal/veto/file"
@@ -118,8 +119,16 @@ type Stores struct {
 	Traces   *tracefile.Store
 	Feedback *feedbackfile.Store
 	Outcomes *feedbackfile.OutcomeStore
-	Ledger   *knowledge.Ledger
-	Clock    *Clock
+	// The store behind the ledger as the raw record pages read it
+	Knowledge *knowledgefile.Store
+	Ledger    *knowledge.Ledger
+	Clock     *Clock
+}
+
+// The stores of the record dir as the raw record pages read them
+// No guard log since the harness keeps no home
+func (s Stores) Source() schema.Source {
+	return schema.Source{Traces: s.Traces, Verdicts: s.Feedback, Outcomes: s.Outcomes, Knowledge: s.Knowledge}
 }
 
 // Empty record stores in a temp dir and a clock the test advances
@@ -138,7 +147,7 @@ func Open(t *testing.T) Stores {
 	ledger := knowledge.NewLedger(
 		items, vetofile.NewApprovedFile(t.TempDir(), dir), clock.Now, func(prefix string) string { return prefix + "generated" },
 	)
-	return Stores{Dir: dir, Traces: traces, Feedback: verdicts, Outcomes: outcomes, Ledger: ledger, Clock: clock}
+	return Stores{Dir: dir, Traces: traces, Feedback: verdicts, Outcomes: outcomes, Knowledge: items, Ledger: ledger, Clock: clock}
 }
 
 // Steps a second per call so two calls around a model call give a positive duration
@@ -159,6 +168,13 @@ func (c *Clock) Now() time.Time {
 	now := c.now
 	c.now = now.Add(ClockStep)
 	return now
+}
+
+// Moves the clock on without a read such as past the settle time of a records page
+func (c *Clock) Advance(d time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.now = c.now.Add(d)
 }
 
 // The error of a call whose value the test does not need such as the records an import appended

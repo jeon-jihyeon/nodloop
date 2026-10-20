@@ -2,6 +2,7 @@ package main
 
 import (
 	"cmp"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -95,6 +96,27 @@ type guardCommand struct {
 
 // The decision log under the nodloop directory of home
 const decisionLog = "guard.jsonl"
+
+// The decision log of a home one line per entry as the raw record pages read it
+type guardLog struct {
+	home homeDir
+}
+
+// Every logged decision as it was written
+// No home or no log yet lists nothing
+func (g guardLog) List(context.Context) ([]json.RawMessage, error) {
+	if g.home == "" {
+		return nil, nil
+	}
+	log, err := jsonl.Open[json.RawMessage](g.home.dir(), decisionLog)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return log.Newest(func(json.RawMessage) bool { return true }, nil, 0)
+}
 
 // Decisions guard log prints without a limit flag
 // One screen of recent blocks and asks
