@@ -76,6 +76,8 @@ func fixture(t *testing.T) (testkit.Stores, map[string]string) {
 		"replay":        add(t, st, trace.NameReplay, 40, "", none),
 		"consolidate":   add(t, st, trace.NameConsolidate, 40, "", none),
 		"compact":       add(t, st, trace.NameCompact, 40, "", none),
+		"old turn":      add(t, st, trace.NameTurn, 40, "", "{}"),
+		"young turn":    add(t, st, trace.NameTurn, 3, "", "{}"),
 	}
 	failed := trace.Trace{
 		ID: trace.NewID(now.Add(-35 * 24 * time.Hour)), Name: trace.NameRun, Producer: "bot", Time: now.Add(-35 * 24 * time.Hour),
@@ -88,10 +90,10 @@ func fixture(t *testing.T) (testkit.Stores, map[string]string) {
 	ids["young classify of a removed run"] = add(t, st, trace.NameClassify, 1, ids["unjudged"], none)
 	ids["classify of a kept run"] = add(t, st, trace.NameClassify, 40, ids["judged"], none)
 	ids["extract"] = add(t, st, trace.NameExtract, 40, ids["unjudged"], none)
-	judge(t, st, ids["judged"], feedback.VerdictApprove, "")
+	judge(t, st, ids["judged"], feedback.VerdictApprove, "ann")
 	judge(t, st, ids["inferred"], feedback.VerdictReject, feedback.ReviewerSession)
-	judge(t, st, ids["withdrawn"], feedback.VerdictWithdraw, "")
-	o, err := feedback.NewOutcome(ids["checked"], feedback.ResultRefuted, "", "", "", now)
+	judge(t, st, ids["withdrawn"], feedback.VerdictWithdraw, "ann")
+	o, err := feedback.NewOutcome(ids["checked"], feedback.ResultRefuted, "", "", "ann", now)
 	require.NoError(t, err)
 	require.NoError(t, st.Outcomes.Append(ctx, o.Record()))
 	propose(t, st, "a", knowledge.Evidence{FeedbackTraceIDs: []string{ids["taught"]}})
@@ -140,6 +142,8 @@ func TestRetainerPrune(t *testing.T) {
 		{"a replay trace stays", "replay", true},
 		{"a consolidate trace stays", "consolidate", true},
 		{"a compact trace stays", "compact", true},
+		{"an old turn trace goes since its run holds the duration", "old turn", false},
+		{"a young turn trace stays for the stop of its turn", "young turn", true},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
@@ -149,8 +153,9 @@ func TestRetainerPrune(t *testing.T) {
 	}
 	assert.ElementsMatch(t, []string{ids["unjudged"], ids["earlier use"], ids["failed use"], ids["use appended late"]}, plan.Runs)
 	assert.ElementsMatch(t, []string{ids["classify of a removed run"], ids["young classify of a removed run"]}, plan.Classify)
+	assert.Equal(t, []string{ids["old turn"]}, plan.Turns)
 	assert.Equal(t, 8, plan.Kept)
-	assert.Equal(t, 6, removed)
+	assert.Equal(t, 7, removed)
 }
 
 // A verdict recorded between the plan and its removal keeps the run and its classify trace
@@ -163,7 +168,7 @@ func TestRetainerApplyReadsTheCitationsAgain(t *testing.T) {
 	plan, err := retainer.Plan(ctx, retain.Days(30).Cutoff(now))
 	require.NoError(t, err)
 	require.Equal(t, []string{run}, plan.Runs)
-	judge(t, st, run, feedback.VerdictApprove, "")
+	judge(t, st, run, feedback.VerdictApprove, "ann")
 
 	removed, err := retainer.Apply(ctx, plan)
 
@@ -191,7 +196,7 @@ func TestRetainerApplyReadsTheCitationsWhenTheStorePrunes(t *testing.T) {
 	st := testkit.Open(t)
 	ctx := context.Background()
 	run := add(t, st, trace.NameRun, 40, "", `{"applied":[]}`)
-	traces := judgingTraces{Store: st.Traces, judge: func() { judge(t, st, run, feedback.VerdictReject, "") }}
+	traces := judgingTraces{Store: st.Traces, judge: func() { judge(t, st, run, feedback.VerdictReject, "ann") }}
 	retainer := retain.New(traces, st.Feedback, st.Outcomes, st.Ledger)
 	plan, err := retainer.Plan(ctx, retain.Days(30).Cutoff(now))
 	require.NoError(t, err)

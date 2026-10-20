@@ -6,6 +6,7 @@ import (
 	"github.com/jeon-jihyeon/nodloop/internal/loop"
 	"github.com/jeon-jihyeon/nodloop/internal/record"
 	"github.com/jeon-jihyeon/nodloop/internal/retain"
+	"github.com/jeon-jihyeon/nodloop/internal/trace"
 )
 
 var (
@@ -27,4 +28,6 @@ var (
 	ErrResultUnknown = feedback.ErrResultUnknown
 	// A Judgment or an Outcome whose run id names no recorded run
 	ErrRunNotFound = record.ErrTraceNotFound
+	// A Run whose Duration is below zero
+	ErrDurationNegative = trace.ErrDurationNegative
 )

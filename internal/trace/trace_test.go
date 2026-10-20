@@ -47,6 +47,8 @@ func TestNameValid(t *testing.T) {
 	}{
 		{"run is known", trace.NameRun, true},
 		{"check is known", trace.NameCheck, true},
+		{"turn is known", trace.NameTurn, true},
+		{"compact is known", trace.NameCompact, true},
 		{"a name of the data review is unknown now", "diagnose", false},
 		{"empty name is unknown", "", false},
 		{"misspelled name is unknown", "diagnosis", false},
@@ -55,6 +57,32 @@ func TestNameValid(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			assert.Equal(t, tc.want, tc.args.Valid())
+		})
+	}
+}
+
+func TestTraceTook(t *testing.T) {
+	type want struct {
+		ms  int64
+		err error
+	}
+	tcs := []struct {
+		name string
+		args time.Duration
+		want want
+	}{
+		{"a duration is kept in milliseconds", 1500 * time.Millisecond, want{1500, nil}},
+		{"zero leaves no duration", 0, want{0, nil}},
+		{"a negative duration is refused", -time.Second, want{0, trace.ErrDurationNegative}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := trace.Trace{ID: "r1"}.Took(tc.args)
+
+			assert.ErrorIs(t, err, tc.want.err)
+			assert.Equal(t, tc.want.ms, got.DurationMS)
 		})
 	}
 }
@@ -132,6 +160,34 @@ func TestNewID(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			assert.Regexp(t, tc.want, trace.NewID(tc.args))
+		})
+	}
+}
+
+func TestIDTime(t *testing.T) {
+	at := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
+	type want struct {
+		at time.Time
+		ok bool
+	}
+	tcs := []struct {
+		name string
+		args string
+		want want
+	}{
+		{"an id of NewID gives its millisecond", trace.NewID(at.Add(time.Microsecond)), want{at, true}},
+		{"a short id has no time", "r1", want{}},
+		{"an id that is not hex has no time", "run-of-acme-1", want{}},
+		{"a hex prefix with another suffix has no time", "0199d1c2a400acme-run", want{}},
+		{"a signed prefix has no time", "-00000000001abcd1234", want{}},
+		{"a hex id of another length has no time", "0199d1c2a400abcd", want{}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got, ok := trace.IDTime(tc.args)
+			assert.Equal(t, tc.want.ok, ok)
+			assert.True(t, tc.want.at.Equal(got), got)
 		})
 	}
 }

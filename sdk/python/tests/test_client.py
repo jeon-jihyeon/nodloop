@@ -142,6 +142,28 @@ async def test_record_takes_items_as_withheld(binary: str, records: str) -> None
     assert [(r["runs"], r["undrawn"]) for r in effect if r.get("producer") == "stream-bot"] == [(0, 1), (0, 1)]
 
 
+async def test_record_names_the_model(binary: str, records: str) -> None:
+    """The model of a run lands in its trace and a run without one records none"""
+    async with Client(records, binary) as c:
+        named = await c.record("stream-bot", "lag rose", model="gpt-4o-mini")
+        bare = await c.record("stream-bot", "lag rose again")
+
+    runs = {t["id"]: t for t in (json.loads(line) for line in (Path(records) / "traces.jsonl").read_text().splitlines() if line.strip())}
+    assert runs[named]["model"] == "gpt-4o-mini"
+    assert "model" not in runs[bare]
+
+
+async def test_record_names_the_duration(binary: str, records: str) -> None:
+    """The duration of a run lands in its trace so its span has a length"""
+    async with Client(records, binary) as c:
+        timed = await c.record("stream-bot", "lag rose", duration_ms=1500)
+        bare = await c.record("stream-bot", "lag rose again")
+
+    runs = {t["id"]: t for t in (json.loads(line) for line in (Path(records) / "traces.jsonl").read_text().splitlines() if line.strip())}
+    assert runs[timed]["duration_ms"] == 1500
+    assert runs[bare]["duration_ms"] == 0
+
+
 async def test_outcome_and_report(binary: str, records: str) -> None:
     # A prune another surface ran sets the window every report reads
     Path(records).mkdir()

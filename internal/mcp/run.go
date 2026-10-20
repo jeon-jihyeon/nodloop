@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"time"
 	"unicode/utf8"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -41,11 +42,13 @@ type runInput struct {
 	Producer string              `json:"producer" jsonschema:"who made the output such as session"`
 	Labels   map[string][]string `json:"labels,omitempty" jsonschema:"the situation of the run as key to values such as repo, dir or task. Knowledge scoped to these labels reaches it"`
 	Subject  string              `json:"subject,omitempty" jsonschema:"what the run was about in a few words"`
+	Model    string              `json:"model,omitempty" jsonschema:"the one model the producer runs. Leave it out when the producer may switch models"`
 	Output   any                 `json:"output" jsonschema:"the output as it was given to the person, a JSON value or text"`
 	Applied  []knowledge.Ref     `json:"applied,omitempty" jsonschema:"the knowledge items with their versions that the run applied, as knowledge_for answered them"`
 	Withheld []knowledge.Ref     `json:"withheld,omitempty" jsonschema:"the withheld items knowledge_for answered when the holdout drew the run. Never together with applied"`
 	// The run tool takes the draw again from the key so a producer passes back only what it holds
 	HoldoutKey string `json:"holdout_key,omitempty" jsonschema:"the holdout key the run passed to knowledge_for. Report effect counts only runs recorded with it"`
+	DurationMS int64  `json:"duration_ms,omitempty" jsonschema:"how many milliseconds the run took up to this call so its span has a length"`
 }
 
 // Records one output so a person can nod on it
@@ -73,7 +76,10 @@ func (s *Server) run(ctx context.Context, _ *sdk.CallToolRequest, in runInput) (
 	if err != nil {
 		return nil, nil, err
 	}
-	tr.SessionID = s.session
+	tr.SessionID, tr.Model = s.session, in.Model
+	if tr, err = tr.Took(time.Duration(in.DurationMS) * time.Millisecond); err != nil {
+		return nil, nil, err
+	}
 	if err := s.traces.Append(ctx, tr.Record()); err != nil {
 		return nil, nil, err
 	}

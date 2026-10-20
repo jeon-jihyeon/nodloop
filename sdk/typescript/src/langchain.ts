@@ -14,6 +14,8 @@ export class NodloopMiddleware {
   withheld: Ref[] = [];
   // The run the final answer was recorded as so a verdict can cite it
   run = "";
+  // When the first model call of the run came so the run records how long it took
+  private started = performance.now();
 
   // The items of the current run, fetched on its first model call and dropped once the run is recorded
   private knowledge?: Knowledge;
@@ -39,6 +41,7 @@ export class NodloopMiddleware {
       name: "NodloopMiddleware",
       wrapModelCall: async (request, handler) => {
         if (!this.knowledge) {
+          this.started = performance.now();
           this.knowledge = await this.client.knowledge(this.producer, this.labelsOf(request.state), this.holdoutKey);
           this.applied = this.knowledge.items;
           this.withheld = this.knowledge.withheld ?? [];
@@ -70,7 +73,7 @@ export class NodloopMiddleware {
     const answers = state.messages.filter((m) => AIMessage.isInstance(m));
     if (!answers.length) return "";
     const output = answers[answers.length - 1].text;
-    this.run = await this.client.record({ producer: this.producer, output, labels: this.labelsOf(state), applied: this.applied, withheld: this.withheld, holdoutKey: this.holdoutKey });
+    this.run = await this.client.record({ producer: this.producer, output, labels: this.labelsOf(state), applied: this.applied, withheld: this.withheld, holdoutKey: this.holdoutKey, durationMs: performance.now() - this.started });
     return this.run;
   }
 

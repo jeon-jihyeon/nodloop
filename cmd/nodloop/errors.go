@@ -44,6 +44,7 @@ var (
 	errScopeFlags         = errors.New("--label and --everywhere exclude each other")
 	errPruneFlags         = errors.New("--dry-run and --daily exclude each other")
 	errExportFlags        = errors.New("--since and --pending exclude each other")
+	errOTelEndpoint       = errors.New("invalid otel endpoint")
 	errOTelProtocol       = errors.New("unknown otel protocol")
 	errUnknownTraceName   = errors.New("unknown trace name")
 	errNoAction           = fmt.Errorf("an action %w", errRequired)

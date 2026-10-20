@@ -18,7 +18,7 @@ import (
 // The server starts whatever its config so the conversation can tell the user what to fix
 // Every call opens the config of that moment so a change of record dir needs no reconnect
 func runMCP(
-	args []string, getenv func(string) string, now func() time.Time,
+	args []string, getenv func(string) string, start starter, now func() time.Time,
 	stdin io.Reader, stdout io.WriteCloser, stderr io.Writer,
 ) int {
 	fs := newFlagSet("mcp", stderr)
@@ -33,7 +33,7 @@ func runMCP(
 		cmd.list()
 		return 0
 	}
-	open := mcpOpen{flags: records, getenv: getenv, now: now, session: mcp.NewSession(now()), log: stderr}.open
+	open := mcpOpen{flags: records, getenv: getenv, now: now, session: mcp.NewSession(now()), log: stderr, export: start}.open
 	instructions := pluginVersion(getenv(envPluginVersion)).mismatch(buildVersion(), executable())
 	if instructions != "" {
 		instructions += ". Tell the user this before the first answer"
@@ -92,6 +92,8 @@ type mcpOpen struct {
 	person string
 	// Where a failed prune after a run is written since stdout is the protocol stream
 	log io.Writer
+	// Starts the OTLP export after every record of the server when config.json holds an otel target at that call
+	export starter
 }
 
 // The server over the record directory of that moment
@@ -126,6 +128,10 @@ func (o mcpOpen) open(context.Context) (*mcp.Server, error) {
 		return nil, err
 	}
 	policy := mcp.Policy{Holdout: a.cfg.holdout, Retention: a.cfg.retention, Marks: retain.NewMarker(dir), AfterRun: a.afterRun(o.log)}
+	if o.export != nil && a.cfg.otel != nil {
+		policy.AfterRun = a.afterRunExport(o.export, o.log)
+		policy.AfterVerdict = a.afterVerdict(o.export, o.log)
+	}
 	return mcp.New(
 		traces, verdicts, outcomes, ledger, compactor, extract.New(ledger, traces, verdicts, o.now), o.now, o.session, executable(),
 		a.cfg.recordArgs(), o.person, policy,

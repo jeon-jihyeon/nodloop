@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
+	"strconv"
 	"time"
 )
 
@@ -55,12 +56,13 @@ const (
 	NameReplay      Name = "replay"      // a lesson judged against the recorded outputs it should and should not catch
 	NameConsolidate Name = "consolidate" // groups of waiting candidates of one producer that may say the same lesson
 	NameRefill      Name = "refill"      // the items a session start added again after the context of the session was emptied
+	NameTurn        Name = "turn"        // the start of a turn of a session that the stop reads for the duration of its run
 	NameCompact     Name = "compact"     // one drafting of a compaction through a model
 )
 
 // Every name in a fixed order for messages
 func Names() []Name {
-	return []Name{NameRun, NameCheck, NameClassify, NameExtract, NameReplay, NameConsolidate, NameRefill, NameCompact}
+	return []Name{NameRun, NameCheck, NameClassify, NameExtract, NameReplay, NameConsolidate, NameRefill, NameTurn, NameCompact}
 }
 
 func (n Name) Valid() bool {
@@ -111,6 +113,16 @@ func NewRun(producer, subject string, labels Labels, input json.RawMessage, outp
 	}, nil
 }
 
+// The trace with how long it took up to its time
+// A negative duration fails with ErrDurationNegative since the span would end before it starts
+func (t Trace) Took(d time.Duration) (Trace, error) {
+	if d < 0 {
+		return Trace{}, fmt.Errorf("%w: %s", ErrDurationNegative, d)
+	}
+	t.DurationMS = d.Milliseconds()
+	return t, nil
+}
+
 type Usage struct {
 	InputTokens  int `json:"input_tokens"`
 	OutputTokens int `json:"output_tokens"`
@@ -147,6 +159,24 @@ func NewID(now time.Time) string {
 	// crypto rand Read never returns an error
 	_, _ = rand.Read(suffix[:])
 	return fmt.Sprintf("%012x%x", now.UnixMilli(), suffix)
+}
+
+// The millisecond NewID wrote at the start of the id
+// False for an id of another shape such as one a caller chose
+func IDTime(id string) (time.Time, bool) {
+	if len(id) != 20 {
+		return time.Time{}, false
+	}
+	// ParseUint refuses a sign that ParseInt would take
+	// 12 hex digits hold 48 bits so the bound keeps the int64 conversion exact
+	ms, err := strconv.ParseUint(id[:12], 16, 48)
+	if err != nil {
+		return time.Time{}, false
+	}
+	if _, err := strconv.ParseUint(id[12:], 16, 32); err != nil {
+		return time.Time{}, false
+	}
+	return time.UnixMilli(int64(ms)).UTC(), true
 }
 
 // Traces in the order the store lists them

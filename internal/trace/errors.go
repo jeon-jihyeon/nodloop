@@ -16,3 +16,6 @@ var ErrLabelEmpty = errors.New("trace: empty label")
 
 // A run carries one value per label key
 var ErrLabelValues = errors.New("trace: a run label has more than one value")
+
+// A run ends at its time so a duration below zero would start it after it ended
+var ErrDurationNegative = errors.New("trace: negative duration")

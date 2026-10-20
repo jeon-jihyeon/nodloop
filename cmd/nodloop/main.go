@@ -195,12 +195,20 @@ commands:
   classifier list           Every point with its endpoint or claude alone
   classifier probe <point>  Ask the endpoint of the point one question and print its answer and time
   server                    Moved to its own binary nodloop-server in 0.7.0
+  otel set --endpoint <url> [--protocol http/protobuf|http/json] [--headers-env <ENV>] [--no-logs] [--content]
+                            Export every record on its own from now on: the stop hook, nodloop mcp and the background
+                            extractions start export otel --pending after what they record. The endpoint is the base URL
+                            /v1/traces and /v1/logs join, such as http://127.0.0.1:4318. Headers are read from the variable
+                            --headers-env names at each export and never saved. --no-logs sends traces only, for Langfuse,
+                            Phoenix or Datadog. --content also sends outputs, reasons, notes and candidate text
+  otel unset                Export nothing on its own again
+  otel                      Print the saved target
   export otel [--endpoint <url>] [--protocol <p>] [--header <Name=value>] [--since <RFC3339> | --pending] [--with-content]
                             Send the records as OTLP traces and logs of the OpenTelemetry GenAI and OpenInference conventions:
                             a span per turn from prompt to stop, verdicts, outcomes and decisions as evaluation spans
                             with log records, and every model step with its usage. Ids derive from the records
                             so a record sent again is never counted twice. --endpoint is a traces URL and sends traces only.
-                            Without it OTEL_EXPORTER_OTLP_* of the environment name the target.
+                            Without it the target of otel set is used, then OTEL_EXPORTER_OTLP_* of the environment.
                             --pending sends only what came after export.json of the record directory and moves it
   doctor [--repair]         Read every record file and the guard log, and name the lines that fail to decode.
                             A read skips such a line, and --repair moves them to <file>.corrupt. Run it while nothing writes
@@ -274,12 +282,15 @@ func run(args []string, getenv func(string) string, stdin io.Reader, stdout io.W
 		"knowledge": func(args []string) int {
 			return runKnowledge(args, getenv, configuredLLM(getenv), time.Now, stdout, stderr)
 		},
-		"mcp":        func(args []string) int { return runMCP(args, getenv, time.Now, stdin, stdout, stderr) },
+		"mcp": func(args []string) int {
+			return runMCP(args, getenv, detached(homeDir(getenv("HOME")).hookLog()), time.Now, stdin, stdout, stderr)
+		},
 		"config":     func(args []string) int { return runConfig(args, getenv, stdout, stderr) },
 		"classifier": func(args []string) int { return runClassifier(args, getenv, time.Now, stdout, stderr) },
 		"server":     func([]string) int { return fail(stderr, "server", errServerMoved) },
 		"doctor":     func(args []string) int { return runDoctor(args, getenv, time.Now, stdout, stderr) },
 		"export":     func(args []string) int { return runExport(args, getenv, time.Now, stdout, stderr) },
+		"otel":       func(args []string) int { return runOTel(args, getenv, stdout, stderr) },
 		"version": func([]string) int {
 			fmt.Fprintln(stdout, buildVersion())
 			return 0

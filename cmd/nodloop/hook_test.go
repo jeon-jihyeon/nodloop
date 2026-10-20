@@ -1496,3 +1496,59 @@ func TestRunHookCorruptLine(t *testing.T) {
 		})
 	}
 }
+
+// The run of each stop records how long its turn took
+func TestRunHookTurnDuration(t *testing.T) {
+	// One hook call after the clock moved by wait
+	type step struct {
+		action    string
+		wait      time.Duration
+		continued bool
+	}
+	tcs := []struct {
+		name string
+		args []step
+		// The duration of each run oldest first
+		want []int64
+	}{
+		{"a turn lasts from its prompt to its stop", []step{{"prompt", 0, false}, {"stop", 90 * time.Second, false}}, []int64{90_000}},
+		{"a stop without a prompt records no duration", []step{{"stop", time.Second, false}}, []int64{0}},
+		{
+			"a turn a stop hook continued lasts from the stop before it",
+			[]step{{"prompt", 0, false}, {"stop", 10 * time.Second, false}, {"stop", 5 * time.Second, true}},
+			[]int64{10_000, 5_000},
+		},
+		{
+			"a prompt before the previous stop starts no later turn",
+			[]step{{"prompt", 0, false}, {"stop", 10 * time.Second, false}, {"stop", 5 * time.Second, false}},
+			[]int64{10_000, 0},
+		},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			home, records, repo := hookHome(t, "use git -C")
+			getenv := func(k string) string { return map[string]string{"HOME": home, envRecordDir: records}[k] }
+			at := time.Date(2026, 10, 2, 1, 0, 0, 0, time.UTC)
+			now := func() time.Time { return at }
+
+			for _, s := range tc.args {
+				at = at.Add(s.wait)
+				stdin := fmt.Sprintf(`{"session_id":"s1","cwd":%q,"prompt":"go on","last_assistant_message":"done","stop_hook_active":%t}`, repo, s.continued)
+				var stdout, stderr bytes.Buffer
+				require.Equal(t, 0, runHook([]string{s.action}, getenv, nil, now, strings.NewReader(stdin), &stdout, &stderr))
+				require.Empty(t, stderr.String())
+			}
+
+			store, err := tracefile.New(records)
+			require.NoError(t, err)
+			found, err := store.List(context.Background(), record.TraceFilter{Name: string(trace.NameRun), SessionID: "s1"})
+			require.NoError(t, err)
+			var got []int64
+			for _, r := range slices.Backward(found) {
+				got = append(got, r.DurationMS)
+			}
+			assert.Equal(t, tc.want, got)
+		})
+	}
+}

@@ -24,6 +24,8 @@ type userConfig struct {
 	SessionMode string `json:"session_mode,omitempty"`
 	// The backend every command that calls a model builds its client from
 	LLM llm.Config `json:"llm"`
+	// Where every export sends and nil when nothing is exported on its own
+	OTel *otelConfig `json:"otel,omitempty"`
 	classifierConfig
 }
 

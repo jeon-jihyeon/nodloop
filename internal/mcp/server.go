@@ -89,6 +89,11 @@ type Policy struct {
 	// It reports its own failure since a recorded run must not fail
 	// Nil runs nothing
 	AfterRun func(ctx context.Context)
+	// Runs after a verdict or an outcome or an approval or a reaffirm was recorded
+	// The OTLP export is one
+	// It reports its own failure since the record stands
+	// Nil runs nothing
+	AfterVerdict func(ctx context.Context)
 }
 
 func New(
@@ -112,6 +117,12 @@ func (s *Server) since(ctx context.Context) (time.Time, error) {
 		return time.Time{}, err
 	}
 	return s.policy.Retention.Window(s.now(), last.Cutoff), nil
+}
+
+func (s *Server) afterVerdict(ctx context.Context) {
+	if s.policy.AfterVerdict != nil {
+		s.policy.AfterVerdict(ctx)
+	}
 }
 
 // The name an approval is recorded under: the person of the server key and else the name the call gives
@@ -270,6 +281,7 @@ func (s *Server) feedback(ctx context.Context, _ *sdk.CallToolRequest, in feedba
 	if err = s.verdicts.Append(ctx, fb.Record()); err != nil {
 		return nil, nil, err
 	}
+	s.afterVerdict(ctx)
 	return nil, map[string]any{"trace_id": fb.TraceID, "verdict": fb.Verdict, "reason_code": fb.ReasonCode, "reviewer": fb.Reviewer}, nil
 }
 
@@ -292,6 +304,7 @@ func (s *Server) outcome(ctx context.Context, _ *sdk.CallToolRequest, in outcome
 	if err = s.outcomes.Append(ctx, o.Record()); err != nil {
 		return nil, nil, err
 	}
+	s.afterVerdict(ctx)
 	return nil, map[string]any{"trace_id": o.TraceID, "result": o.Result, "reviewer": o.Reviewer}, nil
 }
 
@@ -399,6 +412,7 @@ func (s *Server) approve(ctx context.Context, _ *sdk.CallToolRequest, in approve
 	if err != nil && !errors.Is(err, knowledge.ErrExport) {
 		return nil, nil, err
 	}
+	s.afterVerdict(ctx)
 	answer := map[string]any{
 		"id": k.ID, "version": k.Version, "status": k.Status, "approver": k.Approver, "veto": k.Veto != nil,
 	}
@@ -515,6 +529,7 @@ func (s *Server) approveCompaction(
 	for _, k := range slices.Concat(c.Items, c.Replaced) {
 		statuses = append(statuses, fmt.Sprintf("%s v%d %s", k.ID, k.Version, k.Status))
 	}
+	s.afterVerdict(ctx)
 	answer := map[string]any{"compaction": c.ID, "approver": s.approver(in.Approver), "records": statuses}
 	// The records are appended and a second approval appends nothing so the export failure rides on the answer
 	if err != nil {

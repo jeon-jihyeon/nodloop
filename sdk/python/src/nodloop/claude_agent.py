@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import time
 from typing import Any
 
 from claude_agent_sdk import HookMatcher
@@ -34,6 +35,8 @@ class NodloopHooks:
         self.withheld: list[Ref] = []
         # The run the last answer was recorded as so a verdict can cite it
         self.run: str = ""
+        # When the prompt of the turn came so the run records how long the turn took
+        self._started = time.monotonic()
 
     def hooks(self) -> dict[str, list[HookMatcher]]:
         return {
@@ -43,6 +46,7 @@ class NodloopHooks:
         }
 
     async def prompt(self, input_data: dict[str, Any], tool_use_id: str | None, context: Any) -> dict[str, Any]:
+        self._started = time.monotonic()
         knowledge = await self.client.knowledge(self.producer, self.labels, self.holdout_key)
         self.applied, self.withheld = knowledge.items, knowledge.withheld
         if not knowledge.text:
@@ -55,7 +59,13 @@ class NodloopHooks:
         answer = input_data.get("last_assistant_message") or ""
         if answer.strip():
             self.run = await self.client.record(
-                self.producer, answer, labels=self.labels, applied=self.applied, withheld=self.withheld, holdout_key=self.holdout_key
+                self.producer,
+                answer,
+                labels=self.labels,
+                applied=self.applied,
+                withheld=self.withheld,
+                holdout_key=self.holdout_key,
+                duration_ms=int((time.monotonic() - self._started) * 1000),
             )
         return {}
 
