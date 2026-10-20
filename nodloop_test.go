@@ -130,6 +130,60 @@ func TestClientJudgmentsProveNoPerson(t *testing.T) {
 	}
 }
 
+// Intervene records every action but a digest as an agent proposal and refuses what the records cannot carry out
+func TestClientIntervene(t *testing.T) {
+	value := func(v float64) *float64 { return &v }
+	type args struct {
+		in func(id string) nodloop.Intervention
+	}
+	type want struct {
+		authority nodloop.Authority
+		err       error
+	}
+	tcs := []struct {
+		name string
+		args args
+		want want
+	}{
+		{"a judgment is a proposal", args{func(id string) nodloop.Intervention {
+			return nodloop.Intervention{Action: nodloop.InterventionJudge, Target: id + ":1", Choice: nodloop.ChoiceKeep}
+		}}, want{nodloop.AuthorityAgent, nil}},
+		{"a pause is a proposal", args{func(string) nodloop.Intervention {
+			return nodloop.Intervention{Action: nodloop.InterventionPause, Labels: nodloop.Labels{"tenant": {"acme"}}}
+		}}, want{nodloop.AuthorityAgent, nil}},
+		{"a digest needs no proof", args{func(string) nodloop.Intervention {
+			return nodloop.Intervention{Action: nodloop.InterventionDigest}
+		}}, want{nodloop.AuthorityAgent, nil}},
+		{"a knob outside its range is refused", args{func(string) nodloop.Intervention {
+			return nodloop.Intervention{Action: nodloop.InterventionKnob, Target: "item_hold", Value: value(0.9)}
+		}}, want{err: nodloop.ErrInterventionRefused}},
+		{"an unknown version is refused", args{func(id string) nodloop.Intervention {
+			return nodloop.Intervention{Action: nodloop.InterventionJudge, Target: id + ":9", Choice: nodloop.ChoiceKeep}
+		}}, want{err: nodloop.ErrNotFound}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ctx := context.Background()
+			c := open(t)
+			run, err := c.Record(ctx, nodloop.Run{Producer: "support-bot", Labels: nodloop.Labels{"tenant": {"acme"}}, Output: []byte("x")})
+			require.NoError(t, err)
+			require.NoError(t, c.Judge(ctx, nodloop.Judgment{Run: run, Verdict: nodloop.VerdictReject, Reason: "wrong", Reviewer: "ann"}))
+			proposed, err := c.Propose(ctx, nodloop.Proposal{Kind: nodloop.KindJudgment, Content: "x", From: run})
+			require.NoError(t, err)
+
+			got, err := c.Intervene(ctx, tc.args.in(proposed.ID))
+
+			assert.ErrorIs(t, err, tc.want.err)
+			assert.Equal(t, tc.want.authority, got.Authority)
+			assert.Equal(t, tc.want.err == nil, got.ID != "")
+			waiting, err := c.Waiting(ctx, "support-bot", nodloop.Labels{"tenant": {"acme"}})
+			require.NoError(t, err)
+			assert.Equal(t, []string{proposed.ID}, ids(waiting), "the candidate still waits")
+		})
+	}
+}
+
 // A judgment in process proves no person so a named one carries proof none and report loop counts it apart from a proven one
 func TestClientJudgeProvesNoPerson(t *testing.T) {
 	ctx := context.Background()

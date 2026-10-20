@@ -103,6 +103,52 @@ test("a server key a person holds approves under its own name and a key of a ser
   }
 });
 
+test("an intervention under a key a person holds decides at once, its reverse takes it back and a key of a service only proposes", async () => {
+  const { url, key, service, proc } = await server();
+  const bot = await Client.open({ url, key: service });
+  const c = await Client.open({ url, key });
+  try {
+    const run = await bot.record({ producer: "support-bot", output: "steps", labels: acme });
+    await bot.judge(run, "reject", "ci", { reason: "the window was missing" });
+    const p = await bot.propose({ kind: "judgment", content: "Quote the refund window", from: run, id: "window" });
+    const proposal = await bot.intervene({ action: "judge", target: `${p.id}:${p.version}`, choice: "keep" });
+    const kept = await c.intervene({ action: "judge", target: `${p.id}:${p.version}`, choice: "keep" });
+    const received = await c.knowledge("support-bot", acme);
+    const back = await c.intervene({ action: "reverse", target: kept.intervention?.id });
+    const after = await c.knowledge("support-bot", acme);
+
+    assert.deepEqual([proposal.authority, proposal.records], ["agent", []]);
+    assert.deepEqual([kept.authority, kept.proof, kept.records], ["person", "key", [{ id: "window", version: 1, status: "approved" }]]);
+    assert.equal(kept.intervention?.record_kind, "intervention");
+    assert.deepEqual(received.items.map((i) => i.id), ["window"]);
+    assert.deepEqual(back.records.map((r) => r.status), ["retired", "candidate"]);
+    assert.deepEqual(after.items, []);
+  } finally {
+    await bot.close();
+    await c.close();
+    proc.kill();
+  }
+});
+
+test("an intervention over stdio records a proposal, a digest answers its cursor and a knob outside its range is a ToolError", async () => {
+  const c = await open();
+  try {
+    const run = await c.record({ producer: "support-bot", output: "steps", labels: acme });
+    await c.judge(run, "reject", "ann", { reason: "the window was missing" });
+    const p = await c.propose({ kind: "judgment", content: "Quote the refund window", from: run, id: "window" });
+    const proposal = await c.intervene({ action: "judge", target: `${p.id}:${p.version}`, choice: "keep", session: "s-1" });
+    const digest = await c.intervene({ action: "digest", target: "support-bot", labels: acme });
+    await assert.rejects(c.intervene({ action: "knob", target: "audit_tier1", value: 0.9 }), ToolError);
+
+    assert.deepEqual([proposal.authority, proposal.proof, proposal.records, proposal.declined], ["agent", "none", [], undefined]);
+    assert.equal(proposal.intervention?.session_id !== undefined, true);
+    assert.deepEqual([digest.authority, digest.since ?? ""], ["agent", ""]);
+    assert.deepEqual((await c.knowledge("support-bot", acme)).items, []);
+  } finally {
+    await c.close();
+  }
+});
+
 test("a wrong server key is refused", async () => {
   const { url, proc } = await server();
   try {

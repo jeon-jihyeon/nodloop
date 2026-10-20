@@ -82,7 +82,15 @@ func (c Client) Text(t *testing.T, name string, args any) (string, error) {
 // A tool error result returns ErrTool with the text content as message
 func (c Client) call(t *testing.T, name string, args any) (*sdk.CallToolResult, error) {
 	t.Helper()
-	res, err := c.session.CallTool(t.Context(), &sdk.CallToolParams{Name: name, Arguments: args})
+	return c.CallParams(t, &sdk.CallToolParams{Name: name, Arguments: args})
+}
+
+// A call with the params a client sends such as a retry that names the response to a form
+// A tool error result returns ErrTool with the text content as message
+func (c Client) CallParams(t *testing.T, params *sdk.CallToolParams) (*sdk.CallToolResult, error) {
+	t.Helper()
+	name := params.Name
+	res, err := c.session.CallTool(t.Context(), params)
 	require.NoError(t, err, "%s: protocol error", name)
 	if !res.IsError {
 		return res, nil

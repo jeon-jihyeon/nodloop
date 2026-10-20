@@ -217,6 +217,14 @@ commands:
                             record a new anchor version when one of them changed. add and remove save a file you keep as
                             direction, such as a plan or a lessons file, in config.json, only at an interactive terminal
                             outside an agent session. A file that cannot be read decides nothing
+  intervene <action> [--target <id>] [--choice <c>] [--label <key=value>]... [--value <v>] [--payload <file>|-]
+                            Act on what curate prepared or carried out: judge a lesson keep, undo or scope, answer or
+                            dismiss a question, pause a change kind or a scope and resume it, set a knob within its range,
+                            reanchor a place, reverse an earlier intervention, or digest for the cursor since your last
+                            judgment. The target is id:version, a compaction, a question, a kind, a pause, a knob such as
+                            audit_tier1, a producer or an intervention. --payload takes the JSON of POST /v1/interventions.
+                            Only an interactive terminal outside an agent session decides at once under config approver,
+                            else person. From a script or the shell of an agent it records a proposal the person is asked about
   classifier set <point> --url <u> [--model <m>] [--key-env <ENV>]
                             Ask an endpoint of the Jev wire format the README shows at a decision point before claude,
                             such as http://localhost:8000/v1/classify. claude answers when the endpoint fails or is less
@@ -331,6 +339,7 @@ func run(args []string, getenv func(string) string, stdin io.Reader, stdout io.W
 		},
 		"config":     func(args []string) int { return runConfig(args, getenv, person, stdout, stderr) },
 		"anchor":     func(args []string) int { return runAnchor(args, getenv, time.Now, person, stdout, stderr) },
+		"intervene":  func(args []string) int { return runIntervene(args, getenv, time.Now, person, stdin, stdout, stderr) },
 		"classifier": func(args []string) int { return runClassifier(args, getenv, time.Now, stdout, stderr) },
 		"server":     func([]string) int { return fail(stderr, "server", errServerMoved) },
 		"doctor":     func(args []string) int { return runDoctor(args, getenv, time.Now, stdout, stderr) },

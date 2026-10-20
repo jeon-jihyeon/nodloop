@@ -15,4 +15,6 @@ var (
 	errNoRecords = errors.New("no records")
 	// A query string a records page cannot read
 	errQueryInvalid = errors.New("invalid query")
+	// A body POST /v1/interventions cannot read as one payload
+	errPayloadInvalid = errors.New("invalid intervention payload")
 )

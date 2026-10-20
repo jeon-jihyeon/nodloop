@@ -10,6 +10,8 @@ var (
 	// A run label is key=value and an applied item is id:version
 	errLabelFlag   = errors.New("bad --label")
 	errAppliedFlag = errors.New("bad --applied")
+	// A --payload of intervene that is no payload of the write side
+	errPayload     = errors.New("bad --payload")
 	errHeaderFlag  = errors.New("bad --header")
 	errServerMoved = errors.New("moved to its own binary in 0.7.0. Install nodloop-server from the release archives or with " +
 		"go install github.com/jeon-jihyeon/nodloop/server/cmd/nodloop-server@latest")

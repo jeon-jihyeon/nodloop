@@ -19,6 +19,7 @@ import (
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/jeon-jihyeon/nodloop/internal/compact"
+	"github.com/jeon-jihyeon/nodloop/internal/curate"
 	"github.com/jeon-jihyeon/nodloop/internal/extract"
 	feedbackfile "github.com/jeon-jihyeon/nodloop/internal/feedback/file"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
@@ -27,6 +28,7 @@ import (
 	"github.com/jeon-jihyeon/nodloop/internal/mcp"
 	"github.com/jeon-jihyeon/nodloop/internal/retain"
 	"github.com/jeon-jihyeon/nodloop/internal/schema"
+	"github.com/jeon-jihyeon/nodloop/internal/trace"
 	tracefile "github.com/jeon-jihyeon/nodloop/internal/trace/file"
 	"github.com/jeon-jihyeon/nodloop/internal/userconfig"
 	vetofile "github.com/jeon-jihyeon/nodloop/internal/veto/file"
@@ -57,7 +59,7 @@ func runServe(args []string, getenv func(string) string, now func() time.Time, s
 	if uc.Server.has(knowledge.ApproverNodloop) {
 		return fail(stderr, "serve", fmt.Errorf("%w: remove the key %s and add it again under another name", knowledge.ErrApproverReserved, knowledge.ApproverNodloop))
 	}
-	policy := mcp.Policy{Holdout: knowledge.Holdout(uc.Holdout), Retention: retain.Days(uc.Retention)}
+	policy := mcp.Policy{Holdout: knowledge.Holdout(uc.Holdout), Retention: retain.Days(uc.Retention), Build: buildVersion()}
 	if err := errors.Join(policy.Holdout.Check(), policy.Retention.Check()); err != nil {
 		return fail(stderr, "serve", err)
 	}
@@ -108,8 +110,9 @@ func runServe(args []string, getenv func(string) string, now func() time.Time, s
 // 2. a tenant reads and writes the records under tenants of the record directory and never those of another tenant
 // 3. one host per key so its calls are serialized like a stdio server while keys of one tenant share the file locks of its records
 // 4. GET /v1/records/{kind} answers a page of the raw records of a kind to a key whose role may read records
-// 5. GET /v1/reports/{name} answers a report as JSON for a dashboard to a key whose role may read reports
-// 6. GET /healthz and GET /v1/openapi.json answer without a key so a load balancer probes it and a client reads the contract
+// 5. POST /v1/interventions records one intervention of the write side through the host of the key so it serializes with its tool calls
+// 6. GET /v1/reports/{name} answers a report as JSON for a dashboard to a key whose role may read reports, deprecated for the record pages
+// 7. GET /healthz and GET /v1/openapi.json answer without a key so a load balancer probes it and a client reads the contract
 type serveHandler struct {
 	stores tenantStores
 	config serverConfig
@@ -117,8 +120,14 @@ type serveHandler struct {
 	// Where an internal failure is written since its answer names none of it
 	log   io.Writer
 	mu    sync.Mutex
-	hosts map[string]*sdk.Server
+	hosts map[string]keyHost
 	mcp   http.Handler
+}
+
+// The host of one key with the MCP server of its role
+type keyHost struct {
+	host   *mcp.Host
+	server *sdk.Server
 }
 
 type keyContext struct{}
@@ -126,12 +135,13 @@ type keyContext struct{}
 // Every other path is the MCP endpoint as it was before the reports came
 // A client that names no path keeps working
 func newServeHandler(stores tenantStores, config serverConfig, now func() time.Time, log io.Writer) http.Handler {
-	h := &serveHandler{stores: stores, config: config, now: now, log: log, hosts: map[string]*sdk.Server{}}
+	h := &serveHandler{stores: stores, config: config, now: now, log: log, hosts: map[string]keyHost{}}
 	h.mcp = sdk.NewStreamableHTTPHandler(h.server, &sdk.StreamableHTTPOptions{Stateless: true})
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { fmt.Fprintln(w, "ok") })
 	mux.Handle("GET /v1/openapi.json", openAPIHandler{files: schema.Published, version: buildVersion(), log: log})
 	mux.Handle("GET /v1/records/{kind}", h.authorized(http.HandlerFunc(h.records)))
+	mux.Handle("POST /v1/interventions", h.authorized(http.HandlerFunc(h.interventions)))
 	mux.Handle("GET /v1/reports/{name}", h.authorized(http.HandlerFunc(h.report)))
 	mux.Handle("/", h.authorized(h.mcp))
 	return mux
@@ -247,15 +257,64 @@ func (h *serveHandler) internal(w http.ResponseWriter, key serverKey, err error)
 // The MCP server of the key the request was authenticated with
 func (h *serveHandler) server(r *http.Request) *sdk.Server {
 	key, _ := r.Context().Value(keyContext{}).(serverKey)
+	return h.hostOf(key).server
+}
+
+// The host of the key made once so every call of the key serializes on it
+func (h *serveHandler) hostOf(key serverKey) keyHost {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if srv, ok := h.hosts[key.Name]; ok {
-		return srv
+	if kh, ok := h.hosts[key.Name]; ok {
+		return kh
 	}
-	srv := mcp.NewHost(h.stores.open(key, h.now, mcp.NewSession(h.now())), buildVersion(), "").Server(key.Role.Tools())
-	h.hosts[key.Name] = srv
-	return srv
+	host := mcp.NewHost(h.stores.open(key, h.now, mcp.NewSession(h.now())), buildVersion(), "")
+	kh := keyHost{host: host, server: host.Server(key.Role.Tools())}
+	h.hosts[key.Name] = kh
+	return kh
 }
+
+// What a payload the records cannot carry out names, answered 422 with the refusal
+var refusals = []error{
+	curate.ErrTargetInvalid, trace.ErrInterventionInvalid, knowledge.ErrApproverRequired, knowledge.ErrTransitionInvalid, knowledge.ErrNotFound,
+	knowledge.ErrFolderFull, knowledge.ErrScopeWidened, knowledge.ErrVetoLifted, knowledge.ErrCandidateOutdated, knowledge.ErrScopeUnobserved,
+	knowledge.ErrScopeInvalid, knowledge.ErrReverseStale, knowledge.ErrCoverageNotPassed, knowledge.ErrCompactionOutdated,
+	knowledge.ErrCompactionInvalid, knowledge.ErrVersionUnapproved, knowledge.ErrNotCandidate, knowledge.ErrPersonDecides,
+}
+
+// One intervention of the write side under the key in the payload of MCP intervene
+// 1. a role without the MCP tool intervene is forbidden
+// 2. a body that is no payload is a bad request and a payload the records cannot carry out is unprocessable
+// 3. under a key of role approver added with --person it is the person's judgment and under any other key an agent proposal
+func (h *serveHandler) interventions(w http.ResponseWriter, r *http.Request) {
+	key, _ := r.Context().Value(keyContext{}).(serverKey)
+	if !slices.Contains(key.Role.Tools(), "intervene") {
+		http.Error(w, fmt.Sprintf("the role %s may not intervene", key.Role), http.StatusForbidden)
+		return
+	}
+	var req curate.Request
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxPayload))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&req); err != nil {
+		http.Error(w, fmt.Sprintf("%v: %v", errPayloadInvalid, err), http.StatusBadRequest)
+		return
+	}
+	answer, err := h.hostOf(key).host.Intervene(r.Context(), req)
+	switch {
+	case slices.ContainsFunc(refusals, func(refusal error) bool { return errors.Is(err, refusal) }):
+		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
+		return
+	case err != nil:
+		h.internal(w, key, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	enc := json.NewEncoder(w)
+	enc.SetEscapeHTML(false)
+	_ = enc.Encode(answer)
+}
+
+// The largest payload an intervention takes
+const maxPayload = 1 << 16
 
 // Where the server keeps the records of a tenant
 type tenantStores interface {

@@ -34,7 +34,7 @@ linters:
     # knowledge is the ledger and the application packages sit above it
     # compact and extract are imported by mcp and cmd and the server
     # loop and retain are imported by those and the nodloop package at the module root
-    # consolidate and curate are imported by cmd alone and application packages never import each other
+    # consolidate is imported by cmd alone, curate by mcp, cmd, the server and the nodloop package, and application packages never import each other
     # markfile holds the mark file and its lock that consolidate, curate, retain and otel share since they cannot import each other
     # schema reads the published record schemas and textkey holds the HMAC key, and both sit in infrastructure
     # datapackage writes a Data Package folder from fields and rows and imports nothing of the module
@@ -195,7 +195,7 @@ linters:
             - pkg: github.com/jeon-jihyeon/nodloop/internal/replay
               desc: only cmd imports replay
             - pkg: github.com/jeon-jihyeon/nodloop/internal/curate
-              desc: only cmd imports curate
+              desc: only mcp, cmd, the server and the nodloop package import curate
         compact:
           files:
             - "**/internal/compact/**"
@@ -211,7 +211,7 @@ linters:
             - pkg: github.com/jeon-jihyeon/nodloop/internal/consolidate
               desc: only cmd imports consolidate
             - pkg: github.com/jeon-jihyeon/nodloop/internal/curate
-              desc: only cmd imports curate
+              desc: only mcp, cmd, the server and the nodloop package import curate
         extract:
           files:
             - "**/internal/extract/**"
@@ -227,7 +227,7 @@ linters:
             - pkg: github.com/jeon-jihyeon/nodloop/internal/consolidate
               desc: only cmd imports consolidate
             - pkg: github.com/jeon-jihyeon/nodloop/internal/curate
-              desc: only cmd imports curate
+              desc: only mcp, cmd, the server and the nodloop package import curate
         loop:
           files:
             - "**/internal/loop/**"
@@ -245,7 +245,7 @@ linters:
             - pkg: github.com/jeon-jihyeon/nodloop/internal/consolidate
               desc: only cmd imports consolidate
             - pkg: github.com/jeon-jihyeon/nodloop/internal/curate
-              desc: only cmd imports curate
+              desc: only mcp, cmd, the server and the nodloop package import curate
         replay:
           files:
             - "**/internal/replay/**"
@@ -261,7 +261,7 @@ linters:
             - pkg: github.com/jeon-jihyeon/nodloop/internal/consolidate
               desc: only cmd imports consolidate
             - pkg: github.com/jeon-jihyeon/nodloop/internal/curate
-              desc: only cmd imports curate
+              desc: only mcp, cmd, the server and the nodloop package import curate
         retain:
           files:
             - "**/internal/retain/**"
@@ -279,7 +279,7 @@ linters:
             - pkg: github.com/jeon-jihyeon/nodloop/internal/consolidate
               desc: only cmd imports consolidate
             - pkg: github.com/jeon-jihyeon/nodloop/internal/curate
-              desc: only cmd imports curate
+              desc: only mcp, cmd, the server and the nodloop package import curate
         consolidate:
           files:
             - "**/internal/consolidate/**"
@@ -295,7 +295,7 @@ linters:
             - pkg: github.com/jeon-jihyeon/nodloop/internal/retain
               desc: only mcp, cmd, the server and the nodloop package import retain
             - pkg: github.com/jeon-jihyeon/nodloop/internal/curate
-              desc: only cmd imports curate
+              desc: only mcp, cmd, the server and the nodloop package import curate
         curate:
           files:
             - "**/internal/curate/**"

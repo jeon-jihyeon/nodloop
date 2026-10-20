@@ -245,12 +245,17 @@ func (c compactionCommand) approve(ctx context.Context, id, approver string) err
 	if err != nil {
 		return err
 	}
-	compaction, err := c.compactor.Approve(ctx, id, judgment.Person)
+	cov, err := c.compactor.Coverage(ctx, id)
+	if err != nil {
+		return err
+	}
+	decision := trace.NewID(c.records.app.now())
+	compaction, err := c.ledger.Under(decision).ApproveCompaction(ctx, id, judgment.Person, cov)
 	if err != nil && !errors.Is(err, knowledge.ErrExport) {
 		return err
 	}
 	c.printCompaction(compaction)
-	if ierr := c.records.intervened(ctx, judgment, slices.Concat(compaction.Items, compaction.Replaced)); ierr != nil || err != nil {
+	if ierr := c.records.intervened(ctx, decision, judgment, slices.Concat(compaction.Items, compaction.Replaced)); ierr != nil || err != nil {
 		return errors.Join(err, ierr)
 	}
 	after, err := c.ledger.All(ctx)

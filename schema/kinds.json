@@ -212,6 +212,7 @@
         "input.extract",
         "input.signal",
         "input.anchor",
+        "input.proposal",
         "output.judge"
       ],
       "text": []
@@ -290,7 +291,9 @@
         "input.overturn",
         "input.authority",
         "input.proof",
-        "output.records"
+        "input.refs",
+        "output.records",
+        "output.carried"
       ],
       "text": []
     },
@@ -306,12 +309,17 @@
       "links": [
         "session_id",
         "source",
+        "input.target",
         "input.id",
         "input.version",
         "input.compaction",
+        "input.decide",
+        "input.refs",
+        "input.reverses",
         "input.authority",
         "input.proof",
-        "output.records"
+        "output.records",
+        "output.answer"
       ],
       "text": []
     },

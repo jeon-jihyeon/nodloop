@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jeon-jihyeon/nodloop/internal/curate"
 	feedbackfile "github.com/jeon-jihyeon/nodloop/internal/feedback/file"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	knowledgefile "github.com/jeon-jihyeon/nodloop/internal/knowledge/file"
@@ -40,6 +41,8 @@ type Client struct {
 	pruneFailed func(error)
 	// The daily prunes Record started and WaitPrune waits for
 	pruning sync.WaitGroup
+	// Records the interventions of the write side, each an agent proposal from in process
+	intervener *curate.Intervener
 }
 
 // How Open builds a client
@@ -124,10 +127,13 @@ func Open(dir string, opts ...Option) (*Client, error) {
 		return nil, err
 	}
 	ledger := knowledge.NewLedger(store, sink, o.now, knowledge.NewIDs(o.now))
+	// The package starts no curate pass so a proposal waits for the next pass of a CLI or a plugin session over the directory
+	cursor := func(at time.Time, id string) string { return schema.Cursor{Time: at, RecordID: id}.String() }
 	c := &Client{
 		traces: traces, verdicts: verdicts, outcomes: outcomes, ledger: ledger, now: o.now, holdout: holdout, days: days,
 		source: schema.Source{Traces: traces, Verdicts: verdicts, Outcomes: outcomes, Knowledge: store},
 		marks:  retain.NewMarker(dir), pruneFailed: o.pruneFailed,
+		intervener: curate.NewIntervener(ledger, traces, curate.InterveneSetting{Cursor: cursor}, o.now),
 	}
 	if days == 0 {
 		return c, nil

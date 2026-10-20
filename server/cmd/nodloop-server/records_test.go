@@ -205,14 +205,19 @@ func TestServeHandlerOpenAPI(t *testing.T) {
 	for name, s := range doc.Components.Schemas {
 		got[name] = canonical(t, s)
 	}
-	page := got["page"]
+	page, payload, answer := got["page"], got["intervene"], got["intervened"]
 	delete(got, "page")
+	delete(got, "intervene")
+	delete(got, "intervened")
 	assert.Equal(t, openAPIVersion, doc.OpenAPI)
-	assert.ElementsMatch(t, []string{"/healthz", "/mcp", "/v1/openapi.json", "/v1/records/{kind}", "/v1/reports/{name}"}, slices.Collect(maps.Keys(doc.Paths)))
+	assert.ElementsMatch(t, []string{"/healthz", "/mcp", "/v1/openapi.json", "/v1/records/{kind}", "/v1/reports/{name}", "/v1/interventions"},
+		slices.Collect(maps.Keys(doc.Paths)))
 	assert.Equal(t, names, records.Get.Parameters[0].Schema.Enum)
 	assert.NotContains(t, names, "guard")
 	assert.Equal(t, want, got)
 	assert.Contains(t, page, `"#/components/schemas/intervention"`)
+	assert.Contains(t, payload, `"enum":["judge","answer","dismiss","pause","resume","knob","reanchor","digest","reverse"]`)
+	assert.Contains(t, answer, `"#/components/schemas/intervention"`)
 }
 
 // Published files that lack the index or the file of a kind answer no document and log why

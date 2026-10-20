@@ -16,6 +16,7 @@ import (
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/jeon-jihyeon/nodloop/internal/compact"
+	"github.com/jeon-jihyeon/nodloop/internal/curate"
 	"github.com/jeon-jihyeon/nodloop/internal/extract"
 	"github.com/jeon-jihyeon/nodloop/internal/feedback"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
@@ -74,6 +75,10 @@ type Server struct {
 	recordArgs string
 	caller     Caller
 	policy     Policy
+	// Carries out the interventions of the write side
+	intervener *curate.Intervener
+	// The forms of intervene the client has yet to answer, kept by the host across the calls of one process
+	forms forms
 }
 
 // What the composition root reads from config.json for the tools since the server never reads it
@@ -91,22 +96,37 @@ type Policy struct {
 	// It reports its own failure since a recorded run must not fail
 	// Nil runs nothing
 	AfterRun func(ctx context.Context)
-	// Runs after a verdict or an outcome or an approval or a reaffirm was recorded
+	// Runs after a verdict or an outcome or an approval or a reaffirm or an intervention was recorded
 	// The OTLP export is one
 	// It reports its own failure since the record stands
 	// Nil runs nothing
 	AfterVerdict func(ctx context.Context)
+	// The name a person who accepts a form decides under: approver of config.json and person when it names none
+	Approver string
+	// curate.json of the records so the question of a proposal is due at once
+	// Nil where no curate pass runs such as nodloop-server, whose proposals wait for a pass over the same records
+	Curate curate.Marks
+	// The build a knob event the person raises at once names in its policy version
+	Build string
 }
 
 func New(
 	traces TraceStore, verdicts FeedbackStore, outcomes OutcomeStore, ledger *knowledge.Ledger, source schema.Source, compactor *compact.Compactor,
 	extractor *extract.Extractor, now func() time.Time, session, exe, recordArgs string, caller Caller, policy Policy,
 ) *Server {
+	intervener := curate.NewIntervener(ledger, traces, curate.InterveneSetting{
+		Build: policy.Build, Coverage: compactor.Coverage, Marks: policy.Curate, Cursor: cursorAt,
+	}, now)
 	return &Server{
 		traces: traces, verdicts: verdicts, outcomes: outcomes, ledger: ledger, source: source, compactor: compactor, extractor: extractor,
 		now: now, session: session,
-		exe: exe, recordArgs: recordArgs, caller: caller, policy: policy,
+		exe: exe, recordArgs: recordArgs, caller: caller, policy: policy, intervener: intervener,
 	}
+}
+
+// The cursor of the record pages that starts after a record
+func cursorAt(at time.Time, id string) string {
+	return schema.Cursor{Time: at, RecordID: id}.String()
 }
 
 // The start of the runs queue and health and the reports read
@@ -150,10 +170,11 @@ func (s *Server) proof() trace.Proof {
 	return trace.ProofNone
 }
 
-// Records the intervention of a judgment with the records it wrote and returns its trace id
-// A judgment without a proof wrote nothing so its intervention is an agent proposal the person is asked about
-func (s *Server) intervened(ctx context.Context, in trace.Intervention, wrote knowledge.Set) (string, error) {
-	tr, err := in.Trace("", s.session, trace.SourceManual, trace.InterventionOutput{Records: wrote.Written()}, s.now())
+// Records the intervention of a judgment under the id its records name with the records it wrote and returns its trace id
+// 1. a judgment without a proof wrote nothing so its intervention is an agent proposal the person is asked about
+// 2. the caller chose what to act on so the source is manual
+func (s *Server) intervened(ctx context.Context, id string, in trace.Intervention, wrote knowledge.Set) (string, error) {
+	tr, err := in.Trace(id, s.session, trace.SourceManual, trace.InterventionOutput{Records: wrote.Written()}, s.now())
 	if err != nil {
 		return "", err
 	}
@@ -241,10 +262,20 @@ func enums() map[reflect.Type]*jsonschema.Schema {
 	for _, n := range loop.ReportNames() {
 		reports = append(reports, string(n))
 	}
+	actions := make([]any, 0, len(trace.Actions()))
+	for _, a := range trace.Actions() {
+		actions = append(actions, string(a))
+	}
+	choices := make([]any, 0, len(trace.Choices()))
+	for _, c := range trace.Choices() {
+		choices = append(choices, string(c))
+	}
 	return map[reflect.Type]*jsonschema.Schema{
 		reflect.TypeFor[feedback.ReasonCode](): {Type: "string", Enum: codes},
 		reflect.TypeFor[loop.ReportName]():     {Type: "string", Enum: reports},
 		reflect.TypeFor[recordKind]():          {Type: "string", Enum: recordKinds()},
+		reflect.TypeFor[trace.Action]():        {Type: "string", Enum: actions},
+		reflect.TypeFor[trace.Choice]():        {Type: "string", Enum: choices},
 	}
 }
 
@@ -292,7 +323,8 @@ var tools = []tool{
 	newTool("knowledge_health", "Read how the runs that applied each knowledge version held up: verdicts, outcomes, retire and promotion candidates, "+
 		"versions past their review deadline and references that no longer resolve. "+
 		"Reads only. Retire, narrow and reaffirm stay with the person", (*Server).knowledgeHealth),
-	newTool("report", "Read one report of the records as JSON: loop for the totals and how each approved item fared, extract for how drafting ended, "+
+	newTool("report", "Deprecated and removed in the next release: page the raw records with records instead, which carry the published contract. "+
+		"Read one report of the records as JSON: loop for the totals and how each approved item fared, extract for how drafting ended, "+
 		"critic for how critics agreed with people and the reaction point with the conversation, effect for runs with items against the holdout, health for each knowledge version, "+
 		"replay for the newest replay of each version against recorded outputs. "+
 		"Reads only", (*Server).report),
@@ -305,6 +337,12 @@ var tools = []tool{
 		"interventions and every other kind, oldest first after the cursor since. The free text of the kind such as outputs, reasons and lesson content "+
 		"is left out unless content is true. A record younger than 10 s waits for a later page. Pass next back as since for the following page, "+
 		"which answers the same next while nothing newer is settled. Reads only", (*Server).records),
+	newTool("intervene", "Submit what the person named on what nodloop prepared or carried out: judge a lesson keep, undo or scope, answer or dismiss a question, "+
+		"pause or resume curate for a kind or a scope, set a knob within its range, reanchor a place, or reverse an earlier intervention. "+
+		"digest answers the cursor since the person's last judgment and changes nothing, so page records of answer, intervention, decide, expose and knowledge from it. "+
+		"Where the client shows forms the person confirms it in one form and it is the person's decision at once, and a declined form records nothing. "+
+		"Any other call records an agent proposal that is asked of the person at the end of this turn, so pass the session id the prompt note names. "+
+		"Never call it for anything the person did not name", (*Server).intervene),
 }
 
 // feedback and outcome and propose take a recorded run as the trace they concern
@@ -532,13 +570,14 @@ func (in approveInput) judgment(proof trace.Proof, approver string) trace.Interv
 
 // The approval recorded with every failure after it on the answer
 // The approval is recorded and a second approve would fail so a later failure never fails the call
-// The intervention follows the approval since it names the record the approval wrote
+// The intervention follows the approval since it names the record the approval wrote, and the approval names the intervention
 func (s *Server) approved(ctx context.Context, in approveInput, judgment trace.Intervention) (approveAnswer, error) {
-	k, err := s.approval(ctx, in, judgment.Person)
+	id := trace.NewID(s.now())
+	k, err := s.approval(ctx, s.ledger.Under(id), in, judgment.Person)
 	if err != nil && !errors.Is(err, knowledge.ErrExport) {
 		return approveAnswer{}, err
 	}
-	if _, ierr := s.intervened(ctx, judgment, knowledge.Set{k}); ierr != nil {
+	if _, ierr := s.intervened(ctx, id, judgment, knowledge.Set{k}); ierr != nil {
 		return approveAnswer{}, fmt.Errorf("%s v%d is %s and its intervention was not recorded: %w", k.ID, k.Version, k.Status, ierr)
 	}
 	s.afterVerdict(ctx)
@@ -572,7 +611,7 @@ func (s *Server) proposeApproval(ctx context.Context, in approveInput, judgment 
 			return approveAnswer{}, err
 		}
 	}
-	id, err := s.intervened(ctx, judgment, nil)
+	id, err := s.intervened(ctx, "", judgment, nil)
 	if err != nil {
 		return approveAnswer{}, err
 	}
@@ -580,15 +619,15 @@ func (s *Server) proposeApproval(ctx context.Context, in approveInput, judgment 
 	return approveAnswer{ID: k.ID, Version: k.Version, Status: k.Status, Approver: k.Approver, Veto: k.Veto != nil, Proposal: id}, nil
 }
 
-// The approval as proposed or in the scope the user picked
-func (s *Server) approval(ctx context.Context, in approveInput, approver string) (knowledge.Knowledge, error) {
+// The approval through the ledger as proposed or in the scope the user picked
+func (s *Server) approval(ctx context.Context, ledger *knowledge.Ledger, in approveInput, approver string) (knowledge.Knowledge, error) {
 	if in.Scope == nil {
-		return s.ledger.Approve(ctx, in.ID, in.Version, approver)
+		return ledger.Approve(ctx, in.ID, in.Version, approver)
 	}
 	if err := s.checkScope(ctx, in); err != nil {
 		return knowledge.Knowledge{}, err
 	}
-	return s.ledger.ApproveIn(ctx, in.ID, in.Version, in.Scope.Labels, approver)
+	return ledger.ApproveIn(ctx, in.ID, in.Version, in.Scope.Labels, approver)
 }
 
 // The scope the candidate takes in the labels the user picked
@@ -709,7 +748,7 @@ func (s *Server) approveCompaction(
 		if err != nil {
 			return nil, approveCompactionAnswer{}, err
 		}
-		id, err := s.intervened(ctx, judgment, nil)
+		id, err := s.intervened(ctx, "", judgment, nil)
 		if err != nil {
 			return nil, approveCompactionAnswer{}, err
 		}
@@ -717,11 +756,16 @@ func (s *Server) approveCompaction(
 		return nil, approveCompactionAnswer{Compaction: c.ID, Records: c.Statuses(), Proposal: id}, nil
 	}
 	judgment.Person = approver
-	c, err := s.compactor.Approve(ctx, in.Compaction, approver)
+	id := trace.NewID(s.now())
+	cov, err := s.compactor.Coverage(ctx, in.Compaction)
+	if err != nil {
+		return nil, approveCompactionAnswer{}, err
+	}
+	c, err := s.ledger.Under(id).ApproveCompaction(ctx, in.Compaction, approver, cov)
 	if err != nil && !errors.Is(err, knowledge.ErrExport) {
 		return nil, approveCompactionAnswer{}, err
 	}
-	if _, ierr := s.intervened(ctx, judgment, slices.Concat(c.Items, c.Replaced)); ierr != nil {
+	if _, ierr := s.intervened(ctx, id, judgment, slices.Concat(c.Items, c.Replaced)); ierr != nil {
 		return nil, approveCompactionAnswer{}, fmt.Errorf("compaction %s is approved and its intervention was not recorded: %w", c.ID, ierr)
 	}
 	s.afterVerdict(ctx)

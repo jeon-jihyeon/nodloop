@@ -44,16 +44,16 @@ func TestSkillTools(t *testing.T) {
 			},
 		},
 		{
-			"the nod skill records verdicts on runs, proposes knowledge from them and lists the waiting drafts",
+			"the nod skill records verdicts on runs, proposes knowledge from them and runs the manual path over the raw records",
 			"../../plugin/skills/nod/SKILL.md",
 			want{
-				tools: []string{"feedback", "propose", "extraction", "propose_extraction", "run", "compaction", "propose_compaction", "check_compaction"},
-				commands: []string{"nodloop trace list --name run", "nodloop trace show", "nodloop knowledge for --producer session",
-					"nodloop knowledge waiting --producer session", "nodloop feedback list --trace", "nodloop knowledge retire", "nodloop knowledge replay",
-					"nodloop knowledge approve", "nodloop knowledge approve-compaction"},
+				tools: []string{
+					"feedback", "propose", "extraction", "propose_extraction", "run", "compaction", "propose_compaction", "check_compaction", "intervene", "records",
+				},
+				commands: []string{"nodloop trace list --name run", "nodloop trace show", "nodloop knowledge for --producer session"},
 				phrases: []string{
-					"not a correction", "verdict `withdraw`", "the first line of the answer they corrected", "no hook asks about them",
-					"show the one line for that terminal and never run it yourself",
+					"not a correction", "verdict `withdraw`", "action `digest`", "add no question of your own", "Never answer a nodloop question for the user",
+					"never run such a command yourself", "once per thing they named",
 				},
 			},
 		},

@@ -13,13 +13,15 @@ from mcp.client.stdio import stdio_client
 from mcp.client.streamable_http import create_mcp_http_client, streamable_http_client
 
 from . import binary
-from .records import AnyRecord, RecordKind
+from .records import AnyRecord, InterventionRecord, RecordKind
 
 __all__ = [
     "Approval",
     "Candidate",
     "Client",
     "Decision",
+    "Intervention",
+    "InterventionAction",
     "Item",
     "Knowledge",
     "Page",
@@ -35,7 +37,11 @@ VERSION = "0.9.0"
 
 
 # The reports report reads
+# Deprecated: page the raw records with records instead, which carry the published contract
 ReportName = Literal["loop", "extract", "critic", "effect", "health", "replay"]
+
+# The actions of the write side
+InterventionAction = Literal["judge", "answer", "dismiss", "pause", "resume", "knob", "reanchor", "digest", "reverse"]
 
 # What a real check found for a run
 Result = Literal["confirmed", "refuted", "inconclusive"]
@@ -127,7 +133,10 @@ class Knowledge:
 
 @dataclass(frozen=True)
 class Report:
-    """One report of the records with the start of the runs it read"""
+    """One report of the records with the start of the runs it read
+
+    Deprecated: page the raw records with records instead, which carry the published contract
+    """
 
     # The report as JSON
     report: Any
@@ -143,6 +152,28 @@ class Page:
     records: list[AnyRecord]
     # The cursor to pass as since for the next page, the same while no newer record is settled
     next: str = ""
+
+
+@dataclass(frozen=True)
+class Intervention:
+    """What one intervention of the write side recorded"""
+
+    # The intervention record in its published schema and None when the person declined the form
+    intervention: InterventionRecord | None
+    # person when a key a person holds decided and agent for a proposal the person is asked about
+    authority: str = ""
+    proof: str = ""
+    # The knowledge records it wrote, each with id, version and status
+    records: list[dict[str, Any]] = field(default_factory=list)
+    # The answer event an answer wrote
+    answer: str = ""
+    # The cursor of a digest to pass as since to the records of answer, intervention, decide, expose and knowledge
+    since: str = ""
+    # The decide that asks the person about a proposal
+    question: str = ""
+    # The person declined the form so nothing was recorded
+    declined: bool = False
+    export_error: str = ""
 
 
 def _ref(v: Item | Ref | dict[str, Any]) -> dict[str, Any]:
@@ -306,7 +337,10 @@ class Client:
         await self.call("outcome", args)
 
     async def report(self, name: ReportName) -> Report:
-        """One report of the records as JSON with the start of the window it read"""
+        """One report of the records as JSON with the start of the window it read
+
+        Deprecated: page the raw records with records instead, which carry the published contract. report is removed in the next release
+        """
         answer = await self.call("report", {"name": name})
         return Report(answer["report"], answer.get("since", ""))
 
@@ -375,6 +409,45 @@ class Client:
             export_error=answer.get("export_error", ""),
             folder_error=answer.get("folder_error", ""),
             proposal=answer.get("proposal", ""),
+        )
+
+    async def intervene(
+        self,
+        action: InterventionAction,
+        target: str = "",
+        *,
+        choice: str = "",
+        labels: dict[str, list[str]] | None = None,
+        value: float | None = None,
+        session: str = "",
+    ) -> Intervention:
+        """Submits one intervention of the write side: judge, answer, dismiss, pause, resume, knob, reanchor, digest or reverse
+
+        target is an item version as id:version, a compaction, the decide of a question, the change kind of a pause,
+        the pause a resume ends, a knob such as audit_tier1, the producer of a place or the intervention a reverse takes back
+        Under a key of nodloop-server that a person holds it is the person's decision at once
+        Any other call such as one over stdio records an agent proposal the person is asked about and changes nothing
+        A digest needs no proof and answers since, the cursor after the person's last decision
+        """
+        args: dict[str, Any] = {"action": action}
+        for key, given in (("target", target), ("choice", choice), ("session", session)):
+            if given:
+                args[key] = given
+        if labels is not None:
+            args["labels"] = labels
+        if value is not None:
+            args["value"] = value
+        answer = await self.call("intervene", args)
+        return Intervention(
+            answer.get("intervention"),
+            authority=answer.get("authority", ""),
+            proof=answer.get("proof", ""),
+            records=answer.get("records") or [],
+            answer=answer.get("answer", ""),
+            since=answer.get("since", ""),
+            question=answer.get("question", ""),
+            declined=bool(answer.get("declined")),
+            export_error=answer.get("export_error", ""),
         )
 
     async def check_call(self, tool: str, arguments: dict[str, Any], producer: str = "") -> Decision:

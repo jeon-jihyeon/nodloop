@@ -34,6 +34,7 @@ func TestHostOpenFails(t *testing.T) {
 		"check_call": {"tool": "Bash", "input": map[string]any{"command": "ls"}},
 		"report":     {"name": "loop"},
 		"records":    {"kind": "run"},
+		"intervene":  {"action": "digest"},
 	}
 	tools := c.Tools(t)
 	require.ElementsMatch(t, mcp.Tools(), tools)

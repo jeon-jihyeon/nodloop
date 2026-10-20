@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/jeon-jihyeon/nodloop/internal/curate"
+	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	"github.com/jeon-jihyeon/nodloop/internal/record"
 	"github.com/jeon-jihyeon/nodloop/internal/textkey"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
@@ -212,7 +213,11 @@ func (c anchorCommand) refresh(ctx context.Context) (anchorState, error) {
 		return anchorState{}, err
 	}
 	designated, absent := c.designated(key)
-	state.anchor, state.absent, state.at = curate.NewAnchor(all, designated, loaded), absent, newest.at
+	taken, err := reanchored(ctx, store)
+	if err != nil {
+		return anchorState{}, err
+	}
+	state.anchor, state.absent, state.at = curate.NewAnchor(all, designated, loaded).Taking(taken), absent, newest.at
 	next, changed := state.anchor.Next(newest.version)
 	state.version = next
 	if !changed {
@@ -224,6 +229,19 @@ func (c anchorCommand) refresh(ctx context.Context) (anchorState, error) {
 	}
 	state.at = tr.Time
 	return state, store.Append(ctx, tr.Record())
+}
+
+// The versions nodloop approved that a reanchor or an answer mine of the person took, as curate folds the records
+func reanchored(ctx context.Context, store *tracefile.Store) (map[knowledge.Ref]string, error) {
+	var folded trace.Traces
+	for _, name := range []trace.Name{trace.NameIntervention, trace.NameAnswer, trace.NameDecide} {
+		found, err := store.List(ctx, record.TraceFilter{Name: string(name)})
+		if err != nil {
+			return nil, err
+		}
+		folded = append(folded, trace.RestoreAll(found)...)
+	}
+	return curate.RestoreInterventions(folded).Reanchored(), nil
 }
 
 // The newest anchor version with the time it was recorded
