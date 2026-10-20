@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -105,8 +106,9 @@ func TestRunFeedbackOnRun(t *testing.T) {
 		args []string
 		want string
 	}{
-		{"an edit of a run is any JSON", []string{"add", "--trace", run, "--verdict", "edit", "--reason-code", "other", "--edited", edited}, run + "\tedit\tauthor\n"},
-		{"an outcome of a run", []string{"outcome", "--trace", run, "--result", "confirmed"}, run + "\tconfirmed\tauthor\n"},
+		{"an edit of a run is any JSON", []string{"add", "--trace", run, "--verdict", "edit", "--reason-code", "other", "--edited", edited, "--reviewer", "ann"},
+			run + "\tedit\tann\n"},
+		{"an outcome of a run", []string{"outcome", "--trace", run, "--result", "confirmed", "--reviewer", "ann"}, run + "\tconfirmed\tann\n"},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
@@ -114,7 +116,7 @@ func TestRunFeedbackOnRun(t *testing.T) {
 
 			code := runFeedback(tc.args, getenv, now, &stdout, &stderr)
 
-			require.Equal(t, 0, code, stderr.String())
+			assert.Equal(t, tc.want == "", code == 1, stderr.String())
 			assert.Equal(t, tc.want, stdout.String())
 		})
 	}
@@ -123,65 +125,101 @@ func TestRunFeedbackOnRun(t *testing.T) {
 // The loop of a run with no data dir: a run, a proposal scoped to its labels, an approval and the items the next run gets
 func TestRunKnowledgeForRuns(t *testing.T) {
 	at := time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
-	dir, records := t.TempDir(), t.TempDir()
-	getenv := func(k string) string { return map[string]string{"HOME": dir, envRecordDir: records}[k] }
-	now := func() time.Time { return at }
-	out := filepath.Join(dir, "out.txt")
-	require.NoError(t, os.WriteFile(out, []byte("cd repo && git status"), 0o600))
-	var id bytes.Buffer
-	require.Equal(t, 0, runRun([]string{"record", "--producer", "session", "--label", "repo=nodloop", "--output", out}, getenv, now, &id, &bytes.Buffer{}))
-	run := strings.TrimSpace(id.String())
-	knowledgeRun := func(args ...string) (int, string, string) {
-		var stdout, stderr bytes.Buffer
-		code := runKnowledge(args, getenv, nil, now, &stdout, &stderr)
-		return code, stdout.String(), stderr.String()
+	type args struct {
+		// The knowledge commands that succeed before the one under test with {run} for the recorded run
+		before [][]string
+		args   []string
 	}
-	propose := []string{"propose", "--id", "git-c", "--kind", "judgment", "--content", "use git -C instead of cd", "--trace", run, "--producer", "session"}
-
-	code, _, stderr := knowledgeRun(append(propose, "--label", "repo=nodlop")...)
-	assert.Equal(t, 1, code)
-	assert.Contains(t, stderr, "no run of session carries repo=nodlop")
-	code, _, stderr = knowledgeRun("propose", "--kind", "judgment", "--content", "x", "--trace", run, "--label", "repo=nodloop")
-	assert.Equal(t, 1, code)
-	assert.Contains(t, stderr, "propose: --producer or --from is required")
-	code, _, stderr = knowledgeRun(append(propose, "--label", "repo=nodloop", "--basis", "verified")...)
-	assert.Equal(t, 1, code)
-	assert.Contains(t, stderr, "propose: --evidence-outcome is required with --basis verified")
-	code, stdout, stderr := knowledgeRun(append(propose, "--label", "repo=nodloop")...)
-	require.Equal(t, 0, code, stderr)
-	assert.Contains(t, stdout, "scope\truns of session. repo=nodloop\n")
-	assert.Contains(t, stdout, "of 9000 chars in runs of session")
-	code, _, stderr = knowledgeRun("approve", "git-c", "--version", "1", "--approver", "ann")
-	require.Equal(t, 0, code, stderr)
-
+	type want struct {
+		code int
+		// Regexps matched against stdout and stderr
+		stdout, stderr string
+	}
+	propose := []string{"propose", "--id", "git-c", "--kind", "judgment", "--content", "use git -C instead of cd", "--trace", "{run}", "--producer", "session"}
+	scoped := slices.Concat(propose, []string{"--label", "repo=nodloop"})
+	approved := [][]string{scoped, {"approve", "git-c", "--version", "1", "--approver", "ann"}}
 	tcs := []struct {
 		name string
-		args []string
-		want string
+		args args
+		want want
 	}{
-		{"a run of the repo gets the item", []string{"for", "--producer", "session", "--label", "repo=nodloop"}, "git-c\tv1\tjudgment\tuse git -C instead of cd\ntotal\t1 items\t"},
-		{"a run of another repo gets nothing", []string{"for", "--producer", "session", "--label", "repo=other"}, "total\t0 items\t0 chars\n"},
+		{
+			"a label no run carries is refused",
+			args{args: slices.Concat(propose, []string{"--label", "repo=nodlop"})},
+			want{1, `^$`, `no run of session carries repo=nodlop`},
+		},
+		{
+			"a proposal without a producer is refused",
+			args{args: []string{"propose", "--kind", "judgment", "--content", "x", "--trace", "{run}", "--label", "repo=nodloop"}},
+			want{1, `^$`, `propose: --producer or --from is required`},
+		},
+		{
+			"a verified basis without an outcome is refused",
+			args{args: slices.Concat(scoped, []string{"--basis", "verified"})},
+			want{1, `^$`, `propose: --evidence-outcome is required with --basis verified`},
+		},
+		{
+			"a proposal is scoped to the labels of the run and counts the chars of the place",
+			args{args: scoped},
+			want{0, `(?s)scope\truns of session\. repo=nodloop\n.*of 9000 chars in runs of session`, `^$`},
+		},
+		{"the proposal is approved", args{before: approved[:1], args: approved[1]}, want{0, ``, `^$`}},
+		{
+			"a run of the repo gets the item",
+			args{before: approved, args: []string{"for", "--producer", "session", "--label", "repo=nodloop"}},
+			want{0, `^git-c\tv1\tjudgment\tuse git -C instead of cd\ntotal\t1 items\t`, `^$`},
+		},
+		{
+			"a run of another repo gets nothing",
+			args{before: approved, args: []string{"for", "--producer", "session", "--label", "repo=other"}},
+			want{0, `^total\t0 items\t0 chars\n`, `^$`},
+		},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
-			code, stdout, stderr := knowledgeRun(tc.args...)
+			t.Parallel()
+			dir, records := t.TempDir(), t.TempDir()
+			getenv := func(k string) string { return map[string]string{"HOME": dir, envRecordDir: records}[k] }
+			now := func() time.Time { return at }
+			out := filepath.Join(dir, "out.txt")
+			require.NoError(t, os.WriteFile(out, []byte("cd repo && git status"), 0o600))
+			var id bytes.Buffer
+			require.Equal(t, 0, runRun([]string{"record", "--producer", "session", "--label", "repo=nodloop", "--output", out}, getenv, now, &id, &bytes.Buffer{}))
+			place := strings.NewReplacer("{run}", strings.TrimSpace(id.String()))
+			for _, args := range tc.args.before {
+				var stderr bytes.Buffer
+				require.Equal(t, 0, runKnowledge(runPlaced(place, args), getenv, nil, now, atTerminal, &bytes.Buffer{}, &stderr), stderr.String())
+			}
+			var stdout, stderr bytes.Buffer
 
-			require.Equal(t, 0, code, stderr)
-			assert.True(t, strings.HasPrefix(stdout, tc.want), stdout)
+			code := runKnowledge(runPlaced(place, tc.args.args), getenv, nil, now, atTerminal, &stdout, &stderr)
+
+			assert.Equal(t, tc.want.code, code, stderr.String())
+			assert.Regexp(t, tc.want.stdout, stdout.String())
+			assert.Regexp(t, tc.want.stderr, stderr.String())
 		})
 	}
+}
+
+// The arguments with their placeholders replaced
+func runPlaced(place *strings.Replacer, args []string) []string {
+	placed := make([]string, len(args))
+	for i, a := range args {
+		placed[i] = place.Replace(a)
+	}
+	return placed
 }
 
 // knowledge for prints the withheld items of a drawn key and run record with the same key records the run in its arm
 func TestRunHoldoutRoundTrip(t *testing.T) {
 	home, records, _ := hookHome(t, "use git -C")
-	require.Equal(t, 0, runConfig([]string{"holdout", "0.999"}, func(k string) string { return map[string]string{"HOME": home}[k] }, &bytes.Buffer{}, &bytes.Buffer{}))
+	require.Equal(t, 0, runConfig([]string{"holdout", "0.999"}, func(k string) string { return map[string]string{"HOME": home}[k] }, atTerminal, &bytes.Buffer{}, &bytes.Buffer{}))
 	getenv := func(k string) string { return map[string]string{"HOME": home, envRecordDir: records}[k] }
 	out := filepath.Join(t.TempDir(), "out.txt")
 	require.NoError(t, os.WriteFile(out, []byte("answer"), 0o600))
 	var items, id, stderr bytes.Buffer
 
-	forCode := runKnowledge([]string{"for", "--producer", "session", "--label", "repo=nodloop", "--holdout-key", "w-1"}, getenv, nil, time.Now, &items, &stderr)
+	forCode := runKnowledge([]string{"for", "--producer", "session", "--label", "repo=nodloop", "--holdout-key", "w-1"}, getenv, nil, time.Now, atTerminal, &items, &stderr)
 	recordCode := runRun([]string{"record", "--producer", "session", "--label", "repo=nodloop", "--withheld", "git-c:1", "--holdout-key", "w-1", "--output", out},
 		getenv, time.Now, &id, &stderr)
 

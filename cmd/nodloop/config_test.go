@@ -164,7 +164,7 @@ func TestRunConfig(t *testing.T) {
 			}
 			var stdout, stderr bytes.Buffer
 
-			code := runConfig(tc.args.args, func(k string) string { return env[k] }, &stdout, &stderr)
+			code := runConfig(tc.args.args, func(k string) string { return env[k] }, atTerminal, &stdout, &stderr)
 
 			assert.Equal(t, tc.want.code, code)
 			assert.Equal(t, tc.want.stdout, stdout.String())
@@ -239,7 +239,7 @@ func TestRunConfigList(t *testing.T) {
 			maps.Copy(env, tc.args.env)
 			var stdout, stderr bytes.Buffer
 
-			code := runConfig(nil, envOf(env), &stdout, &stderr)
+			code := runConfig(nil, envOf(env), atTerminal, &stdout, &stderr)
 
 			assert.Equal(t, 0, code, stderr.String())
 			assert.Equal(t, strings.ReplaceAll(tc.want, "<home>", string(home)), stdout.String())

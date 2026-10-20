@@ -10,6 +10,7 @@ import (
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	"github.com/jeon-jihyeon/nodloop/internal/llm"
 	"github.com/jeon-jihyeon/nodloop/internal/retain"
+	"github.com/jeon-jihyeon/nodloop/internal/trace"
 	"github.com/jeon-jihyeon/nodloop/internal/userconfig"
 )
 
@@ -34,6 +35,8 @@ type config struct {
 	sessionMode string
 	// The export target of config.json and nil when none is saved
 	otel *otelConfig
+	// The name a person saved to decide under
+	approver string
 }
 
 // The record directory as the flag, then NODLOOP_RECORD_DIR, then config.json, then the default under home
@@ -52,7 +55,7 @@ func resolveConfig(getenv func(string) string, recordDir string) (config, error)
 	}
 	return config{
 		recordDir: records, home: h, classifiers: uc.classifierConfig, holdout: knowledge.Holdout(uc.Holdout),
-		retention: retain.Days(uc.Retention), sessionMode: uc.SessionMode, otel: uc.OTel,
+		retention: retain.Days(uc.Retention), sessionMode: uc.SessionMode, otel: uc.OTel, approver: uc.Approver,
 	}, nil
 }
 
@@ -67,12 +70,12 @@ func (c config) recordArgs() string {
 // Each setting of config prints the saved value and saves the value given after it
 // The settings are approver and holdout and retention and session_mode
 // config alone lists every setting with its value and where the value came from
-func runConfig(args []string, getenv func(string) string, stdout, stderr io.Writer) int {
+func runConfig(args []string, getenv func(string) string, proof trace.Proof, stdout, stderr io.Writer) int {
 	h := homeDir(getenv("HOME"))
 	if h == "" {
 		return fail(stderr, "config", errHomeUnknown)
 	}
-	cmd := configCommand{home: h, out: stdout}
+	cmd := configCommand{home: h, proof: proof, out: stdout}
 	if len(args) == 0 {
 		if err := cmd.list(getenv); err != nil {
 			return fail(stderr, "config", err)
@@ -101,7 +104,10 @@ func runConfig(args []string, getenv func(string) string, stdout, stderr io.Writ
 
 type configCommand struct {
 	home homeDir
-	out  io.Writer
+	// The terminal proof of the process
+	// approver names the person every decision of the terminal is recorded under
+	proof trace.Proof
+	out   io.Writer
 }
 
 // One line per setting with its name and value and where the value came from
@@ -164,8 +170,16 @@ func (c configCommand) list(getenv func(string) string) error {
 }
 
 // Prints the saved name or saves the one given
+// 1. saving needs the terminal proof since the name stands for the person in every decision
+// 2. the reserved name is refused
 func (c configCommand) approver(name string) error {
 	if name != "" {
+		if c.proof == trace.ProofNone {
+			return fmt.Errorf("approver: %w", errPersonOnly)
+		}
+		if err := knowledge.CheckApprover(name); err != nil {
+			return fmt.Errorf("approver: %w", err)
+		}
 		if err := c.home.config().Save(map[string]any{"approver": name}); err != nil {
 			return err
 		}

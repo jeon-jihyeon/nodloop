@@ -10,6 +10,8 @@ require (
 	mvdan.cc/sh/v3 v3.13.1
 )
 
+require golang.org/x/term v0.45.0
+
 require (
 	github.com/google/jsonschema-go v0.4.3
 	github.com/modelcontextprotocol/go-sdk v1.8.0

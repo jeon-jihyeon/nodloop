@@ -58,8 +58,8 @@ func TestRunKnowledgeReplay(t *testing.T) {
 			})
 			var stdout, waiting, stderr bytes.Buffer
 
-			code := runKnowledge([]string{"replay", "git-c"}, getenv, client, now, &stdout, &stderr)
-			require.Equal(t, 0, runKnowledge([]string{"waiting", "--producer", "session", "--label", "repo=nodloop"}, getenv, nil, now, &waiting, &stderr), stderr.String())
+			code := runKnowledge([]string{"replay", "git-c"}, getenv, client, now, atTerminal, &stdout, &stderr)
+			require.Equal(t, 0, runKnowledge([]string{"waiting", "--producer", "session", "--label", "repo=nodloop"}, getenv, nil, now, atTerminal, &waiting, &stderr), stderr.String())
 
 			require.Equal(t, 0, code, stderr.String())
 			for _, want := range tc.want.stdout {
@@ -89,13 +89,13 @@ func replaySetup(t *testing.T, at time.Time) (getenv func(string) string, now fu
 		var id bytes.Buffer
 		require.Equal(t, 0, runRun([]string{"record", "--producer", "session", "--label", "repo=nodloop", "--output", out}, getenv, now, &id, &bytes.Buffer{}))
 		run := strings.TrimSpace(id.String())
-		require.Equal(t, 0, runFeedback([]string{"add", "--trace", run, "--verdict", verdict, "--reason", "r"}, getenv, now, &bytes.Buffer{}, &bytes.Buffer{}))
+		require.Equal(t, 0, runFeedback([]string{"add", "--trace", run, "--verdict", verdict, "--reason", "r", "--reviewer", "ann"}, getenv, now, &bytes.Buffer{}, &bytes.Buffer{}))
 		return run
 	}
 	corrected, approved = record("cd repo && git status", "reject"), record("git -C repo status", "approve")
 	var stderr bytes.Buffer
 	require.Equal(t, 0, runKnowledge([]string{"propose", "--id", "git-c", "--kind", "judgment", "--content", "Prefer git -C", "--from", corrected},
-		getenv, nil, now, &bytes.Buffer{}, &stderr), stderr.String())
+		getenv, nil, now, atTerminal, &bytes.Buffer{}, &stderr), stderr.String())
 	return getenv, now, corrected, approved
 }
 
@@ -137,7 +137,7 @@ func TestRunKnowledgeWaitingReplays(t *testing.T) {
 			}
 			var stdout, stderr bytes.Buffer
 
-			code := runKnowledge([]string{"waiting", "--producer", "session", "--label", "repo=nodloop"}, getenv, nil, now, &stdout, &stderr)
+			code := runKnowledge([]string{"waiting", "--producer", "session", "--label", "repo=nodloop"}, getenv, nil, now, atTerminal, &stdout, &stderr)
 
 			assert.Equal(t, tc.want.code, code, stderr.String())
 			assert.Contains(t, stdout.String(), tc.want.waiting)
@@ -160,11 +160,11 @@ func TestRunKnowledgeCheckReplay(t *testing.T) {
 	var id bytes.Buffer
 	require.Equal(t, 0, runRun([]string{"record", "--producer", "session", "--label", "repo=nodloop", "--output", out}, getenv, now, &id, &bytes.Buffer{}))
 	run := strings.TrimSpace(id.String())
-	require.Equal(t, 0, runFeedback([]string{"add", "--trace", run, "--verdict", "reject", "--reason", "ran cd"}, getenv, now, &bytes.Buffer{}, &bytes.Buffer{}))
+	require.Equal(t, 0, runFeedback([]string{"add", "--trace", run, "--verdict", "reject", "--reason", "ran cd", "--reviewer", "ann"}, getenv, now, &bytes.Buffer{}, &bytes.Buffer{}))
 	var stderr bytes.Buffer
 	for item, content := range map[string]string{"a": "Use git -C", "b": "Never cd before git"} {
-		require.Equal(t, 0, runKnowledge([]string{"propose", "--id", item, "--kind", "judgment", "--content", content, "--from", run}, getenv, nil, now, &bytes.Buffer{}, &stderr), stderr.String())
-		require.Equal(t, 0, runKnowledge([]string{"approve", item, "--version", "1", "--approver", "ann"}, getenv, nil, now, &bytes.Buffer{}, &stderr), stderr.String())
+		require.Equal(t, 0, runKnowledge([]string{"propose", "--id", item, "--kind", "judgment", "--content", content, "--from", run}, getenv, nil, now, atTerminal, &bytes.Buffer{}, &stderr), stderr.String())
+		require.Equal(t, 0, runKnowledge([]string{"approve", item, "--version", "1", "--approver", "ann"}, getenv, nil, now, atTerminal, &bytes.Buffer{}, &stderr), stderr.String())
 	}
 	client := llmmock.NewMockClient(gomock.NewController(t))
 	answers := []string{
@@ -178,7 +178,7 @@ func TestRunKnowledgeCheckReplay(t *testing.T) {
 		return llm.Response{Output: json.RawMessage(next)}, nil
 	})
 	var compacted bytes.Buffer
-	require.Equal(t, 0, runKnowledge([]string{"compact", "a"}, getenv, client, now, &compacted, &stderr), stderr.String())
+	require.Equal(t, 0, runKnowledge([]string{"compact", "a"}, getenv, client, now, atTerminal, &compacted, &stderr), stderr.String())
 	compaction := ""
 	for line := range strings.Lines(compacted.String()) {
 		if rest, ok := strings.CutPrefix(line, "compaction\t"); ok {
@@ -188,7 +188,7 @@ func TestRunKnowledgeCheckReplay(t *testing.T) {
 	require.NotEmpty(t, compaction)
 	var stdout bytes.Buffer
 
-	code := runKnowledge([]string{"check", compaction, "--replay"}, getenv, client, now, &stdout, &stderr)
+	code := runKnowledge([]string{"check", compaction, "--replay"}, getenv, client, now, atTerminal, &stdout, &stderr)
 
 	require.Equal(t, 0, code, stderr.String())
 	assert.Contains(t, stdout.String(), "covered\ta v1\tby a v2\tlost -\n")
@@ -223,15 +223,15 @@ func TestCompactionCommandReplayItems(t *testing.T) {
 			var id, stderr bytes.Buffer
 			require.Equal(t, 0, runRun([]string{"record", "--producer", "session", "--label", "repo=nodloop", "--output", out}, getenv, now, &id, &stderr), stderr.String())
 			run := strings.TrimSpace(id.String())
-			require.Equal(t, 0, runFeedback([]string{"add", "--trace", run, "--verdict", "reject", "--reason", "ran cd"}, getenv, now, &bytes.Buffer{}, &stderr), stderr.String())
+			require.Equal(t, 0, runFeedback([]string{"add", "--trace", run, "--verdict", "reject", "--reason", "ran cd", "--reviewer", "ann"}, getenv, now, &bytes.Buffer{}, &stderr), stderr.String())
 			for _, args := range [][]string{
 				{"propose", "--id", "lone", "--kind", "judgment", "--content", "Use git -C", "--from", run},
 				{"propose", "--id", "guard", "--kind", "judgment", "--content", "Never cd", "--from", run,
 					"--veto-tool", "Bash", "--veto-field", "command", "--veto-match", `^cd\b`, "--veto-example", `{"command":"cd repo"}`},
 			} {
-				require.Equal(t, 0, runKnowledge(args, getenv, nil, now, &bytes.Buffer{}, &stderr), stderr.String())
+				require.Equal(t, 0, runKnowledge(args, getenv, nil, now, atTerminal, &bytes.Buffer{}, &stderr), stderr.String())
 			}
-			require.Equal(t, 0, runFeedback([]string{"add", "--trace", run, "--verdict", "withdraw"}, getenv, now, &bytes.Buffer{}, &stderr), stderr.String())
+			require.Equal(t, 0, runFeedback([]string{"add", "--trace", run, "--verdict", "withdraw", "--reviewer", "ann"}, getenv, now, &bytes.Buffer{}, &stderr), stderr.String())
 			a, err := recordFlags{}.app(getenv, now)
 			require.NoError(t, err)
 			ledger, err := a.ledger()

@@ -43,13 +43,13 @@ func TestRunKnowledgeExtract(t *testing.T) {
 		t.Helper()
 		var stderr bytes.Buffer
 		require.Equal(t, 0, runKnowledge([]string{"propose", "--id", "git-c", "--kind", "judgment", "--content", "Prefer git -C", "--from", taught, "--label", "repo=nodloop"},
-			getenv, nil, now, &bytes.Buffer{}, &stderr), stderr.String())
+			getenv, nil, now, atTerminal, &bytes.Buffer{}, &stderr), stderr.String())
 	}
 	var approved setup = func(t *testing.T, getenv func(string) string, now func() time.Time, run, _ string) {
 		t.Helper()
 		propose(t, getenv, now, run)
 		var stderr bytes.Buffer
-		require.Equal(t, 0, runKnowledge([]string{"approve", "git-c", "--version", "1", "--approver", "ann"}, getenv, nil, now, &bytes.Buffer{}, &stderr), stderr.String())
+		require.Equal(t, 0, runKnowledge([]string{"approve", "git-c", "--version", "1", "--approver", "ann"}, getenv, nil, now, atTerminal, &bytes.Buffer{}, &stderr), stderr.String())
 	}
 	// git-c waits as a candidate another corrected run taught instead of being approved
 	var waiting setup = func(t *testing.T, getenv func(string) string, now func() time.Time, _, out string) {
@@ -105,7 +105,7 @@ func TestRunKnowledgeExtract(t *testing.T) {
 			}
 			var stdout, stderr bytes.Buffer
 
-			code := runKnowledge(append([]string{"extract"}, flags...), getenv, client, now, &stdout, &stderr)
+			code := runKnowledge(append([]string{"extract"}, flags...), getenv, client, now, atTerminal, &stdout, &stderr)
 
 			assert.Equal(t, tc.want.code, code, stderr.String())
 			assert.Regexp(t, extractInOrder(tc.want.stdout), stdout.String())
@@ -189,7 +189,7 @@ func TestRunKnowledgeExtractPreparedCompaction(t *testing.T) {
 			})
 			var stdout, stderr bytes.Buffer
 
-			code := runKnowledge([]string{"extract", "--from", run}, getenv, client, stores.Clock.Now, &stdout, &stderr)
+			code := runKnowledge([]string{"extract", "--from", run}, getenv, client, stores.Clock.Now, atTerminal, &stdout, &stderr)
 
 			assert.Equal(t, tc.want.code, code, stderr.String())
 			assert.Contains(t, stderr.String(), tc.want.stderr)

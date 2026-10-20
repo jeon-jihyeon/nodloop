@@ -100,8 +100,8 @@ func hookHome(t testing.TB, content string) (home, records, repo string) {
 	require.Equal(t, 0, runKnowledge([]string{
 		"propose", "--id", "git-c", "--kind", "judgment", "--content", content,
 		"--trace", strings.TrimSpace(id.String()), "--producer", sessionProducer, "--label", "repo=nodloop",
-	}, getenv, nil, now, &bytes.Buffer{}, &stderr), stderr.String())
-	require.Equal(t, 0, runKnowledge([]string{"approve", "git-c", "--version", "1", "--approver", "ann"}, getenv, nil, now, &bytes.Buffer{}, &stderr), stderr.String())
+	}, getenv, nil, now, atTerminal, &bytes.Buffer{}, &stderr), stderr.String())
+	require.Equal(t, 0, runKnowledge([]string{"approve", "git-c", "--version", "1", "--approver", "ann"}, getenv, nil, now, atTerminal, &bytes.Buffer{}, &stderr), stderr.String())
 	return home, records, repo
 }
 
@@ -267,7 +267,7 @@ func TestRunHookPromptDelta(t *testing.T) {
 			require.NoError(t, err)
 			knowledgeOf := func(args ...string) {
 				var stderr bytes.Buffer
-				require.Equal(t, 0, runKnowledge(args, getenv, nil, now, &bytes.Buffer{}, &stderr), stderr.String())
+				require.Equal(t, 0, runKnowledge(args, getenv, nil, now, atTerminal, &bytes.Buffer{}, &stderr), stderr.String())
 			}
 			propose := func(id, content string, version string) func() string {
 				return func() string {
@@ -491,7 +491,7 @@ func TestRunHookStart(t *testing.T) {
 			hookPromptSetup(t, getenv, now, repo, false, true, false)
 			// A share of 0 withholds no session like no holdout at all
 			share := map[bool]string{false: "0", true: "0.999"}[tc.args.withheld]
-			require.Equal(t, 0, runConfig([]string{"holdout", share}, getenv, &bytes.Buffer{}, &bytes.Buffer{}))
+			require.Equal(t, 0, runConfig([]string{"holdout", share}, getenv, atTerminal, &bytes.Buffer{}, &bytes.Buffer{}))
 			hookAppend(t, filepath.Join(records, "knowledge.jsonl"), map[bool]string{true: "not json\n"}[tc.args.corrupt])
 			cwd := map[bool]string{false: repo, true: filepath.Join(t.TempDir(), "other")}[tc.args.other]
 			require.NoError(t, os.MkdirAll(filepath.Join(cwd, ".git"), 0o755))
@@ -554,7 +554,7 @@ func hookPromptSetup(t *testing.T, getenv func(string) string, now func() time.T
 		require.Equal(t, 0, runKnowledge([]string{
 			"propose", "--id", id, "--kind", "judgment", "--content", content,
 			"--trace", runs[0].ID, "--producer", sessionProducer, "--label", "repo=nodloop",
-		}, getenv, nil, now, &bytes.Buffer{}, &stderr), stderr.String())
+		}, getenv, nil, now, atTerminal, &bytes.Buffer{}, &stderr), stderr.String())
 	}
 	if waiting {
 		propose("short-msg", "keep commit messages to one line")
@@ -821,7 +821,7 @@ func TestRunHookStopExtract(t *testing.T) {
 			}}}[tc.args.drafted]
 			for _, draft := range drafts {
 				var stderr bytes.Buffer
-				require.Equal(t, 0, runKnowledge(draft, getenv, nil, now, &bytes.Buffer{}, &stderr), stderr.String())
+				require.Equal(t, 0, runKnowledge(draft, getenv, nil, now, atTerminal, &bytes.Buffer{}, &stderr), stderr.String())
 			}
 			require.NoError(t, os.Chmod(filepath.Join(records, "traces.jsonl"), cmp.Or(tc.args.mode, 0o600)))
 			var stderr string
@@ -986,7 +986,7 @@ func TestRunKnowledgeLifecycle(t *testing.T) {
 	}
 	knowledgeRun := func(args ...string) (int, string, string) {
 		var stdout, stderr bytes.Buffer
-		code := runKnowledge(args, getenv, nil, time.Now, &stdout, &stderr)
+		code := runKnowledge(args, getenv, nil, time.Now, atTerminal, &stdout, &stderr)
 		return code, stdout.String(), stderr.String()
 	}
 
@@ -1243,7 +1243,7 @@ func TestRunKnowledgeWaiting(t *testing.T) {
 			t.Parallel()
 			var stdout, stderr bytes.Buffer
 
-			code := runKnowledge(tc.args, getenv, nil, hookClock(), &stdout, &stderr)
+			code := runKnowledge(tc.args, getenv, nil, hookClock(), atTerminal, &stdout, &stderr)
 
 			assert.Equal(t, tc.want.code, code, stderr.String())
 			assert.Equal(t, tc.want.stdout, stdout.String())
@@ -1283,12 +1283,12 @@ func TestRunKnowledgeApproveIn(t *testing.T) {
 			var stdout, stderr bytes.Buffer
 
 			code := runKnowledge(slices.Concat([]string{"approve", "short-msg", "--version", "1", "--approver", "ann"}, tc.args.flags),
-				getenv, nil, time.Now, &stdout, &stderr)
+				getenv, nil, time.Now, atTerminal, &stdout, &stderr)
 
 			assert.Equal(t, tc.want.code, code, stderr.String())
 			assert.Contains(t, stderr.String(), tc.want.stderr)
 			var items bytes.Buffer
-			require.Equal(t, 0, runKnowledge([]string{"for", "--producer", "session", "--label", "repo=other"}, getenv, nil, time.Now, &items, &stderr))
+			require.Equal(t, 0, runKnowledge([]string{"for", "--producer", "session", "--label", "repo=other"}, getenv, nil, time.Now, atTerminal, &items, &stderr))
 			assert.Equal(t, tc.want.elsewhere, strings.Contains(items.String(), "short-msg"), items.String())
 		})
 	}
@@ -1329,7 +1329,7 @@ func TestRunHookHoldout(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			home, records, repo := hookHome(t, "use git -C")
-			require.Equal(t, 0, runConfig([]string{"holdout", tc.args}, func(k string) string { return map[string]string{"HOME": home}[k] }, &bytes.Buffer{}, &bytes.Buffer{}))
+			require.Equal(t, 0, runConfig([]string{"holdout", tc.args}, func(k string) string { return map[string]string{"HOME": home}[k] }, atTerminal, &bytes.Buffer{}, &bytes.Buffer{}))
 			getenv := func(k string) string { return map[string]string{"HOME": home, envRecordDir: records}[k] }
 			now := hookClock()
 			var prompts bytes.Buffer

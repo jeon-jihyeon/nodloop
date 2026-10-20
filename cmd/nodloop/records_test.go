@@ -50,7 +50,7 @@ func pruneHome(t *testing.T, retention string) (getenv func(string) string, reco
 	} {
 		require.NoError(t, traces.Append(ctx, tr.Record()))
 	}
-	fb, err := feedback.New("old-judged", feedback.VerdictApprove, "", "", nil, "", old)
+	fb, err := feedback.New("old-judged", feedback.VerdictApprove, "", "", nil, "ann", old)
 	require.NoError(t, err)
 	require.NoError(t, verdicts.Append(ctx, fb.Record()))
 	return func(k string) string { return map[string]string{"HOME": home, envRecordDir: records}[k] }, records
@@ -96,7 +96,7 @@ func TestRunRecordsPrune(t *testing.T) {
 			0, "pruned 2 traces older than 2026-09-12T12:00:00Z\n", "^$", []string{"old-judged", "recent"}, true,
 		}},
 		{"a dry run removes nothing", args{"30", []string{"prune", "--dry-run"}, ""}, want{
-			0, "would prune 1 runs and 1 classify traces older than 2026-09-12T12:00:00Z, kept 1 judged, cited or first or last to use an item\n", "^$",
+			0, "would prune 1 runs, 1 classify traces and 0 turn traces older than 2026-09-12T12:00:00Z, kept 1 judged, cited or first or last to use an item\n", "^$",
 			every, false,
 		}},
 		{"a longer retention keeps the old runs", args{"60", []string{"prune"}, ""}, want{
@@ -210,24 +210,25 @@ func TestRunHookStopStartsTheDailyPrune(t *testing.T) {
 	}
 	type want struct {
 		started [][]string
-		left    int
+		// The exit codes of each started command run twice
+		codes []int
+		left  int
 	}
 	tcs := []struct {
 		name string
 		args args
 		want want
 	}{
-		{"a due prune is started and prunes", args{"30", ""}, want{[][]string{{"records", "prune", "--daily"}}, 3}},
-		{"a fresh marker starts nothing", args{"30", `{"at":"2026-10-12T06:00:00Z"}`}, want{nil, 5}},
-		{"no retention starts nothing", args{"", ""}, want{nil, 5}},
+		{"a due prune is started and prunes", args{"30", ""}, want{[][]string{{"records", "prune", "--daily"}}, []int{0, 0}, 3}},
+		{"a fresh marker starts nothing", args{"30", `{"at":"2026-10-12T06:00:00Z"}`}, want{nil, nil, 5}},
+		{"no retention starts nothing", args{"", ""}, want{nil, nil, 5}},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			getenv, records := pruneHome(t, tc.args.retention)
-			if tc.args.marker != "" {
-				require.NoError(t, os.WriteFile(filepath.Join(records, retain.MarkerFile), []byte(tc.args.marker), 0o600))
-			}
+			// An empty marker reads as no marker so every case writes one
+			require.NoError(t, os.WriteFile(filepath.Join(records, retain.MarkerFile), []byte(tc.args.marker), 0o600))
 			repo := filepath.Join(t.TempDir(), "nodloop")
 			require.NoError(t, os.MkdirAll(filepath.Join(repo, ".git"), 0o755))
 			stdin := `{"session_id":"s1","cwd":"` + repo + `","last_assistant_message":"done"}`
@@ -237,19 +238,20 @@ func TestRunHookStopStartsTheDailyPrune(t *testing.T) {
 				started = append(started, args)
 				return nil
 			}
-			var stderr bytes.Buffer
+			var stderr, out bytes.Buffer
 
 			code := runHook([]string{"stop"}, getenv, start, now, strings.NewReader(stdin), &bytes.Buffer{}, &stderr)
+			// Each started command runs twice and the second finds the marker fresh
+			var codes []int
 			for _, args := range started {
-				var out bytes.Buffer
-				require.Equal(t, 0, runRecords(args[1:], getenv, now, &out, &stderr), stderr.String())
-				require.Equal(t, 0, runRecords(args[1:], getenv, now, &out, &stderr), stderr.String())
-				assert.Empty(t, out.String(), "the daily prune prints nothing")
+				codes = append(codes, runRecords(args[1:], getenv, now, &out, &stderr), runRecords(args[1:], getenv, now, &out, &stderr))
 			}
 
 			assert.Equal(t, 0, code)
 			assert.Empty(t, stderr.String())
 			assert.Equal(t, tc.want.started, started)
+			assert.Equal(t, tc.want.codes, codes)
+			assert.Empty(t, out.String(), "the daily prune prints nothing")
 			assert.Len(t, traceIDs(t, records), tc.want.left)
 		})
 	}
@@ -294,7 +296,7 @@ func TestRecordsPruneSixtyDaysOfStream(t *testing.T) {
 		if i%500 != 0 {
 			continue
 		}
-		fb, err := feedback.New(tr.ID, feedback.VerdictApprove, "", "", nil, "", at)
+		fb, err := feedback.New(tr.ID, feedback.VerdictApprove, "", "", nil, "ann", at)
 		require.NoError(t, err)
 		require.NoError(t, json.NewEncoder(&verdicts).Encode(fb))
 	}
@@ -313,7 +315,7 @@ func TestRecordsPruneSixtyDaysOfStream(t *testing.T) {
 
 	assert.Equal(t, before, run(runReport, "loop"))
 	assert.Len(t, traceIDs(t, records), window+judgedOld)
-	assert.Contains(t, planned, fmt.Sprintf("would prune %d runs and 0 classify traces", runs-window-judgedOld))
+	assert.Contains(t, planned, fmt.Sprintf("would prune %d runs, 0 classify traces and 0 turn traces", runs-window-judgedOld))
 	assert.Contains(t, planned, fmt.Sprintf("kept %d judged", judgedOld))
 	assert.Contains(t, pruned, fmt.Sprintf("pruned %d traces", runs-window-judgedOld))
 }

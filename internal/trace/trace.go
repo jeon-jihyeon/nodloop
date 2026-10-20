@@ -58,11 +58,13 @@ const (
 	NameRefill      Name = "refill"      // the items a session start added again after the context of the session was emptied
 	NameTurn        Name = "turn"        // the start of a turn of a session that the stop reads for the duration of its run
 	NameCompact     Name = "compact"     // one drafting of a compaction through a model
+	// One action of a person or an agent on what nodloop prepared or carried out with the proof of its caller
+	NameIntervention Name = "intervention"
 )
 
 // Every name in a fixed order for messages
 func Names() []Name {
-	return []Name{NameRun, NameCheck, NameClassify, NameExtract, NameReplay, NameConsolidate, NameRefill, NameTurn, NameCompact}
+	return []Name{NameRun, NameCheck, NameClassify, NameExtract, NameReplay, NameConsolidate, NameRefill, NameTurn, NameCompact, NameIntervention}
 }
 
 func (n Name) Valid() bool {

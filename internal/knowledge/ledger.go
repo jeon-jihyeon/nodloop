@@ -43,7 +43,7 @@ type VetoSink interface {
 
 // Every write appends new records and none edits an earlier one
 // 1. a proposal is always a candidate
-// 2. approve and retire need an approver and follow the allowed status changes
+// 2. approve, retire, reaffirm and a compaction approval need an approver other than the reserved name and follow the allowed status changes
 // 3. the clock is read here in UTC and every record of one call carries that time
 // 4. approve and retire and import and reaffirm end by exporting the approved vetoes and rules
 // A refused approve or retire exports them too so its retry repairs an export a killed call left behind
@@ -239,6 +239,9 @@ func (l *Ledger) ScopeIn(ctx context.Context, id string, version int, labels tra
 
 // The approval decided on the records as seen recorded under the store lock
 func (l *Ledger) approve(ctx context.Context, id string, version int, approver string, seen func(all Set) (Set, error)) (Knowledge, error) {
+	if err := refuseReserved(approver); err != nil {
+		return Knowledge{}, err
+	}
 	var to Knowledge
 	err := l.appendDecided(ctx, func(all Set) ([]Knowledge, error) {
 		all, err := seen(all)
@@ -259,6 +262,9 @@ func (l *Ledger) approve(ctx context.Context, id string, version int, approver s
 }
 
 func (l *Ledger) Retire(ctx context.Context, id string, version int, approver string) (Knowledge, error) {
+	if err := refuseReserved(approver); err != nil {
+		return Knowledge{}, err
+	}
 	var to Knowledge
 	err := l.appendDecided(ctx, func(all Set) ([]Knowledge, error) {
 		history, err := all.historyOf(id)
@@ -374,6 +380,9 @@ func (l *Ledger) Compaction(ctx context.Context, id string) (Compaction, error) 
 // 3. a second call appends only the records still missing such as those of a legacy call cut between two appends
 // 4. vetoes are exported once after the records
 func (l *Ledger) ApproveCompaction(ctx context.Context, id, approver string, check Coverage) (Compaction, error) {
+	if err := refuseReserved(approver); err != nil {
+		return Compaction{}, err
+	}
 	err := l.appendDecided(ctx, func(all Set) ([]Knowledge, error) {
 		return all.compactionApproval(id, approver, check, l.now().UTC())
 	})

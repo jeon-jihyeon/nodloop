@@ -12,6 +12,7 @@ var (
 	ErrBasisUnknown         = errors.New("knowledge: unknown basis")
 	ErrStatusUnknown        = errors.New("knowledge: unknown status")
 	ErrApproverRequired     = errors.New("knowledge: an approver is required")
+	ErrApproverReserved     = errors.New("knowledge: the approver name is reserved for what nodloop carries out")
 	ErrAuthorRequired       = errors.New("knowledge: author is required")
 	ErrTransitionInvalid    = errors.New("knowledge: invalid status transition")
 	ErrVersionUnapproved    = errors.New("knowledge: version is not approved")

@@ -40,7 +40,7 @@ func TestRunKnowledgeConsolidateWhileAnotherRuns(t *testing.T) {
 			client := llmmock.NewMockClient(gomock.NewController(t))
 			var stderr bytes.Buffer
 
-			runKnowledge(tc.args, getenv, client, func() time.Time { return consolidateNow }, &bytes.Buffer{}, &stderr)
+			runKnowledge(tc.args, getenv, client, func() time.Time { return consolidateNow }, atTerminal, &bytes.Buffer{}, &stderr)
 
 			assert.Equal(t, tc.want, stderr.String())
 		})
