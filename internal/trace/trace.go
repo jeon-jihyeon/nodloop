@@ -48,17 +48,18 @@ type Trace struct {
 type Name string
 
 const (
-	NameRun      Name = "run"      // output any producer recorded through the core tools
-	NameCheck    Name = "check"    // coverage check of a compaction
-	NameClassify Name = "classify" // answers of the classifiers a decision point asked
-	NameExtract  Name = "extract"  // one extraction of a lesson from a corrected run with its drafts and conclusion
-	NameReplay   Name = "replay"   // a lesson judged against the recorded outputs it should and should not catch
-	NameCompact  Name = "compact"  // one drafting of a compaction through a model
+	NameRun         Name = "run"         // output any producer recorded through the core tools
+	NameCheck       Name = "check"       // coverage check of a compaction
+	NameClassify    Name = "classify"    // answers of the classifiers a decision point asked
+	NameExtract     Name = "extract"     // one extraction of a lesson from a corrected run with its drafts and conclusion
+	NameReplay      Name = "replay"      // a lesson judged against the recorded outputs it should and should not catch
+	NameConsolidate Name = "consolidate" // groups of waiting candidates of one producer that may say the same lesson
+	NameCompact     Name = "compact"     // one drafting of a compaction through a model
 )
 
 // Every name in a fixed order for messages
 func Names() []Name {
-	return []Name{NameRun, NameCheck, NameClassify, NameExtract, NameReplay, NameCompact}
+	return []Name{NameRun, NameCheck, NameClassify, NameExtract, NameReplay, NameConsolidate, NameCompact}
 }
 
 func (n Name) Valid() bool {

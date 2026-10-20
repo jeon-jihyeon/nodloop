@@ -2,14 +2,11 @@ package retain
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
-	"os"
 	"path/filepath"
 	"time"
 
+	"github.com/jeon-jihyeon/nodloop/internal/markfile"
 	"github.com/jeon-jihyeon/nodloop/internal/record"
 )
 
@@ -62,34 +59,18 @@ func (m Marker) path() string {
 // 2. a marker that does not decode reads as no prune so far
 // 3. the marker is written in place and a torn write reads as no prune so far and costs one more prune
 func (m Marker) Claim(_ context.Context, at, cutoff time.Time, every time.Duration) (bool, error) {
-	file, err := os.OpenFile(m.path(), os.O_CREATE|os.O_RDWR, 0o600)
+	held, err := markfile.Hold(m.path())
 	if err != nil {
 		return false, fmt.Errorf("%w: %w", ErrMarker, err)
 	}
-	defer func() { _ = file.Close() }()
-	locked, err := tryLock(file)
-	if err != nil {
-		return false, fmt.Errorf("%w: %w", ErrMarker, err)
-	}
-	if !locked {
+	if held == nil {
 		return false, nil
 	}
-	b, err := io.ReadAll(file)
-	if err != nil {
-		return false, fmt.Errorf("%w: %w", ErrMarker, err)
-	}
-	var last record.Mark
-	if json.Unmarshal(b, &last) == nil && Mark(last).fresh(at, every) {
+	defer func() { _ = held.Release() }()
+	if Mark(held.Mark).fresh(at, every) {
 		return false, nil
 	}
-	b, err = json.Marshal(record.Mark{At: at, Cutoff: cutoff})
-	if err != nil {
-		return false, fmt.Errorf("%w: %w", ErrMarker, err)
-	}
-	if err := file.Truncate(0); err != nil {
-		return false, fmt.Errorf("%w: %w", ErrMarker, err)
-	}
-	if _, err := file.WriteAt(append(b, '\n'), 0); err != nil {
+	if err := held.Write(record.Mark{At: at, Cutoff: cutoff}); err != nil {
 		return false, fmt.Errorf("%w: %w", ErrMarker, err)
 	}
 	return true, nil
@@ -98,16 +79,9 @@ func (m Marker) Claim(_ context.Context, at, cutoff time.Time, every time.Durati
 // Read without the lock
 // A missing marker and one that does not decode read as no prune so far
 func (m Marker) Last(context.Context) (record.Mark, error) {
-	b, err := os.ReadFile(m.path())
-	if errors.Is(err, os.ErrNotExist) {
-		return record.Mark{}, nil
-	}
+	last, err := markfile.Read(m.path())
 	if err != nil {
 		return record.Mark{}, fmt.Errorf("%w: %w", ErrMarker, err)
-	}
-	var last record.Mark
-	if json.Unmarshal(b, &last) != nil {
-		return record.Mark{}, nil
 	}
 	return last, nil
 }
