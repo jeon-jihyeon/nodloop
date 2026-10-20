@@ -311,7 +311,7 @@ func (f fileTenants) open(key serverKey, now func() time.Time, session string) m
 		}
 		compactor := compact.New(t.ledger, t.traces, t.verdicts, t.traces, now)
 		extractor := extract.New(t.ledger, t.traces, t.verdicts, now)
-		return mcp.New(t.traces, t.verdicts, t.outcomes, t.ledger, compactor, extractor, now, session, cliName, "", key.Name, f.policyOf(key.Tenant)), nil
+		return mcp.New(t.traces, t.verdicts, t.outcomes, t.ledger, compactor, extractor, now, session, cliName, "", mcp.Caller{Person: key.Name}, f.policyOf(key.Tenant)), nil
 	}
 }
 
@@ -374,7 +374,7 @@ func (p pgTenants) open(key serverKey, now func() time.Time, session string) mcp
 		ledger := p.ledger(key.Tenant, now)
 		compactor := compact.New(ledger, traces, verdicts, traces, now)
 		extractor := extract.New(ledger, traces, verdicts, now)
-		return mcp.New(traces, verdicts, p.db.Outcomes(key.Tenant), ledger, compactor, extractor, now, session, cliName, "", key.Name, p.policyOf(key.Tenant)), nil
+		return mcp.New(traces, verdicts, p.db.Outcomes(key.Tenant), ledger, compactor, extractor, now, session, cliName, "", mcp.Caller{Person: key.Name}, p.policyOf(key.Tenant)), nil
 	}
 }
 

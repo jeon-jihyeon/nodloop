@@ -9,7 +9,7 @@
   "mcpServers": {
     "nodloop": {
       "command": "./bin/nodloop",
-      "args": ["mcp"],
+      "args": ["mcp", "--agent"],
       "cwd": "."
     }
   },

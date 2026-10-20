@@ -34,6 +34,11 @@ func (h *Host) ServeTransport(ctx context.Context, t sdk.Transport) error {
 	return h.Server(Tools()).Run(ctx, t)
 }
 
+// Serves the tools of the agent server so no tool deciding for a person is listed
+func (h *Host) ServeAgent(ctx context.Context, t sdk.Transport) error {
+	return h.Server(AgentTools()).Run(ctx, t)
+}
+
 // The MCP server with the named tools of the host
 // A server key of a role names fewer tools so a call outside the role is no tool at all
 func (h *Host) Server(names []string) *sdk.Server {
@@ -48,12 +53,12 @@ func (h *Host) Server(names []string) *sdk.Server {
 
 // Runs one tool call on the server open answers under the call lock
 // An open error is the answer of that call so the conversation can tell the user what to fix
-func (h *Host) call(ctx context.Context, run func(*Server) (*sdk.CallToolResult, any, error)) (*sdk.CallToolResult, any, error) {
+func (h *Host) call(ctx context.Context, run func(*Server) error) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	s, err := h.open(ctx)
 	if err != nil {
-		return nil, nil, err
+		return err
 	}
 	return run(s)
 }

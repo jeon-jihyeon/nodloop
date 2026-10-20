@@ -20,20 +20,29 @@ type checkCompactionInput struct {
 	Items      []compact.CoverageAnswer `json:"items" jsonschema:"one entry per old item: the new items that state it and every fact of it no new item states"`
 }
 
+type checkCompactionAnswer struct {
+	Compaction string                   `json:"compaction"`
+	Items      []knowledge.CoverageItem `json:"items"`
+	Passed     bool                     `json:"passed"`
+	Why        string                   `json:"why,omitempty"`
+}
+
 // Records the coverage the conversation checked for a compaction of run items
-// Approval reads the newest one, so a fixed draft is checked again before approve_compaction
-func (s *Server) checkCompaction(ctx context.Context, _ *sdk.CallToolRequest, in checkCompactionInput) (*sdk.CallToolResult, any, error) {
+// Approval reads the newest one so a fixed draft is checked again before approve_compaction
+func (s *Server) checkCompaction(
+	ctx context.Context, _ *sdk.CallToolRequest, in checkCompactionInput,
+) (*sdk.CallToolResult, checkCompactionAnswer, error) {
 	cov, err := s.compactor.Record(ctx, in.Compaction, in.Items)
 	if err != nil {
-		return nil, nil, err
+		return nil, checkCompactionAnswer{}, err
 	}
 	c, err := s.ledger.Compaction(ctx, in.Compaction)
 	if err != nil {
-		return nil, nil, err
+		return nil, checkCompactionAnswer{}, err
 	}
-	answer := map[string]any{"compaction": cov.Compaction, "items": cov.Items, "passed": true}
+	answer := checkCompactionAnswer{Compaction: cov.Compaction, Items: cov.Items, Passed: true}
 	if err := cov.Passes(c); err != nil {
-		answer["passed"], answer["why"] = false, err.Error()
+		answer.Passed, answer.Why = false, err.Error()
 	}
 	return nil, answer, nil
 }
@@ -51,42 +60,46 @@ type runInput struct {
 	DurationMS int64  `json:"duration_ms,omitempty" jsonschema:"how many milliseconds the run took up to this call so its span has a length"`
 }
 
+type runAnswer struct {
+	TraceID string `json:"trace_id"`
+}
+
 // Records one output so a person can nod on it
 // AfterRun of the policy follows the record
-func (s *Server) run(ctx context.Context, _ *sdk.CallToolRequest, in runInput) (*sdk.CallToolResult, any, error) {
+func (s *Server) run(ctx context.Context, _ *sdk.CallToolRequest, in runInput) (*sdk.CallToolResult, runAnswer, error) {
 	refs, err := knowledge.NewRunInput(in.Applied, in.Withheld, "")
 	if err != nil {
-		return nil, nil, err
+		return nil, runAnswer{}, err
 	}
 	// Text stays a JSON string even when it reads as a number
 	// Secrets go before anything is written
 	b, err := json.Marshal(in.Output)
 	if err != nil {
-		return nil, nil, err
+		return nil, runAnswer{}, err
 	}
 	b = []byte(feedback.Redact(string(b)))
 	if in.Producer == "" {
-		return nil, nil, trace.ErrProducerRequired
+		return nil, runAnswer{}, trace.ErrProducerRequired
 	}
 	input, err := json.Marshal(s.policy.Holdout.Drawn(refs, in.Producer, in.HoldoutKey))
 	if err != nil {
-		return nil, nil, err
+		return nil, runAnswer{}, err
 	}
 	tr, err := trace.NewRun(in.Producer, in.Subject, in.Labels, input, b, s.now())
 	if err != nil {
-		return nil, nil, err
+		return nil, runAnswer{}, err
 	}
 	tr.SessionID, tr.Model = s.session, in.Model
 	if tr, err = tr.Took(time.Duration(in.DurationMS) * time.Millisecond); err != nil {
-		return nil, nil, err
+		return nil, runAnswer{}, err
 	}
 	if err := s.traces.Append(ctx, tr.Record()); err != nil {
-		return nil, nil, err
+		return nil, runAnswer{}, err
 	}
 	if s.policy.AfterRun != nil {
 		s.policy.AfterRun(ctx)
 	}
-	return nil, map[string]any{"trace_id": tr.ID}, nil
+	return nil, runAnswer{TraceID: tr.ID}, nil
 }
 
 type knowledgeForInput struct {
@@ -104,15 +117,26 @@ type runItem struct {
 	Scope   knowledge.RunScope `json:"scope"`
 }
 
-// The approved items a run with these labels applies and whether they pass the run caps together
+type knowledgeForAnswer struct {
+	Items      []runItem `json:"items"`
+	Chars      int       `json:"chars"`
+	OverBudget bool      `json:"over_budget"`
+	Context    string    `json:"context"`
+	// Present only when the holdout drew the call and empty when the place has no approved item
+	Withheld []knowledge.Ref `json:"withheld,omitzero"`
+}
+
+// The approved items a run with these labels applies and whether they pass RunChars together
 // A run the holdout draws gets no item and withheld names every item it would have received
-func (s *Server) knowledgeFor(ctx context.Context, _ *sdk.CallToolRequest, in knowledgeForInput) (*sdk.CallToolResult, any, error) {
+func (s *Server) knowledgeFor(
+	ctx context.Context, _ *sdk.CallToolRequest, in knowledgeForInput,
+) (*sdk.CallToolResult, knowledgeForAnswer, error) {
 	if in.Producer == "" {
-		return nil, nil, trace.ErrProducerRequired
+		return nil, knowledgeForAnswer{}, trace.ErrProducerRequired
 	}
 	all, err := s.ledger.All(ctx)
 	if err != nil {
-		return nil, nil, err
+		return nil, knowledgeForAnswer{}, err
 	}
 	items := all.For(in.Producer, in.Labels)
 	var withheld []knowledge.Ref
@@ -125,53 +149,59 @@ func (s *Server) knowledgeFor(ctx context.Context, _ *sdk.CallToolRequest, in kn
 		out = append(out, runItem{ID: k.ID, Version: k.Version, Kind: k.Kind, Content: k.Content, Scope: *k.Run})
 		chars += utf8.RuneCountInString(k.Text())
 	}
-	answer := map[string]any{
-		"items": out, "chars": chars, "over_budget": chars > knowledge.RunChars,
-		"context": items.Prompt(),
-	}
-	if withheld != nil {
-		answer["withheld"] = withheld
-	}
-	return nil, answer, nil
+	return nil, knowledgeForAnswer{
+		Items: out, Chars: chars, OverBudget: chars > knowledge.RunChars, Context: items.Prompt(), Withheld: withheld,
+	}, nil
 }
 
 // A proposal scoped to runs
 // 1. from fills the producer and the labels of a run a person corrected with edit or reject and cites it
 // 2. labels given beside from replace the labels of the run
 // 3. every label must be one a recorded run of the producer carries
-func (s *Server) proposeRun(ctx context.Context, in proposeInput, draft knowledge.Knowledge, from *trace.Trace) (*sdk.CallToolResult, any, error) {
+func (s *Server) proposeRun(ctx context.Context, in proposeInput, draft knowledge.Knowledge, from *trace.Trace) (proposeAnswer, error) {
 	draft.Run = &knowledge.RunScope{Producer: in.Producer, Labels: in.Labels, Except: in.Except}
 	draft.NewLabels = in.NewLabels
 	if from != nil {
 		verdicts, err := s.verdicts.List(ctx, record.FeedbackFilter{TraceID: from.ID})
 		if err != nil {
-			return nil, nil, err
+			return proposeAnswer{}, err
 		}
 		if draft, err = draft.From(*from, feedback.RestoreAll(verdicts)); err != nil {
-			return nil, nil, err
+			return proposeAnswer{}, err
 		}
 	}
 	if !in.NewLabels {
 		runs, err := s.traces.List(ctx, record.TraceFilter{Name: string(trace.NameRun)})
 		if err != nil {
-			return nil, nil, err
+			return proposeAnswer{}, err
 		}
 		if err := draft.Run.Recorded(trace.RestoreAll(runs).Vocabulary(draft.Run.Producer)); err != nil {
-			return nil, nil, err
+			return proposeAnswer{}, err
 		}
 	}
 	k, overlaps, err := s.ledger.Propose(ctx, draft)
 	if err != nil {
-		return nil, nil, err
+		return proposeAnswer{}, err
 	}
 	folder, err := s.ledger.Folder(ctx, k.ID, k.Version)
 	if err != nil {
-		return nil, nil, err
+		return proposeAnswer{}, err
 	}
-	return nil, map[string]any{
-		"id": k.ID, "version": k.Version, "status": k.Status, "overlaps": overlaps, "folder": newFolderAnswer(folder),
-		"veto": k.Veto, "scope": k.Run, "drafted": k.Drafted,
+	return proposeAnswer{
+		ID: k.ID, Version: k.Version, Status: k.Status, Overlaps: overlaps, Folder: newFolderAnswer(folder),
+		Veto: k.Veto, Scope: k.Run, Drafted: k.Drafted,
 	}, nil
+}
+
+type proposeAnswer struct {
+	ID       string              `json:"id"`
+	Version  int                 `json:"version"`
+	Status   knowledge.Status    `json:"status"`
+	Overlaps knowledge.Set       `json:"overlaps"`
+	Folder   folderAnswer        `json:"folder"`
+	Veto     *knowledge.Veto     `json:"veto"`
+	Scope    *knowledge.RunScope `json:"scope"`
+	Drafted  bool                `json:"drafted"`
 }
 
 type checkCallInput struct {
@@ -180,19 +210,27 @@ type checkCallInput struct {
 	Input    map[string]any `json:"input" jsonschema:"the arguments of the call. A shell command goes under command"`
 }
 
-// The veto of approved knowledge that matches the call, blocks winning over asks
-func (s *Server) checkCall(ctx context.Context, _ *sdk.CallToolRequest, in checkCallInput) (*sdk.CallToolResult, any, error) {
+type checkCallAnswer struct {
+	// allow or the action of the veto that matched
+	Action string `json:"action"`
+	Veto   string `json:"veto,omitempty"`
+	Reason string `json:"reason,omitempty"`
+}
+
+// The veto of approved knowledge that matches the call
+// A block wins over an ask
+func (s *Server) checkCall(ctx context.Context, _ *sdk.CallToolRequest, in checkCallInput) (*sdk.CallToolResult, checkCallAnswer, error) {
 	all, err := s.ledger.All(ctx)
 	if err != nil {
-		return nil, nil, err
+		return nil, checkCallAnswer{}, err
 	}
 	vetoes, err := all.Guard(in.Producer)
 	if err != nil {
-		return nil, nil, err
+		return nil, checkCallAnswer{}, err
 	}
 	matched := vetoes.Match(in.Tool, in.Input)
 	if matched == nil {
-		return nil, map[string]any{"action": "allow"}, nil
+		return nil, checkCallAnswer{Action: "allow"}, nil
 	}
-	return nil, map[string]any{"action": matched.Action(), "veto": matched.ID(), "reason": matched.Reason()}, nil
+	return nil, checkCallAnswer{Action: string(matched.Action()), Veto: matched.ID(), Reason: matched.Reason()}, nil
 }

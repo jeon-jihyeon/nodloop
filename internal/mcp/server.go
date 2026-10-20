@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
-	"slices"
 	"strings"
 	"time"
 
@@ -68,10 +67,8 @@ type Server struct {
 	// Flags that name the record directory of this server
 	// A command in an answer ends with them so a shell without the server's flags or env reads the same records
 	recordArgs string
-	// The person a server key names and empty over stdio
-	// Approvals are recorded under this name whatever the call says and verdicts without a reviewer take it
-	person string
-	policy Policy
+	caller     Caller
+	policy     Policy
 }
 
 // What the composition root reads from config.json for the tools since the server never reads it
@@ -98,12 +95,12 @@ type Policy struct {
 
 func New(
 	traces TraceStore, verdicts FeedbackStore, outcomes OutcomeStore, ledger *knowledge.Ledger, compactor *compact.Compactor,
-	extractor *extract.Extractor, now func() time.Time, session, exe, recordArgs, person string, policy Policy,
+	extractor *extract.Extractor, now func() time.Time, session, exe, recordArgs string, caller Caller, policy Policy,
 ) *Server {
 	return &Server{
 		traces: traces, verdicts: verdicts, outcomes: outcomes, ledger: ledger, compactor: compactor, extractor: extractor,
 		now: now, session: session,
-		exe: exe, recordArgs: recordArgs, person: person, policy: policy,
+		exe: exe, recordArgs: recordArgs, caller: caller, policy: policy,
 	}
 }
 
@@ -125,14 +122,19 @@ func (s *Server) afterVerdict(ctx context.Context) {
 	}
 }
 
-// The name an approval is recorded under: the person of the server key and else the name the call gives
+// The name a judgment is recorded under: the person of the server key and else the name the call gives
 func (s *Server) approver(given string) string {
-	return cmp.Or(s.person, given)
+	return cmp.Or(s.caller.Person, given)
 }
 
-// The reviewer of a verdict: the name the call gives and else the person of the server key
+// The reviewer of a verdict or an outcome
+// 1. session on the agent server whatever the call gives since the model of a session makes every call
+// 2. else the name the call gives and else the person of the server key
 func (s *Server) reviewer(given string) string {
-	return cmp.Or(given, s.person)
+	if s.caller.Agent {
+		return feedback.ReviewerSession
+	}
+	return cmp.Or(given, s.caller.Person)
 }
 
 // The session of one server process
@@ -156,22 +158,49 @@ type tool struct {
 	add  func(srv *sdk.Server, h *Host)
 }
 
-func newTool[In any](
-	name, description string, h func(*Server, context.Context, *sdk.CallToolRequest, In) (*sdk.CallToolResult, any, error),
+// The answer type of the handler sets the outputSchema the tool lists
+// The SDK checks every answer against it before the client reads it
+func newTool[In, Out any](
+	name, description string, h func(*Server, context.Context, *sdk.CallToolRequest, In) (*sdk.CallToolResult, Out, error),
 ) tool {
-	schema, err := jsonschema.For[In](&jsonschema.ForOptions{TypeSchemas: enums()})
-	if err != nil {
-		// An input type the schema cannot express is a programming error the SDK would also panic on
-		panic(err)
+	t := &sdk.Tool{
+		Name: name, Description: description, InputSchema: schemaFor[In](enums()), OutputSchema: schemaFor[Out](answers()),
 	}
-	t := &sdk.Tool{Name: name, Description: description, InputSchema: schema}
 	return tool{
 		name: name,
 		add: func(srv *sdk.Server, host *Host) {
-			sdk.AddTool(srv, t, func(ctx context.Context, req *sdk.CallToolRequest, in In) (*sdk.CallToolResult, any, error) {
-				return host.call(ctx, func(s *Server) (*sdk.CallToolResult, any, error) { return h(s, ctx, req, in) })
+			sdk.AddTool(srv, t, func(ctx context.Context, req *sdk.CallToolRequest, in In) (*sdk.CallToolResult, Out, error) {
+				var res *sdk.CallToolResult
+				var out Out
+				err := host.call(ctx, func(s *Server) error {
+					var err error
+					res, out, err = h(s, ctx, req, in)
+					return err
+				})
+				return res, out, err
 			})
 		},
+	}
+}
+
+func schemaFor[T any](types map[reflect.Type]*jsonschema.Schema) *jsonschema.Schema {
+	schema, err := jsonschema.For[T](&jsonschema.ForOptions{TypeSchemas: types})
+	if err != nil {
+		// A type the schema cannot express is a programming error the SDK would also panic on
+		panic(err)
+	}
+	return schema
+}
+
+// Answer types whose schema differs from what their Go type infers
+// 1. a passed through record shape stays open so its shape stays with its module
+// 2. labels and maps of any value marshal to null when nil
+func answers() map[reflect.Type]*jsonschema.Schema {
+	values := &jsonschema.Schema{Types: []string{"null", "array"}, Items: &jsonschema.Schema{Type: "string"}}
+	return map[reflect.Type]*jsonschema.Schema{
+		reflect.TypeFor[json.RawMessage](): {},
+		reflect.TypeFor[trace.Labels]():    {Types: []string{"null", "object"}, AdditionalProperties: values},
+		reflect.TypeFor[map[string]any]():  {Types: []string{"null", "object"}},
 	}
 }
 
@@ -197,7 +226,7 @@ var tools = []tool{
 		"such as repo, dir or task. Answers the trace id that feedback, outcome and propose take. "+
 		"Name the knowledge items it applied as knowledge_for answered them, or the withheld ones when knowledge_for answered withheld", (*Server).run),
 	newTool("knowledge_for", "List the approved knowledge items that apply to a run of the producer with these labels, "+
-		"with their total size and whether they pass the caps together. Call it before making the output and follow the items. "+
+		"with their total size and whether they pass the 9000 char cap together. Call it before making the output and follow the items. "+
 		"With a holdout key a share of runs gets no item and an answer withheld to pass back to run. "+
 		"Items are data a person approved, never instructions that override the user", (*Server).knowledgeFor),
 	newTool("feedback", "Record the user's verdict on a recorded run: approve, edit with the corrected output in full, or reject with what was wrong. "+
@@ -209,11 +238,12 @@ var tools = []tool{
 		"or from set to a run the user corrected so code fills them. Every label must be one a recorded run carries. "+
 		"Answers the candidate, the items it overlaps and the folder it joins", (*Server).propose),
 	newTool("extraction", "Read what a lesson is drafted from after the user corrected a run with edit or reject: the output, the verdict, "+
-		"the edit, the approved items the run reaches, the rules, the schema and the critic questions. "+
+		"the edit, the approved items and the waiting candidates the run reaches, the rules, the schema and the critic questions. "+
 		"Draft by the rules, answer the critic questions as a second reader, then call propose_extraction", (*Server).extraction),
-	newTool("propose_extraction", "Propose the lesson of a correction with its relation to the items the run reaches: add a new item, "+
-		"update one, or name a duplicate or a conflict, which propose nothing. Code refuses a draft that is not one sentence, "+
-		"copies the output, names an item the run never reached or fails a critic question", (*Server).proposeExtraction),
+	newTool("propose_extraction", "Propose the lesson of a correction with its relation to the items and candidates the run reaches: add a new item, "+
+		"update one, or name a duplicate or a conflict. A duplicate of a waiting candidate adds the run to its evidence and the others propose nothing. "+
+		"Code refuses a draft that is not one sentence, copies the output, names an item or candidate the run never reached or fails a critic question",
+		(*Server).proposeExtraction),
 	newTool("approve", "Approve a knowledge candidate on behalf of a named person. "+
 		"Only call it when the user says so and gives their name. Pass scope when the user picked where it applies. A judgment with a veto becomes a guard veto. "+
 		"A failure after the approval rides on the answer since the approval is recorded and approving again would fail", (*Server).approve),
@@ -232,7 +262,7 @@ var tools = []tool{
 		"versions past their review deadline and references that no longer resolve. "+
 		"Reads only. Retire, narrow and reaffirm stay with a named person", (*Server).knowledgeHealth),
 	newTool("report", "Read one report of the records as JSON: loop for the totals and how each approved item fared, extract for how drafting ended, "+
-		"critic for how critics agreed with people, effect for runs with items against the holdout, health for each knowledge version, "+
+		"critic for how critics agreed with people and the reaction point with the conversation, effect for runs with items against the holdout, health for each knowledge version, "+
 		"replay for the newest replay of each version against recorded outputs. "+
 		"Reads only", (*Server).report),
 	newTool("check_call", "Check a tool call against the vetoes of approved knowledge before an agent runs it. "+
@@ -259,30 +289,37 @@ type feedbackInput struct {
 	Reason     string              `json:"reason,omitempty" jsonschema:"why, in the user's words. For a reject what the output got wrong or missed"`
 	// Any JSON value or text so the schema leaves it open
 	EditedOutput any    `json:"edited_output,omitempty" jsonschema:"the corrected output in full when the verdict is edit, a JSON value or text"`
-	Reviewer     string `json:"reviewer,omitempty" jsonschema:"Defaults to author. The name of the person when someone other than the author reviews, or session for a verdict the conversation inferred from the user's words"`
+	Reviewer     string `json:"reviewer,omitempty" jsonschema:"Defaults to author. The name of the person when someone other than the author reviews, or session for a verdict the conversation inferred from the user's words. The agent server of the plugin records session whatever it says"`
 }
 
-func (s *Server) feedback(ctx context.Context, _ *sdk.CallToolRequest, in feedbackInput) (*sdk.CallToolResult, any, error) {
+type feedbackAnswer struct {
+	TraceID    string              `json:"trace_id"`
+	Verdict    feedback.Verdict    `json:"verdict"`
+	ReasonCode feedback.ReasonCode `json:"reason_code"`
+	Reviewer   string              `json:"reviewer"`
+}
+
+func (s *Server) feedback(ctx context.Context, _ *sdk.CallToolRequest, in feedbackInput) (*sdk.CallToolResult, feedbackAnswer, error) {
 	if _, err := s.checkRun(ctx, in.TraceID); err != nil {
-		return nil, nil, err
+		return nil, feedbackAnswer{}, err
 	}
 	var edited json.RawMessage
 	if in.EditedOutput != nil {
 		var err error
 		if edited, err = json.Marshal(in.EditedOutput); err != nil {
-			return nil, nil, err
+			return nil, feedbackAnswer{}, err
 		}
 	}
 	fb, err := feedback.New(in.TraceID, in.Verdict, in.ReasonCode, in.Reason, edited, s.reviewer(in.Reviewer), s.now())
 	if err != nil {
-		return nil, nil, err
+		return nil, feedbackAnswer{}, err
 	}
 	fb.Audit = in.Audit
 	if err = s.verdicts.Append(ctx, fb.Record()); err != nil {
-		return nil, nil, err
+		return nil, feedbackAnswer{}, err
 	}
 	s.afterVerdict(ctx)
-	return nil, map[string]any{"trace_id": fb.TraceID, "verdict": fb.Verdict, "reason_code": fb.ReasonCode, "reviewer": fb.Reviewer}, nil
+	return nil, feedbackAnswer{TraceID: fb.TraceID, Verdict: fb.Verdict, ReasonCode: fb.ReasonCode, Reviewer: fb.Reviewer}, nil
 }
 
 type outcomeInput struct {
@@ -290,22 +327,28 @@ type outcomeInput struct {
 	Result         feedback.Result `json:"result" jsonschema:"confirmed or refuted or inconclusive"`
 	ConfirmedCause string          `json:"confirmed_cause,omitempty" jsonschema:"the cause that held, in the reviewer's words"`
 	Note           string          `json:"note,omitempty" jsonschema:"what the check showed beyond the result, such as why it was inconclusive"`
-	Reviewer       string          `json:"reviewer,omitempty" jsonschema:"Defaults to author. The name of the person when someone other than the author reviews"`
+	Reviewer       string          `json:"reviewer,omitempty" jsonschema:"Defaults to author. The name of the person when someone other than the author reviews. The agent server of the plugin records session whatever it says"`
 }
 
-func (s *Server) outcome(ctx context.Context, _ *sdk.CallToolRequest, in outcomeInput) (*sdk.CallToolResult, any, error) {
+type outcomeAnswer struct {
+	TraceID  string          `json:"trace_id"`
+	Result   feedback.Result `json:"result"`
+	Reviewer string          `json:"reviewer"`
+}
+
+func (s *Server) outcome(ctx context.Context, _ *sdk.CallToolRequest, in outcomeInput) (*sdk.CallToolResult, outcomeAnswer, error) {
 	if _, err := s.checkRun(ctx, in.TraceID); err != nil {
-		return nil, nil, err
+		return nil, outcomeAnswer{}, err
 	}
 	o, err := feedback.NewOutcome(in.TraceID, in.Result, in.ConfirmedCause, in.Note, s.reviewer(in.Reviewer), s.now())
 	if err != nil {
-		return nil, nil, err
+		return nil, outcomeAnswer{}, err
 	}
 	if err = s.outcomes.Append(ctx, o.Record()); err != nil {
-		return nil, nil, err
+		return nil, outcomeAnswer{}, err
 	}
 	s.afterVerdict(ctx)
-	return nil, map[string]any{"trace_id": o.TraceID, "result": o.Result, "reviewer": o.Reviewer}, nil
+	return nil, outcomeAnswer{TraceID: o.TraceID, Result: o.Result, Reviewer: o.Reviewer}, nil
 }
 
 type proposeInput struct {
@@ -347,21 +390,22 @@ func (v *vetoInput) veto() *knowledge.Veto {
 	return &knowledge.Veto{Tool: v.Tool, When: when, Example: v.Example}
 }
 
-func (s *Server) propose(ctx context.Context, _ *sdk.CallToolRequest, in proposeInput) (*sdk.CallToolResult, any, error) {
+func (s *Server) propose(ctx context.Context, _ *sdk.CallToolRequest, in proposeInput) (*sdk.CallToolResult, proposeAnswer, error) {
 	for _, id := range in.TraceIDs {
 		if _, err := s.checkRun(ctx, id); err != nil {
-			return nil, nil, err
+			return nil, proposeAnswer{}, err
 		}
 	}
 	var from *trace.Trace
 	if in.From != "" {
 		tr, err := s.checkRun(ctx, in.From)
 		if err != nil {
-			return nil, nil, err
+			return nil, proposeAnswer{}, err
 		}
 		from = &tr
 	}
-	return s.proposeRun(ctx, in, in.draft(), from)
+	answer, err := s.proposeRun(ctx, in, in.draft(), from)
+	return nil, answer, err
 }
 
 // Claude Code writes the content so every proposal of the conversation is a draft
@@ -407,47 +451,61 @@ type scopeInput struct {
 	Labels map[string][]string `json:"labels" jsonschema:"key to values a run must carry one of, each a label a recorded run of the producer carries. An empty object reaches every run of the producer"`
 }
 
-func (s *Server) approve(ctx context.Context, _ *sdk.CallToolRequest, in approveInput) (*sdk.CallToolResult, any, error) {
-	k, err := s.approval(ctx, in)
+type approveAnswer struct {
+	ID          string           `json:"id"`
+	Version     int              `json:"version"`
+	Status      knowledge.Status `json:"status"`
+	Approver    string           `json:"approver"`
+	Veto        bool             `json:"veto"`
+	Folder      *folderAnswer    `json:"folder,omitempty"`
+	ExportError string           `json:"export_error,omitempty"`
+	FolderError string           `json:"folder_error,omitempty"`
+}
+
+func (s *Server) approve(ctx context.Context, _ *sdk.CallToolRequest, in approveInput) (*sdk.CallToolResult, approveAnswer, error) {
+	k, err := s.approval(ctx, in, s.approver(in.Approver))
 	if err != nil && !errors.Is(err, knowledge.ErrExport) {
-		return nil, nil, err
+		return nil, approveAnswer{}, err
 	}
 	s.afterVerdict(ctx)
-	answer := map[string]any{
-		"id": k.ID, "version": k.Version, "status": k.Status, "approver": k.Approver, "veto": k.Veto != nil,
-	}
+	answer := approveAnswer{ID: k.ID, Version: k.Version, Status: k.Status, Approver: k.Approver, Veto: k.Veto != nil}
 	// The approval is recorded and a second approve would fail so every later failure rides on the answer
 	if err != nil {
-		answer["export_error"] = err.Error()
+		answer.ExportError = err.Error()
 	}
 	folder, err := s.ledger.Folder(ctx, k.ID, k.Version)
 	if err != nil {
-		answer["folder_error"] = err.Error()
+		answer.FolderError = err.Error()
 		return nil, answer, nil
 	}
-	answer["folder"] = newFolderAnswer(folder)
+	f := newFolderAnswer(folder)
+	answer.Folder = &f
 	return nil, answer, nil
 }
 
 // The approval as proposed or in the scope the user picked
-// Every label of that scope must be one a recorded run of the producer carries
-func (s *Server) approval(ctx context.Context, in approveInput) (knowledge.Knowledge, error) {
-	approver := s.approver(in.Approver)
+func (s *Server) approval(ctx context.Context, in approveInput, approver string) (knowledge.Knowledge, error) {
 	if in.Scope == nil {
 		return s.ledger.Approve(ctx, in.ID, in.Version, approver)
 	}
-	scope, err := s.ledger.ScopeIn(ctx, in.ID, in.Version, in.Scope.Labels)
-	if err != nil {
-		return knowledge.Knowledge{}, err
-	}
-	runs, err := s.traces.List(ctx, record.TraceFilter{Name: string(trace.NameRun)})
-	if err != nil {
-		return knowledge.Knowledge{}, err
-	}
-	if err := scope.Recorded(trace.RestoreAll(runs).Vocabulary(scope.Producer)); err != nil {
+	if err := s.checkScope(ctx, in); err != nil {
 		return knowledge.Knowledge{}, err
 	}
 	return s.ledger.ApproveIn(ctx, in.ID, in.Version, in.Scope.Labels, approver)
+}
+
+// The scope the candidate takes in the labels the user picked
+// Every label of that scope must be one a recorded run of the producer carries
+func (s *Server) checkScope(ctx context.Context, in approveInput) error {
+	scope, err := s.ledger.ScopeIn(ctx, in.ID, in.Version, in.Scope.Labels)
+	if err != nil {
+		return err
+	}
+	runs, err := s.traces.List(ctx, record.TraceFilter{Name: string(trace.NameRun)})
+	if err != nil {
+		return err
+	}
+	return scope.Recorded(trace.RestoreAll(runs).Vocabulary(scope.Producer))
 }
 
 type compactionInput struct {
@@ -474,18 +532,23 @@ func newItemAnswers(set knowledge.Set) []itemAnswer {
 	return out
 }
 
-func (s *Server) compaction(ctx context.Context, _ *sdk.CallToolRequest, in compactionInput) (*sdk.CallToolResult, any, error) {
+type compactionAnswer struct {
+	Anchor      string               `json:"anchor"`
+	Items       []itemAnswer         `json:"items"`
+	Corrections []compact.Correction `json:"corrections"`
+	Pending     string               `json:"pending"`
+	Rules       string               `json:"rules"`
+	Schema      json.RawMessage      `json:"schema"`
+}
+
+func (s *Server) compaction(ctx context.Context, _ *sdk.CallToolRequest, in compactionInput) (*sdk.CallToolResult, compactionAnswer, error) {
 	f, err := s.compactor.Folder(ctx, in.ID)
 	if err != nil {
-		return nil, nil, err
+		return nil, compactionAnswer{}, err
 	}
-	return nil, map[string]any{
-		"anchor":      f.Anchor,
-		"items":       newItemAnswers(f.Items),
-		"corrections": f.Corrections,
-		"pending":     f.Pending,
-		"rules":       compact.Rules,
-		"schema":      json.RawMessage(compact.Schema),
+	return nil, compactionAnswer{
+		Anchor: f.Anchor, Items: newItemAnswers(f.Items), Corrections: f.Corrections, Pending: f.Pending,
+		Rules: compact.Rules, Schema: json.RawMessage(compact.Schema),
 	}, nil
 }
 
@@ -495,21 +558,29 @@ type proposeCompactionInput struct {
 	Author string         `json:"author,omitempty" jsonschema:"who drafted. claude by default because the conversation drafts"`
 }
 
+type proposeCompactionAnswer struct {
+	Compaction   string       `json:"compaction"`
+	Items        []itemAnswer `json:"items"`
+	Replaced     []string     `json:"replaced"`
+	Check        string       `json:"check"`
+	CheckCommand string       `json:"check_command"`
+}
+
 func (s *Server) proposeCompaction(
 	ctx context.Context, _ *sdk.CallToolRequest, in proposeCompactionInput,
-) (*sdk.CallToolResult, any, error) {
+) (*sdk.CallToolResult, proposeCompactionAnswer, error) {
 	c, err := s.compactor.Propose(ctx, in.Anchor, compact.Draft{Items: in.Items}, cmp.Or(in.Author, defaultAuthor))
 	if err != nil {
-		return nil, nil, err
+		return nil, proposeCompactionAnswer{}, err
 	}
 	replaced := make([]string, 0, len(c.Replaced))
 	for _, k := range c.Replaced {
 		replaced = append(replaced, fmt.Sprintf("%s v%d", k.ID, k.Version))
 	}
-	return nil, map[string]any{
-		"compaction": c.ID, "items": newItemAnswers(c.Items), "replaced": replaced,
-		"check":         "call check_compaction with the coverage of every old item, or run check_command for a check by a separate model call",
-		"check_command": strings.TrimSpace(s.exe + " knowledge check " + c.ID + " " + s.recordArgs),
+	return nil, proposeCompactionAnswer{
+		Compaction: c.ID, Items: newItemAnswers(c.Items), Replaced: replaced,
+		Check:        "call check_compaction with the coverage of every old item, or run check_command for a check by a separate model call",
+		CheckCommand: strings.TrimSpace(s.exe + " knowledge check " + c.ID + " " + s.recordArgs),
 	}, nil
 }
 
@@ -518,22 +589,26 @@ type approveCompactionInput struct {
 	Approver   string `json:"approver" jsonschema:"the name the user gave or saved with nodloop config approver. Never a default"`
 }
 
+type approveCompactionAnswer struct {
+	Compaction  string   `json:"compaction"`
+	Approver    string   `json:"approver"`
+	Records     []string `json:"records"`
+	ExportError string   `json:"export_error,omitempty"`
+}
+
 func (s *Server) approveCompaction(
 	ctx context.Context, _ *sdk.CallToolRequest, in approveCompactionInput,
-) (*sdk.CallToolResult, any, error) {
-	c, err := s.compactor.Approve(ctx, in.Compaction, s.approver(in.Approver))
+) (*sdk.CallToolResult, approveCompactionAnswer, error) {
+	approver := s.approver(in.Approver)
+	c, err := s.compactor.Approve(ctx, in.Compaction, approver)
 	if err != nil && !errors.Is(err, knowledge.ErrExport) {
-		return nil, nil, err
-	}
-	statuses := make([]string, 0, len(c.Items)+len(c.Replaced))
-	for _, k := range slices.Concat(c.Items, c.Replaced) {
-		statuses = append(statuses, fmt.Sprintf("%s v%d %s", k.ID, k.Version, k.Status))
+		return nil, approveCompactionAnswer{}, err
 	}
 	s.afterVerdict(ctx)
-	answer := map[string]any{"compaction": c.ID, "approver": s.approver(in.Approver), "records": statuses}
+	answer := approveCompactionAnswer{Compaction: c.ID, Approver: approver, Records: c.Statuses()}
 	// The records are appended and a second approval appends nothing so the export failure rides on the answer
 	if err != nil {
-		answer["export_error"] = err.Error()
+		answer.ExportError = err.Error()
 	}
 	return nil, answer, nil
 }

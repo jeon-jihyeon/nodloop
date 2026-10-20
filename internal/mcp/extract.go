@@ -8,32 +8,43 @@ import (
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/jeon-jihyeon/nodloop/internal/extract"
+	"github.com/jeon-jihyeon/nodloop/internal/feedback"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
+	"github.com/jeon-jihyeon/nodloop/internal/trace"
 )
 
 type extractionInput struct {
 	From string `json:"from" jsonschema:"the trace id of a run the user corrected with edit or reject"`
 }
 
+type extractionAnswer struct {
+	Run        string              `json:"run"`
+	Producer   string              `json:"producer"`
+	Labels     trace.Labels        `json:"labels"`
+	Output     json.RawMessage     `json:"output"`
+	Verdict    feedback.Verdict    `json:"verdict"`
+	ReasonCode feedback.ReasonCode `json:"reason_code"`
+	Reason     string              `json:"reason"`
+	Edited     json.RawMessage     `json:"edited,omitempty"`
+	Items      []itemAnswer        `json:"items"`
+	Candidates []itemAnswer        `json:"candidates"`
+	Rules      string              `json:"rules"`
+	Schema     json.RawMessage     `json:"schema"`
+	Critic     string              `json:"critic"`
+}
+
 // What the conversation drafts a lesson from
-func (s *Server) extraction(ctx context.Context, _ *sdk.CallToolRequest, in extractionInput) (*sdk.CallToolResult, any, error) {
+func (s *Server) extraction(ctx context.Context, _ *sdk.CallToolRequest, in extractionInput) (*sdk.CallToolResult, extractionAnswer, error) {
 	r, err := s.extractor.Reaction(ctx, in.From)
 	if err != nil {
-		return nil, nil, err
+		return nil, extractionAnswer{}, err
 	}
-	answer := map[string]any{
-		"run": r.Run.ID, "producer": r.Run.Producer, "labels": r.Run.Labels, "output": r.Run.Output,
-		"verdict": r.Verdict.Verdict, "reason_code": r.Verdict.ReasonCode, "reason": r.Verdict.Reason,
-		"items":      newItemAnswers(r.Reached),
-		"candidates": newItemAnswers(r.Waiting),
-		"rules":      extract.Rules,
-		"schema":     json.RawMessage(extract.Schema),
-		"critic":     extract.CriticRules,
-	}
-	if len(r.Verdict.Edited) > 0 {
-		answer["edited"] = r.Verdict.Edited
-	}
-	return nil, answer, nil
+	return nil, extractionAnswer{
+		Run: r.Run.ID, Producer: r.Run.Producer, Labels: r.Run.Labels, Output: r.Run.Output,
+		Verdict: r.Verdict.Verdict, ReasonCode: r.Verdict.ReasonCode, Reason: r.Verdict.Reason, Edited: r.Verdict.Edited,
+		Items: newItemAnswers(r.Reached), Candidates: newItemAnswers(r.Waiting),
+		Rules: extract.Rules, Schema: json.RawMessage(extract.Schema), Critic: extract.CriticRules,
+	}, nil
 }
 
 type proposeExtractionInput struct {
@@ -50,30 +61,50 @@ type proposeExtractionInput struct {
 // Checks the draft and the critique and proposes an add or an update or corroborates the candidate a duplicate names
 func (s *Server) proposeExtraction(
 	ctx context.Context, _ *sdk.CallToolRequest, in proposeExtractionInput,
-) (*sdk.CallToolResult, any, error) {
+) (*sdk.CallToolResult, proposeExtractionAnswer, error) {
 	r, err := s.extractor.Reaction(ctx, in.From)
 	if err != nil {
-		return nil, nil, err
+		return nil, proposeExtractionAnswer{}, err
 	}
 	res, err := s.extractor.Propose(ctx, r, extract.Draft{
 		Relation: in.Relation, RelatesTo: in.RelatesTo, Kind: in.Kind, Content: in.Content, Keys: in.Keys,
 	}, in.Critique, cmp.Or(in.Author, defaultAuthor))
 	if err != nil {
-		return nil, nil, err
+		return nil, proposeExtractionAnswer{}, err
 	}
-	answer := map[string]any{"relation": res.Relation, "content": res.Content, "next": next[res.Relation]}
+	answer := proposeExtractionAnswer{Relation: res.Relation, Content: res.Content, Next: next[res.Relation]}
 	if res.Related != nil {
-		answer["related"] = newItemAnswers(knowledge.Set{*res.Related})[0]
+		answer.Related = &newItemAnswers(knowledge.Set{*res.Related})[0]
 	}
 	if res.Candidate != nil {
 		k := res.Candidate
-		answer["candidate"] = map[string]any{"id": k.ID, "version": k.Version, "status": k.Status, "kind": k.Kind, "scope": k.Run}
-		answer["overlaps"] = newItemAnswers(res.Overlaps)
+		answer.Candidate = &candidateAnswer{ID: k.ID, Version: k.Version, Status: k.Status, Kind: k.Kind, Scope: k.Run}
+		answer.Overlaps = newItemAnswers(res.Overlaps)
 	}
 	if res.Corroborated() {
-		answer["corroborated"], answer["next"] = true, nextCorroborated
+		answer.Corroborated, answer.Next = true, nextCorroborated
 	}
 	return nil, answer, nil
+}
+
+type proposeExtractionAnswer struct {
+	Relation extract.Relation `json:"relation"`
+	Content  string           `json:"content"`
+	Next     string           `json:"next"`
+	Related  *itemAnswer      `json:"related,omitempty"`
+	// The candidate an add or an update proposed or the one a duplicate corroborated
+	Candidate *candidateAnswer `json:"candidate,omitempty"`
+	// Present with a candidate only
+	Overlaps     []itemAnswer `json:"overlaps,omitzero"`
+	Corroborated bool         `json:"corroborated,omitempty"`
+}
+
+type candidateAnswer struct {
+	ID      string              `json:"id"`
+	Version int                 `json:"version"`
+	Status  knowledge.Status    `json:"status"`
+	Kind    knowledge.Kind      `json:"kind"`
+	Scope   *knowledge.RunScope `json:"scope"`
 }
 
 // What happens after a duplicate of a waiting candidate

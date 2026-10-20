@@ -373,7 +373,7 @@ func TestManifests(t *testing.T) {
 			".codex-plugin",
 			want{
 				skills: "./skills/", hooks: "./hooks/codex.json",
-				servers: `{"nodloop":{"command":"./bin/nodloop","args":["mcp"],"cwd":"."}}`,
+				servers: `{"nodloop":{"command":"./bin/nodloop","args":["mcp","--agent"],"cwd":"."}}`,
 				files:   []string{"./skills/", "./hooks/codex.json", "bin/nodloop"},
 			},
 		},
@@ -394,6 +394,16 @@ func TestManifests(t *testing.T) {
 			assert.Empty(t, missingFiles(tc.want.files))
 		})
 	}
+}
+
+// Claude Code starts the agent server of the plugin, which lists no tool that decides for a person
+func TestMCPConfig(t *testing.T) {
+	b, err := os.ReadFile(".mcp.json")
+	require.NoError(t, err)
+
+	got := compactJSON(t, b)
+
+	assert.Equal(t, `{"mcpServers":{"nodloop":{"command":"${CLAUDE_PLUGIN_ROOT}/bin/nodloop","args":["mcp","--agent"]}}}`, got)
 }
 
 // The JSON in compact form and empty for none

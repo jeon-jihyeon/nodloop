@@ -3,6 +3,7 @@ package mcp_test
 import (
 	"os"
 	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -11,12 +12,15 @@ import (
 	"github.com/jeon-jihyeon/nodloop/internal/mcp"
 )
 
-// Each skill calls only served tools and at least the ones it is for
+// Each skill calls only tools the agent server of the plugin serves and at least the ones it is for
 // A backticked lower case word after the word call is read as a tool name
 func TestSkillTools(t *testing.T) {
 	called := regexp.MustCompile("[Cc]all `([a-z_]+)`")
 	// Tools of the data review that the server no longer serves
-	removed := regexp.MustCompile("`(setup|infer_policy|events|observe|context|select|record|detail|pending)`")
+	// The tools that decide for a person since the agent server never lists them
+	// The commands, the mode and the handover of the draft questions the session no longer pushes
+	removed := regexp.MustCompile("`(setup|infer_policy|events|observe|context|select|record|detail|pending|approve|reaffirm|approve_compaction)`|--approver|" +
+		"knowledge ask|knowledge defer|hook wake|`immediate`|nodloop review question")
 	type want struct {
 		// Tools the skill must call
 		tools []string
@@ -34,18 +38,23 @@ func TestSkillTools(t *testing.T) {
 			"the sessions skill records verdicts and proposes knowledge and runs the list and the export through the CLI",
 			"../../plugin/skills/sessions/SKILL.md",
 			want{
-				tools:    []string{"feedback", "propose", "approve"},
-				commands: []string{"nodloop feedback list --trace", "nodloop knowledge export", "nodloop trace list --name run --session"},
+				tools:    []string{"feedback", "propose"},
+				commands: []string{"nodloop feedback list --trace", "nodloop knowledge export", "nodloop trace list --name run --session", "nodloop knowledge approve"},
+				phrases:  []string{"never run it, since from here it records only a proposal"},
 			},
 		},
 		{
-			"the nod skill records verdicts on runs, proposes knowledge from them and reviews the waiting drafts",
+			"the nod skill records verdicts on runs, proposes knowledge from them and lists the waiting drafts",
 			"../../plugin/skills/nod/SKILL.md",
 			want{
-				tools: []string{"feedback", "propose", "extraction", "propose_extraction", "approve", "run", "compaction", "propose_compaction", "check_compaction", "approve_compaction"},
+				tools: []string{"feedback", "propose", "extraction", "propose_extraction", "run", "compaction", "propose_compaction", "check_compaction"},
 				commands: []string{"nodloop trace list --name run", "nodloop trace show", "nodloop knowledge for --producer session",
-					"nodloop knowledge waiting --producer session", "nodloop feedback list --trace", "nodloop knowledge retire", "nodloop knowledge replay"},
-				phrases: []string{"not a correction", "verdict `withdraw`", "the first line of the answer they corrected", "no hook asks about them"},
+					"nodloop knowledge waiting --producer session", "nodloop feedback list --trace", "nodloop knowledge retire", "nodloop knowledge replay",
+					"nodloop knowledge approve", "nodloop knowledge approve-compaction"},
+				phrases: []string{
+					"not a correction", "verdict `withdraw`", "the first line of the answer they corrected", "no hook asks about them",
+					"show the one line for that terminal and never run it yourself",
+				},
 			},
 		},
 	}
@@ -55,24 +64,34 @@ func TestSkillTools(t *testing.T) {
 			b, err := os.ReadFile(tc.args)
 			require.NoError(t, err)
 			text := string(b)
-			named := map[string]bool{}
-			for _, m := range called.FindAllStringSubmatch(text, -1) {
-				named[m[1]] = true
-			}
 
-			for name := range named {
-				assert.Contains(t, mcp.Tools(), name)
-			}
-			for _, name := range tc.want.tools {
-				assert.True(t, named[name], name)
-			}
-			for _, command := range tc.want.commands {
-				assert.Contains(t, text, "`~/.nodloop/bin/"+command)
-			}
-			for _, phrase := range tc.want.phrases {
-				assert.Contains(t, text, phrase)
-			}
+			named := calledTools(called, text)
+
+			assert.Subset(t, mcp.AgentTools(), named, "every called tool is served by the agent server")
+			assert.Subset(t, named, tc.want.tools)
+			assert.Empty(t, absent(text, "`~/.nodloop/bin/", tc.want.commands))
+			assert.Empty(t, absent(text, "", tc.want.phrases))
 			assert.Empty(t, removed.FindAllString(text, -1))
 		})
 	}
+}
+
+// The tool names the pattern captures in the text
+func calledTools(called *regexp.Regexp, text string) []string {
+	var out []string
+	for _, m := range called.FindAllStringSubmatch(text, -1) {
+		out = append(out, m[1])
+	}
+	return out
+}
+
+// The wanted strings the text does not hold after the prefix
+func absent(text, prefix string, wants []string) []string {
+	var out []string
+	for _, w := range wants {
+		if !strings.Contains(text, prefix+w) {
+			out = append(out, w)
+		}
+	}
+	return out
 }

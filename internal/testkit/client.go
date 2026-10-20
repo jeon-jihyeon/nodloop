@@ -19,11 +19,19 @@ type Client struct {
 
 func Connect(t *testing.T, serve func(context.Context, sdk.Transport) error) Client {
 	t.Helper()
+	return ConnectWith(t, serve, nil, "")
+}
+
+// A client with the options of a real one such as the elicitation handler that shows forms
+// An empty protocol version is the latest the SDK speaks
+func ConnectWith(t *testing.T, serve func(context.Context, sdk.Transport) error, opts *sdk.ClientOptions, protocol string) Client {
+	t.Helper()
 	serverTransport, clientTransport := sdk.NewInMemoryTransports()
 	ctx := t.Context()
 	// The server only stops when the test ends and cancels ctx so its error carries nothing to check
 	go func() { _ = serve(ctx, serverTransport) }()
-	session, err := sdk.NewClient(&sdk.Implementation{Name: "testkit", Version: "0"}, nil).Connect(ctx, clientTransport, nil)
+	client := sdk.NewClient(&sdk.Implementation{Name: "testkit", Version: "0"}, opts)
+	session, err := client.Connect(ctx, clientTransport, &sdk.ClientSessionOptions{ProtocolVersion: protocol})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = session.Close() })
 	return Client{session: session}
@@ -90,11 +98,26 @@ func (c Client) call(t *testing.T, name string, args any) (*sdk.CallToolResult, 
 
 func (c Client) Tools(t *testing.T) []string {
 	t.Helper()
-	res, err := c.session.ListTools(t.Context(), nil)
-	require.NoError(t, err)
-	names := make([]string, 0, len(res.Tools))
-	for _, tool := range res.Tools {
+	names := make([]string, 0)
+	for _, tool := range c.listed(t) {
 		names = append(names, tool.Name)
 	}
 	return names
+}
+
+// The outputSchema each listed tool carries by tool name and nil for a tool without one
+func (c Client) OutputSchemas(t *testing.T) map[string]any {
+	t.Helper()
+	schemas := map[string]any{}
+	for _, tool := range c.listed(t) {
+		schemas[tool.Name] = tool.OutputSchema
+	}
+	return schemas
+}
+
+func (c Client) listed(t *testing.T) []*sdk.Tool {
+	t.Helper()
+	res, err := c.session.ListTools(t.Context(), nil)
+	require.NoError(t, err)
+	return res.Tools
 }

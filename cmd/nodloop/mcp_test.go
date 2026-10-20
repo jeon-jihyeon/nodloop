@@ -46,6 +46,7 @@ func TestShellWord(t *testing.T) {
 
 func TestRunMCP(t *testing.T) {
 	tools := strings.Join(mcp.Tools(), "\n") + "\n"
+	agentTools := strings.Join(mcp.RoleReviewer.Tools(), "\n") + "\n"
 	at := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
 	type args struct {
 		args []string
@@ -64,6 +65,9 @@ func TestRunMCP(t *testing.T) {
 		want want
 	}{
 		{"list prints the tool names without opening any record", args{[]string{"--list"}, map[string]string{"HOME": "{home}"}}, want{0, `^$`, tools}},
+		{"the agent server lists the reviewer role and no tool that decides", args{[]string{"--agent", "--list"}, map[string]string{"HOME": "{home}"}},
+			want{0, `^$`, agentTools}},
+		{"the agent server serves until stdin closes", args{[]string{"--agent"}, map[string]string{envRecordDir: "{records}"}}, want{0, `^$`, ""}},
 		{"serves until stdin closes", args{nil, map[string]string{envRecordDir: "{records}"}}, want{0, `^$`, ""}},
 		{"nothing configured still serves", args{nil, map[string]string{"HOME": "{home}"}}, want{0, `^$`, ""}},
 		{
