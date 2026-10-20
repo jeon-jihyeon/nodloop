@@ -576,7 +576,7 @@ func (c knowledgeCommand) judgment(target trace.Intervention, approver string) (
 
 // Records the intervention of a judgment with the records it wrote
 func (c knowledgeCommand) intervened(ctx context.Context, judgment trace.Intervention, wrote knowledge.Set) error {
-	tr, err := judgment.Trace(wrote.Written(), "", c.app.now())
+	tr, err := judgment.Trace("", "", trace.SourceCommand, trace.InterventionOutput{Records: wrote.Written()}, c.app.now())
 	if err != nil {
 		return err
 	}

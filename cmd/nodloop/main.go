@@ -244,7 +244,13 @@ commands:
                             so a record sent again is never counted twice. --endpoint is a traces URL and sends traces only.
                             Without it the target of otel set is used, then OTEL_EXPORTER_OTLP_* of the environment.
                             --pending sends only what came after export.json of the record directory and moves it
-  doctor [--repair]         Read every record file and the guard log, and name the lines that fail to decode.
+  export package --out <folder> [--kind <k>]... [--since <datapackage.json>] [--with-content]
+                            Write the raw records as a Frictionless Data Package that DuckDB, pandas, Arrow and BI tools
+                            read: datapackage.json and one CSV per kind and schema version with its Table Schema, the
+                            guard log of this machine included. The folder must be missing or empty. --since takes the
+                            descriptor of an earlier export and writes only what came after the cursor of each kind.
+                            --with-content also writes outputs, reasons, notes, lesson content and paths
+  doctor [--repair]        Read every record file and the guard log, and name the lines that fail to decode.
                             A read skips such a line, and --repair moves them to <file>.corrupt. Run it while nothing writes
   version                   Print the build version
   help [<command>]          Print this text or the part of one command. -h or --help as the first flag does the same

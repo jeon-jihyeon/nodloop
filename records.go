@@ -489,7 +489,7 @@ func (c *Client) proposal(ctx context.Context, target trace.Intervention, approv
 		return Intervention{}, err
 	}
 	target.Action, target.Proof = trace.ActionJudge, trace.ProofNone
-	tr, err := target.Trace(nil, "", c.now())
+	tr, err := target.Trace("", "", trace.SourceManual, trace.InterventionOutput{}, c.now())
 	if err != nil {
 		return Intervention{}, err
 	}
