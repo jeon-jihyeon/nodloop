@@ -44,6 +44,10 @@ var (
 	ErrHoldoutInvalid       = errors.New("knowledge: invalid holdout share")
 	ErrItemHoldInvalid      = errors.New("knowledge: invalid item hold share")
 	ErrReasonUnknown        = errors.New("knowledge: unknown retire reason")
+	// What nodloop may not write since only a person decides it
+	ErrPersonDecides = errors.New("knowledge: only a person decides this")
+	// A write of nodloop names the decide trace behind it
+	ErrDecisionRequired = errors.New("knowledge: a write of nodloop names the decision behind it")
 	// A run either received its items or a holdout kept them from it so the arms of report effect never share a run
 	ErrWithheldApplied = errors.New("knowledge: a run carries applied or withheld items and never both")
 )

@@ -39,6 +39,9 @@ func decisions() curate.Shots {
 	return append(out, curate.Shot{Ref: ref("k-late"), At: start, Content: "lesson k-late", Kept: true})
 }
 
+// The default settings on sonnet
+var sonnetJudge = curate.JudgeSettings{Model: "sonnet", Effort: curate.JudgeEffort, Kept: 4, Refused: 2}
+
 // The sets the decisions draw at start
 var drawnAtStart = [][]knowledge.Ref{
 	{ref("k-a2"), ref("k-a4"), ref("k-a6"), ref("k-r0"), ref("k-a1"), ref("k-r1")},
@@ -60,6 +63,7 @@ func seal(text string) string {
 var change = curate.Case{
 	Change:  "add: run the linter before the tests",
 	Anchor:  []string{"plan: lint before tests", "lessons: name the failing test first", "rules: never push to main"},
+	Words:   []string{"lint before you run the tests"},
 	Carried: []string{"added: keep commits small"},
 }
 
@@ -118,7 +122,7 @@ func TestJudgeJudge(t *testing.T) {
 			for _, r := range tc.args {
 				client.EXPECT().Complete(gomock.Any(), gomock.Any()).Return(llm.Response{Output: r.output, Model: "claude-sonnet-5-5"}, r.err)
 			}
-			members, err := curate.JudgeConfig{}.Next("sonnet", curate.JudgeEffort, decisions(), start).Members(client, decisions())
+			members, err := curate.JudgeConfig{}.Next(sonnetJudge, decisions(), start).Members(client, decisions())
 			require.NoError(t, err)
 			judge := curate.NewJudge(classify.NewPanel(classify.PointJudge, members, stores.Traces, seal, stores.Clock.Now))
 			state, err := json.Marshal(change)
@@ -135,6 +139,7 @@ func TestJudgeJudge(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, "run-1", recorded.Ref)
 			assert.JSONEq(t, `{"state":"`+seal(string(state))+`","questions":["against","decided"]}`, string(recorded.Input))
+			assert.NotContains(t, string(recorded.Input)+string(recorded.Output), "lint before you run", "the person's words stay out of the trace")
 			var out struct {
 				Members []member `json:"members"`
 			}
@@ -149,7 +154,7 @@ func TestJudgeJudgeAppendFails(t *testing.T) {
 	stores := testkit.Open(t)
 	client := llmmock.NewMockClient(gomock.NewController(t))
 	client.EXPECT().Complete(gomock.Any(), gomock.Any()).Return(llm.Response{Output: answer(0.9, 0.05)}, nil).Times(3)
-	members, err := curate.JudgeConfig{}.Next("sonnet", curate.JudgeEffort, nil, start).Members(client, nil)
+	members, err := curate.JudgeConfig{}.Next(sonnetJudge, nil, start).Members(client, nil)
 	require.NoError(t, err)
 	traces := &testkit.FlakyTraces{Store: stores.Traces, Appends: testkit.Reads{Err: assert.AnError}}
 	judge := curate.NewJudge(classify.NewPanel(classify.PointJudge, members, traces, seal, stores.Clock.Now))
@@ -166,7 +171,8 @@ func TestJudgeConfigMembers(t *testing.T) {
 		Model: "claude-sonnet-5-5", Effort: "high", Prompt: curate.PromptVersion, Start: start,
 		Sets: [][]knowledge.Ref{{ref("k-a0"), ref("k-r0")}, {ref("k-a1")}, nil},
 	}
-	tail := "## Changes carried out since the anchor version\n- added: keep commits small\n\n## Change\nadd: run the linter before the tests\n"
+	tail := "## The person's own words on the runs the change cites\n- lint before you run the tests\n\n" +
+		"## Changes carried out since the anchor version\n- added: keep commits small\n\n## Change\nadd: run the linter before the tests\n"
 	type want struct {
 		names   []string
 		prompts []string
@@ -227,13 +233,21 @@ func TestJudgeConfigNext(t *testing.T) {
 	earlier := start.Add(-14 * 24 * time.Hour)
 	kept := curate.JudgeConfig{
 		Model: "sonnet", Effort: "high", Prompt: curate.PromptVersion, Start: earlier, Sets: [][]knowledge.Ref{{ref("k-a0")}, {ref("k-a1")}, nil},
+		Kept: 4, Refused: 2,
 	}
 	older := kept
 	older.Prompt = "0"
+	with := func(change func(*curate.JudgeSettings)) curate.JudgeSettings {
+		s := sonnetJudge
+		change(&s)
+		return s
+	}
+	started := func(model, effort string, sets [][]knowledge.Ref, kept, refused int) curate.JudgeConfig {
+		return curate.JudgeConfig{Model: model, Effort: effort, Prompt: curate.PromptVersion, Start: start, Sets: sets, Kept: kept, Refused: refused}
+	}
 	type args struct {
-		config curate.JudgeConfig
-		model  string
-		effort string
+		config   curate.JudgeConfig
+		settings curate.JudgeSettings
 	}
 	tcs := []struct {
 		name string
@@ -241,24 +255,30 @@ func TestJudgeConfigNext(t *testing.T) {
 		want curate.JudgeConfig
 	}{
 		{"a first judge starts now with sets drawn from the decisions before now",
-			args{curate.JudgeConfig{}, "sonnet", "high"},
-			curate.JudgeConfig{Model: "sonnet", Effort: "high", Prompt: curate.PromptVersion, Start: start, Sets: drawnAtStart}},
-		{"the same model and effort keep the configuration and its sets however many decisions came since",
-			args{kept, "sonnet", "high"}, kept},
+			args{curate.JudgeConfig{}, sonnetJudge}, started("sonnet", "high", drawnAtStart, 4, 2)},
+		{"the same settings keep the configuration and its sets however many decisions came since", args{kept, sonnetJudge}, kept},
 		{"another model is a new judge",
-			args{kept, "opus", "high"},
-			curate.JudgeConfig{Model: "opus", Effort: "high", Prompt: curate.PromptVersion, Start: start, Sets: drawnAtStart}},
+			args{kept, with(func(s *curate.JudgeSettings) { s.Model = "opus" })}, started("opus", "high", drawnAtStart, 4, 2)},
 		{"another effort is a new judge",
-			args{kept, "sonnet", "max"},
-			curate.JudgeConfig{Model: "sonnet", Effort: "max", Prompt: curate.PromptVersion, Start: start, Sets: drawnAtStart}},
-		{"a configuration of another prompt version is a new judge",
-			args{older, "sonnet", "high"},
-			curate.JudgeConfig{Model: "sonnet", Effort: "high", Prompt: curate.PromptVersion, Start: start, Sets: drawnAtStart}},
+			args{kept, with(func(s *curate.JudgeSettings) { s.Effort = "max" })}, started("sonnet", "max", drawnAtStart, 4, 2)},
+		{"other sizes of the sets are a new judge",
+			args{kept, with(func(s *curate.JudgeSettings) { s.Kept, s.Refused = 1, 0 })},
+			started("sonnet", "high", [][]knowledge.Ref{{ref("k-a2")}, {ref("k-a4")}, {ref("k-a6")}}, 1, 0)},
+		{"a configuration of another prompt version is a new judge", args{older, sonnetJudge}, started("sonnet", "high", drawnAtStart, 4, 2)},
+		{"a start pinned at the start of the configuration keeps it", args{kept, with(func(s *curate.JudgeSettings) { s.Start = earlier })}, kept},
+		{
+			"another pinned start is a new judge whose sets are what that start draws",
+			args{kept, with(func(s *curate.JudgeSettings) { s.Start = start.Add(24 * time.Hour) })},
+			curate.JudgeConfig{
+				Model: "sonnet", Effort: "high", Prompt: curate.PromptVersion, Start: start.Add(24 * time.Hour), Kept: 4, Refused: 2,
+				Sets: curate.Shots(decisions()).Draw(start.Add(24*time.Hour), 4, 2),
+			},
+		},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			assert.Equal(t, tc.want, tc.args.config.Next(tc.args.model, tc.args.effort, decisions(), start))
+			assert.Equal(t, tc.want, tc.args.config.Next(tc.args.settings, decisions(), start))
 		})
 	}
 }
@@ -286,7 +306,7 @@ func TestShotsDraw(t *testing.T) {
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			assert.Equal(t, tc.want, tc.args.decisions.Draw(tc.args.start))
+			assert.Equal(t, tc.want, tc.args.decisions.Draw(tc.args.start, 4, 2))
 		})
 	}
 }
@@ -368,7 +388,7 @@ func TestClaudeJudgeReply(t *testing.T) {
 			client := llmmock.NewMockClient(gomock.NewController(t))
 			client.EXPECT().Complete(gomock.Any(), gomock.Any()).
 				Return(llm.Response{Output: tc.args.output, Model: "claude-sonnet-5-5"}, tc.args.err).Times(tc.args.calls)
-			members, err := curate.JudgeConfig{}.Next("sonnet", curate.JudgeEffort, nil, start).Members(client, nil)
+			members, err := curate.JudgeConfig{}.Next(sonnetJudge, nil, start).Members(client, nil)
 			require.NoError(t, err)
 			judge, ok := members[0].Classifier.(classify.Replier)
 			require.True(t, ok)
@@ -385,7 +405,7 @@ func TestClaudeJudgeReply(t *testing.T) {
 func TestClaudeJudgeClassify(t *testing.T) {
 	client := llmmock.NewMockClient(gomock.NewController(t))
 	client.EXPECT().Complete(gomock.Any(), gomock.Any()).Return(llm.Response{Output: answer(0.8, 0.1)}, nil)
-	members, err := curate.JudgeConfig{}.Next("sonnet", curate.JudgeEffort, nil, start).Members(client, nil)
+	members, err := curate.JudgeConfig{}.Next(sonnetJudge, nil, start).Members(client, nil)
 	require.NoError(t, err)
 
 	got, err := members[0].Classifier.Classify(context.Background(), classify.Request{State: `{"change":"add: x"}`, Questions: curate.JudgeQuestions})

@@ -44,6 +44,7 @@ func TestKnobEventTrace(t *testing.T) {
 		{"an item hold Check refuses is refused", with(func(k *curate.KnobEvent) { k.Knobs.ItemHold = 1 }), knowledge.ErrItemHoldInvalid},
 		{"no seed is refused", with(func(k *curate.KnobEvent) { k.Seed = "" }), curate.ErrKnobInvalid},
 		{"an unknown cause is refused", with(func(k *curate.KnobEvent) { k.Cause = "widen" }), curate.ErrKnobInvalid},
+		{"the start knobs pass", with(func(k *curate.KnobEvent) { k.Knobs = curate.StartKnobs() }), nil},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {

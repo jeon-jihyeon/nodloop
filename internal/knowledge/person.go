@@ -93,5 +93,144 @@ func (s Set) ApprovedBy(approver string, since time.Time, producer string, label
 // 1. one version and never a union since a run with a label value no recorded run carries yet would fall between the versions of a union
 // 2. it reaches them when the scope widens it by none of the rules of ErrScopeWidened
 func (s Set) PersonReaches(scope RunScope) bool {
-	return slices.ContainsFunc(s.PersonApproved(), func(k Knowledge) bool { return k.Run != nil && !scope.widens(*k.Run) })
+	return len(s.PersonApproved().Reaching(scope)) > 0
+}
+
+// The items of the set in their order that each reach every run the scope reaches
+// One item and never a union for the reason PersonReaches gives
+func (s Set) Reaching(scope RunScope) Set {
+	out := Set{}
+	for _, k := range s {
+		if k.Run != nil && !scope.widens(*k.Run) {
+			out = append(out, k)
+		}
+	}
+	return out
+}
+
+// The reasons nodloop retires under
+// A retire by a person and one of an approved compaction name what nodloop never decides
+func (r Reason) carriedOut() bool {
+	return r.Valid() && r != ReasonPerson && r != ReasonCompaction
+}
+
+// A write of nodloop names its decide and a retire one of the reasons nodloop retires under
+func checkCarriedOut(reason Reason, decision string) error {
+	switch {
+	case decision == "":
+		return ErrDecisionRequired
+	case !reason.carriedOut():
+		return fmt.Errorf("%w: nodloop retires under %q never", ErrReasonUnknown, reason)
+	}
+	return nil
+}
+
+// Whether a person decided the version last: approved, superseded or retired it under a name of their own
+func (s Set) personDecided(id string, version int) bool {
+	k, err := s.Version(id, version)
+	return err == nil && k.Approver != "" && !k.carriedOut()
+}
+
+// The records of an approval curate carries out as nodloop under the decide
+// 1. a candidate with a veto, one built on a version a person decided and one no version a person approved reaches fail with ErrPersonDecides
+// 2. so does an approval that supersedes a version a person approved
+// 3. every check of an approval holds and every record names the decide
+func (s Set) applied(id string, version int, decision string, now time.Time) ([]Knowledge, error) {
+	if decision == "" {
+		return nil, ErrDecisionRequired
+	}
+	k, err := s.Version(id, version)
+	if err != nil {
+		return nil, err
+	}
+	cur := s.current(id)
+	switch {
+	case k.Veto != nil:
+		return nil, fmt.Errorf("%w: %s v%d carries a veto", ErrPersonDecides, id, version)
+	case k.Base > 0 && s.personDecided(id, k.Base):
+		return nil, fmt.Errorf("%w: %s v%d was built on v%d, which a person decided", ErrPersonDecides, id, version, k.Base)
+	case k.Run == nil || !s.PersonReaches(*k.Run):
+		return nil, fmt.Errorf("%w: %s v%d reaches runs no lesson a person approved reaches", ErrPersonDecides, id, version)
+	case cur != nil && cur.Status == StatusApproved && !cur.carriedOut():
+		return nil, fmt.Errorf("%w: %s v%d would replace v%d, which a person approved", ErrPersonDecides, id, version, cur.Version)
+	}
+	records, err := s.approval(id, version, ApproverNodloop, now)
+	if err != nil {
+		return nil, err
+	}
+	for i := range records {
+		records[i].Decision = decision
+	}
+	return records, nil
+}
+
+// The records of a compaction curate carries out as nodloop under the decide
+// 1. a compaction that retires or supersedes a version a person approved fails with ErrPersonDecides
+// 2. so does one whose new item carries a veto
+// 3. every check of a compaction approval holds and every record names the decide
+// No new item reaches a run its old items never reached and each of them passed PersonReaches when nodloop approved it
+// A version a person approved that reaches them shares their folder so the merge would retire it
+func (s Set) appliedCompaction(id, decision string, check Coverage, now time.Time) ([]Knowledge, error) {
+	if decision == "" {
+		return nil, ErrDecisionRequired
+	}
+	c, err := s.compaction(id)
+	if err != nil {
+		return nil, err
+	}
+	for _, old := range c.Replaced {
+		if !old.carriedOut() {
+			return nil, fmt.Errorf("%w: compaction %s merges %s v%d, which a person approved", ErrPersonDecides, id, old.ID, old.Version)
+		}
+	}
+	for _, k := range c.Items {
+		if k.Veto != nil {
+			return nil, fmt.Errorf("%w: compaction %s drafts %s v%d with a veto", ErrPersonDecides, id, k.ID, k.Version)
+		}
+	}
+	records, err := s.compactionApproval(id, ApproverNodloop, check, now)
+	if err != nil {
+		return nil, err
+	}
+	for i := range records {
+		records[i].Decision = decision
+	}
+	return records, nil
+}
+
+// The retire of a version nodloop approved that curate carries out under the decide
+// A version a person approved or reaffirmed last fails with ErrPersonDecides
+func (s Set) withdrawal(id string, version int, reason Reason, decision string, now time.Time) (Knowledge, error) {
+	if err := checkCarriedOut(reason, decision); err != nil {
+		return Knowledge{}, err
+	}
+	k, err := s.checkApproved(id, version)
+	if err != nil {
+		return Knowledge{}, err
+	}
+	if !k.carriedOut() {
+		return Knowledge{}, fmt.Errorf("%w: %s v%d was approved by %s", ErrPersonDecides, id, version, k.Approver)
+	}
+	return k.retiredBy(reason, decision, now), nil
+}
+
+// The retire of a waiting candidate that curate carries out under the decide
+// Fails with ErrNotCandidate unless the version is the newest candidate of its id
+func (s Set) dropped(id string, version int, reason Reason, decision string, now time.Time) (Knowledge, error) {
+	if err := checkCarriedOut(reason, decision); err != nil {
+		return Knowledge{}, err
+	}
+	k, err := s.waitingVersion(id, version)
+	if err != nil {
+		return Knowledge{}, err
+	}
+	return k.retiredBy(reason, decision, now), nil
+}
+
+// The retire record of nodloop with the reason and the decide behind it
+// Only for an approved version or a candidate since both may become retired
+func (k Knowledge) retiredBy(reason Reason, decision string, now time.Time) Knowledge {
+	to := k.changed(StatusRetired, ApproverNodloop, now)
+	to.Reason, to.Decision = reason, decision
+	return to
 }

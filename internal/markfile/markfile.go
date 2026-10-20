@@ -6,22 +6,21 @@ import (
 	"errors"
 	"io"
 	"os"
-
-	"github.com/jeon-jihyeon/nodloop/internal/record"
 )
 
-// A mark file one process holds until Release
-type Held struct {
+// A mark file one process holds until Release in the shape its owner keeps
+// The owner names the shape so a package of infrastructure never imports the one that owns a mark
+type Held[M any] struct {
 	file *os.File
 	// The mark the file held when it was taken
 	// Zero when it held none that decodes
-	Mark record.Mark
+	Mark M
 }
 
 // Takes the file at path without waiting and reads its mark
 // 1. nil without an error when another process holds it so the caller ends at once
-// 2. a mark that does not decode reads as the zero Mark
-func Hold(path string) (*Held, error) {
+// 2. a mark that does not decode reads as the zero mark
+func Hold[M any](path string) (*Held[M], error) {
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		return nil, err
@@ -34,16 +33,17 @@ func Hold(path string) (*Held, error) {
 	if err != nil {
 		return nil, errors.Join(err, file.Close())
 	}
-	var last record.Mark
+	var last M
 	if json.Unmarshal(b, &last) != nil {
-		last = record.Mark{}
+		var zero M
+		last = zero
 	}
-	return &Held{file: file, Mark: last}, nil
+	return &Held[M]{file: file, Mark: last}, nil
 }
 
 // Writes the mark in place as one JSON line
-// A torn write reads as the zero Mark on the next read
-func (h *Held) Write(m record.Mark) error {
+// A torn write reads as the zero mark on the next read
+func (h *Held[M]) Write(m M) error {
 	b, err := json.Marshal(m)
 	if err != nil {
 		return err
@@ -56,7 +56,7 @@ func (h *Held) Write(m record.Mark) error {
 }
 
 // Lets the next process take the file
-func (h *Held) Release() error {
+func (h *Held[M]) Release() error {
 	return h.file.Close()
 }
 

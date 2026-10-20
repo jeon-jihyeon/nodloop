@@ -44,7 +44,7 @@ func (m mark) fresh(now time.Time, every time.Duration) bool {
 // 2. a mark that does not decode reads as no run so far
 // 3. the caller claims before its calls so a run that fails waits a day
 func (m Marker) Claim(at time.Time, every time.Duration) (bool, error) {
-	held, err := markfile.Hold(m.path())
+	held, err := markfile.Hold[record.Mark](m.path())
 	if err != nil || held == nil {
 		return false, markErr(err)
 	}

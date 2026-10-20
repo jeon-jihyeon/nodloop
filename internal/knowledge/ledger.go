@@ -282,6 +282,73 @@ func (l *Ledger) Retire(ctx context.Context, id string, version int, approver st
 	return to, l.exported(ctx, to)
 }
 
+// Approves a candidate as nodloop under the decide of curate
+// Refused with ErrPersonDecides for what only a person decides and by every check of an approval
+func (l *Ledger) Apply(ctx context.Context, id string, version int, decision string) (Knowledge, error) {
+	var to Knowledge
+	err := l.appendDecided(ctx, func(all Set) ([]Knowledge, error) {
+		records, err := all.applied(id, version, decision, l.now().UTC())
+		if err != nil {
+			return nil, err
+		}
+		to = records[0]
+		return records, nil
+	})
+	if err != nil {
+		return Knowledge{}, l.refused(ctx, err)
+	}
+	return to, l.exported(ctx, to)
+}
+
+// Approves a compaction as nodloop under the decide of curate in the one write of ApproveCompaction
+// Refused with ErrPersonDecides when it merges a version a person approved or drafts what only a person approves
+func (l *Ledger) ApplyCompaction(ctx context.Context, id, decision string, check Coverage) (Compaction, error) {
+	err := l.appendDecided(ctx, func(all Set) ([]Knowledge, error) {
+		return all.appliedCompaction(id, decision, check, l.now().UTC())
+	})
+	if err != nil {
+		return Compaction{}, l.refused(ctx, err)
+	}
+	applied, err := l.Compaction(ctx, id)
+	if err != nil {
+		return Compaction{}, err
+	}
+	if err := l.Export(ctx); err != nil {
+		return applied, fmt.Errorf("%w: compaction %s is approved: %w", ErrExport, id, err)
+	}
+	return applied, nil
+}
+
+// Retires a version nodloop approved under the decide of curate with the reason of its signal
+// Refused with ErrPersonDecides for a version a person approved or reaffirmed last
+func (l *Ledger) Withdraw(ctx context.Context, id string, version int, reason Reason, decision string) (Knowledge, error) {
+	var to Knowledge
+	err := l.appendDecided(ctx, func(all Set) ([]Knowledge, error) {
+		var err error
+		to, err = all.withdrawal(id, version, reason, decision, l.now().UTC())
+		return []Knowledge{to}, err
+	})
+	if err != nil {
+		return Knowledge{}, l.refused(ctx, err)
+	}
+	return to, l.exported(ctx, to)
+}
+
+// Retires a waiting candidate under the decide of curate with the reason of its rule
+// A candidate never reached a run so nothing is exported
+func (l *Ledger) Drop(ctx context.Context, id string, version int, reason Reason, decision string) (Knowledge, error) {
+	var to Knowledge
+	err := l.appendDecided(ctx, func(all Set) ([]Knowledge, error) {
+		var err error
+		to, err = all.dropped(id, version, reason, decision, l.now().UTC())
+		return []Knowledge{to}, err
+	})
+	if err != nil {
+		return Knowledge{}, err
+	}
+	return to, nil
+}
+
 // The refusal of an approve or a retire after the approved knowledge is exported again
 // A call killed between its append and its export leaves the exports behind the records and its retry is refused
 // so the refused retry brings them back in step

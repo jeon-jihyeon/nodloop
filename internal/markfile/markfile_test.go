@@ -41,7 +41,7 @@ func TestHoldAndRead(t *testing.T) {
 			path := filepath.Join(dir, "mark.json")
 
 			read, readErr := markfile.Read[record.Mark](path)
-			held, holdErr := markfile.Hold(path)
+			held, holdErr := markfile.Hold[record.Mark](path)
 			require.NoError(t, holdErr)
 			t.Cleanup(func() { _ = held.Release() })
 
@@ -72,11 +72,11 @@ func TestHeldWrite(t *testing.T) {
 			t.Parallel()
 			path := filepath.Join(t.TempDir(), "mark.json")
 			require.NoError(t, os.WriteFile(path, []byte(`{"at":"2026-10-07T09:00:00Z","cutoff":"2026-10-07T09:00:00Z"}`), 0o600))
-			held, err := markfile.Hold(path)
+			held, err := markfile.Hold[record.Mark](path)
 			require.NoError(t, err)
 
 			writeErr := held.Write(tc.args)
-			second, err := markfile.Hold(path)
+			second, err := markfile.Hold[record.Mark](path)
 			require.NoError(t, err)
 			require.NoError(t, held.Release())
 			b, err := os.ReadFile(path)
@@ -111,7 +111,7 @@ func TestMarkfileFails(t *testing.T) {
 			require.NoError(t, os.Mkdir(filepath.Join(dir, "mark.json"), 0o755))
 			path := filepath.Join(dir, tc.args)
 
-			held, holdErr := markfile.Hold(path)
+			held, holdErr := markfile.Hold[record.Mark](path)
 			read, readErr := markfile.Read[record.Mark](path)
 
 			assert.Nil(t, held)
@@ -140,7 +140,7 @@ func TestHeldReleased(t *testing.T) {
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			held, err := markfile.Hold(filepath.Join(t.TempDir(), "mark.json"))
+			held, err := markfile.Hold[record.Mark](filepath.Join(t.TempDir(), "mark.json"))
 			require.NoError(t, err)
 			for range tc.args {
 				require.NoError(t, held.Release())
@@ -150,6 +150,53 @@ func TestHeldReleased(t *testing.T) {
 
 			assert.ErrorIs(t, writeErr, tc.want.writeErr)
 			assert.ErrorIs(t, releaseErr, tc.want.releaseErr)
+		})
+	}
+}
+
+// The owner names the shape of its mark so a larger shape keeps every field and one that does not encode leaves the file as it was
+func TestHeldShape(t *testing.T) {
+	type mark struct {
+		At   time.Time `json:"at"`
+		Due  []string  `json:"due"`
+		Fail any       `json:"fail,omitempty"`
+	}
+	type want struct {
+		mark    mark
+		writeOK bool
+		file    string
+	}
+	tcs := []struct {
+		name string
+		// The mark written over one that held a time and one due id
+		args mark
+		want want
+	}{
+		{
+			"a mark of its own shape replaces the file", mark{At: at, Due: []string{"d2"}},
+			want{mark{At: at, Due: []string{"d1"}}, true, `{"at":"2026-10-07T09:00:00Z","due":["d2"]}` + "\n"},
+		},
+		{
+			"a mark that does not encode writes nothing", mark{Fail: func() {}},
+			want{mark{At: at, Due: []string{"d1"}}, false, `{"at":"2026-10-07T09:00:00Z","due":["d1"]}`},
+		},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			path := filepath.Join(t.TempDir(), "mark.json")
+			require.NoError(t, os.WriteFile(path, []byte(`{"at":"2026-10-07T09:00:00Z","due":["d1"]}`), 0o600))
+			held, err := markfile.Hold[mark](path)
+			require.NoError(t, err)
+
+			writeErr := held.Write(tc.args)
+			require.NoError(t, held.Release())
+			b, err := os.ReadFile(path)
+			require.NoError(t, err)
+
+			assert.Equal(t, tc.want.mark, held.Mark)
+			assert.Equal(t, tc.want.writeOK, writeErr == nil, writeErr)
+			assert.Equal(t, tc.want.file, string(b))
 		})
 	}
 }
