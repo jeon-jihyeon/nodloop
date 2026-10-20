@@ -71,6 +71,13 @@ commands:
                             ones say the same lesson, and print one line per group. Recorded as a consolidate trace per
                             producer and nothing else changes. --daily runs only when consolidate.json says a day passed
                             and prints nothing, as hook stop starts it in a process of its own once two candidates wait
+  knowledge curate [--daily] [--model <m>]
+                            Sort each waiting candidate by whether your recorded decisions settle it and print one line per
+                            decision. An exact duplicate, a lesson whose correction you took back and one scoped to a
+                            temporary directory are dropped, what only you decide waits for a question to you, and the
+                            rest is judged and left waiting until you end the shadow. Nothing is approved for you yet.
+                            --daily runs only when curate.json says a day passed, and first drafts each correction no
+                            extraction read, as hook stop starts it in a process of its own
   knowledge for --producer <p> [--label <key=value>] [--holdout-key <k>]
                             The approved items a run of the producer with these labels applies, and their size. With a
                             holdout key a share of runs gets a withheld line per item and no item. Pass the same key and

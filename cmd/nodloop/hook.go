@@ -406,7 +406,8 @@ func (ts sessionTurns) inContext(items knowledge.Set, refill trace.Trace) []know
 // The conversation usually drafted it in the same turn
 // 4. the holdout draws once per session so every turn of a conversation is in one arm
 // A lesson shown in one turn stays in the context of the next so a draw per turn would leak it into the withheld arm
-// 5. the extraction and the daily retention prune and the daily consolidate and the OTLP export start in processes of their own so the turn never waits for them
+// 5. the extraction, the daily retention prune, the daily consolidate, the daily curate pass and the OTLP export start in processes of their own
+// so the turn never waits for them
 // A failure to start one is printed and the others still start
 // A failed record starts no export since no new run waits to be sent
 // 6. a host whose stop input carries no answer records no run and still starts the background work
@@ -431,7 +432,7 @@ func (c hookCommand) stop(ctx context.Context, sessionID string, labels trace.La
 	if c.export != nil && c.host.answers() && failed == nil {
 		failed = c.app.startExport(c.export)
 	}
-	failed = errors.Join(failed, c.prune(ctx), c.consolidate(all))
+	failed = errors.Join(failed, c.prune(ctx), c.consolidate(all), c.curate())
 	if judged := trace.Traces(runs.answered()).Newest(); !continued && !all.Cites(judged.ID) {
 		failed = errors.Join(failed, c.extract(ctx, judged.ID, judged.Time))
 	}

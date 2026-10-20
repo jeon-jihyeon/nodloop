@@ -235,10 +235,10 @@ func TestRunHookStopStartsTheDailyPrune(t *testing.T) {
 			stdin := `{"session_id":"s1","cwd":"` + repo + `","last_assistant_message":"done"}`
 			now := func() time.Time { return pruneNow }
 			var started [][]string
-			start := func(args []string) error {
+			start := besideCurate(func(args []string) error {
 				started = append(started, args)
 				return nil
-			}
+			})
 			var stderr, out bytes.Buffer
 
 			code := runHook([]string{"stop"}, getenv, start, now, strings.NewReader(stdin), &bytes.Buffer{}, &stderr)

@@ -134,6 +134,7 @@ func TestJudgeJudge(t *testing.T) {
 			assert.Equal(t, tc.want.outcome, got.Outcome)
 			assert.InDelta(t, tc.want.share, got.Share, 1e-9)
 			assert.Equal(t, tc.want.bin, got.Bin)
+			assert.Equal(t, tc.want.bin != "", got.Confidence != nil, "a judgment with a bin carries the confidence it read")
 			assert.ErrorIs(t, got.Err, tc.want.err)
 			recorded, err := stores.Traces.Get(ctx, got.Trace)
 			require.NoError(t, err)
@@ -317,30 +318,31 @@ func TestVotes(t *testing.T) {
 	}
 	failed := classify.Vote{Member: "m", Err: assert.AnError}
 	type want struct {
-		outcome curate.Outcome
-		share   float64
-		bin     curate.Bin
-		err     error
+		outcome    curate.Outcome
+		share      float64
+		bin        curate.Bin
+		confidence float64
+		err        error
 	}
 	tcs := []struct {
 		name string
 		args curate.Votes
 		want want
 	}{
-		{"no vote is split", nil, want{curate.OutcomeSplit, 0, "", nil}},
-		{"decided at one half conforms at the edge of b1", curate.Votes{v(0.5, 0.05)}, want{curate.OutcomeConform, 1, curate.Bin1, nil}},
-		{"just below b1 is b2", curate.Votes{v(0.9, 0.06)}, want{curate.OutcomeConform, 1, curate.Bin2, nil}},
-		{"the edge of b2", curate.Votes{v(0.9, 0.15)}, want{curate.OutcomeConform, 1, curate.Bin2, nil}},
-		{"just below b2 is b3", curate.Votes{v(0.9, 0.16)}, want{curate.OutcomeConform, 1, curate.Bin3, nil}},
-		{"the edge of b3", curate.Votes{v(0.9, 0.30)}, want{curate.OutcomeConform, 1, curate.Bin3, nil}},
-		{"just below b3 is b4", curate.Votes{v(0.9, 0.31)}, want{curate.OutcomeConform, 1, curate.Bin4, nil}},
-		{"against at one half wins over decided", curate.Votes{v(0.9, 0.5)}, want{curate.OutcomeAgainst, 0, "", nil}},
-		{"decided below one half finds the anchor silent", curate.Votes{v(0.49, 0.1)}, want{curate.OutcomeUndecided, 0, "", nil}},
+		{"no vote is split", nil, want{curate.OutcomeSplit, 0, "", 0, nil}},
+		{"decided at one half conforms at the edge of b1", curate.Votes{v(0.5, 0.05)}, want{curate.OutcomeConform, 1, curate.Bin1, 0.95, nil}},
+		{"just below b1 is b2", curate.Votes{v(0.9, 0.06)}, want{curate.OutcomeConform, 1, curate.Bin2, 0.94, nil}},
+		{"the edge of b2", curate.Votes{v(0.9, 0.15)}, want{curate.OutcomeConform, 1, curate.Bin2, 0.85, nil}},
+		{"just below b2 is b3", curate.Votes{v(0.9, 0.16)}, want{curate.OutcomeConform, 1, curate.Bin3, 0.84, nil}},
+		{"the edge of b3", curate.Votes{v(0.9, 0.30)}, want{curate.OutcomeConform, 1, curate.Bin3, 0.7, nil}},
+		{"just below b3 is b4", curate.Votes{v(0.9, 0.31)}, want{curate.OutcomeConform, 1, curate.Bin4, 0.69, nil}},
+		{"against at one half wins over decided", curate.Votes{v(0.9, 0.5)}, want{curate.OutcomeAgainst, 0, "", 0, nil}},
+		{"decided below one half finds the anchor silent", curate.Votes{v(0.49, 0.1)}, want{curate.OutcomeUndecided, 0, "", 0, nil}},
 		{"the bin is the mean of the conforming answers", curate.Votes{v(0.9, 0.05), v(0.9, 0.15), v(0.9, 0.9)},
-			want{curate.OutcomeSplit, 2.0 / 3, curate.Bin2, nil}},
+			want{curate.OutcomeSplit, 2.0 / 3, curate.Bin2, 0.9, nil}},
 		{"a member without an answer splits a unanimous rest", curate.Votes{v(0.9, 0.05), v(0.9, 0.05), failed},
-			want{curate.OutcomeSplit, 2.0 / 3, curate.Bin1, assert.AnError}},
-		{"members that all failed are split", curate.Votes{failed, failed}, want{curate.OutcomeSplit, 0, "", assert.AnError}},
+			want{curate.OutcomeSplit, 2.0 / 3, curate.Bin1, 0.95, assert.AnError}},
+		{"members that all failed are split", curate.Votes{failed, failed}, want{curate.OutcomeSplit, 0, "", 0, assert.AnError}},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
@@ -348,6 +350,9 @@ func TestVotes(t *testing.T) {
 			assert.Equal(t, tc.want.outcome, tc.args.Outcome())
 			assert.InDelta(t, tc.want.share, tc.args.Share(), 1e-9)
 			assert.Equal(t, tc.want.bin, tc.args.Bin())
+			mean, conforms := tc.args.Confidence()
+			assert.Equal(t, tc.want.bin != "", conforms)
+			assert.InDelta(t, tc.want.confidence, mean, 1e-9)
 			assert.ErrorIs(t, tc.args.Err(), tc.want.err)
 		})
 	}
@@ -397,6 +402,43 @@ func TestClaudeJudgeReply(t *testing.T) {
 
 			assert.ErrorIs(t, err, tc.want.err)
 			assert.Equal(t, tc.want.reply, got)
+		})
+	}
+}
+
+// Each claude member calls the backend under the judge timeout and a caller with an earlier deadline keeps its own
+func TestClaudeJudgeTimeout(t *testing.T) {
+	tcs := []struct {
+		name string
+		args time.Duration
+		want time.Duration
+	}{
+		{"a caller without a deadline gets the judge timeout", 0, curate.JudgeTimeout},
+		{"an earlier deadline of the caller stands", time.Second, time.Second},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			client := llmmock.NewMockClient(gomock.NewController(t))
+			var left time.Duration
+			client.EXPECT().Complete(gomock.Any(), gomock.Any()).DoAndReturn(func(ctx context.Context, _ llm.Request) (llm.Response, error) {
+				deadline, _ := ctx.Deadline()
+				left = time.Until(deadline)
+				return llm.Response{Output: answer(0.8, 0.1)}, nil
+			})
+			members, err := curate.JudgeConfig{}.Next(sonnetJudge, nil, start).Members(client, nil)
+			require.NoError(t, err)
+			ctx := context.Background()
+			if tc.args > 0 {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, tc.args)
+				t.Cleanup(cancel)
+			}
+
+			_, err = members[0].Classifier.Classify(ctx, classify.Request{State: `{"change":"add: x"}`, Questions: curate.JudgeQuestions})
+
+			require.NoError(t, err)
+			assert.InDelta(t, tc.want.Seconds(), left.Seconds(), 1)
 		})
 	}
 }

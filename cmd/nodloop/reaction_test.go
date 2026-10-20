@@ -51,7 +51,7 @@ func TestRunHookReactionKeepsNoWords(t *testing.T) {
 			stdin := `{"session_id":"s1","cwd":"` + repo + `","prompt":"` + words + `"}`
 			var stderr bytes.Buffer
 
-			code := runHook([]string{"prompt"}, getenv, nil, now, strings.NewReader(stdin), &bytes.Buffer{}, &stderr)
+			code := runHook([]string{"prompt"}, getenv, noStart, now, strings.NewReader(stdin), &bytes.Buffer{}, &stderr)
 
 			require.Equal(t, 0, code, stderr.String())
 			store, err := tracefile.New(records)
@@ -102,7 +102,7 @@ func TestRunHookReactionWithoutKey(t *testing.T) {
 	require.NoError(t, os.Mkdir(filepath.Join(records, textkey.FileName), 0o700))
 	var stderr bytes.Buffer
 
-	code := runHook([]string{"prompt"}, getenv, nil, now, strings.NewReader(`{"session_id":"s1","cwd":"`+repo+`","prompt":"wrong"}`), &bytes.Buffer{}, &stderr)
+	code := runHook([]string{"prompt"}, getenv, noStart, now, strings.NewReader(`{"session_id":"s1","cwd":"`+repo+`","prompt":"wrong"}`), &bytes.Buffer{}, &stderr)
 
 	store, err := tracefile.New(records)
 	require.NoError(t, err)

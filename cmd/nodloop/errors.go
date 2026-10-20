@@ -22,6 +22,8 @@ var (
 	errReplayUndecodable = errors.New("replay trace does not decode")
 	// The mark of the last consolidate is held by another run
 	errConsolidateRunning = errors.New("another consolidate is running")
+	// The mark of the last curate pass is held by another pass
+	errCurateRunning = errors.New("another curate pass is running")
 	// go deletes a go run build on exit so a hook on it would fail open
 	// The marker lock of the record directory is held by another prune
 	errPruneRunning        = errors.New("another prune is running")

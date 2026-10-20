@@ -148,7 +148,7 @@ func TestRunHookHosts(t *testing.T) {
 			stdin := strings.NewReader(hookFixture(t, tc.args.stdin, repo))
 			var stdout, stderr bytes.Buffer
 
-			code := runHook(tc.args.hook, getenv, nil, func() time.Time { return hostNow }, stdin, &stdout, &stderr)
+			code := runHook(tc.args.hook, getenv, noStart, func() time.Time { return hostNow }, stdin, &stdout, &stderr)
 			want := strings.ReplaceAll(tc.want.answer, "{items}", string(items))
 
 			assert.Equal(t, 0, code)

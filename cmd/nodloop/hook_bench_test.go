@@ -36,7 +36,7 @@ func BenchmarkHook(b *testing.B) {
 						}
 						iteration++
 						stdin := fmt.Sprintf(`{"session_id":%q,"cwd":%q,"prompt":"next","last_assistant_message":"done"}`, id, repo)
-						require.Equal(b, 0, runHook([]string{hook}, getenv, nil, time.Now, strings.NewReader(stdin), io.Discard, io.Discard))
+						require.Equal(b, 0, runHook([]string{hook}, getenv, noStart, time.Now, strings.NewReader(stdin), io.Discard, io.Discard))
 					}
 				})
 			}

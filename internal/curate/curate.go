@@ -41,6 +41,11 @@ func (k ChangeKind) versioned() bool {
 	return slices.Contains([]ChangeKind{ChangeAdd, ChangeUpdate, ChangeJoin, ChangeDrop, ChangeWithdraw}, k)
 }
 
+// Whether the knobs offer the change from the numbers of a cycle so it cites no run
+func (k ChangeKind) offered() bool {
+	return k == ChangeWiden || k == ChangeActivate
+}
+
 // The rule that sent a change to its tier
 type RuleCode string
 
@@ -69,7 +74,8 @@ func RuleCodes() []RuleCode {
 	}
 }
 
-// Empty for a tier 1 decision no rule sent there or one of the set
+// Empty or one of the set
+// A tier 1 decision and an offer of the knobs reach their tier by no rule
 func (r RuleCode) known() bool {
 	return r == "" || slices.Contains(RuleCodes(), r)
 }
@@ -151,9 +157,14 @@ type Change struct {
 	Anchor int `json:"anchor"`
 	// The HMAC of the cumulative diff the judge read
 	Diff string `json:"diff,omitempty"`
+	// The kind and bin a widening asks to open
+	Opens *Opening `json:"opens,omitempty"`
 }
 
-// A change of one version names it and a compaction names the compaction it approves
+// 1. a change of one version names it
+// 2. a compaction names the compaction it approves
+// 3. a join names the one older candidate it adds the evidence to
+// 4. only a widening names the kind and bin it opens
 func (c Change) check() error {
 	switch {
 	case !c.Kind.Valid():
@@ -164,6 +175,8 @@ func (c Change) check() error {
 		return fmt.Errorf("%w: a compaction names the compaction it approves", ErrDecideInvalid)
 	case c.Kind == ChangeJoin && len(c.Old) != 1:
 		return fmt.Errorf("%w: a join names the one older candidate it adds the evidence to", ErrDecideInvalid)
+	case (c.Kind == ChangeWiden) != (c.Opens != nil) || c.Opens != nil && !c.Opens.Valid():
+		return fmt.Errorf("%w: a widening names the kind and bin it opens and no other change names one", ErrDecideInvalid)
 	}
 	return nil
 }
@@ -176,9 +189,12 @@ type Decision struct {
 	Judge   string  `json:"judge,omitempty"`
 	Outcome Outcome `json:"outcome,omitempty"`
 	// The share of the judge members that conform
-	Vote   *float64 `json:"vote,omitempty"`
-	Bin    Bin      `json:"bin,omitempty"`
-	Action Action   `json:"action"`
+	Vote *float64 `json:"vote,omitempty"`
+	Bin  Bin      `json:"bin,omitempty"`
+	// The mean confidence the bin reads and nil where no member conforms
+	// The Brier score of the judge reads it whole
+	Confidence *float64 `json:"confidence,omitempty"`
+	Action     Action   `json:"action"`
 	// Why a drop or a withdrawal retires with what may still teach and what brings it back
 	Reason  knowledge.Reason `json:"reason,omitempty"`
 	Failure FailureClass     `json:"failure,omitempty"`
@@ -204,11 +220,11 @@ func (d Decision) carries() bool {
 }
 
 // 1. the tier is 0, 1 or 2 and the action one of the set
-// 2. every other value is empty or one of its set
+// 2. every other value is empty or one of its set and a confidence lies from 0 to 1
 func (d Decision) known() bool {
 	return d.Tier >= 0 && d.Tier <= topTier && slices.Contains(Actions(), d.Action) && d.RuleCode.known() &&
 		(d.Outcome == "" || d.Outcome.Valid()) && (d.Bin == "" || d.Bin.Valid()) && (d.Reason == "" || d.Reason.Valid()) &&
-		d.Failure.known() && d.Reopen.known()
+		d.Failure.known() && d.Reopen.known() && (d.Confidence == nil || *d.Confidence >= 0 && *d.Confidence <= 1)
 }
 
 // Where a curate event belongs and the draw it was recorded under
@@ -244,13 +260,13 @@ func (e Event) trace(name trace.Name, subject string, input, output any, now tim
 }
 
 // The decide event of one change cited by the run of the event
-// 1. the change and the decision pass their checks and the decide names its run
+// 1. the change and the decision pass their checks and the decide names its run unless the knobs offered the change
 // 2. the audit draws on the id of the decide and a decision of curate is pushed
 // So no drafter or proposer can pick an id that avoids the audit
 // 3. a retry carries the error of the judge call that failed and no other action carries one
 func (e Event) Decide(c Change, d Decision, failed error, now time.Time) (trace.Trace, error) {
 	switch {
-	case e.ID == "" || e.Ref == "":
+	case e.ID == "" || e.Ref == "" && !c.Kind.offered():
 		return trace.Trace{}, fmt.Errorf("%w: a decide names its id and the run of the change", ErrDecideInvalid)
 	case e.Source != trace.SourcePush || e.Draw.Unit != e.ID:
 		return trace.Trace{}, fmt.Errorf("%w: a decision of curate is pushed and drawn on its own id", ErrDecideInvalid)

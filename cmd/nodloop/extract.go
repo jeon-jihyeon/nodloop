@@ -16,6 +16,11 @@ func (f knowledgeFlags) runExtract(ctx context.Context, a app, client llm.Client
 	if f.from == "" {
 		return fmt.Errorf("extract: --from %w", errRequired)
 	}
+	return f.extractRun(ctx, a, client, getenv, f.from, stdout)
+}
+
+// The extraction of one run that knowledge extract and the daily gaps of curate share
+func (f knowledgeFlags) extractRun(ctx context.Context, a app, client llm.Client, getenv func(string) string, runID string, stdout io.Writer) error {
 	ledger, err := a.ledger()
 	if err != nil {
 		return err
@@ -34,7 +39,7 @@ func (f knowledgeFlags) runExtract(ctx context.Context, a app, client llm.Client
 	if err != nil {
 		return err
 	}
-	res, err := extract.New(ledger, traces, verdicts, a.now).Extract(ctx, extract.NewClaudeDrafter(meter, f.model), critic, f.from, f.author)
+	res, err := extract.New(ledger, traces, verdicts, a.now).Extract(ctx, extract.NewClaudeDrafter(meter, f.model), critic, runID, f.author)
 	if err != nil {
 		return err
 	}

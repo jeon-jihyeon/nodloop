@@ -146,10 +146,10 @@ func TestWrittenRecordsValidate(t *testing.T) {
 			return runKnowledge([]string{"approve", "git-c", "--version", "1", "--approver", "ann"}, getenv, nil, now, atTerminal, &bytes.Buffer{}, &bytes.Buffer{})
 		},
 		func() int {
-			return runHook([]string{"prompt"}, getenv, nil, now, strings.NewReader(`{"session_id":"s1","prompt":"commit","cwd":"`+cwd+`"}`), &bytes.Buffer{}, &bytes.Buffer{})
+			return runHook([]string{"prompt"}, getenv, noStart, now, strings.NewReader(`{"session_id":"s1","prompt":"commit","cwd":"`+cwd+`"}`), &bytes.Buffer{}, &bytes.Buffer{})
 		},
 		func() int {
-			return runHook([]string{"start"}, getenv, nil, now, strings.NewReader(`{"session_id":"s1","source":"compact","cwd":"`+cwd+`"}`), &bytes.Buffer{}, &bytes.Buffer{})
+			return runHook([]string{"start"}, getenv, noStart, now, strings.NewReader(`{"session_id":"s1","source":"compact","cwd":"`+cwd+`"}`), &bytes.Buffer{}, &bytes.Buffer{})
 		},
 		func() int {
 			vetoes := "vetoes:\n  - {id: no-sed, tool: Bash, when: [{field: command, match: 'sed -i'}], reason: use Edit}\n"
