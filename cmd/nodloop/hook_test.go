@@ -741,72 +741,51 @@ func hookFixture(t *testing.T, stdin, repo string) string {
 	return strings.ReplaceAll(stdin, "{repo}", repo)
 }
 
-// The stop hook starts the extraction of the previous run only when the conversation inferred a correction of it
-func TestRunHookStopExtract(t *testing.T) {
+// The stop hook starts the capture of the person's words on the transcript it names and drafts nothing itself
+func TestRunHookStopCapture(t *testing.T) {
 	type args struct {
-		// Stops of the first turn a stop hook continued after its answer and before its verdicts
-		questions int
-		// The feedback flags recorded in order on the first answer
-		verdicts [][]string
-		session  string
-		// Answers after the first one
-		stops int
-		// The answers after the first one end turns a stop hook continued
-		continued bool
+		// The hook input with {repo} for the repository of the approved item
+		stdin   string
+		session string
+		host    string
 		// The error of the start and none when nil
 		startErr error
-		// The conversation drafted the lesson of the reject in its turn
-		drafted bool
-		// The mode of the trace records before the later answers and unchanged when 0
+		// The mode of the trace records before the stop and unchanged when 0
 		mode os.FileMode
 	}
 	type want struct {
-		// Runs of session s1 recorded
+		// Runs of the session recorded
 		runs     int
-		extracts bool
+		captures bool
 		stderr   string
 	}
-	reject := func(reviewer string) []string {
-		return []string{"--verdict", "reject", "--reason-code", "form", "--reason", "the message was too long", "--reviewer", reviewer}
-	}
-	inferred := [][]string{reject("session")}
+	stop := `{"session_id":"s1","cwd":"{repo}","last_assistant_message":"done","transcript_path":"/work/s1.jsonl"}`
 	tcs := []struct {
 		name string
 		args args
 		want want
 	}{
-		{"an inferred correction of the previous answer is extracted", args{verdicts: inferred, stops: 1}, want{runs: 2, extracts: true}},
-		{"a later answer does not extract it again", args{verdicts: inferred, stops: 2}, want{runs: 3, extracts: true}},
-		{"a person's verdict is left to the nod skill", args{verdicts: [][]string{reject("ann")}, stops: 1}, want{runs: 2}},
+		{"a stop with a transcript starts the capture of its session", args{stdin: stop}, want{runs: 1, captures: true}},
 		{
-			"a person's approve wins over a later inferred reject",
-			args{verdicts: [][]string{{"--verdict", "approve", "--reviewer", "ann"}, reject("session")}, stops: 1},
-			want{runs: 2},
+			"a stop of a turn a stop hook continued starts it too",
+			args{stdin: strings.Replace(stop, `"done"`, `"done","stop_hook_active":true`, 1)},
+			want{runs: 1, captures: true},
 		},
-		{"an answer without a verdict extracts nothing", args{stops: 1}, want{runs: 2}},
-		{"manual extracts nothing", args{verdicts: inferred, session: "manual", stops: 1}, want{runs: 2}},
-		{"immediate of an earlier release extracts like deferred", args{verdicts: inferred, session: "immediate", stops: 1}, want{runs: 2, extracts: true}},
+		{"manual starts the capture for the answers to its questions", args{stdin: stop, session: "manual"}, want{runs: 1, captures: true}},
+		{"immediate of an earlier release starts it like deferred", args{stdin: stop, session: "immediate"}, want{runs: 1, captures: true}},
+		{"a stop without a transcript starts none", args{stdin: strings.Replace(stop, `"/work/s1.jsonl"`, `""`, 1)}, want{runs: 1}},
+		{"a stop without a session starts none", args{stdin: strings.Replace(stop, `"s1"`, `""`, 1)}, want{}},
+		{"a codex stop with a null transcript starts none", args{stdin: strings.Replace(stop, `"/work/s1.jsonl"`, "null", 1), host: "codex"}, want{runs: 1}},
+		{"an empty answer starts nothing", args{stdin: strings.Replace(stop, `"done"`, `""`, 1)}, want{}},
 		{
-			"a reject a person withdrew is not extracted",
-			args{verdicts: [][]string{reject("session"), {"--verdict", "withdraw", "--reviewer", "ann"}}, stops: 1},
-			want{runs: 2},
-		},
-		{"a correction the turn already drafted is not extracted again", args{verdicts: inferred, stops: 1, drafted: true}, want{runs: 2}},
-		{
-			"the answer before a question a stop hook continued is extracted at the next answer",
-			args{questions: 1, verdicts: inferred, stops: 1},
-			want{runs: 3, extracts: true},
-		},
-		{"a stop of a continued turn leaves the extraction to a later answer", args{verdicts: inferred, stops: 1, continued: true}, want{runs: 2}},
-		{
-			"a failed start still records the answer",
-			args{verdicts: inferred, stops: 1, startErr: errors.New("no process")},
-			want{runs: 2, extracts: true, stderr: "nodloop hook: no process"},
+			"a failed start is printed and the answer is still recorded",
+			args{stdin: stop, startErr: errors.New("no process")},
+			want{runs: 1, captures: true, stderr: "nodloop hook: no process"},
 		},
 		{
-			"an answer that fails to record still starts the extraction",
-			args{verdicts: inferred, stops: 1, mode: 0o400},
-			want{runs: 1, extracts: true, stderr: "permission denied"},
+			"an answer that fails to record still starts the capture",
+			args{stdin: stop, mode: 0o400},
+			want{captures: true, stderr: "permission denied"},
 		},
 	}
 	for _, tc := range tcs {
@@ -819,106 +798,30 @@ func TestRunHookStopExtract(t *testing.T) {
 			getenv := func(k string) string {
 				return map[string]string{"HOME": home, envRecordDir: records, envSession: tc.args.session}[k]
 			}
-			now := hookClock()
 			var started [][]string
 			start := besideCurate(func(args []string) error {
 				started = append(started, args)
 				return tc.args.startErr
 			})
-			stop := func(answer string, continued bool) string {
-				var stderr bytes.Buffer
-				stdin := fmt.Sprintf(`{"session_id":"s1","cwd":%q,"last_assistant_message":%q,"stop_hook_active":%t}`, repo, answer, continued)
-				require.Equal(t, 0, runHook([]string{"stop"}, getenv, start, now, strings.NewReader(stdin), &bytes.Buffer{}, &stderr))
-				return stderr.String()
-			}
-			stop("committed with a long message", false)
-			store, err := tracefile.New(records)
-			require.NoError(t, err)
-			first, err := store.List(context.Background(), record.TraceFilter{Name: string(trace.NameRun), SessionID: "s1"})
-			require.NoError(t, err)
-			require.Len(t, first, 1)
-			for range tc.args.questions {
-				require.Empty(t, stop("Reply keep or drop", true))
-			}
-			for _, flags := range tc.args.verdicts {
-				var stderr bytes.Buffer
-				require.Equal(t, 0, runFeedback(slices.Concat([]string{"add", "--trace", first[0].ID}, flags), getenv, now, trace.ProofNone, &bytes.Buffer{}, &stderr), stderr.String())
-			}
-			drafts := map[bool][][]string{true: {{
-				"propose", "--id", "short-msg", "--kind", "judgment", "--content", "keep commit messages to one line",
-				"--trace", first[0].ID, "--producer", sessionProducer, "--label", "repo=nodloop",
-			}}}[tc.args.drafted]
-			for _, draft := range drafts {
-				var stderr bytes.Buffer
-				require.Equal(t, 0, runKnowledge(draft, getenv, nil, now, atTerminal, &bytes.Buffer{}, &stderr), stderr.String())
-			}
 			require.NoError(t, os.Chmod(filepath.Join(records, "traces.jsonl"), cmp.Or(tc.args.mode, 0o600)))
-			var stderr string
-			for i := range tc.args.stops {
-				stderr += stop(fmt.Sprintf("answer %d", i), tc.args.continued)
+			hook := []string{"stop"}
+			if tc.args.host != "" {
+				hook = append(hook, "--host", tc.args.host)
 			}
-
-			runs, err := store.List(context.Background(), record.TraceFilter{Name: string(trace.NameRun), SessionID: "s1"})
-			require.NoError(t, err)
-			extracted := map[bool][][]string{true: {{"knowledge", "extract", "--from", first[0].ID}}}[tc.want.extracts]
-			assert.Contains(t, stderr, tc.want.stderr)
-			assert.Len(t, runs, tc.want.runs)
-			assert.Equal(t, extracted, started)
-		})
-	}
-}
-
-// The stop hook looks for the previous run of the session within sessionWindow and reads its verdicts from the run on
-func TestRunHookStopWindow(t *testing.T) {
-	first := time.Date(2026, 10, 3, 0, 0, 0, 0, time.UTC)
-	type args struct {
-		// From the first answer to the inferred reject of it
-		verdict time.Duration
-		// From the first answer to the next one
-		next time.Duration
-	}
-	type want struct {
-		extracts bool
-	}
-	tcs := []struct {
-		name string
-		args args
-		want want
-	}{
-		{"a previous run within the window is extracted", args{time.Minute, 24 * time.Hour}, want{true}},
-		{"a previous run older than the window is no previous run", args{time.Minute, 8 * 24 * time.Hour}, want{false}},
-		{"a verdict stamped before the run is not read", args{-time.Minute, 24 * time.Hour}, want{false}},
-	}
-	for _, tc := range tcs {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			home, records, repo := hookHome(t, "use git -C")
-			getenv := func(k string) string { return map[string]string{"HOME": home, envRecordDir: records}[k] }
-			at := first
-			now := func() time.Time { return at }
-			var started [][]string
-			start := besideCurate(func(args []string) error {
-				started = append(started, args)
-				return nil
-			})
-			stdin := `{"session_id":"s1","cwd":"` + repo + `","last_assistant_message":"done"}`
-			require.Equal(t, 0, runHook([]string{"stop"}, getenv, start, now, strings.NewReader(stdin), &bytes.Buffer{}, &bytes.Buffer{}))
-			store, err := tracefile.New(records)
-			require.NoError(t, err)
-			runs, err := store.List(context.Background(), record.TraceFilter{Name: string(trace.NameRun), SessionID: "s1"})
-			require.NoError(t, err)
-			require.Len(t, runs, 1)
-			at = first.Add(tc.args.verdict)
 			var stderr bytes.Buffer
-			require.Equal(t, 0, runFeedback([]string{"add", "--trace", runs[0].ID, "--verdict", "reject", "--reason", "too long", "--reviewer", "session"},
-				getenv, now, trace.ProofNone, &bytes.Buffer{}, &stderr), stderr.String())
-			at = first.Add(tc.args.next)
 
-			code := runHook([]string{"stop"}, getenv, start, now, strings.NewReader(stdin), &bytes.Buffer{}, &stderr)
+			code := runHook(hook, getenv, start, hookClock(), strings.NewReader(strings.ReplaceAll(tc.args.stdin, "{repo}", repo)), &bytes.Buffer{}, &stderr)
 
 			assert.Equal(t, 0, code)
-			assert.Empty(t, stderr.String())
-			assert.Equal(t, tc.want.extracts, len(started) == 1, "started %v", started)
+			assert.Contains(t, stderr.String(), tc.want.stderr)
+			require.NoError(t, os.Chmod(filepath.Join(records, "traces.jsonl"), 0o600))
+			store, err := tracefile.New(records)
+			require.NoError(t, err)
+			runs, err := store.List(context.Background(), record.TraceFilter{Name: string(trace.NameRun), SessionID: "s1"})
+			require.NoError(t, err)
+			assert.Len(t, runs, tc.want.runs)
+			captured := map[bool][][]string{true: {{"session", "capture", "--session", "s1", "--transcript", "/work/s1.jsonl"}}}[tc.want.captures]
+			assert.Equal(t, captured, started)
 		})
 	}
 }
@@ -1510,12 +1413,12 @@ func hookAdded(event, text string) string {
 	return b.String()
 }
 
-// A process with no record directory reads no mark and holds nothing
-func TestAppItemHold(t *testing.T) {
-	hold, err := app{}.itemHold()
+// A process with no record directory reads the zero mark and holds nothing
+func TestAppMark(t *testing.T) {
+	mark, err := app{}.mark()
 
 	assert.NoError(t, err)
-	assert.Zero(t, hold)
+	assert.Zero(t, mark)
 }
 
 // The reaction point judges the user's message on the previous answer before the conversation does

@@ -29,10 +29,10 @@ commands:
                             directory otherwise. It then names the newest answer of the session that no stop hook
                             continued so the conversation records the user's verdict on it. start adds every item again
                             after a compact or a clear and subagent adds them to a subagent. stop records the answer as a
-                            run, marked continued when a stop hook continued the turn, and drafts the lesson of the newest
-                            answer before it in the background when the conversation recorded a correction no record
-                            cites. instructions records the path and an HMAC of the content of each CLAUDE.md and rules
-                            file Claude Code loads, leaving out approved.md and auto memory. All exit 0.
+                            run, marked continued when a stop hook continued the turn, and starts session capture in the
+                            background on the transcript Claude Code names. instructions records the path and an HMAC of
+                            the content of each CLAUDE.md and rules file Claude Code loads, leaving out approved.md and
+                            auto memory. All exit 0.
                             --host reads the input and writes the answer of that agent and labels the run host,
                             claude-code by default. codex runs every hook. cursor and copilot run start and stop alone:
                             start adds every item and stop records no run since their input holds no answer. Their hook
@@ -40,6 +40,12 @@ commands:
                             then deferred: deferred records verdicts silently and drafts their lessons after the turn,
                             manual leaves out the note and off records nothing. immediate of an earlier release reads as
                             deferred
+  session capture --session <id> --transcript <path> [--model <m>]
+                            Read the messages the user typed in the transcript since the last capture of the session,
+                            ask the reaction point whether each corrects or approves the answer it followed and whether it
+                            asks to stop following a lesson in that answer's context, and record what is sure as verdicts
+                            of reviewer nodloop and signals for curate. Then draft the lesson of each corrected run no
+                            record cites and run one curate pass. Only a mode that infers reads anything. hook stop starts it
   feedback list [--trace <id>] [--verdict <v>] [--reviewer <r>] [--limit <n>]
                             List feedback newest first with the reason code or a dash after the verdict
   feedback add --trace <id> --verdict <v> --reviewer <r> [--reason-code <c>] [--reason <r>] [--edited <file>] [--audit]
@@ -325,6 +331,9 @@ func run(args []string, getenv func(string) string, stdin io.Reader, stdout io.W
 		"run":     func(args []string) int { return runRun(args, getenv, time.Now, stdout, stderr) },
 		"hook": func(args []string) int {
 			return runHook(args, getenv, detached(homeDir(getenv("HOME")).hookLog()), time.Now, stdin, stdout, stderr)
+		},
+		"session": func(args []string) int {
+			return runSession(args, getenv, configuredLLM(getenv), time.Now, detached(homeDir(getenv("HOME")).hookLog()), stdout, stderr)
 		},
 		"feedback": func(args []string) int { return runFeedback(args, getenv, time.Now, person, stdout, stderr) },
 		"queue":    func(args []string) int { return runQueue(args, getenv, time.Now, stdout, stderr) },

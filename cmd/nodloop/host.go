@@ -152,6 +152,31 @@ func (h host) context(w io.Writer, event, text string) error {
 	return h.write(w, map[string]any{"hookSpecificOutput": map[string]any{"hookEventName": event, "additionalContext": text}})
 }
 
+// The question at the end of the answer in the stop answer of the host
+// 1. Claude Code continues the turn on Stop additionalContext with no decision, which shows no error label as a block does
+// 2. Cursor submits followup_message as the next message of the user
+// 3. Codex and Copilot take the reason of a blocked stop as the next prompt
+func (h host) ask(w io.Writer, text string) error {
+	switch h {
+	case hostClaudeCode:
+		return h.write(w, map[string]any{"hookSpecificOutput": map[string]any{"hookEventName": "Stop", "additionalContext": text}})
+	case hostCursor:
+		return h.write(w, map[string]string{"followup_message": text})
+	}
+	return h.write(w, map[string]string{"decision": "block", "reason": text})
+}
+
+// Whether the host shows a line of the stop to the person with no model turn
+// Only Claude Code documents the common field systemMessage of a synchronous Stop hook
+func (h host) notices() bool {
+	return h == hostClaudeCode
+}
+
+// The notice as the systemMessage of the stop alone so the turn ends and the model never repeats the answer
+func (h host) notice(w io.Writer, line string) error {
+	return h.write(w, map[string]string{"systemMessage": line})
+}
+
 // Items quote commands such as a && b so the text stays as written
 func (host) write(w io.Writer, answer any) error {
 	enc := json.NewEncoder(w)

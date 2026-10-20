@@ -124,14 +124,13 @@ func (a app) source() (schema.Source, error) {
 	return schema.Source{Traces: traces, Verdicts: verdicts, Outcomes: outcomes, Knowledge: items, Guard: guardLog{a.cfg.home}}, nil
 }
 
-// The item hold that curate.json of the record directory turns on
-// No record directory holds nothing since no curate pass could have written its mark
-func (a app) itemHold() (knowledge.ItemHold, error) {
+// The mark curate.json of the record directory leaves the hooks with the knobs of the item hold and the questions due
+// No record directory reads the zero mark since no curate pass could have written one
+func (a app) mark() (curate.Mark, error) {
 	if a.cfg.recordDir == "" {
-		return 0, nil
+		return curate.Mark{}, nil
 	}
-	mark, err := curate.ReadMark(a.cfg.recordDir)
-	return mark.Knobs.Hold(), err
+	return curate.ReadMark(a.cfg.recordDir)
 }
 
 // Approved vetoes of the record directory under home
