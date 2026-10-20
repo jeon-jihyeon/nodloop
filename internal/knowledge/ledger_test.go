@@ -260,6 +260,10 @@ func TestLedgerPropose(t *testing.T) {
 	drafted.Drafted = true
 	proposedDrafted := proposed
 	proposedDrafted.Drafted = true
+	decided := draft
+	decided.Reason, decided.Decision, decided.Extract = knowledge.ReasonPerson, "d1", "e1"
+	proposedExtract := proposed
+	proposedExtract.Extract = "e1"
 	none, just := knowledge.Set{}, knowledge.Set{proposed}
 	type args struct {
 		seeds []knowledge.Knowledge
@@ -285,6 +289,11 @@ func TestLedgerPropose(t *testing.T) {
 		{"version and status of the draft are replaced", args{draft: filled}, want{proposed, none, just, nil}},
 		{"approval fields of the draft are dropped", args{draft: signed}, want{proposed, none, just, nil}},
 		{"a session the draft names is dropped so a propose is never a deferral", args{draft: deferred}, want{proposed, none, just, nil}},
+		{
+			"a reason and a decision of the draft are dropped and the extract that proposed it stays",
+			args{draft: decided},
+			want{proposedExtract, none, knowledge.Set{proposedExtract}, nil},
+		},
 		{
 			"verified basis is kept",
 			args{draft: verified},
@@ -1081,8 +1090,10 @@ func TestLedgerRetire(t *testing.T) {
 	superseded.Status = knowledge.StatusSuperseded
 	candidateRetired := candidate
 	candidateRetired.Status, candidateRetired.Approver, candidateRetired.Time = knowledge.StatusRetired, "sam", now
+	candidateRetired.Reason = knowledge.ReasonPerson
 	approvedRetired := approved
 	approvedRetired.Status, approvedRetired.Approver, approvedRetired.Time = knowledge.StatusRetired, "sam", now
+	approvedRetired.Reason = knowledge.ReasonPerson
 	judgment := candidate
 	judgment.Kind, judgment.Content = knowledge.KindJudgment, "never edit files with sed -i"
 	judgment.Veto = &knowledge.Veto{
@@ -1094,6 +1105,7 @@ func TestLedgerRetire(t *testing.T) {
 	judgmentApproved.Status, judgmentApproved.Approver, judgmentApproved.ApprovedAt = knowledge.StatusApproved, "ann", at
 	judgmentRetired := judgmentApproved
 	judgmentRetired.Status, judgmentRetired.Approver, judgmentRetired.Time = knowledge.StatusRetired, "sam", now
+	judgmentRetired.Reason = knowledge.ReasonPerson
 	type args struct {
 		seeds    []knowledge.Knowledge
 		version  int
@@ -1199,6 +1211,12 @@ func TestLedgerImport(t *testing.T) {
 	retired.Status, retired.Time = knowledge.StatusRetired, at.Add(time.Hour)
 	edited := approved
 	edited.Content = "one edited"
+	reasoned := retired
+	reasoned.Reason, reasoned.Decision = knowledge.ReasonDuplicate, "d1"
+	unknownReason := retired
+	unknownReason.Reason = "stale"
+	approvedReason := approved
+	approvedReason.Reason = knowledge.ReasonPerson
 	type args struct {
 		// Imported before the records under test
 		seeds   []knowledge.Knowledge
@@ -1262,6 +1280,21 @@ func TestLedgerImport(t *testing.T) {
 			"a record as new as the recorded history lands",
 			args{[]knowledge.Knowledge{candidate}, []knowledge.Knowledge{approved}},
 			want{knowledge.Set{approved}, knowledge.Set{approved, candidate}, "", nil, "<nil>"},
+		},
+		{
+			"a retire keeps its reason and its decision",
+			args{[]knowledge.Knowledge{candidate, approved}, []knowledge.Knowledge{reasoned}},
+			want{knowledge.Set{reasoned}, knowledge.Set{reasoned, approved, candidate}, "", nil, "<nil>"},
+		},
+		{
+			"a reason outside the set is refused",
+			args{[]knowledge.Knowledge{candidate, approved}, []knowledge.Knowledge{unknownReason}},
+			want{nil, knowledge.Set{approved, candidate}, "", knowledge.ErrReasonUnknown, `record 1: knowledge: unknown retire reason: "stale"`},
+		},
+		{
+			"a reason on a record that is not retired is refused",
+			args{[]knowledge.Knowledge{candidate}, []knowledge.Knowledge{approvedReason}},
+			want{nil, knowledge.Set{candidate}, "", knowledge.ErrReasonUnknown, "record 1: knowledge: unknown retire reason: the record is approved and only a retire names one"},
 		},
 	}
 	ctx := context.Background()
@@ -1335,7 +1368,7 @@ func TestLedgerFailsOnBrokenStore(t *testing.T) {
 	approvedNow.Status, approvedNow.Approver = knowledge.StatusApproved, "sam"
 	approvedNow.ApprovedAt, approvedNow.Time = now(), now()
 	retiredNow := approved
-	retiredNow.Status, retiredNow.Approver, retiredNow.Time = knowledge.StatusRetired, "sam", now()
+	retiredNow.Status, retiredNow.Approver, retiredNow.Time, retiredNow.Reason = knowledge.StatusRetired, "sam", now(), knowledge.ReasonPerson
 	third := candidate
 	third.ID = "k3"
 	type args struct {

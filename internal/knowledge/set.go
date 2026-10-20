@@ -280,7 +280,7 @@ func (s Set) OverlapsOf(id string) (Set, error) {
 }
 
 // The draft as the next candidate version of its id
-// 1. status and approval fields of the draft are dropped so a proposal never arrives approved
+// 1. status, approval, reason and decision fields of the draft are dropped so a proposal never arrives decided
 // 2. compaction fields are dropped so only a compaction proposal marks its candidates
 // 3. the base is the current version of the id so approval can tell which versions the candidate was built on
 func (s Set) propose(draft Knowledge, now time.Time) (Knowledge, error) {
@@ -296,7 +296,7 @@ func (s Set) propose(draft Knowledge, now time.Time) (Knowledge, error) {
 	}
 	draft.Version, draft.Status, draft.Time = s.nextVersion(draft.ID), StatusCandidate, now
 	draft.Approver, draft.ApprovedAt, draft.ReviewedAt, draft.Supersedes = "", time.Time{}, time.Time{}, 0
-	draft.Compaction, draft.CompactionSize, draft.Base, draft.DeferredIn = "", 0, 0, ""
+	draft.Compaction, draft.CompactionSize, draft.Base, draft.DeferredIn, draft.Reason, draft.Decision = "", 0, 0, "", "", ""
 	if cur := s.current(draft.ID); cur != nil {
 		draft.Base = cur.Version
 	}
@@ -482,12 +482,18 @@ func (s Set) importable(records []Knowledge) (Set, error) {
 	return out, nil
 }
 
+// The retire of a version by a person with the reason that says so
 func (s Set) retire(id string, version int, approver string, now time.Time) (Knowledge, error) {
 	from, err := s.Version(id, version)
 	if err != nil {
 		return Knowledge{}, err
 	}
-	return from.transition(StatusRetired, approver, now)
+	to, err := from.transition(StatusRetired, approver, now)
+	if err != nil {
+		return Knowledge{}, err
+	}
+	to.Reason = ReasonPerson
+	return to, nil
 }
 
 func (s Set) checkApproved(id string, version int) (Knowledge, error) {

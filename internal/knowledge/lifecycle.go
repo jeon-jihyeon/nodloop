@@ -48,7 +48,7 @@ func (l *Ledger) Reaffirm(ctx context.Context, id string, version int, approver 
 			return nil, err
 		}
 		k.Time = l.now().UTC()
-		k.ReviewedAt, k.Approver = k.Time, approver
+		k.ReviewedAt, k.Approver, k.Decision = k.Time, approver, ""
 		return []Knowledge{k}, nil
 	})
 	if err != nil {

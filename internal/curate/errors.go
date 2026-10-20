@@ -9,4 +9,6 @@ var (
 	ErrAnswerInvalid = errors.New("curate: judge answer is not valid")
 	// A few-shot set names a decision the records no longer hold
 	ErrShotUnknown = errors.New("curate: few-shot decision not found")
+	// curate.json exists and cannot be read
+	ErrMark = errors.New("curate: mark unreadable")
 )

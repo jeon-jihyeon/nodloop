@@ -146,6 +146,24 @@
       "type": "string",
       "format": "date-time"
     },
+    "reason": {
+      "type": "string",
+      "enum": [
+        "duplicate",
+        "no_evidence",
+        "temp_scope",
+        "conflict",
+        "words",
+        "compaction",
+        "person"
+      ]
+    },
+    "decision": {
+      "type": "string"
+    },
+    "extract": {
+      "type": "string"
+    },
     "supersedes": {
       "type": "integer"
     },

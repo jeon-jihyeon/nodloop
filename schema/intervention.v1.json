@@ -194,6 +194,14 @@
         }
       }
     },
+    "source": {
+      "type": "string",
+      "enum": [
+        "push",
+        "manual",
+        "command"
+      ]
+    },
     "schema_version": {
       "type": "integer",
       "const": 1

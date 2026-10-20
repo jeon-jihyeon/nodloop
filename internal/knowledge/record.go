@@ -9,7 +9,8 @@ import (
 func Restore(r record.Knowledge) Knowledge {
 	k := Knowledge{
 		ID: r.ID, Version: r.Version, Kind: Kind(r.Kind), Content: r.Content, Basis: Basis(r.Basis), Status: Status(r.Status),
-		Approver: r.Approver, ApprovedAt: r.ApprovedAt, ReviewedAt: r.ReviewedAt, Supersedes: r.Supersedes, Base: r.Base,
+		Approver: r.Approver, ApprovedAt: r.ApprovedAt, ReviewedAt: r.ReviewedAt, Reason: Reason(r.Reason), Decision: r.Decision,
+		Extract: r.Extract, Supersedes: r.Supersedes, Base: r.Base,
 		Time: r.Time, Author: r.Author, Drafted: r.Drafted, NewLabels: r.NewLabels, Compaction: r.Compaction,
 		CompactionSize: r.CompactionSize, DeferredIn: r.DeferredIn,
 		Evidence: Evidence{
@@ -46,7 +47,7 @@ func (k Knowledge) Record() record.Knowledge {
 	r := record.Knowledge{
 		ID: k.ID, Version: k.Version, Kind: string(k.Kind), Content: k.Content, Basis: string(k.Basis),
 		Status: string(k.Status), Approver: k.Approver, ApprovedAt: k.ApprovedAt, ReviewedAt: k.ReviewedAt,
-		Supersedes: k.Supersedes, Base: k.Base, Time: k.Time, Author: k.Author, Drafted: k.Drafted, NewLabels: k.NewLabels,
+		Reason: string(k.Reason), Decision: k.Decision, Extract: k.Extract, Supersedes: k.Supersedes, Base: k.Base, Time: k.Time, Author: k.Author, Drafted: k.Drafted, NewLabels: k.NewLabels,
 		Compaction: k.Compaction, CompactionSize: k.CompactionSize, DeferredIn: k.DeferredIn, SchemaVersion: SchemaVersion,
 		Evidence: record.Evidence{
 			FeedbackTraceIDs: k.Evidence.FeedbackTraceIDs, OutcomeTraceIDs: k.Evidence.OutcomeTraceIDs,

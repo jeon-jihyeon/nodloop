@@ -95,6 +95,52 @@
         "unit": {
           "type": "string"
         },
+        "eligible": {
+          "type": [
+            "null",
+            "array"
+          ],
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "version": {
+                "type": "integer"
+              },
+              "p_include": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "id",
+              "version",
+              "p_include"
+            ]
+          }
+        },
+        "held": {
+          "type": [
+            "null",
+            "array"
+          ],
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "version": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "id",
+              "version"
+            ]
+          }
+        },
         "continued": {
           "type": "boolean"
         }

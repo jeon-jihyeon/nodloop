@@ -15,6 +15,10 @@ import (
 
 func TestTraceRecord(t *testing.T) {
 	base := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
+	draw := trace.NewDraw("2026-09-21", "0.10.0+1a2b3c4d", "seed", "d1", "audit", 0.15)
+	decide := trace.Trace{
+		ID: "d1", Name: "decide", Ref: "c1", Time: base, Input: json.RawMessage(`{}`), Draw: &draw, Source: trace.SourcePush,
+	}
 	full := trace.Trace{
 		ID: trace.NewID(base), Name: trace.NameRun, SessionID: "session-1", Subject: "commit", Ref: "c1", Time: base,
 		Model: "sonnet", Input: json.RawMessage(`{"applied":[]}`), Output: json.RawMessage(`"out"`), Error: "timeout",
@@ -30,6 +34,7 @@ func TestTraceRecord(t *testing.T) {
 		{"every field", full},
 		{"only the required fields", trace.Trace{ID: "t1", Name: trace.NameCheck, Time: base, Input: json.RawMessage(`{}`)}},
 		{"empty labels stay empty", trace.Trace{ID: "t2", Name: trace.NameRun, Time: base, Labels: trace.Labels{}}},
+		{"a decision keeps its draw and its source", decide},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {

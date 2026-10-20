@@ -79,7 +79,7 @@ func (m Marker) Claim(_ context.Context, at, cutoff time.Time, every time.Durati
 // Read without the lock
 // A missing marker and one that does not decode read as no prune so far
 func (m Marker) Last(context.Context) (record.Mark, error) {
-	last, err := markfile.Read(m.path())
+	last, err := markfile.Read[record.Mark](m.path())
 	if err != nil {
 		return record.Mark{}, fmt.Errorf("%w: %w", ErrMarker, err)
 	}

@@ -11,6 +11,7 @@ import (
 
 	"github.com/jeon-jihyeon/nodloop/internal/classify"
 	"github.com/jeon-jihyeon/nodloop/internal/compact"
+	"github.com/jeon-jihyeon/nodloop/internal/curate"
 	"github.com/jeon-jihyeon/nodloop/internal/extract"
 	feedbackfile "github.com/jeon-jihyeon/nodloop/internal/feedback/file"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
@@ -97,6 +98,16 @@ func (a app) ledger() (*knowledge.Ledger, error) {
 		return nil, err
 	}
 	return knowledge.NewLedger(store, a.vetoFile(dir), a.now, knowledge.NewIDs(a.now)), nil
+}
+
+// The item hold that curate.json of the record directory turns on
+// No record directory holds nothing since no curate pass could have written its mark
+func (a app) itemHold() (knowledge.ItemHold, error) {
+	if a.cfg.recordDir == "" {
+		return 0, nil
+	}
+	mark, err := curate.ReadMark(a.cfg.recordDir)
+	return mark.Knobs.Hold(), err
 }
 
 // Approved vetoes of the record directory under home

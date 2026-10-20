@@ -43,10 +43,18 @@ type publishedKind struct {
 	links, text   []string
 	// Paths of values a model wrote that keep any string even outside the set of their type
 	free []string
+	// The trace fields of the draw envelope the name carries
+	// A trace of any other name never carries draw or source so its file names neither
+	envelope []string
 }
 
 func (k publishedKind) withFree(paths ...string) publishedKind {
 	k.free = paths
+	return k
+}
+
+func (k publishedKind) withEnvelope(fields ...string) publishedKind {
+	k.envelope = fields
 	return k
 }
 
@@ -91,8 +99,8 @@ var publishedKinds = kindTable{
 		reflect.TypeFor[struct{}](), nil, []string{"session_id", "subject"}, []string{}),
 	traceKind(trace.NameIntervention, "One action of a person or an agent with the proof of its caller and the records it wrote",
 		reflect.TypeFor[trace.Intervention](), reflect.TypeFor[trace.InterventionOutput](),
-		[]string{"session_id", "input.id", "input.version", "input.compaction", "input.authority", "input.proof", "output.records"},
-		[]string{}),
+		[]string{"session_id", "source", "input.id", "input.version", "input.compaction", "input.authority", "input.proof", "output.records"},
+		[]string{}).withEnvelope("source"),
 	{
 		name: "verdict", store: schema.StoreVerdicts, version: feedback.VerdictVersion,
 		description: "A verdict on a run: approve, edit, reject or withdraw", record: reflect.TypeFor[feedback.Feedback](),
@@ -109,7 +117,7 @@ var publishedKinds = kindTable{
 		record:      reflect.TypeFor[knowledge.Knowledge](),
 		links: []string{
 			"id", "version", "base", "supersedes", "evidence.feedback_trace_ids", "evidence.outcome_trace_ids", "evidence.knowledge",
-			"compaction", "approver",
+			"extract", "compaction", "decision", "reason", "approver",
 		},
 		text: []string{"content", "veto.example"},
 	},
@@ -131,9 +139,11 @@ func typeSchemas() map[reflect.Type]*jsonschema.Schema {
 		reflect.TypeFor[trace.Authority]():  enum(trace.Authorities()),
 		reflect.TypeFor[trace.Action]():     enum(trace.Actions()),
 		reflect.TypeFor[trace.Choice]():     enum(trace.Choices()),
+		reflect.TypeFor[trace.Source]():     enum(trace.Sources()),
 		reflect.TypeFor[knowledge.Kind]():   enum(knowledge.Kinds()),
 		reflect.TypeFor[knowledge.Status](): enum(knowledge.Statuses()),
 		reflect.TypeFor[knowledge.Basis]():  enum(knowledge.Bases()),
+		reflect.TypeFor[knowledge.Reason](): enum(knowledge.Reasons()),
 		reflect.TypeFor[veto.Action]():      enum(veto.Actions()),
 	}
 }
@@ -178,6 +188,7 @@ func (k publishedKind) schema() (*jsonschema.Schema, error) {
 }
 
 // Pins the name of the trace and types its input and output
+// The envelope fields the name never carries and the output of a name that records none are left out
 func (k publishedKind) typeTrace(s *jsonschema.Schema, opts *jsonschema.ForOptions) error {
 	s.Properties["name"] = &jsonschema.Schema{Type: "string", Const: jsonschema.Ptr[any](k.name)}
 	in, err := jsonschema.ForType(k.input, opts)
@@ -185,9 +196,15 @@ func (k publishedKind) typeTrace(s *jsonschema.Schema, opts *jsonschema.ForOptio
 		return err
 	}
 	s.Properties["input"] = in
+	unused := slices.DeleteFunc([]string{"draw", "source"}, func(f string) bool { return slices.Contains(k.envelope, f) })
 	if k.output == nil {
-		delete(s.Properties, "output")
-		s.PropertyOrder = slices.DeleteFunc(s.PropertyOrder, func(p string) bool { return p == "output" })
+		unused = append(unused, "output")
+	}
+	for _, f := range unused {
+		delete(s.Properties, f)
+	}
+	s.PropertyOrder = slices.DeleteFunc(s.PropertyOrder, func(p string) bool { return slices.Contains(unused, p) })
+	if k.output == nil {
 		return nil
 	}
 	out, err := jsonschema.ForType(k.output, opts)

@@ -59,7 +59,7 @@ func (m Marker) Claim(at time.Time, every time.Duration) (bool, error) {
 // Whether Interval passed since the last run
 // Read without the lock so most stops start nothing and a missing or torn mark reads as due
 func (m Marker) Due(now time.Time) (bool, error) {
-	last, err := markfile.Read(m.path())
+	last, err := markfile.Read[record.Mark](m.path())
 	if err != nil {
 		return false, markErr(err)
 	}

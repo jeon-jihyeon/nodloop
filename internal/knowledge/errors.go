@@ -42,6 +42,8 @@ var (
 	ErrScopeWidened         = errors.New("knowledge: new version would reach runs the approved version never reached")
 	ErrImportStale          = errors.New("knowledge: import record is older than the recorded history of its version")
 	ErrHoldoutInvalid       = errors.New("knowledge: invalid holdout share")
+	ErrItemHoldInvalid      = errors.New("knowledge: invalid item hold share")
+	ErrReasonUnknown        = errors.New("knowledge: unknown retire reason")
 	// A run either received its items or a holdout kept them from it so the arms of report effect never share a run
 	ErrWithheldApplied = errors.New("knowledge: a run carries applied or withheld items and never both")
 )

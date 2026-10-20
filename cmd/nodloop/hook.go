@@ -74,9 +74,13 @@ func runHook(args []string, getenv func(string) string, start starter, now func(
 		fmt.Fprintln(stderr, "nodloop hook:", err)
 		return 0
 	}
+	hold, err := a.itemHold()
+	if err != nil {
+		fmt.Fprintln(stderr, "nodloop hook:", err)
+	}
 	cmd := hookCommand{
 		app: a, detach: start, out: stdout, mode: mode, host: h,
-		plugin: cmp.Or(getenv(envPluginVersion), buildVersion()), holdout: a.cfg.holdout,
+		plugin: cmp.Or(getenv(envPluginVersion), buildVersion()), holdout: a.cfg.holdout, hold: hold,
 	}
 	if a.cfg.otel != nil {
 		cmd.export = start
@@ -131,6 +135,9 @@ type hookCommand struct {
 	// The version the launcher ran this binary for and else the build version
 	plugin  string
 	holdout knowledge.Holdout
+	// The share of sessions that miss each version nodloop approved
+	// 0 until curate.json turns it on so every hook gives what it gave before the hold
+	hold knowledge.ItemHold
 	// The reaction point the user set up and nil when the conversation judges alone
 	reaction *classify.Plan
 	// Starts the OTLP export after every recorded run and nil when config.json holds no otel target
@@ -145,6 +152,7 @@ type hookCommand struct {
 // 4. the newest answer of the session with the run before it and the newest refill tell which items are in the context already
 // 5. the start of the turn is recorded first so the stop knows how long the turn took
 // 6. the note and the reaction point name the newest answer since a run a stop hook continued answers the stop and never the person
+// 7. the versions the item hold keeps from the session are left out of every turn
 func (c hookCommand) prompt(ctx context.Context, sessionID, message string, labels trace.Labels) error {
 	turnErr := c.recordTurn(ctx, sessionID)
 	all, allErr := c.all(ctx)
@@ -160,10 +168,11 @@ func (c hookCommand) prompt(ctx context.Context, sessionID, message string, labe
 	if c.holdout.WithholdsRun(sessionProducer, sessionID) {
 		items = nil
 	}
+	held := c.hold.Held(items.fitting(), sessionProducer, sessionID)
 	recorded, reactErr := c.react(ctx, turn{run: previous, message: message})
 	note := c.note(sessionID, previous)
 	note.recorded = recorded
-	text := items.context(answered.inContext(knowledge.Set(items), refill), note)
+	text := items.context(answered.inContext(knowledge.Set(items), refill), held, note)
 	runsErr = errors.Join(turnErr, allErr, runsErr, reactErr)
 	if text == "" {
 		return runsErr
@@ -209,6 +218,7 @@ func (c hookCommand) start(ctx context.Context, sessionID, source string, labels
 // A subagent carries the session id of its conversation so it lands in the same arm
 // 2. a corrupt line leaves out that record and the rest are still added
 // 3. no prompt hook runs inside a subagent so its start is the only way an item reaches it
+// 4. the versions the item hold keeps from the session are left out as from the prompts
 func (c hookCommand) addItems(ctx context.Context, event, sessionID string, labels trace.Labels) (knowledge.Set, error) {
 	if c.holdout.WithholdsRun(sessionProducer, sessionID) {
 		return nil, nil
@@ -218,15 +228,15 @@ func (c hookCommand) addItems(ctx context.Context, event, sessionID string, labe
 		return nil, err
 	}
 	items := hookItems(all.For(sessionProducer, labels))
-	text := items.context(nil, sessionNote{})
+	held := c.hold.Held(items.fitting(), sessionProducer, sessionID)
+	text := items.context(nil, held, sessionNote{})
 	if text == "" {
 		return nil, err
 	}
 	if addErr := c.addContext(event, text); addErr != nil {
 		return nil, errors.Join(addErr, err)
 	}
-	added, _ := items.fitting()
-	return added, err
+	return items.fitting().Without(held), err
 }
 
 // The start of a turn of the session as a turn trace with no text
@@ -423,10 +433,11 @@ func (c hookCommand) stop(ctx context.Context, sessionID string, labels trace.La
 // 1. a turn start that cannot be read leaves the duration out and still records the run
 // 2. a corrupt line is left to the read of the previous run that reports it already
 // 3. the run of a turn a stop hook continued is marked so no reader takes it for the answer the person judged
+// 4. the item hold takes the versions it keeps from the session out of applied and records every fitting version with its chance
 func (c hookCommand) record(
 	ctx context.Context, sessionID string, labels trace.Labels, answer reply, all knowledge.Set, previous trace.Trace, continued bool,
 ) error {
-	shown, _ := hookItems(all.For(sessionProducer, labels)).fitting()
+	shown := hookItems(all.For(sessionProducer, labels)).fitting()
 	applied := shown.Refs()
 	var withheld []knowledge.Ref
 	if c.holdout.WithholdsRun(sessionProducer, sessionID) {
@@ -437,6 +448,7 @@ func (c hookCommand) record(
 		return err
 	}
 	in.Continued = continued
+	in = c.hold.Drawn(in, shown, sessionProducer, sessionID)
 	input, err := json.Marshal(c.holdout.Drawn(in, sessionProducer, sessionID))
 	if err != nil {
 		return err
@@ -531,21 +543,23 @@ type hookItems knowledge.Set
 // 2. with none in the context every fitting item comes under PromptLead
 // The items are cut at promptRunes with the count left out so the model knows the list is partial
 // 3. the note is left out when it would pass contextRunes
-func (items hookItems) context(inContext []knowledge.Ref, note sessionNote) string {
+// 4. the held versions are left out after the cut so whether one version reaches the session never depends on the draws of the others
+func (items hookItems) context(inContext, held []knowledge.Ref, note sessionNote) string {
 	var b strings.Builder
-	shown, lines := items.fitting()
+	fitted := items.fitting()
+	shown, left := fitted.Without(held), len(items)-len(fitted)
 	switch added := shown.Without(inContext); {
 	case len(inContext) > 0 && len(added) > 0:
 		b.WriteString(knowledge.DeltaLead)
 		for _, k := range added {
 			b.WriteString(k.PromptLine())
 		}
-	case len(inContext) == 0 && len(items) > 0:
+	case len(inContext) == 0 && (len(shown) > 0 || left > 0):
 		b.WriteString(knowledge.PromptLead)
-		for _, line := range lines {
-			b.WriteString(line)
+		for _, k := range shown {
+			b.WriteString(k.PromptLine())
 		}
-		if left := len(items) - len(shown); left > 0 {
+		if left > 0 {
 			fmt.Fprintf(&b, "- %d more items left out over the size cap\n", left)
 		}
 	}
@@ -555,21 +569,20 @@ func (items hookItems) context(inContext []knowledge.Ref, note sessionNote) stri
 	return b.String()
 }
 
-// The items that fit the prompt in order with their lines
+// The items that fit the prompt in order before the item hold leaves its versions out
 // The prompt hook shows them and the stop hook records them as applied, so both name the same items
-func (items hookItems) fitting() (knowledge.Set, []string) {
+func (items hookItems) fitting() knowledge.Set {
 	size := utf8.RuneCountInString(knowledge.PromptLead)
 	var shown knowledge.Set
-	var lines []string
 	for _, k := range items {
-		line := k.PromptLine()
-		if size+utf8.RuneCountInString(line) > promptRunes {
+		runes := utf8.RuneCountInString(k.PromptLine())
+		if size+runes > promptRunes {
 			break
 		}
-		size += utf8.RuneCountInString(line)
-		shown, lines = append(shown, k), append(lines, line)
+		size += runes
+		shown = append(shown, k)
 	}
-	return shown, lines
+	return shown
 }
 
 // What the prompt hook tells the conversation about its session

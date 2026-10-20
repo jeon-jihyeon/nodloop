@@ -83,7 +83,7 @@ func TestLedgerReaffirm(t *testing.T) {
 	item := knowledge.Knowledge{
 		ID: "item", Version: 1, Kind: knowledge.KindMeaning, Content: "units", Run: repoRun(),
 		Evidence: knowledge.Evidence{FeedbackTraceIDs: []string{"t1"}}, Basis: knowledge.BasisStated,
-		Status: knowledge.StatusApproved, Author: "author", Approver: "first", ApprovedAt: old, Time: old,
+		Status: knowledge.StatusApproved, Author: "author", Approver: "first", ApprovedAt: old, Time: old, Decision: "a1",
 	}
 	next := item
 	next.Version = 2
@@ -103,6 +103,8 @@ func TestLedgerReaffirm(t *testing.T) {
 		records  int
 		stale    bool
 		approver string
+		// The decision on the newest record since a reaffirm names none of the approval it repeats
+		decision string
 		err      error
 	}
 	tcs := []struct {
@@ -113,32 +115,32 @@ func TestLedgerReaffirm(t *testing.T) {
 		{
 			"the approved version is reaffirmed",
 			args{[]knowledge.Knowledge{item}, "item", 1, "second"},
-			want{2, false, "second", nil},
+			want{2, false, "second", "", nil},
 		},
 		{
 			"an approver is required",
 			args{[]knowledge.Knowledge{item}, "item", 1, ""},
-			want{1, true, "first", knowledge.ErrApproverRequired},
+			want{1, true, "first", "a1", knowledge.ErrApproverRequired},
 		},
 		{
 			"a candidate is refused",
 			args{[]knowledge.Knowledge{candidate}, "item", 1, "second"},
-			want{1, false, "", knowledge.ErrVersionUnapproved},
+			want{1, false, "", "a1", knowledge.ErrVersionUnapproved},
 		},
 		{
 			"a retired version is refused",
 			args{[]knowledge.Knowledge{item, retired}, "item", 1, "second"},
-			want{2, false, "first", knowledge.ErrVersionUnapproved},
+			want{2, false, "first", "a1", knowledge.ErrVersionUnapproved},
 		},
 		{
 			"a superseded version is refused",
 			args{[]knowledge.Knowledge{item, next, superseded}, "item", 1, "second"},
-			want{3, false, "first", knowledge.ErrVersionUnapproved},
+			want{3, false, "first", "a1", knowledge.ErrVersionUnapproved},
 		},
 		{
 			"an unknown id is not found",
 			args{[]knowledge.Knowledge{item}, "other", 1, "second"},
-			want{1, true, "first", knowledge.ErrNotFound},
+			want{1, true, "first", "a1", knowledge.ErrNotFound},
 		},
 	}
 	ctx := context.Background()
@@ -155,6 +157,7 @@ func TestLedgerReaffirm(t *testing.T) {
 			newest, imported := history[0], tc.args.records[len(tc.args.records)-1]
 			assert.Equal(t, tc.want.stale, newest.Stale(now))
 			assert.Equal(t, tc.want.approver, newest.Approver)
+			assert.Equal(t, tc.want.decision, newest.Decision)
 			assert.Equal(t, imported.Content, newest.Content)
 			assert.Equal(t, imported.ApprovedAt, newest.ApprovedAt)
 		})

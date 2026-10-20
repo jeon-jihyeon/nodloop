@@ -21,6 +21,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeon-jihyeon/nodloop/internal/curate"
 	"github.com/jeon-jihyeon/nodloop/internal/feedback"
 	feedbackfile "github.com/jeon-jihyeon/nodloop/internal/feedback/file"
 	"github.com/jeon-jihyeon/nodloop/internal/jsonl"
@@ -1057,15 +1058,14 @@ func TestHookItemsFitting(t *testing.T) {
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			shown, lines := tc.args.fitting()
-			text := tc.args.context(nil, sessionNote{})
+			shown := tc.args.fitting()
+			text := tc.args.context(nil, nil, sessionNote{})
 
 			var ids []string
 			for _, k := range shown {
 				ids = append(ids, k.ID)
 			}
 			assert.Equal(t, tc.want.shown, ids)
-			assert.Len(t, lines, len(tc.want.shown))
 			assert.Equal(t, tc.want.leftOut, counted.FindString(text))
 			assert.Less(t, len([]rune(text)), 10_000)
 		})
@@ -1122,7 +1122,7 @@ func TestHookItemsContextDelta(t *testing.T) {
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got := tc.args.items.context(tc.args.inContext, note)
+			got := tc.args.items.context(tc.args.inContext, nil, note)
 
 			assert.Equal(t, strings.ReplaceAll(tc.want, "{note}", note.text()), got)
 		})
@@ -1215,7 +1215,7 @@ func TestHookItemsContextNote(t *testing.T) {
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got := tc.args.context(nil, note)
+			got := tc.args.context(nil, nil, note)
 
 			assert.Equal(t, tc.want.note, strings.Contains(got, note.text()))
 			assert.LessOrEqual(t, len([]rune(got)), contextRunes)
@@ -1384,6 +1384,138 @@ func TestRunHookHoldout(t *testing.T) {
 			assert.Equal(t, tc.want.items, strings.Count(prompts.String(), "use git -C"))
 		})
 	}
+}
+
+// A version nodloop approved that the item hold draws for a session is left out of every hook of it
+// Until curate.json turns the hold on every hook writes the bytes it wrote before the hold
+func TestRunHookItemHold(t *testing.T) {
+	prC := knowledge.Ref{ID: "pr-c", Version: 1}
+	require.True(t, knowledge.ItemHold(0.1).Holds(sessionProducer, "s34", prC), "pr-c draws 0.054 in s34")
+	require.False(t, knowledge.ItemHold(0.1).Holds(sessionProducer, "s1", prC), "pr-c draws 0.932 in s1")
+	// pr-c approved by nodloop after git-c so it comes first in the For order
+	const nodloopItem = `{"id":"pr-c","version":1,"kind":"judgment","content":"write the motivation first",` +
+		`"run":{"producer":"session","labels":{"repo":["nodloop"]}},"evidence":{"feedback_trace_ids":["t1"]},"basis":"stated",` +
+		`"status":"approved","approver":"nodloop","approved_at":"2026-10-02T00:30:00Z","time":"2026-10-02T00:30:00Z","author":"nodloop"}` + "\n"
+	type args struct {
+		// The content of curate.json, none when empty and a directory for dir
+		mark    string
+		session string
+		// The holdout share
+		holdout string
+	}
+	type want struct {
+		// The output of the prompt, stop, second prompt, subagent and compact start hooks in that order
+		outputs []string
+		// The input of the run the stop recorded as stored
+		input string
+		// Lines on stderr, each one the unreadable mark
+		errors int
+	}
+	both := knowledge.PromptLead + "- [pr-c v1 judgment] write the motivation first\n- [git-c v1 judgment] use git -C\n"
+	person := knowledge.PromptLead + "- [git-c v1 judgment] use git -C\n"
+	outputs := func(text string) []string {
+		return []string{hookAdded("UserPromptSubmit", text), "", "", hookAdded("SubagentStart", text), hookAdded("SessionStart", text)}
+	}
+	asBefore := want{outputs(both), `{"applied":[{"id":"pr-c","version":1},{"id":"git-c","version":1}],"plugin":"0.7.0"}`, 0}
+	const active = `{"knobs":{"activated":true,"item_hold":0.1}}`
+	tcs := []struct {
+		name string
+		args args
+		want want
+	}{
+		{"no curate.json leaves every hook as before", args{session: "s34", holdout: "0"}, asBefore},
+		{"tier 1 in shadow leaves every hook as before", args{`{"knobs":{"activated":false,"item_hold":0.1}}`, "s34", "0"}, asBefore},
+		{"a share of 0 leaves every hook as before", args{`{"knobs":{"activated":true,"item_hold":0}}`, "s34", "0"}, asBefore},
+		{"an unreadable mark is reported and leaves every hook as before", args{"dir", "s34", "0"}, want{asBefore.outputs, asBefore.input, 5}},
+		{
+			"a turn without a session is never held",
+			args{active, "", "0"},
+			want{
+				[]string{asBefore.outputs[0], "", asBefore.outputs[0], asBefore.outputs[3], asBefore.outputs[4]},
+				asBefore.input, 0,
+			},
+		},
+		{
+			"a drawn session misses the version in every hook and its run records the chances",
+			args{active, "s34", "0"},
+			want{outputs(person), `{"applied":[{"id":"git-c","version":1}],"plugin":"0.7.0",` +
+				`"eligible":[{"id":"pr-c","version":1,"p_include":0.9},{"id":"git-c","version":1,"p_include":1}],` +
+				`"held":[{"id":"pr-c","version":1}]}`, 0},
+		},
+		{
+			"a session the draw passes gets every version and its run records the chances",
+			args{active, "s1", "0"},
+			want{outputs(both), `{"applied":[{"id":"pr-c","version":1},{"id":"git-c","version":1}],"plugin":"0.7.0",` +
+				`"eligible":[{"id":"pr-c","version":1,"p_include":0.9},{"id":"git-c","version":1,"p_include":1}]}`, 0},
+		},
+		{
+			"a withheld session gets no item and includes none",
+			args{active, "s34", "0.999"},
+			want{[]string{"", "", "", "", ""}, `{"applied":[],"plugin":"0.7.0",` +
+				`"withheld":[{"id":"pr-c","version":1},{"id":"git-c","version":1}],"drawn":true,"share":0.999,"scheme":1,"unit":"7b1eb3ad69b36412",` +
+				`"eligible":[{"id":"pr-c","version":1,"p_include":0},{"id":"git-c","version":1,"p_include":0}]}`, 0},
+		},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			home, records, repo := hookHome(t, "use git -C")
+			hookAppend(t, filepath.Join(records, "knowledge.jsonl"), nodloopItem)
+			hookMark(t, records, tc.args.mark)
+			getenv := envOf(map[string]string{"HOME": home, envRecordDir: records, envSession: "manual", envPluginVersion: "0.7.0"})
+			require.Equal(t, 0, runConfig([]string{"holdout", tc.args.holdout}, getenv, atTerminal, &bytes.Buffer{}, &bytes.Buffer{}))
+			now := hookClock()
+			in := `{"session_id":"` + tc.args.session + `","cwd":"` + repo + `","source":"compact","last_assistant_message":"done"}`
+			var got []string
+			var stderr bytes.Buffer
+
+			for _, action := range []string{"prompt", "stop", "prompt", "subagent", "start"} {
+				var stdout bytes.Buffer
+				require.Equal(t, 0, runHook([]string{action}, getenv, nil, now, strings.NewReader(in), &stdout, &stderr))
+				got = append(got, stdout.String())
+			}
+
+			store, err := tracefile.New(records)
+			require.NoError(t, err)
+			runs, err := store.List(context.Background(), record.TraceFilter{Name: string(trace.NameRun), Limit: 1})
+			require.NoError(t, err)
+			require.Len(t, runs, 1)
+			assert.Equal(t, tc.want.outputs, got)
+			assert.Equal(t, tc.want.input, string(runs[0].Input))
+			assert.Equal(t, tc.want.errors, strings.Count(stderr.String(), "curate: mark unreadable"))
+			assert.Equal(t, tc.want.errors, strings.Count(stderr.String(), "\n"), stderr.String())
+		})
+	}
+}
+
+// Writes curate.json of the record directory, nothing when mark is empty and a directory in its place for dir
+func hookMark(t *testing.T, records, mark string) {
+	t.Helper()
+	path := filepath.Join(records, curate.MarkFile)
+	switch mark {
+	case "":
+	case "dir":
+		require.NoError(t, os.Mkdir(path, 0o755))
+	default:
+		require.NoError(t, os.WriteFile(path, []byte(mark), 0o600))
+	}
+}
+
+// The output of a Claude Code hook that adds the text on the event
+func hookAdded(event, text string) string {
+	var b bytes.Buffer
+	enc := json.NewEncoder(&b)
+	enc.SetEscapeHTML(false)
+	_ = enc.Encode(map[string]any{"hookSpecificOutput": map[string]any{"hookEventName": event, "additionalContext": text}})
+	return b.String()
+}
+
+// A process with no record directory reads no mark and holds nothing
+func TestAppItemHold(t *testing.T) {
+	hold, err := app{}.itemHold()
+
+	assert.NoError(t, err)
+	assert.Zero(t, hold)
 }
 
 // The reaction point judges the user's message on the previous answer before the conversation does

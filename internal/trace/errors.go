@@ -22,3 +22,6 @@ var ErrDurationNegative = errors.New("trace: negative duration")
 
 // An intervention whose action, target, proof or person does not hold together
 var ErrInterventionInvalid = errors.New("trace: invalid intervention")
+
+// A draw envelope that does not fit its source
+var ErrDrawInvalid = errors.New("trace: invalid draw")
