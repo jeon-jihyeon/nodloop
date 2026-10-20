@@ -38,8 +38,8 @@ func (k Knowledge) Stale(now time.Time) bool {
 // So a reaffirm never reopens a version that a concurrent retire closed
 // 3. the exports follow because they name the approver
 func (l *Ledger) Reaffirm(ctx context.Context, id string, version int, approver string) (Knowledge, error) {
-	if approver == "" {
-		return Knowledge{}, fmt.Errorf("%w: reaffirm needs one", ErrApproverRequired)
+	if err := CheckApprover(approver); err != nil {
+		return Knowledge{}, fmt.Errorf("reaffirm: %w", err)
 	}
 	var k Knowledge
 	err := l.appendDecided(ctx, func(all Set) ([]Knowledge, error) {

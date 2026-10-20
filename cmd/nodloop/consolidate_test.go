@@ -43,7 +43,7 @@ func consolidateHome(t *testing.T, candidates int, session string) (getenv func(
 		require.Equal(t, 0, runKnowledge([]string{
 			"propose", "--id", fmt.Sprintf("lesson-%d", i), "--kind", "meaning", "--content", fmt.Sprintf("acme fact %d", i),
 			"--trace", strings.TrimSpace(id.String()), "--producer", sessionProducer, "--label", "repo=nodloop",
-		}, getenv, nil, now, &bytes.Buffer{}, &stderr), stderr.String())
+		}, getenv, nil, now, atTerminal, &bytes.Buffer{}, &stderr), stderr.String())
 	}
 	return getenv, records, repo
 }
@@ -125,7 +125,7 @@ func TestRunHookStopConsolidatesOncePerDay(t *testing.T) {
 				now := func() time.Time { return consolidateNow.Add(after) }
 				require.Equal(t, 0, runHook([]string{"stop"}, getenv, start, now, strings.NewReader(stdin), &bytes.Buffer{}, &stderr))
 				for _, args := range started {
-					require.Equal(t, 0, runKnowledge(args[1:], getenv, client, now, &stdout, &stderr), stderr.String())
+					require.Equal(t, 0, runKnowledge(args[1:], getenv, client, now, atTerminal, &stdout, &stderr), stderr.String())
 				}
 				started = nil
 			}
@@ -179,7 +179,7 @@ func TestRunKnowledgeConsolidate(t *testing.T) {
 			client.EXPECT().Complete(gomock.Any(), gomock.Any()).Return(llm.Response{Output: json.RawMessage(tc.args.output)}, nil).Times(tc.args.calls)
 			var stdout, stderr bytes.Buffer
 
-			code := runKnowledge(append([]string{"consolidate"}, tc.args.flags...), getenv, client, func() time.Time { return consolidateNow }, &stdout, &stderr)
+			code := runKnowledge(append([]string{"consolidate"}, tc.args.flags...), getenv, client, func() time.Time { return consolidateNow }, atTerminal, &stdout, &stderr)
 
 			assert.Equal(t, tc.want.code, code, stderr.String())
 			assert.Equal(t, tc.want.stdout, stdout.String())
@@ -215,7 +215,7 @@ func TestRunKnowledgeConsolidateMarkFails(t *testing.T) {
 			flags := []string{"consolidate", "--record-dir", filepath.Join(records, tc.args.recordDir)}
 			var stderr bytes.Buffer
 
-			code := runKnowledge(flags, getenv, client, func() time.Time { return consolidateNow }, &bytes.Buffer{}, &stderr)
+			code := runKnowledge(flags, getenv, client, func() time.Time { return consolidateNow }, atTerminal, &bytes.Buffer{}, &stderr)
 
 			assert.Equal(t, 1, code)
 			assert.Contains(t, stderr.String(), tc.want)

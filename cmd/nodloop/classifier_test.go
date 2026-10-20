@@ -246,7 +246,7 @@ func TestRunKnowledgeExtractClassifier(t *testing.T) {
 			var id bytes.Buffer
 			require.Equal(t, 0, runRun([]string{"record", "--producer", "session", "--label", "repo=nodloop", "--output", out}, getenv, now, &id, &bytes.Buffer{}))
 			run := strings.TrimSpace(id.String())
-			require.Equal(t, 0, runFeedback([]string{"add", "--trace", run, "--verdict", "reject", "--reason", "ran cd before git"}, getenv, now, &bytes.Buffer{}, &bytes.Buffer{}))
+			require.Equal(t, 0, runFeedback([]string{"add", "--trace", run, "--verdict", "reject", "--reason", "ran cd before git", "--reviewer", "ann"}, getenv, now, &bytes.Buffer{}, &bytes.Buffer{}))
 			client := llmmock.NewMockClient(gomock.NewController(t))
 			answers := []string{draft, passed}
 			client.EXPECT().Complete(gomock.Any(), gomock.Any()).Times(tc.want.calls).DoAndReturn(func(context.Context, llm.Request) (llm.Response, error) {
@@ -256,7 +256,7 @@ func TestRunKnowledgeExtractClassifier(t *testing.T) {
 			})
 			var stdout, stderr bytes.Buffer
 
-			code := runKnowledge([]string{"extract", "--from", run}, getenv, client, now, &stdout, &stderr)
+			code := runKnowledge([]string{"extract", "--from", run}, getenv, client, now, atTerminal, &stdout, &stderr)
 
 			require.Equal(t, 0, code, stderr.String())
 			assert.Contains(t, stdout.String(), "relation\tadd\n")
@@ -285,7 +285,7 @@ func TestRunKnowledgeExtractInvalidEndpoint(t *testing.T) {
 	client := llmmock.NewMockClient(gomock.NewController(t))
 	var stderr bytes.Buffer
 
-	code := runKnowledge([]string{"extract", "--from", strings.TrimSpace(id.String())}, getenv, client, time.Now, &bytes.Buffer{}, &stderr)
+	code := runKnowledge([]string{"extract", "--from", strings.TrimSpace(id.String())}, getenv, client, time.Now, atTerminal, &bytes.Buffer{}, &stderr)
 
 	assert.Equal(t, 1, code)
 	assert.Contains(t, stderr.String(), `critic: classify: invalid endpoint: "localhost:8000" is not an absolute http or https URL`)

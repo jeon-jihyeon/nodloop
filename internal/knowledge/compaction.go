@@ -40,6 +40,15 @@ type Compaction struct {
 	Replaced Set
 }
 
+// The id, version and status of the new versions and then the old ones
+func (c Compaction) Statuses() []string {
+	out := make([]string, 0, len(c.Items)+len(c.Replaced))
+	for _, k := range slices.Concat(c.Items, c.Replaced) {
+		out = append(out, fmt.Sprintf("%s v%d %s", k.ID, k.Version, k.Status))
+	}
+	return out
+}
+
 // Which new items state each old item of a compaction and what they lose
 // A run cannot be replayed so a reader of both sides checks that nothing is lost
 type Coverage struct {

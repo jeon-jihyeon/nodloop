@@ -49,6 +49,7 @@ func TestNameValid(t *testing.T) {
 		{"check is known", trace.NameCheck, true},
 		{"turn is known", trace.NameTurn, true},
 		{"compact is known", trace.NameCompact, true},
+		{"intervention is known", trace.NameIntervention, true},
 		{"a name of the data review is unknown now", "diagnose", false},
 		{"empty name is unknown", "", false},
 		{"misspelled name is unknown", "diagnosis", false},

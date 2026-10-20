@@ -13,6 +13,7 @@ import (
 
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	"github.com/jeon-jihyeon/nodloop/internal/loop"
+	"github.com/jeon-jihyeon/nodloop/internal/trace"
 )
 
 // The conversation records joined once for the loop views
@@ -59,9 +60,10 @@ func (c knowledgeCommand) audit(ctx context.Context) error {
 }
 
 // Without a version the approved version of the id is the one reaffirmed
+// Without the terminal proof the call records an agent proposal on an approved version and changes nothing
 func (c knowledgeCommand) reaffirm(ctx context.Context, id string, version int, approver string) error {
-	if id == "" || approver == "" {
-		return fmt.Errorf("reaffirm: an id and --approver %w", errRequired)
+	if id == "" {
+		return fmt.Errorf("reaffirm: an id %w", errRequired)
 	}
 	if version == 0 {
 		var err error
@@ -69,12 +71,22 @@ func (c knowledgeCommand) reaffirm(ctx context.Context, id string, version int, 
 			return err
 		}
 	}
-	k, err := c.ledger.Reaffirm(ctx, id, version, approver)
+	judgment, err := c.judgment(trace.Intervention{ID: id, Version: version, Choice: trace.ChoiceKeep}, approver)
+	if err != nil {
+		return err
+	}
+	if judgment.Proof == trace.ProofNone {
+		if _, err := c.ledger.Approved(ctx, id, version); err != nil {
+			return err
+		}
+		return c.proposal(ctx, "reaffirm", judgment)
+	}
+	k, err := c.ledger.Reaffirm(ctx, id, version, judgment.Person)
 	if err != nil {
 		return err
 	}
 	fmt.Fprintf(c.out, "%s\tv%d\treaffirmed\t%s\n", k.ID, k.Version, k.Approver)
-	return nil
+	return c.intervened(ctx, judgment, knowledge.Set{k})
 }
 
 // Proposes the next version that excepts the values of the key its refuted runs carried
@@ -92,7 +104,7 @@ func (c knowledgeCommand) narrow(ctx context.Context, id string, version int, ke
 	}
 	n, overlaps, err := c.ledger.Narrow(ctx, id, version, key, h.RefutedValues(id, version, key), h.RefutedTraces(id, version), author)
 	if errors.Is(err, knowledge.ErrNarrowExhausted) {
-		return fmt.Errorf("%w. Keep the version or retire it by name with nodloop knowledge retire %s --version %d --approver <name>",
+		return fmt.Errorf("%w. Keep the version, or retire it from your own terminal with nodloop knowledge retire %s --version %d",
 			err, id, version)
 	}
 	if err != nil {

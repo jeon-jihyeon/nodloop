@@ -102,6 +102,15 @@ func (s Set) Refs() []Ref {
 	return out
 }
 
+// The id, version and status of each record in set order as an intervention names the records it wrote
+func (s Set) Written() []trace.Written {
+	out := make([]trace.Written, 0, len(s))
+	for _, k := range s {
+		out = append(out, trace.Written{ID: k.ID, Version: k.Version, Status: string(k.Status)})
+	}
+	return out
+}
+
 // The records in set order whose version none of the refs names
 func (s Set) Without(refs []Ref) Set {
 	out := Set{}
@@ -323,8 +332,9 @@ func (s Set) scoped(id string, version int, labels trace.Labels) (Knowledge, err
 // Only a retire by a named person lifts a veto
 // 4. a new version that reaches runs the approved version never reached is refused with ErrScopeWidened
 // Only a retire by a named person widens the scope the same way
-// 5. an approval that pushes a run past RunChars or RunItems or grows one already past them is refused
-// So a new version that replaces an item in a run already past a cap passes while that run does not grow
+// 5. an approval that pushes a run past RunChars or grows one already past it is refused
+// So a new version that replaces an item in a run already past the cap passes while that run does not grow
+// No approval is refused for the number of items
 func (s Set) approval(id string, version int, approver string, now time.Time) ([]Knowledge, error) {
 	history, err := s.historyOf(id)
 	if err != nil {

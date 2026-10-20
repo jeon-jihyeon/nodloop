@@ -62,13 +62,7 @@ func TestRunReportRecords(t *testing.T) {
 				ID: "replay-1", Name: trace.NameReplay, Subject: "git-c", Time: at,
 				Output: json.RawMessage(`{"id":"git-c","version":1,"cases":[{"run":"r","expect":"breaks","breaks":true,"why":"w"}],"missed":0,"overreach":0}`),
 			}.Record()))
-			if tc.args.corrupt {
-				f, err := os.OpenFile(filepath.Join(records, "traces.jsonl"), os.O_APPEND|os.O_WRONLY, 0o600)
-				require.NoError(t, err)
-				_, err = f.WriteString("not json\n")
-				require.NoError(t, err)
-				require.NoError(t, f.Close())
-			}
+			hookAppend(t, filepath.Join(records, "traces.jsonl"), map[bool]string{true: "not json\n"}[tc.args.corrupt])
 			getenv := func(k string) string { return map[string]string{envRecordDir: records}[k] }
 			var stdout, stderr bytes.Buffer
 

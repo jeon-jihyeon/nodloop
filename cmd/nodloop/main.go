@@ -81,22 +81,27 @@ commands:
                             idle versions no run applied for 30 days and contested ones corrected again for their reason
                             with the items to compact them with
   knowledge audit           References of current items that no longer resolve
-  knowledge reaffirm <id> --approver <name> [--version <n>]
-                            Record that a named person rechecked the approved version. Its review deadline starts again
+  knowledge reaffirm <id> [--approver <name>] [--version <n>]
+                            Record that you rechecked the approved version. Its review deadline starts again
   knowledge narrow <id> --version <n> --key <label key> [--author <a>]
                             Propose the next version that excepts the values of that label its refuted runs carried
   knowledge promote <id> --version <n> [--author <a>]
                             Propose the next version with basis verified and the runs whose outcome confirmed it
   knowledge overlaps <id>   Current items of the same kind that one run may carry together
-  knowledge approve <id> --version <n> --approver <name> [--label <key=value> | --everywhere]
+  knowledge approve <id> --version <n> [--approver <name>] [--label <key=value> | --everywhere]
                             Refused when one run would carry more than 9000 chars, when it would lift the veto of the
                             approved version or reach runs it never reached, or when it was not built from that version.
                             --label approves a candidate for the runs that carry these labels instead of the proposed
                             ones and --everywhere for every run of its producer. Each label must be one a recorded run
                             carries
-  knowledge retire <id> --version <n> --approver <name>
+  knowledge retire <id> --version <n> [--approver <name>]
+                            approve, retire, reaffirm and approve-compaction decide only at an interactive terminal outside
+                            an agent session, under --approver, then config approver, then person. From a script or the
+                            shell of an agent they record a proposal the person is asked about and change nothing.
+                            The name nodloop is refused
   knowledge import --file <jsonl>
-                            Append the records of a file not yet recorded
+                            Append the records of a file not yet recorded, only at an interactive terminal outside an
+                            agent session since the records name their approvers
   knowledge compact <id> [--model <m>] [--author <a>]
                             Draft through claude -p a smaller set of items for the runs the item reaches, with nothing said
                             twice and nothing lost, and propose it
@@ -106,7 +111,7 @@ commands:
                             the corrections of the items it replaces, and totals what they miss and where they reach too far
   knowledge compaction <compaction id>
                             Print the new and old items and the newest coverage check
-  knowledge approve-compaction <compaction id> --approver <name>
+  knowledge approve-compaction <compaction id> [--approver <name>]
                             Approve the new items and retire the old ones once the coverage check passed
   knowledge export          Write the approved vetoes and approved.md of the record directory again after a failed export
                             and print the line that imports approved.md from a CLAUDE.md
@@ -173,7 +178,8 @@ commands:
   llm unset                 Every command calls claude -p again
   config                    Every setting with its value and where it came from: an environment variable, config.json
                             or the default
-  config approver [<name>]  Print the name saved in ~/.nodloop/config.json to approve under, or save one
+  config approver [<name>]  Print the name saved in ~/.nodloop/config.json to decide under, or save one, which only an
+                            interactive terminal outside an agent session does. The name nodloop is refused
   config holdout [<share>]  Print or save the share of draws that get no item so report effect can compare: each Claude
                             Code conversation is one draw, and each holdout key a producer passes to knowledge_for, to
                             knowledge for --holdout-key or to the nodloop-server it reads at start is one draw.
@@ -217,7 +223,7 @@ commands:
 
 Every command that reads records accepts --record-dir, which overrides NODLOOP_RECORD_DIR, then record_dir of
 ~/.nodloop/config.json, then ~/.nodloop/records
-An approved version is stale 90 days after its approval or last reaffirm. Nothing is retired without a named approver
+An approved version is stale 90 days after its approval or last reaffirm. Nothing is approved or retired without a person
 `
 
 // Set by goreleaser through ldflags
@@ -266,6 +272,8 @@ func run(args []string, getenv func(string) string, stdin io.Reader, stdout io.W
 	if words, ok := helpWords(args); ok {
 		return runHelp(words, stdout)
 	}
+	// Read once from the process so a command that decides for a person records what proved the person or a proposal
+	person := terminalProof(stdin, stdout, getenv)
 	commands := map[string]func(args []string) int{
 		"help":    func(args []string) int { return runHelp(args, stdout) },
 		"trace":   func(args []string) int { return runTrace(args, getenv, time.Now, stdout, stderr) },
@@ -280,12 +288,12 @@ func run(args []string, getenv func(string) string, stdin io.Reader, stdout io.W
 		"guard":    func(args []string) int { return runGuard(args, getenv, os.Executable, time.Now, stdin, stdout, stderr) },
 		"llm":      func(args []string) int { return runLLM(args, getenv, configuredLLM(getenv), time.Now, stdout, stderr) },
 		"knowledge": func(args []string) int {
-			return runKnowledge(args, getenv, configuredLLM(getenv), time.Now, stdout, stderr)
+			return runKnowledge(args, getenv, configuredLLM(getenv), time.Now, person, stdout, stderr)
 		},
 		"mcp": func(args []string) int {
 			return runMCP(args, getenv, detached(homeDir(getenv("HOME")).hookLog()), time.Now, stdin, stdout, stderr)
 		},
-		"config":     func(args []string) int { return runConfig(args, getenv, stdout, stderr) },
+		"config":     func(args []string) int { return runConfig(args, getenv, person, stdout, stderr) },
 		"classifier": func(args []string) int { return runClassifier(args, getenv, time.Now, stdout, stderr) },
 		"server":     func([]string) int { return fail(stderr, "server", errServerMoved) },
 		"doctor":     func(args []string) int { return runDoctor(args, getenv, time.Now, stdout, stderr) },

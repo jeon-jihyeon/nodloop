@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -48,7 +49,8 @@ func (f *knowledgeFlags) bind(fs *flag.FlagSet) {
 	fs.StringVar(&f.kind, "kind", "", "meaning or judgment")
 	fs.StringVar(&f.content, "content", "", "the knowledge in one or a few sentences")
 	fs.StringVar(&f.basis, "basis", string(knowledge.BasisStated), "stated or verified")
-	fs.StringVar(&f.approver, "approver", "", "name of the person approving or retiring")
+	fs.StringVar(&f.approver, "approver", "",
+		"approve, retire, reaffirm and approve-compaction: the name of the person deciding. approver of config.json, then person, when empty")
 	fs.StringVar(&f.author, "author", feedback.ReviewerAuthor, "who proposed")
 	fs.StringVar(&f.status, "status", "", "list: candidate, approved, retired or superseded")
 	fs.StringVar(&f.traceID, "trace", "", "propose: the run whose feedback is the evidence")
@@ -132,8 +134,10 @@ func (f knowledgeFlags) filter(now time.Time) knowledge.Filter {
 	return out
 }
 
+// proof is the terminal proof of the process
+// The commands that decide for a person carry out what they record only with it
 func runKnowledge(
-	args []string, getenv func(string) string, client llm.Client, now func() time.Time, stdout, stderr io.Writer,
+	args []string, getenv func(string) string, client llm.Client, now func() time.Time, proof trace.Proof, stdout, stderr io.Writer,
 ) int {
 	if len(args) == 0 {
 		return fail(stderr, "knowledge", errNoAction)
@@ -154,7 +158,7 @@ func runKnowledge(
 	ctx := context.Background()
 	switch {
 	case slices.Contains([]string{"compact", "compaction", "check", "approve-compaction"}, args[0]):
-		err = flags.runCompaction(ctx, args[0], id, a, client, stdout)
+		err = flags.runCompaction(ctx, args[0], id, a, client, proof, stdout)
 	case args[0] == "propose":
 		err = flags.runPropose(ctx, a, stdout)
 	case args[0] == "extract":
@@ -167,7 +171,7 @@ func runKnowledge(
 		err = flags.runConsolidate(ctx, a, client, stdout)
 		a.exportAfter(detached(a.cfg.home.hookLog()), stderr)
 	default:
-		err = flags.runRecords(ctx, args[0], id, a, stdout)
+		err = flags.runRecords(ctx, args[0], id, a, proof, stdout)
 	}
 	if err != nil {
 		return fail(stderr, "knowledge", err)
@@ -176,12 +180,13 @@ func runKnowledge(
 }
 
 // The actions over the knowledge records and the records they cite
-func (f knowledgeFlags) runRecords(ctx context.Context, action, id string, a app, stdout io.Writer) error {
+func (f knowledgeFlags) runRecords(ctx context.Context, action, id string, a app, proof trace.Proof, stdout io.Writer) error {
 	ledger, err := a.ledger()
 	if err != nil {
 		return err
 	}
 	cmd := a.knowledgeCommand(ledger, stdout)
+	cmd.proof = proof
 	switch action {
 	case "list":
 		return cmd.list(ctx, f.filter(a.now()))
@@ -195,17 +200,8 @@ func (f knowledgeFlags) runRecords(ctx context.Context, action, id string, a app
 		return cmd.forRun(ctx, f.producer, trace.Labels(f.labels), f.holdoutKey)
 	case "waiting":
 		return cmd.waiting(ctx, f.producer, trace.Labels(f.labels))
-	case "approve":
-		approve, err := f.approval(cmd)
-		if err != nil {
-			return err
-		}
-		if err := cmd.transition(ctx, "approve", approve, id, f.version, f.approver); err != nil {
-			return err
-		}
-		return cmd.folder(ctx, id, f.version)
-	case "retire":
-		return cmd.transition(ctx, "retire", ledger.Retire, id, f.version, f.approver)
+	case "approve", "retire":
+		return f.runJudge(ctx, action, id, cmd)
 	case "import":
 		return cmd.importFile(ctx, f.file)
 	case "export":
@@ -215,19 +211,55 @@ func (f knowledgeFlags) runRecords(ctx context.Context, action, id string, a app
 	}
 }
 
-// The approval of the flags
+// Moves one version to a new status under the person's name
+// Without the terminal proof it records a proposal
+// An approval prints the folder the version joined
+func (f knowledgeFlags) runJudge(ctx context.Context, action, id string, cmd knowledgeCommand) error {
+	if id == "" || f.version <= 0 {
+		return fmt.Errorf("%s: an id and --version %w", action, errRequired)
+	}
+	target := trace.Intervention{ID: id, Version: f.version, Choice: trace.ChoiceUndo}
+	var move mover = cmd.ledger.Retire
+	if action == "approve" {
+		var err error
+		if target, move, err = f.approval(cmd, id); err != nil {
+			return err
+		}
+	}
+	judgment, err := cmd.judgment(target, f.approver)
+	if err != nil {
+		return err
+	}
+	if err := cmd.transition(ctx, action, move, judgment); err != nil {
+		return err
+	}
+	if action != "approve" || judgment.Proof == trace.ProofNone {
+		return nil
+	}
+	return cmd.folder(ctx, id, f.version)
+}
+
+// One version moved to a new status under a name
+type mover func(ctx context.Context, id string, version int, approver string) (knowledge.Knowledge, error)
+
+// The approval of the flags and the target it records
 // 1. as proposed without --label and --everywhere
 // 2. in the labels or for every run of the producer when the person picked one
-func (f knowledgeFlags) approval(cmd knowledgeCommand) (func(context.Context, string, int, string) (knowledge.Knowledge, error), error) {
+func (f knowledgeFlags) approval(cmd knowledgeCommand, id string) (trace.Intervention, mover, error) {
+	target := trace.Intervention{ID: id, Version: f.version, Choice: trace.ChoiceKeep}
+	scoped := target
+	scoped.Choice = trace.ChoiceScope
 	switch {
 	case f.everywhere && len(f.labels) > 0:
-		return nil, fmt.Errorf("approve: %w", errScopeFlags)
+		return trace.Intervention{}, nil, fmt.Errorf("approve: %w", errScopeFlags)
 	case f.everywhere:
-		return cmd.approveIn(trace.Labels{}), nil
+		scoped.Labels = trace.Labels{}
+		return scoped, cmd.approveIn(scoped.Labels), nil
 	case len(f.labels) > 0:
-		return cmd.approveIn(trace.Labels(f.labels)), nil
+		scoped.Labels = trace.Labels(f.labels)
+		return scoped, cmd.approveIn(scoped.Labels), nil
 	}
-	return cmd.ledger.Approve, nil
+	return target, cmd.ledger.Approve, nil
 }
 
 // The actions that read how the reviews of a version held up and the ones that act on it
@@ -249,6 +281,9 @@ func (f knowledgeFlags) runHealth(ctx context.Context, action, id string, cmd kn
 type knowledgeCommand struct {
 	app    app
 	ledger *knowledge.Ledger
+	// The terminal proof of the process
+	// The commands that decide for a person carry out what they record only with it
+	proof trace.Proof
 	// The approved veto file of the record directory
 	// Empty without a home
 	vetoPath     string
@@ -259,9 +294,10 @@ type knowledgeCommand struct {
 	out       io.Writer
 }
 
+// The command proves no person until its caller sets the terminal proof of the process
 func (a app) knowledgeCommand(ledger *knowledge.Ledger, out io.Writer) knowledgeCommand {
 	return knowledgeCommand{
-		app: a, ledger: ledger, vetoPath: a.vetoFile(a.cfg.recordDir).Path(), settingsPath: a.cfg.home.settingsPath(),
+		app: a, ledger: ledger, proof: trace.ProofNone, vetoPath: a.vetoFile(a.cfg.recordDir).Path(), settingsPath: a.cfg.home.settingsPath(),
 		stableBinary: a.cfg.home.stableBinary(), rulesPath: knowledgefile.RulesPath(a.cfg.recordDir), out: out,
 	}
 }
@@ -354,7 +390,7 @@ func (c knowledgeCommand) approveIn(labels trace.Labels) func(context.Context, s
 	}
 }
 
-// The approved items a run of the producer with the labels applies, then their size against the caps
+// The approved items a run of the producer with the labels applies and then their size
 // A run the holdout draws for the key gets a withheld line per item it would have received and no item
 func (c knowledgeCommand) forRun(ctx context.Context, producer string, labels trace.Labels, holdoutKey string) error {
 	if producer == "" {
@@ -484,27 +520,29 @@ func (c knowledgeCommand) overlaps(ctx context.Context, id string) error {
 	return nil
 }
 
-// Approve and retire move one version to a new status under a name
-// 1. a failed export still prints the status line because the record is written and the error follows
-// 2. the veto line appears only when the export worked and the approved vetoes changed
-func (c knowledgeCommand) transition(
-	ctx context.Context, action string, move func(context.Context, string, int, string) (knowledge.Knowledge, error),
-	id string, version int, approver string,
-) error {
-	if id == "" || version <= 0 || approver == "" {
-		return fmt.Errorf("%s: an id, --version and --approver %w", action, errRequired)
+// Approve and retire move one version to a new status under the person's name
+// 1. without the terminal proof the call records an agent proposal once the version is found and changes nothing
+// 2. a failed export still prints the status line because the record is written and the error follows
+// 3. the intervention follows the record since it names the record written
+// 4. the veto line appears only when the export worked and the approved vetoes changed
+func (c knowledgeCommand) transition(ctx context.Context, action string, move mover, judgment trace.Intervention) error {
+	if judgment.Proof == trace.ProofNone {
+		if err := c.proposable(ctx, judgment); err != nil {
+			return err
+		}
+		return c.proposal(ctx, action, judgment)
 	}
 	before, err := c.ledger.All(ctx)
 	if err != nil {
 		return err
 	}
-	k, err := move(ctx, id, version, approver)
+	k, err := move(ctx, judgment.ID, judgment.Version, judgment.Person)
 	if err != nil && !errors.Is(err, knowledge.ErrExport) {
 		return err
 	}
 	fmt.Fprintf(c.out, "%s\tv%d\t%s\t%s\n", k.ID, k.Version, k.Status, k.Approver)
-	if err != nil {
-		return err
+	if ierr := c.intervened(ctx, judgment, knowledge.Set{k}); ierr != nil || err != nil {
+		return errors.Join(err, ierr)
 	}
 	after, err := c.ledger.All(ctx)
 	if err != nil {
@@ -514,6 +552,68 @@ func (c knowledgeCommand) transition(
 		c.vetoLine(len(after.Vetoes()))
 	}
 	return nil
+}
+
+// The judgment of a target under the proof of the process
+// 1. a person is named by --approver, then approver of config.json, then person
+// 2. the reserved name is refused whatever the proof
+// 3. a proposal names no person
+func (c knowledgeCommand) judgment(target trace.Intervention, approver string) (trace.Intervention, error) {
+	name := cmp.Or(approver, c.app.cfg.approver, unnamedPerson)
+	if err := knowledge.CheckApprover(name); err != nil {
+		return trace.Intervention{}, err
+	}
+	target.Action, target.Proof = trace.ActionJudge, c.proof
+	if c.proof.Authority() == trace.AuthorityPerson {
+		target.Person = name
+	}
+	return target, nil
+}
+
+// Records the intervention of a judgment with the records it wrote
+func (c knowledgeCommand) intervened(ctx context.Context, judgment trace.Intervention, wrote knowledge.Set) error {
+	tr, err := judgment.Trace(wrote.Written(), "", c.app.now())
+	if err != nil {
+		return err
+	}
+	store, err := c.app.traces()
+	if err != nil {
+		return err
+	}
+	return store.Append(ctx, tr.Record())
+}
+
+// Records the judgment as an agent proposal and says so
+// Nothing changes until the person answers the question made of it
+func (c knowledgeCommand) proposal(ctx context.Context, action string, judgment trace.Intervention) error {
+	if err := c.intervened(ctx, judgment, nil); err != nil {
+		return err
+	}
+	target := judgment.Compaction
+	if target == "" {
+		target = fmt.Sprintf("%s\tv%d", judgment.ID, judgment.Version)
+	}
+	fmt.Fprintf(c.out, "proposal\t%s\t%s is recorded as a proposal and nothing changed. "+
+		"Only a person at an interactive terminal outside an agent session decides, so the person is asked about it\n", target, action)
+	return nil
+}
+
+// Whether the version a proposal names is recorded and a scope it picks reaches only labels a recorded run carries
+// So a proposal never asks the person about a version that is not there
+func (c knowledgeCommand) proposable(ctx context.Context, judgment trace.Intervention) error {
+	if judgment.Choice == trace.ChoiceScope {
+		scope, err := c.ledger.ScopeIn(ctx, judgment.ID, judgment.Version, judgment.Labels)
+		if err != nil {
+			return err
+		}
+		return c.recorded(ctx, scope)
+	}
+	all, err := c.ledger.All(ctx)
+	if err != nil {
+		return err
+	}
+	_, err = all.Version(judgment.ID, judgment.Version)
+	return err
 }
 
 // Writes the approved vetoes and rules again after a failed export or before the first import of the rules
@@ -547,9 +647,13 @@ func (c knowledgeCommand) vetoLine(count int) {
 }
 
 // Appends the records of a jsonl file as they are
+// Only with the terminal proof since the records name their approvers and skip the status checks
 func (c knowledgeCommand) importFile(ctx context.Context, path string) error {
 	if path == "" {
 		return fmt.Errorf("--file %w", errRequired)
+	}
+	if c.proof == trace.ProofNone {
+		return fmt.Errorf("import: %w", errPersonOnly)
 	}
 	// jsonl Open reads a missing file as empty so a wrong path would import nothing
 	if _, err := os.Stat(path); err != nil {

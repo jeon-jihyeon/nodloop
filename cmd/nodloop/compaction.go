@@ -7,18 +7,20 @@ import (
 	"fmt"
 	"io"
 	"reflect"
+	"slices"
 	"strings"
 
 	"github.com/jeon-jihyeon/nodloop/internal/compact"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	"github.com/jeon-jihyeon/nodloop/internal/llm"
 	"github.com/jeon-jihyeon/nodloop/internal/replay"
+	"github.com/jeon-jihyeon/nodloop/internal/trace"
 )
 
 // The compaction actions of the knowledge command
 // They read runs and verdicts beside the ledger and compact and check call a model
 func (f knowledgeFlags) runCompaction(
-	ctx context.Context, action, id string, a app, client llm.Client, stdout io.Writer,
+	ctx context.Context, action, id string, a app, client llm.Client, proof trace.Proof, stdout io.Writer,
 ) error {
 	if id == "" {
 		return fmt.Errorf("%s: an id %w", action, errRequired)
@@ -31,7 +33,9 @@ func (f knowledgeFlags) runCompaction(
 	if err != nil {
 		return err
 	}
-	cmd := compactionCommand{ledger: ledger, compactor: compactor, client: client, out: stdout, records: a.knowledgeCommand(ledger, stdout)}
+	records := a.knowledgeCommand(ledger, stdout)
+	records.proof = proof
+	cmd := compactionCommand{ledger: ledger, compactor: compactor, client: client, out: stdout, records: records}
 	switch action {
 	case "compact":
 		return cmd.compact(ctx, id, f.model, f.author)
@@ -223,22 +227,31 @@ func (c compactionCommand) show(ctx context.Context, id string) error {
 	return nil
 }
 
+// Approves the compaction under the person's name
+// Without the terminal proof it records a proposal of a found compaction
 // A failed veto export still prints the records because they are written and the error follows
 func (c compactionCommand) approve(ctx context.Context, id, approver string) error {
-	if approver == "" {
-		return fmt.Errorf("approve-compaction: --approver %w", errRequired)
+	judgment, err := c.records.judgment(trace.Intervention{Compaction: id, Choice: trace.ChoiceKeep}, approver)
+	if err != nil {
+		return err
+	}
+	if judgment.Proof == trace.ProofNone {
+		if _, err := c.ledger.Compaction(ctx, id); err != nil {
+			return err
+		}
+		return c.records.proposal(ctx, "approve-compaction", judgment)
 	}
 	before, err := c.ledger.All(ctx)
 	if err != nil {
 		return err
 	}
-	compaction, err := c.compactor.Approve(ctx, id, approver)
+	compaction, err := c.compactor.Approve(ctx, id, judgment.Person)
 	if err != nil && !errors.Is(err, knowledge.ErrExport) {
 		return err
 	}
 	c.printCompaction(compaction)
-	if err != nil {
-		return err
+	if ierr := c.records.intervened(ctx, judgment, slices.Concat(compaction.Items, compaction.Replaced)); ierr != nil || err != nil {
+		return errors.Join(err, ierr)
 	}
 	after, err := c.ledger.All(ctx)
 	if err != nil {

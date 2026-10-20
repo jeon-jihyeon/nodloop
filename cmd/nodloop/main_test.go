@@ -8,7 +8,13 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeon-jihyeon/nodloop/internal/trace"
 )
+
+// The proof of a person at an interactive terminal
+// The commands of these tests stand for that person and a test of a command without it passes trace.ProofNone
+const atTerminal = trace.ProofTerminal
 
 func TestRun(t *testing.T) {
 	plain, err := os.ReadFile("testdata/bash_plain.json")
