@@ -15,6 +15,7 @@ type Feedback struct {
 	Reason     string          `json:"reason,omitempty"`
 	Edited     json.RawMessage `json:"edited,omitempty"`
 	Reviewer   string          `json:"reviewer"`
+	Proof      string          `json:"proof,omitempty"`
 	Audit      bool            `json:"audit,omitempty"`
 }
 

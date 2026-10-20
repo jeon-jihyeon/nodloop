@@ -169,7 +169,7 @@ func TestPlanClassify(t *testing.T) {
 			traces, err := tracefile.New(t.TempDir())
 			require.NoError(t, err)
 			plan := classify.NewPlan(classify.PointCritic, tc.args.endpoint.member(t, "laya"),
-				builtin(t, tc.args.answers, tc.args.err), traces, func() time.Time { return fixed })
+				builtin(t, tc.args.answers, tc.args.err), traces, seal, func() time.Time { return fixed })
 
 			got, err := plan.Classify(ctx, classify.Request{Ref: "run-1", State: "the draft", Questions: questions})
 
@@ -213,7 +213,7 @@ func TestPlanClassifyTimes(t *testing.T) {
 	}
 	claude := builtin(t, classify.Answers{"holds": {Yes: 1}, "states": {Yes: 1}}, nil)
 
-	_, err = classify.NewPlan(classify.PointCritic, unsure.member(t, "laya"), claude, traces, tick).
+	_, err = classify.NewPlan(classify.PointCritic, unsure.member(t, "laya"), claude, traces, seal, tick).
 		Classify(ctx, classify.Request{State: "the draft", Questions: questions})
 
 	require.NoError(t, err)
@@ -229,6 +229,69 @@ func TestPlanClassifyTimes(t *testing.T) {
 	assert.Equal(t, int64(5000), recorded[0].DurationMS)
 	require.Len(t, out.Members, 2)
 	assert.Equal(t, []int64{1000, 1000}, []int64{out.Members[0].MS, out.Members[1].MS})
+}
+
+// The critic keeps its state as text and every other point only its HMAC with the questions by name
+// The trace names the model of the built in member once it answered
+func TestPlanClassifyKeeps(t *testing.T) {
+	const words = "## User message\n\nno, quote the refund window"
+	sure := endpoint{yes: map[string]float64{"holds": 0.95, "states": 0.9}}
+	unsure := endpoint{yes: map[string]float64{"holds": 0.6, "states": 0.1}}
+	sonnet := member{name: "claude", reply: classify.Reply{Answers: classify.Answers{"holds": {Yes: 1}, "states": {Yes: 0}}, Model: "claude-sonnet-5-5"}}
+	type args struct {
+		point    classify.Point
+		endpoint endpoint
+	}
+	type want struct {
+		input string
+		model string
+	}
+	tcs := []struct {
+		name string
+		args args
+		want want
+	}{
+		{"the critic keeps the draft and the instructions", args{classify.PointCritic, unsure},
+			want{`{"state":` + quoted(t, words) + `,"questions":{"holds":"It holds beyond this run.","states":"It states the correction."}}`, "claude-sonnet-5-5"}},
+		{"the reaction keeps the HMAC of the person's words and the names", args{classify.PointReaction, unsure},
+			want{`{"state":` + quoted(t, seal(words)) + `,"questions":["holds","states"]}`, "claude-sonnet-5-5"}},
+		{"a sure endpoint leaves the model of the built in member out", args{classify.PointReaction, sure},
+			want{`{"state":` + quoted(t, seal(words)) + `,"questions":["holds","states"]}`, ""}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ctx := context.Background()
+			traces, err := tracefile.New(t.TempDir())
+			require.NoError(t, err)
+			claude := classify.Member{Name: sonnet.name, Classifier: replier(t, sonnet.reply)}
+			plan := classify.NewPlan(tc.args.point, tc.args.endpoint.member(t, "laya"), claude, traces, seal, func() time.Time { return fixed })
+
+			_, err = plan.Classify(ctx, classify.Request{Ref: "run-1", State: words, Questions: questions})
+
+			require.NoError(t, err)
+			recorded, err := traces.List(ctx, record.TraceFilter{Name: string(trace.NameClassify)})
+			require.NoError(t, err)
+			require.Len(t, recorded, 1)
+			assert.JSONEq(t, tc.want.input, string(recorded[0].Input))
+			assert.Equal(t, tc.want.model, recorded[0].Model)
+		})
+	}
+}
+
+// A replier that may answer any number of times
+func replier(t *testing.T, reply classify.Reply) classify.Classifier {
+	t.Helper()
+	r := classifymock.NewMockReplier(gomock.NewController(t))
+	r.EXPECT().Reply(gomock.Any(), gomock.Any()).Return(reply, nil).AnyTimes()
+	return r
+}
+
+func quoted(t *testing.T, s string) string {
+	t.Helper()
+	b, err := json.Marshal(s)
+	require.NoError(t, err)
+	return string(b)
 }
 
 func TestEndpointsWith(t *testing.T) {

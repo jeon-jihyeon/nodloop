@@ -89,7 +89,7 @@ func replaySetup(t *testing.T, at time.Time) (getenv func(string) string, now fu
 		var id bytes.Buffer
 		require.Equal(t, 0, runRun([]string{"record", "--producer", "session", "--label", "repo=nodloop", "--output", out}, getenv, now, &id, &bytes.Buffer{}))
 		run := strings.TrimSpace(id.String())
-		require.Equal(t, 0, runFeedback([]string{"add", "--trace", run, "--verdict", verdict, "--reason", "r", "--reviewer", "ann"}, getenv, now, &bytes.Buffer{}, &bytes.Buffer{}))
+		require.Equal(t, 0, runFeedback([]string{"add", "--trace", run, "--verdict", verdict, "--reason", "r", "--reviewer", "ann"}, getenv, now, trace.ProofNone, &bytes.Buffer{}, &bytes.Buffer{}))
 		return run
 	}
 	corrected, approved = record("cd repo && git status", "reject"), record("git -C repo status", "approve")
@@ -160,7 +160,7 @@ func TestRunKnowledgeCheckReplay(t *testing.T) {
 	var id bytes.Buffer
 	require.Equal(t, 0, runRun([]string{"record", "--producer", "session", "--label", "repo=nodloop", "--output", out}, getenv, now, &id, &bytes.Buffer{}))
 	run := strings.TrimSpace(id.String())
-	require.Equal(t, 0, runFeedback([]string{"add", "--trace", run, "--verdict", "reject", "--reason", "ran cd", "--reviewer", "ann"}, getenv, now, &bytes.Buffer{}, &bytes.Buffer{}))
+	require.Equal(t, 0, runFeedback([]string{"add", "--trace", run, "--verdict", "reject", "--reason", "ran cd", "--reviewer", "ann"}, getenv, now, trace.ProofNone, &bytes.Buffer{}, &bytes.Buffer{}))
 	var stderr bytes.Buffer
 	for item, content := range map[string]string{"a": "Use git -C", "b": "Never cd before git"} {
 		require.Equal(t, 0, runKnowledge([]string{"propose", "--id", item, "--kind", "judgment", "--content", content, "--from", run}, getenv, nil, now, atTerminal, &bytes.Buffer{}, &stderr), stderr.String())
@@ -223,7 +223,7 @@ func TestCompactionCommandReplayItems(t *testing.T) {
 			var id, stderr bytes.Buffer
 			require.Equal(t, 0, runRun([]string{"record", "--producer", "session", "--label", "repo=nodloop", "--output", out}, getenv, now, &id, &stderr), stderr.String())
 			run := strings.TrimSpace(id.String())
-			require.Equal(t, 0, runFeedback([]string{"add", "--trace", run, "--verdict", "reject", "--reason", "ran cd", "--reviewer", "ann"}, getenv, now, &bytes.Buffer{}, &stderr), stderr.String())
+			require.Equal(t, 0, runFeedback([]string{"add", "--trace", run, "--verdict", "reject", "--reason", "ran cd", "--reviewer", "ann"}, getenv, now, trace.ProofNone, &bytes.Buffer{}, &stderr), stderr.String())
 			for _, args := range [][]string{
 				{"propose", "--id", "lone", "--kind", "judgment", "--content", "Use git -C", "--from", run},
 				{"propose", "--id", "guard", "--kind", "judgment", "--content", "Never cd", "--from", run,
@@ -231,7 +231,7 @@ func TestCompactionCommandReplayItems(t *testing.T) {
 			} {
 				require.Equal(t, 0, runKnowledge(args, getenv, nil, now, atTerminal, &bytes.Buffer{}, &stderr), stderr.String())
 			}
-			require.Equal(t, 0, runFeedback([]string{"add", "--trace", run, "--verdict", "withdraw", "--reviewer", "ann"}, getenv, now, &bytes.Buffer{}, &stderr), stderr.String())
+			require.Equal(t, 0, runFeedback([]string{"add", "--trace", run, "--verdict", "withdraw", "--reviewer", "ann"}, getenv, now, trace.ProofNone, &bytes.Buffer{}, &stderr), stderr.String())
 			a, err := recordFlags{}.app(getenv, now)
 			require.NoError(t, err)
 			ledger, err := a.ledger()

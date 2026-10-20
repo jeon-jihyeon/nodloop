@@ -258,6 +258,7 @@ class Client:
         """Records a verdict on a run: approve, edit with the corrected output, reject with what was wrong, or withdraw an earlier one
 
         reviewer names who judged so a verdict without a name never reads as a person's
+        nodloop is refused since only the capture of a session records verdicts under it
         """
         args: dict[str, Any] = {"trace_id": run, "verdict": verdict}
         for key, value in (("reason", reason), ("reason_code", reason_code), ("reviewer", reviewer)):

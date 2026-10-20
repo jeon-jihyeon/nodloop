@@ -102,8 +102,8 @@ func (cl cluster) sent() bool {
 	return len(cl) > 1
 }
 
-// The trace input
-type input struct {
+// The input of a consolidate trace
+type TraceInput struct {
 	Clusters [][]knowledge.Ref `json:"clusters"`
 }
 
@@ -113,7 +113,7 @@ func (c *Consolidator) consolidate(ctx context.Context, producer string, cluster
 	start := c.now()
 	meter := llm.NewMeter(c.client)
 	res := Result{Producer: producer, Groups: []Group{}}
-	in := input{Clusters: [][]knowledge.Ref{}}
+	in := TraceInput{Clusters: [][]knowledge.Ref{}}
 	var calls, dropped []error
 	for _, cl := range clusters {
 		res.Candidates += len(cl)
@@ -196,7 +196,7 @@ func (cl cluster) checkGroup(g Group, taken map[knowledge.Ref]bool) error {
 }
 
 // Appends the consolidate trace of the producer
-func (c *Consolidator) record(ctx context.Context, producer string, in input, res Result, failed error, spent llm.Response, start time.Time) error {
+func (c *Consolidator) record(ctx context.Context, producer string, in TraceInput, res Result, failed error, spent llm.Response, start time.Time) error {
 	input, err := json.Marshal(in)
 	if err != nil {
 		return err

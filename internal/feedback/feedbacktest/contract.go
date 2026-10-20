@@ -32,7 +32,7 @@ func Run(t *testing.T, store Store) {
 		{TraceID: "t1", Verdict: "reject", Reason: "wrong cause", Reviewer: "author"},
 		{
 			TraceID: "t1", Verdict: "edit", Reason: "reorder",
-			Edited: json.RawMessage(`{"order":["db"]}`), Reviewer: "author",
+			Edited: json.RawMessage(`{"order":["db"]}`), Reviewer: "author", Proof: "key",
 		},
 		{TraceID: "t2", Verdict: "approve", Reviewer: "author"},
 		{TraceID: "t3", Verdict: "reject", Reason: "no, use Edit", Reviewer: "session"},

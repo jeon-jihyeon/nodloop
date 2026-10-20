@@ -23,11 +23,23 @@ func TestRunsReport(t *testing.T) {
 	}
 	v1 := knowledge.Ref{ID: "git-c", Version: 1}
 	verdict := func(id string, v feedback.Verdict, code feedback.ReasonCode, after time.Duration) feedback.Feedback {
-		return feedback.Feedback{TraceID: id, Verdict: v, ReasonCode: code, Time: at.Add(after), Reviewer: feedback.ReviewerAuthor}
+		return feedback.Feedback{
+			TraceID: id, Verdict: v, ReasonCode: code, Time: at.Add(after), Reviewer: feedback.ReviewerAuthor, Proof: trace.ProofTerminal,
+		}
+	}
+	named := func(id string, v feedback.Verdict, code feedback.ReasonCode, after time.Duration) feedback.Feedback {
+		fb := verdict(id, v, code, after)
+		fb.Proof = trace.ProofNone
+		return fb
 	}
 	inferred := func(id string, v feedback.Verdict, code feedback.ReasonCode, after time.Duration) feedback.Feedback {
 		fb := verdict(id, v, code, after)
-		fb.Reviewer = feedback.ReviewerSession
+		fb.Reviewer, fb.Proof = feedback.ReviewerSession, ""
+		return fb
+	}
+	captured := func(id string, v feedback.Verdict, code feedback.ReasonCode, after time.Duration) feedback.Feedback {
+		fb := inferred(id, v, code, after)
+		fb.Reviewer = feedback.ReviewerNodloop
 		return fb
 	}
 	item := func() knowledge.Set {
@@ -83,6 +95,28 @@ func TestRunsReport(t *testing.T) {
 			}, item()},
 			[]loop.RunItem{{ID: "git-c", Version: 1, Applied: 4, Judged: 1, Followed: 1, InferredJudged: 2, InferredRepeat: 1, Settle: time.Hour}},
 		},
+		{
+			"a named verdict without a proof counts apart from a proven one",
+			args{feedback.Records{
+				verdict("a1", feedback.VerdictApprove, "", 3*time.Hour),
+				named("a2", feedback.VerdictReject, feedback.ReasonOther, 3*time.Hour),
+				named("a3", feedback.VerdictApprove, "", 3*time.Hour),
+				{TraceID: "a4", Verdict: feedback.VerdictApprove, Time: at.Add(3 * time.Hour), Reviewer: "ci"},
+			}, item()},
+			[]loop.RunItem{{ID: "git-c", Version: 1, Applied: 4, Judged: 1, Followed: 1, NamedJudged: 3, NamedFollowed: 2, NamedRepeat: 1}},
+		},
+		{
+			"a person's verdict wins over both inferred readers and a run they dispute counts nowhere",
+			args{feedback.Records{
+				inferred("a1", feedback.VerdictReject, feedback.ReasonOther, 3*time.Hour),
+				captured("a1", feedback.VerdictReject, feedback.ReasonOther, 4*time.Hour),
+				verdict("a1", feedback.VerdictApprove, "", 2*time.Hour),
+				inferred("a2", feedback.VerdictReject, feedback.ReasonOther, 3*time.Hour),
+				captured("a2", feedback.VerdictApprove, "", 4*time.Hour),
+				captured("a3", feedback.VerdictReject, feedback.ReasonOther, 3*time.Hour),
+			}, item()},
+			[]loop.RunItem{{ID: "git-c", Version: 1, Applied: 4, Judged: 1, Followed: 1, InferredJudged: 1, InferredRepeat: 1}},
+		},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
@@ -105,8 +139,9 @@ func TestRunsTotals(t *testing.T) {
 		return knowledge.Knowledge{ID: id, Version: 1, Kind: knowledge.KindJudgment, Content: id, Status: status, Run: scope, Compaction: compaction}
 	}
 	verdicts := feedback.Records{
-		verdict("r1", feedback.VerdictApprove, feedback.ReviewerAuthor),
+		verdict("r1", feedback.VerdictApprove, feedback.ReviewerAuthor).WithProof(trace.ProofKey),
 		verdict("r2", feedback.VerdictReject, feedback.ReviewerSession),
+		// A name with no proof such as one of a script
 		verdict("r2", feedback.VerdictEdit, feedback.ReviewerAuthor),
 		verdict("r3", feedback.VerdictReject, feedback.ReviewerSession),
 		verdict("failed", feedback.VerdictReject, feedback.ReviewerAuthor),
@@ -122,7 +157,7 @@ func TestRunsTotals(t *testing.T) {
 
 	got := loop.NewRuns(traces, verdicts).Totals(items)
 
-	assert.Equal(t, loop.Totals{Runs: 4, Judged: 2, Inferred: 1, Corrected: 2, Waiting: 1, Approved: 1}, got)
+	assert.Equal(t, loop.Totals{Runs: 4, Judged: 1, Named: 1, Inferred: 1, Corrected: 2, Waiting: 1, Approved: 1}, got)
 }
 
 func TestRunsExtractions(t *testing.T) {
@@ -388,17 +423,19 @@ func TestRunsEffect(t *testing.T) {
 	verdicts := feedback.Records{
 		reject("taught", feedback.ReasonForm),
 		{TraceID: "a1", Verdict: feedback.VerdictApprove, Reviewer: feedback.ReviewerSession, Audit: true},
-		reject("a2", feedback.ReasonFact),
-		reject("w1", feedback.ReasonForm), reject("w2", feedback.ReasonForm),
+		// A name with no proof on the applied arm and a proven person on the withheld arm beside the inferred verdicts
+		{TraceID: "a2", Verdict: feedback.VerdictReject, ReasonCode: feedback.ReasonFact, Reviewer: "ci"},
+		{TraceID: "w1", Verdict: feedback.VerdictReject, ReasonCode: feedback.ReasonForm, Reviewer: "ann", Proof: trace.ProofKey},
+		reject("w2", feedback.ReasonForm),
 		reject("bare", feedback.ReasonForm), reject("legacy", feedback.ReasonForm),
 		reject("s2", feedback.ReasonFact),
 	}
 	outcomes := feedback.Outcomes{{TraceID: "a3", Result: feedback.ResultConfirmed}, {TraceID: "w2", Result: feedback.ResultRefuted}}
 	items := knowledge.Set{{ID: "git-c", Version: 1, Status: knowledge.StatusApproved, Evidence: knowledge.Evidence{FeedbackTraceIDs: []string{"taught"}}}}
 	type want struct {
-		producer, arm                                                           string
-		runs, judged, corrected, sameReason, audit, confirmed, refuted, undrawn int
-		warnings                                                                []loop.EffectWarning
+		producer, arm                                                                            string
+		runs, judged, named, inferred, corrected, sameReason, audit, confirmed, refuted, undrawn int
+		warnings                                                                                 []loop.EffectWarning
 	}
 	small := []loop.EffectWarning{loop.WarnInsufficient}
 	tcs := []struct {
@@ -407,16 +444,16 @@ func TestRunsEffect(t *testing.T) {
 		want []want
 	}{
 		{"each producer has both arms of its drawn runs in producer order", traces, []want{
-			{"cli-bot", "applied", 0, 0, 0, 0, 0, 0, 0, 1, small},
-			{"cli-bot", "withheld", 0, 0, 0, 0, 0, 0, 0, 1, small},
-			{"session", "applied", 3, 2, 1, 0, 1, 1, 0, 2, small},
-			{"session", "withheld", 2, 2, 2, 2, 0, 0, 1, 2, small},
-			{"stream-bot", "applied", 1, 0, 0, 0, 0, 0, 0, 0, small},
-			{"stream-bot", "withheld", 1, 1, 1, 0, 0, 0, 0, 0, small},
+			{"cli-bot", "applied", 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, small},
+			{"cli-bot", "withheld", 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, small},
+			{"session", "applied", 3, 2, 1, 1, 1, 0, 1, 1, 0, 2, small},
+			{"session", "withheld", 2, 2, 0, 1, 2, 2, 0, 0, 1, 2, small},
+			{"stream-bot", "applied", 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, small},
+			{"stream-bot", "withheld", 1, 1, 0, 1, 1, 0, 0, 0, 0, 0, small},
 		}},
 		{"no run with items to receive has both arms at zero without a producer", traces[:1], []want{
-			{"", "applied", 0, 0, 0, 0, 0, 0, 0, 0, []loop.EffectWarning{}},
-			{"", "withheld", 0, 0, 0, 0, 0, 0, 0, 0, []loop.EffectWarning{}},
+			{"", "applied", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, []loop.EffectWarning{}},
+			{"", "withheld", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, []loop.EffectWarning{}},
 		}},
 	}
 	for _, tc := range tcs {
@@ -426,7 +463,7 @@ func TestRunsEffect(t *testing.T) {
 			for _, row := range loop.NewRuns(tc.args, verdicts).Effect(items, outcomes, since) {
 				assert.Equal(t, since, row.Since)
 				got = append(got, want{
-					row.Producer, string(row.Arm), row.Runs, row.Judged, row.Corrected, row.SameReason, row.AuditJudged,
+					row.Producer, string(row.Arm), row.Runs, row.Judged, row.Named, row.Inferred, row.Corrected, row.SameReason, row.AuditJudged,
 					row.Confirmed, row.Refuted, row.Undrawn, row.Warnings,
 				})
 			}

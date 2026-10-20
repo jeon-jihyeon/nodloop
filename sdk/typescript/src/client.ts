@@ -216,6 +216,7 @@ export class Client {
   /**
    * Records a verdict on a run: approve, edit with the corrected output, reject with what was wrong, or withdraw an earlier one
    * reviewer names who judged so a verdict without a name never reads as a person's
+   * nodloop is refused since only the capture of a session records verdicts under it
    */
   async judge(
     run: string,

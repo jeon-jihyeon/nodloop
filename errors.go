@@ -32,6 +32,8 @@ var (
 	ErrDurationNegative = trace.ErrDurationNegative
 	// A Judgment or an Outcome that names no reviewer
 	ErrReviewerRequired = feedback.ErrReviewerRequired
+	// A Judgment or an Outcome under the name only the capture of the session records its verdicts under
+	ErrReviewerReserved = feedback.ErrReviewerReserved
 	// An Approve, ApproveIn or Retire under the name only what nodloop carries out is recorded under
 	ErrApproverReserved = knowledge.ErrApproverReserved
 )

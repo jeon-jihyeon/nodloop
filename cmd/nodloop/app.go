@@ -18,6 +18,7 @@ import (
 	"github.com/jeon-jihyeon/nodloop/internal/llm"
 	"github.com/jeon-jihyeon/nodloop/internal/replay"
 	"github.com/jeon-jihyeon/nodloop/internal/retain"
+	"github.com/jeon-jihyeon/nodloop/internal/textkey"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
 	tracefile "github.com/jeon-jihyeon/nodloop/internal/trace/file"
 	vetofile "github.com/jeon-jihyeon/nodloop/internal/veto/file"
@@ -125,7 +126,7 @@ const classifierTimeout = 30 * time.Second
 // 1. claude alone with no classify trace while the user set up nothing for the critic point
 // 2. otherwise the plan of the endpoint set for the critic point with claude as its fallback and every answer recorded
 func (a app) critic(claude extract.ClaudeCritic, getenv func(string) string) (extract.Classifier, error) {
-	plan, err := a.plan(classify.PointCritic, claude, getenv, classifierTimeout)
+	plan, err := a.plan(classify.PointCritic, classify.Member{Name: builtinMember, Classifier: claude}, getenv, classifierTimeout)
 	if err != nil || plan == nil {
 		return claude, err
 	}
@@ -133,8 +134,9 @@ func (a app) critic(claude extract.ClaudeCritic, getenv func(string) string) (ex
 }
 
 // The plan of the endpoint the user set for the point and nil when none is set
-// builtin is the member the point falls back to
-func (a app) plan(point classify.Point, builtin classify.Classifier, getenv func(string) string, timeout time.Duration) (*classify.Plan, error) {
+// 1. builtin is the member the point falls back to
+// 2. the HMAC key of the record directory seals what the point keeps of its state
+func (a app) plan(point classify.Point, builtin classify.Member, getenv func(string) string, timeout time.Duration) (*classify.Plan, error) {
 	endpoints, err := a.cfg.classifiers.endpoints()
 	if err != nil {
 		return nil, err
@@ -147,8 +149,12 @@ func (a app) plan(point classify.Point, builtin classify.Classifier, getenv func
 	if err != nil {
 		return nil, err
 	}
+	key, err := textkey.Load(a.cfg.recordDir)
+	if err != nil {
+		return nil, err
+	}
 	endpoint := classify.Member{Name: e.Name(), Classifier: e.Classifier(getenv, timeout)}
-	return classify.NewPlan(point, endpoint, classify.Member{Name: builtinMember, Classifier: builtin}, traces, a.now), nil
+	return classify.NewPlan(point, endpoint, builtin, traces, key.Sum, a.now), nil
 }
 
 // The replayer of the ledger over the runs and verdicts of the record directory

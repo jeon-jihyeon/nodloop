@@ -116,7 +116,7 @@ func TestRunFeedbackOnRun(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			var stdout, stderr bytes.Buffer
 
-			code := runFeedback(tc.args, getenv, now, &stdout, &stderr)
+			code := runFeedback(tc.args, getenv, now, trace.ProofNone, &stdout, &stderr)
 
 			assert.Equal(t, tc.want == "", code == 1, stderr.String())
 			assert.Equal(t, tc.want, stdout.String())

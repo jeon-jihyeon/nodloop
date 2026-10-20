@@ -841,7 +841,7 @@ func TestRunHookStopExtract(t *testing.T) {
 			}
 			for _, flags := range tc.args.verdicts {
 				var stderr bytes.Buffer
-				require.Equal(t, 0, runFeedback(slices.Concat([]string{"add", "--trace", first[0].ID}, flags), getenv, now, &bytes.Buffer{}, &stderr), stderr.String())
+				require.Equal(t, 0, runFeedback(slices.Concat([]string{"add", "--trace", first[0].ID}, flags), getenv, now, trace.ProofNone, &bytes.Buffer{}, &stderr), stderr.String())
 			}
 			drafts := map[bool][][]string{true: {{
 				"propose", "--id", "short-msg", "--kind", "judgment", "--content", "keep commit messages to one line",
@@ -910,7 +910,7 @@ func TestRunHookStopWindow(t *testing.T) {
 			at = first.Add(tc.args.verdict)
 			var stderr bytes.Buffer
 			require.Equal(t, 0, runFeedback([]string{"add", "--trace", runs[0].ID, "--verdict", "reject", "--reason", "too long", "--reviewer", "session"},
-				getenv, now, &bytes.Buffer{}, &stderr), stderr.String())
+				getenv, now, trace.ProofNone, &bytes.Buffer{}, &stderr), stderr.String())
 			at = first.Add(tc.args.next)
 
 			code := runHook([]string{"stop"}, getenv, start, now, strings.NewReader(stdin), &bytes.Buffer{}, &stderr)
@@ -955,17 +955,18 @@ func TestRunReportLoop(t *testing.T) {
 		{
 			"the text report counts the run and the item it followed",
 			[]string{"loop"},
-			want{stdout: "window\tall\nloop\truns 2\tjudged 1\tinferred 0\tcorrected 0\twaiting 0\tapproved 1\n" +
+			want{stdout: "window\tall\nloop\truns 2\tjudged 1\tnamed 0\tinferred 0\tcorrected 0\twaiting 0\tapproved 1\n" +
 				"scope\tunknown\titems 1\tsingle session 0\tnever applied 0\n" +
-				"git-c\tv1\tapplied 1\tfollowed 1 of 1\trepeat 0\tinferred followed 0 of 0\tinferred repeat 0\tsettle -\n" +
+				"git-c\tv1\tapplied 1\tfollowed 1 of 1\trepeat 0\tnamed followed 0 of 0\tnamed repeat 0\tinferred followed 0 of 0\tinferred repeat 0\tsettle -\n" +
 				"misapplied\tnot measured: no label says which runs an item should have reached\n"},
 		},
 		{
 			"the JSON report holds the same totals and item",
 			[]string{"loop", "--json"},
-			want{stdout: `{"totals":{"runs":2,"judged":1,"inferred":0,"corrected":0,"waiting":0,"approved":1},` +
+			want{stdout: `{"totals":{"runs":2,"judged":1,"named":0,"inferred":0,"corrected":0,"waiting":0,"approved":1},` +
 				`"scopes":[{"version":"unknown","items":1,"single_session":0,"never_applied":0}],"drafts":[],` +
 				`"items":[{"id":"git-c","version":1,"applied":1,"judged":1,"followed":1,"repeat":0,` +
+				`"named_judged":0,"named_followed":0,"named_repeat":0,` +
 				`"inferred_judged":0,"inferred_followed":0,"inferred_repeat":0,"settle_ns":0}]}` + "\n"},
 		},
 		{"an unknown flag fails", []string{"loop", "--nope"}, want{code: 1, stderr: "flag provided but not defined: -nope"}},
@@ -984,7 +985,7 @@ func TestRunReportLoop(t *testing.T) {
 			require.NoError(t, err)
 			require.Len(t, runs, 1)
 			var stdout, stderr bytes.Buffer
-			require.Equal(t, 0, runFeedback([]string{"add", "--trace", runs[0].ID, "--verdict", "approve", "--reviewer", "ann"}, getenv, now, &bytes.Buffer{}, &stderr), stderr.String())
+			require.Equal(t, 0, runFeedback([]string{"add", "--trace", runs[0].ID, "--verdict", "approve", "--reviewer", "ann"}, getenv, now, atTerminal, &bytes.Buffer{}, &stderr), stderr.String())
 
 			code := runReport(tc.args, getenv, now, &stdout, &stderr)
 
@@ -1010,7 +1011,7 @@ func TestRunKnowledgeLifecycle(t *testing.T) {
 	refuted, confirmed := record("docs"), record(".")
 	for id, result := range map[string]string{refuted: "refuted", confirmed: "confirmed"} {
 		var stderr bytes.Buffer
-		require.Equal(t, 0, runFeedback([]string{"outcome", "--trace", id, "--result", result, "--reviewer", "ann"}, getenv, time.Now, &bytes.Buffer{}, &stderr), stderr.String())
+		require.Equal(t, 0, runFeedback([]string{"outcome", "--trace", id, "--result", result, "--reviewer", "ann"}, getenv, time.Now, trace.ProofNone, &bytes.Buffer{}, &stderr), stderr.String())
 	}
 	knowledgeRun := func(args ...string) (int, string, string) {
 		var stdout, stderr bytes.Buffer

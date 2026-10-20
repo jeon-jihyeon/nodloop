@@ -24,6 +24,9 @@ const (
 	reactionReasonRunes = 500
 )
 
+// The name the reaction point records its built in member under since that member is the conversation and no model
+const conversationMember = "conversation"
+
 // The conversation as the member a reaction setup names claude
 // It always defers so the conversation judges the message when no endpoint was sure
 type conversation struct{}

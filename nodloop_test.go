@@ -2,6 +2,7 @@ package nodloop_test
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -9,8 +10,10 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeon-jihyeon/nodloop"
+	feedbackfile "github.com/jeon-jihyeon/nodloop/internal/feedback/file"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	knowledgefile "github.com/jeon-jihyeon/nodloop/internal/knowledge/file"
+	"github.com/jeon-jihyeon/nodloop/internal/record"
 	vetofile "github.com/jeon-jihyeon/nodloop/internal/veto/file"
 )
 
@@ -127,18 +130,77 @@ func TestClientJudgmentsProveNoPerson(t *testing.T) {
 	}
 }
 
-// A judgment and an outcome without a reviewer are refused before anything is recorded
-func TestClientReviewerRequired(t *testing.T) {
+// A judgment in process proves no person so a named one carries proof none and report loop counts it apart from a proven one
+func TestClientJudgeProvesNoPerson(t *testing.T) {
 	ctx := context.Background()
-	c := open(t)
-	run, err := c.Record(ctx, nodloop.Run{Producer: "support-bot", Output: []byte("x")})
+	c, dir := openIn(t)
+	var runs []string
+	for range 2 {
+		run, err := c.Record(ctx, nodloop.Run{Producer: "support-bot", Output: []byte("x")})
+		require.NoError(t, err)
+		runs = append(runs, run)
+	}
+
+	require.NoError(t, c.Judge(ctx, nodloop.Judgment{Run: runs[0], Verdict: nodloop.VerdictApprove, Reviewer: "ann"}))
+	require.NoError(t, c.Judge(ctx, nodloop.Judgment{Run: runs[1], Verdict: nodloop.VerdictApprove, Reviewer: "session"}))
+
+	store, err := feedbackfile.New(dir)
 	require.NoError(t, err)
+	found, err := store.List(ctx, record.FeedbackFilter{})
+	require.NoError(t, err)
+	proofs := map[string]string{}
+	for _, fb := range found {
+		proofs[fb.Reviewer] = fb.Proof
+	}
+	report, err := c.Report(ctx, "loop")
+	require.NoError(t, err)
+	var got struct {
+		Totals struct {
+			Judged   int `json:"judged"`
+			Named    int `json:"named"`
+			Inferred int `json:"inferred"`
+		} `json:"totals"`
+	}
+	require.NoError(t, json.Unmarshal(report, &got))
+	assert.Equal(t, map[string]string{"ann": "none", "session": ""}, proofs)
+	assert.Equal(t, [3]int{0, 1, 1}, [3]int{got.Totals.Judged, got.Totals.Named, got.Totals.Inferred})
+}
 
-	judged := c.Judge(ctx, nodloop.Judgment{Run: run, Verdict: nodloop.VerdictApprove})
-	checked := c.Outcome(ctx, nodloop.Outcome{Run: run, Result: nodloop.ResultConfirmed})
+// A judgment and an outcome without a reviewer or under the reserved name of the capture are refused before anything is recorded
+func TestClientReviewerRequired(t *testing.T) {
+	tcs := []struct {
+		name string
+		args string
+		want error
+	}{
+		{"no reviewer is refused", "", nodloop.ErrReviewerRequired},
+		{"the reserved name of the capture is refused", "nodloop", nodloop.ErrReviewerReserved},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ctx := context.Background()
+			c, dir := openIn(t)
+			run, err := c.Record(ctx, nodloop.Run{Producer: "support-bot", Output: []byte("x")})
+			require.NoError(t, err)
 
-	assert.ErrorIs(t, judged, nodloop.ErrReviewerRequired)
-	assert.ErrorIs(t, checked, nodloop.ErrReviewerRequired)
+			judged := c.Judge(ctx, nodloop.Judgment{Run: run, Verdict: nodloop.VerdictReject, Reason: "wrong", Reviewer: tc.args})
+			checked := c.Outcome(ctx, nodloop.Outcome{Run: run, Result: nodloop.ResultConfirmed, Reviewer: tc.args})
+
+			assert.ErrorIs(t, judged, tc.want)
+			assert.ErrorIs(t, checked, tc.want)
+			verdicts, err := feedbackfile.New(dir)
+			require.NoError(t, err)
+			found, err := verdicts.List(ctx, record.FeedbackFilter{})
+			require.NoError(t, err)
+			outcomes, err := feedbackfile.NewOutcomeStore(dir)
+			require.NoError(t, err)
+			checks, err := outcomes.List(ctx, "")
+			require.NoError(t, err)
+			assert.Empty(t, found)
+			assert.Empty(t, checks)
+		})
+	}
 }
 
 func ids(items []nodloop.Item) []string {

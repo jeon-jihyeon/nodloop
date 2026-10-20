@@ -78,8 +78,10 @@ func (res Result) Corroborated() bool {
 	return res.Relation == RelationDuplicate && res.Candidate != nil
 }
 
-// The run with its latest verdict and the items and candidates it reaches
-// A session verdict counts because the user picked it before it was recorded
+// The run with its reconciled verdict and the items and candidates it reaches
+// 1. a person's latest verdict wins whatever its order
+// 2. else the verdict the conversation and the capture leave together so a run they dispute teaches nothing
+// An inferred verdict counts because it was read from the person's own words
 func (e *Extractor) Reaction(ctx context.Context, runID string) (Reaction, error) {
 	found, err := e.traces.Get(ctx, runID)
 	if err != nil {
@@ -93,7 +95,8 @@ func (e *Extractor) Reaction(ctx context.Context, runID string) (Reaction, error
 	if err != nil {
 		return Reaction{}, err
 	}
-	latest := feedback.RestoreAll(verdicts).Latest()
+	records := feedback.RestoreAll(verdicts)
+	latest := slices.Concat(records.Human().Latest(), records.Inferred())
 	if len(latest) == 0 || !latest[0].Corrects() {
 		return Reaction{}, fmt.Errorf("%w: %s", ErrNotCorrected, runID)
 	}

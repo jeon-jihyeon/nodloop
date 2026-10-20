@@ -330,7 +330,7 @@ func (c loopCommand) critics(e loop.Snapshot) {
 // A first line with the window and the drawn runs of each arm
 // One line per arm of each producer after it
 // 1. the arm stays in the second column and the producer follows the counts so a reader of the first columns reads every line
-// 2. the rates and the health checks of the arms follow the producer column in the order of EffectRow
+// 2. the named and inferred counts follow the producer column and the rates and the health checks of the arms follow them in the order of EffectRow
 // 3. the two rows of a report without runs have no producer column and nothing after it
 func (c loopCommand) effect(e loop.Snapshot) {
 	rows := e.Effect()
@@ -347,7 +347,8 @@ func (c loopCommand) effect(e loop.Snapshot) {
 		fmt.Fprintf(c.out, "effect\t%s\truns %d\tjudged %d\tcorrected %d\tsame reason %d",
 			row.Arm, row.Runs, row.Judged, row.Corrected, row.SameReason)
 		if row.Producer != "" {
-			fmt.Fprintf(c.out, "\tproducer %s\tunits %d\trate %s\tjudged rate %s\texpected share %.3f", row.Producer,
+			fmt.Fprintf(c.out, "\tproducer %s\tnamed %d\tinferred %d", row.Producer, row.Named, row.Inferred)
+			fmt.Fprintf(c.out, "\tunits %d\trate %s\tjudged rate %s\texpected share %.3f",
 				row.Units, interval(row.Rate, row.RateLow, row.RateHigh), number(row.JudgedRate), row.ExpectedShare)
 			fmt.Fprintf(c.out, "\taudit judged %d corrected %d\toutcomes confirmed %d refuted %d\tundrawn %d",
 				row.AuditJudged, row.AuditCorrected, row.Confirmed, row.Refuted, row.Undrawn)
@@ -418,14 +419,14 @@ func counts(m map[string]int) string {
 
 // The window line first
 // A line of totals then one scope line per plugin version and one drafts line per plugin version and drafting path
-// One line per approved run item after them: applied, followed of judged and repeat by people then by a session, and settle
+// One line per approved run item after them: applied, followed of judged and repeat by proven people then by names then by inferred readers, and settle
 // A last line says misapplied is not measured
 func (c loopCommand) runs(e loop.Snapshot) {
 	fmt.Fprintf(c.out, "window\t%s\n", windowText(e.Since()))
 	report := e.Loop()
 	t := report.Totals
-	fmt.Fprintf(c.out, "loop\truns %d\tjudged %d\tinferred %d\tcorrected %d\twaiting %d\tapproved %d\n",
-		t.Runs, t.Judged, t.Inferred, t.Corrected, t.Waiting, t.Approved)
+	fmt.Fprintf(c.out, "loop\truns %d\tjudged %d\tnamed %d\tinferred %d\tcorrected %d\twaiting %d\tapproved %d\n",
+		t.Runs, t.Judged, t.Named, t.Inferred, t.Corrected, t.Waiting, t.Approved)
 	for _, sc := range report.Scopes {
 		fmt.Fprintf(c.out, "scope\t%s\titems %d\tsingle session %d\tnever applied %d\n", sc.Version, sc.Items, sc.SingleSession, sc.NeverApplied)
 	}
@@ -434,8 +435,9 @@ func (c loopCommand) runs(e loop.Snapshot) {
 			d.Version, d.Path, d.Drafted, d.Approved, d.Dropped, d.Waiting, seconds(d.Decide))
 	}
 	for _, row := range report.Items {
-		fmt.Fprintf(c.out, "%s\tv%d\tapplied %d\tfollowed %d of %d\trepeat %d\tinferred followed %d of %d\tinferred repeat %d\tsettle %s\n",
-			row.ID, row.Version, row.Applied, row.Followed, row.Judged, row.Repeat,
+		fmt.Fprintf(c.out, "%s\tv%d\tapplied %d\tfollowed %d of %d\trepeat %d", row.ID, row.Version, row.Applied, row.Followed, row.Judged, row.Repeat)
+		fmt.Fprintf(c.out, "\tnamed followed %d of %d\tnamed repeat %d", row.NamedFollowed, row.NamedJudged, row.NamedRepeat)
+		fmt.Fprintf(c.out, "\tinferred followed %d of %d\tinferred repeat %d\tsettle %s\n",
 			row.InferredFollowed, row.InferredJudged, row.InferredRepeat, seconds(row.Settle))
 	}
 	fmt.Fprintln(c.out, "misapplied\tnot measured: no label says which runs an item should have reached")

@@ -82,7 +82,7 @@ func runHook(args []string, getenv func(string) string, start starter, now func(
 		cmd.export = start
 	}
 	if action == "prompt" {
-		if cmd.reaction, err = a.plan(classify.PointReaction, conversation{}, getenv, reactionTimeout); err != nil {
+		if cmd.reaction, err = a.plan(classify.PointReaction, classify.Member{Name: conversationMember, Classifier: conversation{}}, getenv, reactionTimeout); err != nil {
 			fmt.Fprintln(stderr, "nodloop hook:", err)
 		}
 	}

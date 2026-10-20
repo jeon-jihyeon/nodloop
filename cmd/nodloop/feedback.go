@@ -13,6 +13,7 @@ import (
 	"github.com/jeon-jihyeon/nodloop/internal/feedback"
 	feedbackfile "github.com/jeon-jihyeon/nodloop/internal/feedback/file"
 	"github.com/jeon-jihyeon/nodloop/internal/record"
+	"github.com/jeon-jihyeon/nodloop/internal/trace"
 )
 
 // Flags of the feedback subcommands
@@ -46,7 +47,8 @@ func (f feedbackFlags) filter() record.FeedbackFilter {
 	return out
 }
 
-func runFeedback(args []string, getenv func(string) string, now func() time.Time, stdout, stderr io.Writer) int {
+// The proof is the terminal proof of the process so a verdict of a script carries none
+func runFeedback(args []string, getenv func(string) string, now func() time.Time, proof trace.Proof, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		return fail(stderr, "feedback", errNoAction)
 	}
@@ -62,7 +64,7 @@ func runFeedback(args []string, getenv func(string) string, now func() time.Time
 	if err != nil {
 		return fail(stderr, "feedback", err)
 	}
-	cmd := feedbackCommand{app: a, out: stdout, audit: flags.audit}
+	cmd := feedbackCommand{app: a, out: stdout, audit: flags.audit, proof: proof}
 	ctx := context.Background()
 	switch args[0] {
 	case "list":
@@ -85,6 +87,7 @@ type feedbackCommand struct {
 	app   app
 	out   io.Writer
 	audit bool
+	proof trace.Proof
 }
 
 func (c feedbackCommand) list(ctx context.Context, f record.FeedbackFilter) error {
@@ -122,6 +125,7 @@ func (c feedbackCommand) add(
 	if err != nil {
 		return err
 	}
+	fb = fb.WithProof(c.proof)
 	fb.Audit = c.audit
 	store, err := c.checked(ctx, fb.TraceID)
 	if err != nil {

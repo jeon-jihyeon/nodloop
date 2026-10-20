@@ -1,6 +1,7 @@
 package extract
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -47,13 +48,26 @@ func NewClaudeCritic(client llm.Client, model string) ClaudeCritic {
 }
 
 func (c ClaudeCritic) Classify(ctx context.Context, req classify.Request) (classify.Answers, error) {
-	critique, err := complete[Critique](ctx, c.client, llm.Request{
+	reply, err := c.Reply(ctx, req)
+	return reply.Answers, err
+}
+
+// The answers with the model the backend answered with
+// The critic pins no effort so the reply names none
+func (c ClaudeCritic) Reply(ctx context.Context, req classify.Request) (classify.Reply, error) {
+	reply := classify.Reply{Model: c.model}
+	res, err := c.client.Complete(ctx, llm.Request{
 		System: CriticRules, Prompt: req.State, Schema: json.RawMessage(CriticSchema), Model: c.model,
 	})
 	if err != nil {
-		return nil, err
+		return reply, err
 	}
-	return critique.answers(), nil
+	var critique Critique
+	if err := json.Unmarshal(res.Output, &critique); err != nil {
+		return reply, fmt.Errorf("%w: %w", ErrDraftInvalid, err)
+	}
+	reply.Model, reply.Answers = cmp.Or(res.Model, c.model), critique.answers()
+	return reply, nil
 }
 
 // The critique as answers with why as the reason of each

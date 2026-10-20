@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -22,6 +23,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeon-jihyeon/nodloop/internal/feedback"
+	feedbackfile "github.com/jeon-jihyeon/nodloop/internal/feedback/file"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	"github.com/jeon-jihyeon/nodloop/internal/loop"
 	"github.com/jeon-jihyeon/nodloop/internal/mcp"
@@ -368,6 +371,50 @@ func TestPrunerSkipsATenantWithoutRecords(t *testing.T) {
 
 	assert.Empty(t, log.String())
 	assert.NoDirExists(t, filepath.Join(base, "tenants", "acme"))
+}
+
+// No key writes the reserved name of the capture, not even one a person holds, and nothing is recorded
+func TestServeHandlerReviewerReserved(t *testing.T) {
+	base := t.TempDir()
+	config := serverConfig{Keys: []serverKey{held(hashed("ann", "acme", mcp.RoleApprover)), held(hashed("rev", "acme", mcp.RoleReviewer))}}
+	srv := httptest.NewServer(newServeHandler(fileTenants{base: base}, config, time.Now, io.Discard))
+	t.Cleanup(srv.Close)
+	ann := dial(t, srv.URL, "ann")
+	run := call(t, ann, "run", map[string]any{"producer": "bot", "output": "steps"})["trace_id"]
+	tcs := []struct {
+		name string
+		key  string
+		tool string
+		args map[string]any
+	}{
+		{"a verdict under an approver key a person holds", "ann", "feedback", map[string]any{"verdict": "reject", "reason": "wrong"}},
+		{"a verdict under a reviewer key", "rev", "feedback", map[string]any{"verdict": "approve"}},
+		{"an outcome under an approver key", "ann", "outcome", map[string]any{"result": "confirmed"}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			args := map[string]any{"trace_id": run, "reviewer": "nodloop"}
+			maps.Copy(args, tc.args)
+
+			res, err := dial(t, srv.URL, tc.key).CallTool(t.Context(), &sdk.CallToolParams{Name: tc.tool, Arguments: args})
+
+			require.NoError(t, err)
+			assert.True(t, res.IsError)
+			b, err := json.Marshal(res.Content)
+			require.NoError(t, err)
+			assert.Contains(t, string(b), feedback.ErrReviewerReserved.Error())
+		})
+	}
+	verdicts, err := feedbackfile.New(filepath.Join(base, "tenants", "acme"))
+	require.NoError(t, err)
+	found, err := verdicts.List(t.Context(), record.FeedbackFilter{})
+	require.NoError(t, err)
+	outcomes, err := feedbackfile.NewOutcomeStore(filepath.Join(base, "tenants", "acme"))
+	require.NoError(t, err)
+	checks, err := outcomes.List(t.Context(), "")
+	require.NoError(t, err)
+	assert.Empty(t, found)
+	assert.Empty(t, checks)
 }
 
 // The holdout share the stores carry reaches knowledge_for of every key

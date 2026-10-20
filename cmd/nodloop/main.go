@@ -44,7 +44,8 @@ commands:
   feedback add --trace <id> --verdict <v> --reviewer <r> [--reason-code <c>] [--reason <r>] [--edited <file>] [--audit]
                             Append one verdict on a run under the name of who judged. An edit carries the corrected output in full.
                             An edit or reject may name what the output got wrong: fact, approach, scope, form or other.
-                            withdraw takes back the verdict before it so the run has none, as when a session inferred one wrongly
+                            withdraw takes back the verdict before it so the run has none, as when a session inferred one wrongly.
+                            The reviewer nodloop is refused, since only the capture of a session records verdicts under it
   feedback outcome --trace <id> --result <r> --reviewer <r> [--cause <text>] [--note <n>]
                             Record what a real check found: confirmed, refuted or inconclusive
   knowledge propose --kind <k> --content <text> (--producer <p> [--label <key=value>] | --from <run id>)
@@ -278,6 +279,7 @@ func run(args []string, getenv func(string) string, stdin io.Reader, stdout io.W
 		return runHelp(words, stdout)
 	}
 	// Read once from the process so a command that decides for a person records what proved the person or a proposal
+	// A verdict of feedback add carries it too
 	person := terminalProof(stdin, stdout, getenv)
 	commands := map[string]func(args []string) int{
 		"help":    func(args []string) int { return runHelp(args, stdout) },
@@ -287,7 +289,7 @@ func run(args []string, getenv func(string) string, stdin io.Reader, stdout io.W
 		"hook": func(args []string) int {
 			return runHook(args, getenv, detached(homeDir(getenv("HOME")).hookLog()), time.Now, stdin, stdout, stderr)
 		},
-		"feedback": func(args []string) int { return runFeedback(args, getenv, time.Now, stdout, stderr) },
+		"feedback": func(args []string) int { return runFeedback(args, getenv, time.Now, person, stdout, stderr) },
 		"queue":    func(args []string) int { return runQueue(args, getenv, time.Now, stdout, stderr) },
 		"report":   func(args []string) int { return runReport(args, getenv, time.Now, stdout, stderr) },
 		"guard":    func(args []string) int { return runGuard(args, getenv, os.Executable, time.Now, stdin, stdout, stderr) },

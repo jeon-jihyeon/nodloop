@@ -148,7 +148,7 @@ type ReactionRow struct {
 }
 
 // One row per member of the reaction point in name order
-// 1. each answer is held against the latest verdict a session inferred on its run
+// 1. each answer is held against the latest verdict the conversation inferred on its run
 // 2. a run without one counts only in asked
 // 3. a run whose latest session verdict the point recorded itself counts only in asked since it cannot disagree with itself
 func (r Runs) Reactions(traces trace.Traces) []ReactionRow {
@@ -179,12 +179,13 @@ func (r Runs) Reactions(traces trace.Traces) []ReactionRow {
 	return out
 }
 
-// The latest verdict a session inferred on the run and whether the conversation gave it
+// The latest verdict of reviewer session on the run and whether the conversation gave it
 // 1. the point records its own verdict right after the classify trace of the time asked
 // 2. so the first session record from then on with the verdict the point called is its own
 // 3. that record still being the latest leaves nothing the conversation decided
+// A verdict of the capture is no session record so it never stands for the conversation
 func (r Runs) conversationVerdict(run string, asked time.Time, recorded feedback.Verdict) (feedback.Feedback, bool) {
-	latest := r.inferred[run].Latest()
+	latest := r.conversation[run].Latest()
 	if len(latest) == 0 {
 		return feedback.Feedback{}, false
 	}
@@ -192,7 +193,7 @@ func (r Runs) conversationVerdict(run string, asked time.Time, recorded feedback
 		return latest[0], true
 	}
 	var own feedback.Feedback
-	for _, fb := range r.inferred[run] {
+	for _, fb := range r.conversation[run] {
 		if !fb.Time.Before(asked) && (own.TraceID == "" || fb.Time.Before(own.Time)) {
 			own = fb
 		}

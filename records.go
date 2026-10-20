@@ -173,11 +173,14 @@ type Judgment struct {
 	Edited []byte
 	// Who judged, required so no verdict without a name reads as a person's
 	// session marks a verdict a conversation inferred from the person's words
+	// nodloop is reserved for the capture of the session
 	Reviewer string
 }
 
 // Records the verdict on a run that exists
-// A judgment without a reviewer fails with ErrReviewerRequired
+// 1. a judgment without a reviewer fails with ErrReviewerRequired
+// 2. one under the reserved name nodloop fails with ErrReviewerReserved
+// A call in process proves no person so the verdict carries proof none and counts apart from a proven person's
 func (c *Client) Judge(ctx context.Context, j Judgment) error {
 	if err := c.checkRun(ctx, j.Run); err != nil {
 		return err
@@ -193,7 +196,7 @@ func (c *Client) Judge(ctx context.Context, j Judgment) error {
 	if err != nil {
 		return err
 	}
-	return c.verdicts.Append(ctx, fb.Record())
+	return c.verdicts.Append(ctx, fb.WithProof(trace.ProofNone).Record())
 }
 
 // What a real check found for a recorded run apart from the verdict on its output

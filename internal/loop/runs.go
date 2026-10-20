@@ -17,13 +17,18 @@ type RunItem struct {
 	Version int    `json:"version"`
 	// Runs whose input names the version
 	Applied int `json:"applied"`
-	// Applied runs with a verdict of a person
+	// Applied runs with a verdict of a person a proof shows
 	Judged int `json:"judged"`
 	// Judged runs whose latest verdict is approve
 	Followed int `json:"followed"`
 	// Applied runs corrected again for the reason that taught the item
 	Repeat int `json:"repeat"`
-	// The same three counts over the runs only a session judged, so a number always says whose verdict it is
+	// The same three counts over the runs whose verdict names a person with no proof
+	// Such as the verdict of a script or the Go package or a stdio server since a program may pass a name as well as a person
+	NamedJudged   int `json:"named_judged"`
+	NamedFollowed int `json:"named_followed"`
+	NamedRepeat   int `json:"named_repeat"`
+	// The same three counts over the runs only the conversation or the capture judged so a number always says whose verdict it is
 	InferredJudged   int `json:"inferred_judged"`
 	InferredFollowed int `json:"inferred_followed"`
 	InferredRepeat   int `json:"inferred_repeat"`
@@ -35,11 +40,13 @@ type RunItem struct {
 // How far the runs went through the loop so the stage where it stalls reads at a glance
 type Totals struct {
 	Runs int `json:"runs"`
-	// Runs with a verdict of a person
+	// Runs with a verdict of a person a proof shows
 	Judged int `json:"judged"`
-	// Runs with only a verdict a session inferred
+	// Runs whose verdict names a person with no proof
+	Named int `json:"named"`
+	// Runs with only a verdict the conversation or the capture inferred
 	Inferred int `json:"inferred"`
-	// Judged or inferred runs whose verdict corrects
+	// Judged named or inferred runs whose verdict corrects
 	Corrected int `json:"corrected"`
 	// Run candidates waiting for approval outside a compaction
 	Waiting int `json:"waiting"`
@@ -55,10 +62,10 @@ type Runs struct {
 	// The producer per run
 	producers map[string]string
 	applied   map[knowledge.Ref][]string
-	// Latest verdict of a person per trace, or the latest one a session inferred when no person gave one
+	// Latest verdict of a person per trace or else the one the conversation and the capture leave together
 	verdicts map[string]feedback.Feedback
-	// Every record a session inferred per trace in the order of the store
-	inferred map[string]feedback.Records
+	// Every record the conversation inferred per trace in the order of the store
+	conversation map[string]feedback.Records
 	// First correction per trace by anyone
 	firstCorrection map[string]time.Time
 }
@@ -68,7 +75,7 @@ func NewRuns(traces trace.Traces, verdicts feedback.Records) Runs {
 	r := Runs{
 		ids: map[string]bool{}, inputs: map[string]knowledge.RunInput{}, producers: map[string]string{},
 		applied:  map[knowledge.Ref][]string{},
-		verdicts: map[string]feedback.Feedback{}, inferred: map[string]feedback.Records{}, firstCorrection: map[string]time.Time{},
+		verdicts: map[string]feedback.Feedback{}, conversation: map[string]feedback.Records{}, firstCorrection: map[string]time.Time{},
 	}
 	for _, tr := range traces {
 		if tr.Name != trace.NameRun || tr.Error != "" {
@@ -85,17 +92,17 @@ func NewRuns(traces trace.Traces, verdicts feedback.Records) Runs {
 			r.applied[ref] = append(r.applied[ref], tr.ID)
 		}
 	}
-	for _, fb := range verdicts.Latest() {
+	for _, fb := range verdicts.Inferred() {
 		r.verdicts[fb.TraceID] = fb
 	}
-	// A person's verdict wins over one a session inferred whatever their order
+	// A person's verdict wins over an inferred one whatever their order
 	for _, fb := range verdicts.Human().Latest() {
 		r.verdicts[fb.TraceID] = fb
 	}
-	for _, fb := range verdicts.Inferred() {
-		r.inferred[fb.TraceID] = append(r.inferred[fb.TraceID], fb)
-	}
 	for _, fb := range verdicts {
+		if fb.Reviewer == feedback.ReviewerSession {
+			r.conversation[fb.TraceID] = append(r.conversation[fb.TraceID], fb)
+		}
 		if first, ok := r.firstCorrection[fb.TraceID]; fb.Corrects() && (!ok || fb.Time.Before(first)) {
 			r.firstCorrection[fb.TraceID] = fb.Time
 		}
@@ -112,8 +119,10 @@ func (r Runs) Totals(items knowledge.Set) Totals {
 			continue
 		case fb.Implicit():
 			t.Inferred++
-		default:
+		case fb.Proven():
 			t.Judged++
+		default:
+			t.Named++
 		}
 		if fb.Corrects() {
 			t.Corrected++
@@ -157,12 +166,15 @@ func (r Runs) Report(items knowledge.Set) []RunItem {
 	return out
 }
 
-// One judged run in the counts of a person or of a session
+// One judged run in the counts of a proven person or a name or an inferred reader
 // A correction repeats when it gives a code of codes, or any code when codes is empty
 func (row *RunItem) count(fb feedback.Feedback, codes []feedback.ReasonCode) {
 	judged, followed, repeat := &row.Judged, &row.Followed, &row.Repeat
-	if fb.Implicit() {
+	switch {
+	case fb.Implicit():
 		judged, followed, repeat = &row.InferredJudged, &row.InferredFollowed, &row.InferredRepeat
+	case !fb.Proven():
+		judged, followed, repeat = &row.NamedJudged, &row.NamedFollowed, &row.NamedRepeat
 	}
 	*judged++
 	if fb.Verdict == feedback.VerdictApprove {
@@ -199,11 +211,11 @@ func (r Runs) version(runID string) string {
 const unknown = "unknown"
 
 // Runs that applied the approved item and were corrected again for a reason it was taught by
-// A person's verdict and an inferred one both count
+// Proven and named and inferred verdicts all count
 func (r Runs) repeats(k knowledge.Knowledge) int {
 	rows := r.Report(knowledge.Set{k})
 	if len(rows) == 0 {
 		return 0
 	}
-	return rows[0].Repeat + rows[0].InferredRepeat
+	return rows[0].Repeat + rows[0].NamedRepeat + rows[0].InferredRepeat
 }

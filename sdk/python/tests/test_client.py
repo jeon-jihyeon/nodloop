@@ -58,6 +58,18 @@ async def test_judge_names_its_reviewer(binary: str, records: str) -> None:
             await c.judge(run, "approve")  # type: ignore[call-arg]
 
 
+async def test_judge_refuses_the_name_of_the_capture(binary: str, records: str) -> None:
+    """nodloop is reserved for the capture of a session, so a verdict or an outcome under it is refused and nothing is recorded"""
+    async with Client(records, binary) as c:
+        run = await c.record("support-bot", "answer", labels=ACME)
+        with pytest.raises(ToolError, match="reserved for what the capture reads"):
+            await c.judge(run, "reject", "nodloop", reason="wrong")
+        with pytest.raises(ToolError, match="reserved for what the capture reads"):
+            await c.outcome(run, "confirmed", reviewer="nodloop")
+    written = [p.name for p in Path(records).glob("*.jsonl") if p.read_text()]
+    assert "feedback.jsonl" not in written and "outcomes.jsonl" not in written
+
+
 @pytest.mark.parametrize(
     ("tool", "arguments", "action"),
     [
@@ -92,6 +104,8 @@ async def test_server(server: tuple[str, str, str]) -> None:
     async with Client(url=url, key=key) as c:
         approved = await c.approve(proposed.id, proposed.version, "mallory")
         acme = await c.knowledge("support-bot", ACME)
+        with pytest.raises(ToolError, match="reserved for what the capture reads"):
+            await c.judge(run, "approve", "nodloop")
 
     assert (proposal.status, bool(proposal.proposal)) == ("candidate", True)
     assert (approved.id, approved.version, approved.status, approved.approver) == ("refund-window", 1, "approved", "ann")
