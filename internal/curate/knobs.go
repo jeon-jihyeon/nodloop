@@ -32,6 +32,19 @@ type Knobs struct {
 	CUSUM  CUSUM  `json:"cusum,omitzero"`
 }
 
+// The audit p of a decision
+// 1. what tier 0 carried out at the tier 0 p and what tier 1 carried out at the tier 1 p
+// 2. nothing else is audited since nothing else was carried out
+func (k Knobs) audits(d Decision) float64 {
+	switch {
+	case !d.carries():
+		return 0
+	case d.Tier == 0:
+		return k.Audit.Tier0
+	}
+	return k.Audit.Tier1
+}
+
 // The weeks a person may set a cycle to
 const (
 	minCycleWeeks = 1
@@ -119,4 +132,49 @@ func RestoreKnob(t trace.Trace) (KnobEvent, bool) {
 		return KnobEvent{}, false
 	}
 	return k, true
+}
+
+// The knob traces of the trace store newest first
+type knobTraces trace.Traces
+
+// The knob event of the cycle that holds now and false when no knob trace of that cycle exists yet
+// A narrowing appends a later event of the same id so the newest one of the cycle holds its knobs
+func (ts knobTraces) current(now time.Time) (KnobEvent, bool) {
+	open, ok := trace.Traces(ts).Cycles(now).Open(now)
+	if !ok {
+		return KnobEvent{}, false
+	}
+	for _, t := range ts {
+		if k, ok := RestoreKnob(t); ok && k.CycleID == open.ID {
+			return k, true
+		}
+	}
+	return KnobEvent{}, false
+}
+
+// The knob event a pass at now starts the cycle with
+// 1. the cycle starts where the knob traces mark the one that holds now or at 00:00 UTC on the Monday of now before the first
+// 2. it carries the knobs of the newest event before it or the start knobs and its judge on or starts one from the settings
+// 3. the seed is new so no draw of the cycle can be known before it starts
+func (ts knobTraces) next(now time.Time, seed string, settings JudgeSettings, shots Shots) KnobEvent {
+	start := monday(now)
+	if open, ok := trace.Traces(ts).Cycles(now).Open(now); ok {
+		start = open.Start
+	}
+	ev := KnobEvent{CycleID: start.Format(trace.CycleDate), Start: start, Seed: seed, Knobs: StartKnobs(), Cause: KnobStart}
+	var before KnobEvent
+	for _, t := range ts {
+		if k, ok := RestoreKnob(t); ok {
+			before, ev.Knobs, ev.Before = k, k.Knobs, t.ID
+			break
+		}
+	}
+	ev.Judge = before.Judge.Next(settings, shots, now)
+	return ev
+}
+
+// 00:00 UTC on the Monday of the week of t
+func monday(t time.Time) time.Time {
+	day := t.UTC().Truncate(24 * time.Hour)
+	return day.AddDate(0, 0, -((int(day.Weekday()) + 6) % 7))
 }

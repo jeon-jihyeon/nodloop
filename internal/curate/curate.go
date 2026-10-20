@@ -198,6 +198,11 @@ func (d Decision) check() error {
 	return nil
 }
 
+// Whether the decision writes the ledger
+func (d Decision) carries() bool {
+	return slices.Contains([]Action{ActionApply, ActionWithdraw, ActionDrop, ActionJoin}, d.Action)
+}
+
 // 1. the tier is 0, 1 or 2 and the action one of the set
 // 2. every other value is empty or one of its set
 func (d Decision) known() bool {

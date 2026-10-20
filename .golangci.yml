@@ -34,8 +34,8 @@ linters:
     # knowledge is the ledger and the application packages sit above it
     # compact and extract are imported by mcp and cmd and the server
     # loop and retain are imported by those and the nodloop package at the module root
-    # consolidate is imported by cmd alone and application packages never import each other
-    # markfile holds the mark file and its lock that consolidate, retain and otel share since they cannot import each other
+    # consolidate and curate are imported by cmd alone and application packages never import each other
+    # markfile holds the mark file and its lock that consolidate, curate, retain and otel share since they cannot import each other
     # schema reads the published record schemas and textkey holds the HMAC key, and both sit in infrastructure
     # No package imports a producer: a producer reaches the core through the MCP tools or the CLI
     # cmd/nodloop is the composition root and imports everything
@@ -66,6 +66,8 @@ linters:
               desc: domain packages do not import retain
             - pkg: github.com/jeon-jihyeon/nodloop/internal/consolidate
               desc: domain packages do not import consolidate
+            - pkg: github.com/jeon-jihyeon/nodloop/internal/curate
+              desc: domain packages do not import curate
             - pkg: github.com/jeon-jihyeon/nodloop/internal/guard
               desc: domain packages do not import guard
             - pkg: github.com/jeon-jihyeon/nodloop/internal/mcp
@@ -182,6 +184,10 @@ linters:
               desc: only mcp, cmd, the server and the nodloop package import retain
             - pkg: github.com/jeon-jihyeon/nodloop/internal/consolidate
               desc: only cmd imports consolidate
+            - pkg: github.com/jeon-jihyeon/nodloop/internal/replay
+              desc: only cmd imports replay
+            - pkg: github.com/jeon-jihyeon/nodloop/internal/curate
+              desc: only cmd imports curate
         compact:
           files:
             - "**/internal/compact/**"
@@ -196,6 +202,8 @@ linters:
               desc: only mcp, cmd, the server and the nodloop package import retain
             - pkg: github.com/jeon-jihyeon/nodloop/internal/consolidate
               desc: only cmd imports consolidate
+            - pkg: github.com/jeon-jihyeon/nodloop/internal/curate
+              desc: only cmd imports curate
         extract:
           files:
             - "**/internal/extract/**"
@@ -210,6 +218,8 @@ linters:
               desc: only mcp, cmd, the server and the nodloop package import retain
             - pkg: github.com/jeon-jihyeon/nodloop/internal/consolidate
               desc: only cmd imports consolidate
+            - pkg: github.com/jeon-jihyeon/nodloop/internal/curate
+              desc: only cmd imports curate
         loop:
           files:
             - "**/internal/loop/**"
@@ -226,6 +236,8 @@ linters:
               desc: only mcp, cmd, the server and the nodloop package import retain
             - pkg: github.com/jeon-jihyeon/nodloop/internal/consolidate
               desc: only cmd imports consolidate
+            - pkg: github.com/jeon-jihyeon/nodloop/internal/curate
+              desc: only cmd imports curate
         replay:
           files:
             - "**/internal/replay/**"
@@ -240,6 +252,8 @@ linters:
               desc: only mcp, cmd, the server and the nodloop package import retain
             - pkg: github.com/jeon-jihyeon/nodloop/internal/consolidate
               desc: only cmd imports consolidate
+            - pkg: github.com/jeon-jihyeon/nodloop/internal/curate
+              desc: only cmd imports curate
         retain:
           files:
             - "**/internal/retain/**"
@@ -256,6 +270,8 @@ linters:
               desc: retain never calls a model
             - pkg: github.com/jeon-jihyeon/nodloop/internal/consolidate
               desc: only cmd imports consolidate
+            - pkg: github.com/jeon-jihyeon/nodloop/internal/curate
+              desc: only cmd imports curate
         consolidate:
           files:
             - "**/internal/consolidate/**"
@@ -266,6 +282,24 @@ linters:
               desc: consolidate reads the ledger only
             - pkg: github.com/jeon-jihyeon/nodloop/internal/loop
               desc: only mcp, cmd, the server and the nodloop package import loop
+            - pkg: github.com/jeon-jihyeon/nodloop/internal/replay
+              desc: only cmd imports replay
+            - pkg: github.com/jeon-jihyeon/nodloop/internal/retain
+              desc: only mcp, cmd, the server and the nodloop package import retain
+            - pkg: github.com/jeon-jihyeon/nodloop/internal/curate
+              desc: only cmd imports curate
+        curate:
+          files:
+            - "**/internal/curate/**"
+          deny:
+            - pkg: github.com/jeon-jihyeon/nodloop/internal/compact
+              desc: curate reads the ledger and cmd composes it with compact
+            - pkg: github.com/jeon-jihyeon/nodloop/internal/consolidate
+              desc: only cmd imports consolidate
+            - pkg: github.com/jeon-jihyeon/nodloop/internal/extract
+              desc: curate reads extract traces as records and cmd composes it with extract
+            - pkg: github.com/jeon-jihyeon/nodloop/internal/loop
+              desc: cmd hands the numbers of loop to curate as plain values
             - pkg: github.com/jeon-jihyeon/nodloop/internal/replay
               desc: only cmd imports replay
             - pkg: github.com/jeon-jihyeon/nodloop/internal/retain
@@ -318,6 +352,8 @@ linters:
             - pkg: github.com/jeon-jihyeon/nodloop/internal/mcp
               desc: the harness opens stores and never a module under test
             - pkg: github.com/jeon-jihyeon/nodloop/internal/consolidate
+              desc: the harness opens stores and never a module under test
+            - pkg: github.com/jeon-jihyeon/nodloop/internal/curate
               desc: the harness opens stores and never a module under test
             - pkg: github.com/jeon-jihyeon/nodloop/internal/guard
               desc: the harness opens stores and never a module under test
