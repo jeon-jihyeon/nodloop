@@ -89,6 +89,9 @@ const (
 // The actions of a decide that carry a change out
 var carriedActions = []string{"apply", "withdraw", "drop", "join"}
 
+// The kinds of a decide that ask what curate may do and prepare no change a choice could overturn
+var offeredKinds = []string{"widen", "activate"}
+
 // The kinds the code rules of tier 0 carry out with no knob in between
 var tier0Kinds = []string{"drop", "join"}
 

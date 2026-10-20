@@ -34,6 +34,8 @@ var (
 	errPersonOnly = errors.New("only a person at an interactive terminal outside an agent session can run this")
 	// A trace of a session hook that does not hold together
 	errSessionTrace = errors.New("invalid session trace")
+	// The answer of the reaction member of the capture does not decode
+	errReactionInvalid = errors.New("reaction answer invalid")
 	// A path anchor add would designate that names no regular file
 	errAnchorNoFile = errors.New("not a file")
 	// A path anchor remove names that no designated file has

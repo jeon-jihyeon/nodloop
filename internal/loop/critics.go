@@ -204,12 +204,13 @@ func (r Runs) conversationVerdict(run string, asked time.Time, recorded feedback
 	return latest[0], true
 }
 
+// The stops questions the capture asks beside the reaction questions judge no verdict so only the reaction answers count
 func (row *ReactionRow) count(as answers, verdict feedback.Feedback, judged bool) {
 	row.Asked++
 	if !judged {
 		return
 	}
-	if !classify.Answers(as).Sure() {
+	if !classify.Answers(as).Of(classify.ReactionQuestions).Sure() {
 		row.Deferred++
 		return
 	}

@@ -112,10 +112,13 @@ func TestMarkfileFails(t *testing.T) {
 			path := filepath.Join(dir, tc.args)
 
 			held, holdErr := markfile.Hold[record.Mark](path)
+			waited, waitErr := markfile.Wait[record.Mark](path)
 			read, readErr := markfile.Read[record.Mark](path)
 
 			assert.Nil(t, held)
+			assert.Nil(t, waited)
 			assert.Equal(t, tc.want.holdErr, holdErr != nil, holdErr)
+			assert.Equal(t, tc.want.holdErr, waitErr != nil, waitErr)
 			assert.Equal(t, tc.want.readErr, readErr != nil, readErr)
 			assert.Equal(t, record.Mark{}, read)
 		})

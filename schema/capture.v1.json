@@ -91,6 +91,31 @@
           "items": {
             "type": "string"
           }
+        },
+        "stops": {
+          "type": [
+            "null",
+            "array"
+          ],
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "version": {
+                "type": "integer"
+              },
+              "run": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "version",
+              "run"
+            ]
+          }
         }
       },
       "required": [
@@ -100,7 +125,8 @@
         "signals",
         "runs",
         "records",
-        "classify"
+        "classify",
+        "stops"
       ]
     },
     "error": {

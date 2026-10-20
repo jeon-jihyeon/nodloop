@@ -327,6 +327,14 @@ func TestRunsReactions(t *testing.T) {
 			row(loop.ReactionRow{Sure: 1, MissedApproval: 1}),
 		},
 		{
+			"an unsure stops answer of the capture beside sure reaction answers stays sure against the verdict the turn recorded before it",
+			args{
+				asked("reaction", `{"corrects":{"yes":0.95},"approves":{"yes":0.05},"stops:k-1:v1":{"yes":0.6}}`, true),
+				feedback.Records{session(feedback.VerdictReject, -time.Minute)},
+			},
+			row(loop.ReactionRow{Sure: 1, Agree: 1}),
+		},
+		{
 			"a sure answer of both calls nothing and missed the correction",
 			args{asked("reaction", sureBoth, true), feedback.Records{session(feedback.VerdictReject, time.Minute)}},
 			row(loop.ReactionRow{Sure: 1, MissedCorrection: 1}),
