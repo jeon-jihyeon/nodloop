@@ -29,7 +29,7 @@ type TraceStore interface {
 
 // The endpoint of a point and the built in member it falls back to
 // A point asks a plan as it would ask one classifier
-// An endpoint with no classifier leaves the built in member alone, as the capture asks it with no endpoint set
+// An endpoint with no classifier leaves the built in member alone as the capture asks it with no endpoint set
 type Plan struct {
 	point    Point
 	endpoint Member
@@ -110,7 +110,7 @@ func (p *Plan) Rule(ctx context.Context, req Request) (Ruling, error) {
 			err = errors.Join(endpointErr, err)
 		}
 	}
-	tr := p.point.trace(req, p.seal, TraceOutput{Members: all, Answers: reply.Answers}, start, p.now())
+	tr := p.point.trace(req, p.seal, TraceOutput{Members: all, Answers: reply.Answers.probabilities()}, start, p.now())
 	tr.Model = model
 	if failed := p.record(ctx, tr, err); failed != nil {
 		return Ruling{Answers: reply.Answers}, errors.Join(err, failed)
@@ -119,7 +119,8 @@ func (p *Plan) Rule(ctx context.Context, req Request) (Ruling, error) {
 }
 
 // The reply of the member with its answers checked against the questions and the record of what it answered
-// A failed reply keeps the model and the effort the member named so the trace shows what failed
+// 1. a failed reply keeps the model and the effort the member named so the trace shows what failed
+// 2. the record keeps the probabilities without the reasons since a reason is text a model wrote about the state
 func (m Member) ask(ctx context.Context, req Request, now func() time.Time) (Reply, Asked, error) {
 	start := now()
 	reply, err := m.reply(ctx, req)
@@ -131,7 +132,7 @@ func (m Member) ask(ctx context.Context, req Request, now func() time.Time) (Rep
 		rec.Error = err.Error()
 		return Reply{Model: reply.Model, Effort: reply.Effort}, rec, fmt.Errorf("%s: %w", m.Name, err)
 	}
-	rec.Answers = reply.Answers
+	rec.Answers = reply.Answers.probabilities()
 	return reply, rec, nil
 }
 

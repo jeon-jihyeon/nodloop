@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jeon-jihyeon/nodloop/internal/terminal"
+	"github.com/jeon-jihyeon/nodloop/internal/trace"
 	"github.com/jeon-jihyeon/nodloop/internal/userconfig"
 )
 
@@ -21,7 +23,8 @@ const usage = `usage: nodloop-server <command> [flags]
                             A producer records runs and verdicts, a reviewer also drafts and proposes knowledge and
                             reads reports, and an approver also approves. Only an approver key added with --person, which
                             a person holds, decides: its approvals are recorded under its name. Any other key records
-                            an approval as a proposal the person is asked about and changes nothing. The name nodloop is refused
+                            an approval as a proposal the person is asked about and changes nothing. The name nodloop is refused.
+                            --person is taken only at an interactive terminal outside an agent session
   key list                  Keys with their tenant, role and whether a person or a service holds them
   key remove <name>         Remove a key
   serve [--addr <host:port>] [--postgres <url>] [--record-dir <dir>]
@@ -50,17 +53,22 @@ const (
 var version = "dev"
 
 func main() {
-	os.Exit(run(os.Args[1:], os.Getenv, time.Now, os.Stdout, os.Stderr))
+	proof := trace.ProofNone
+	if terminal.Person(os.Stdin, os.Stdout, os.Getenv) {
+		proof = trace.ProofTerminal
+	}
+	os.Exit(run(os.Args[1:], os.Getenv, time.Now, proof, os.Stdout, os.Stderr))
 }
 
-func run(args []string, getenv func(string) string, now func() time.Time, stdout, stderr io.Writer) int {
+// proof tells a person at a terminal of their own from an agent or a program, which key add --person needs
+func run(args []string, getenv func(string) string, now func() time.Time, proof trace.Proof, stdout, stderr io.Writer) int {
 	if len(args) == 0 || args[0] == "help" || args[0] == "-h" || args[0] == "--help" {
 		fmt.Fprint(stdout, usage)
 		return 0
 	}
 	switch args[0] {
 	case "key":
-		return runKey(args[1:], getenv, stdout, stderr)
+		return runKey(args[1:], getenv, proof, stdout, stderr)
 	case "serve":
 		return runServe(args[1:], getenv, now, stderr)
 	case "version":

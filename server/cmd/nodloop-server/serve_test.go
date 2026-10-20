@@ -330,7 +330,7 @@ func TestServeHandlerInternalError(t *testing.T) {
 func TestRunServeWithoutHome(t *testing.T) {
 	var stderr bytes.Buffer
 
-	code := run([]string{"serve"}, func(string) string { return "" }, time.Now, &bytes.Buffer{}, &stderr)
+	code := run([]string{"serve"}, func(string) string { return "" }, time.Now, trace.ProofNone, &bytes.Buffer{}, &stderr)
 
 	assert.Equal(t, 1, code)
 	assert.Equal(t, "nodloop-server serve: home directory unknown\n", stderr.String())
@@ -353,6 +353,8 @@ func TestRunServeRefuses(t *testing.T) {
 		{"an address it cannot listen on", args{`{"retention":30,` + keys + `}`, "127.0.0.1:-1"}, "listen tcp"},
 		{"a key named nodloop", args{`{"server":{"keys":[{"name":"nodloop","tenant":"acme","role":"approver","sha256":"00"}]}}`, "127.0.0.1:0"},
 			knowledge.ErrApproverReserved.Error()},
+		{"a tenant edited into a path", args{`{"server":{"keys":[{"name":"ann","tenant":"../acme","role":"approver","sha256":"00"}]}}`, "127.0.0.1:0"},
+			errTenantInvalid.Error()},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
@@ -363,7 +365,7 @@ func TestRunServeRefuses(t *testing.T) {
 			var stderr bytes.Buffer
 			getenv := func(k string) string { return map[string]string{"HOME": home}[k] }
 
-			code := run([]string{"serve", "--addr", tc.args.addr, "--record-dir", t.TempDir()}, getenv, time.Now, &bytes.Buffer{}, &stderr)
+			code := run([]string{"serve", "--addr", tc.args.addr, "--record-dir", t.TempDir()}, getenv, time.Now, trace.ProofNone, &bytes.Buffer{}, &stderr)
 
 			assert.Equal(t, 1, code)
 			assert.Contains(t, stderr.String(), tc.want)

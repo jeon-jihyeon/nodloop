@@ -13,6 +13,8 @@
         "session_id",
         "input.applied",
         "input.withheld",
+        "input.held",
+        "input.eligible",
         "input.unit",
         "input.continued"
       ],
@@ -74,7 +76,8 @@
       "text": [
         "output.attempts.draft",
         "output.attempts.critique",
-        "output.attempts.error"
+        "output.attempts.error",
+        "error"
       ]
     },
     {

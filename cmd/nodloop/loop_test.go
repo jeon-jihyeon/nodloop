@@ -45,7 +45,8 @@ func TestRunReportRecords(t *testing.T) {
 	}{
 		{"loop as JSON", args{[]string{"loop", "--json"}, false}, want{0, totals, ""}},
 		{"extract as JSON", args{[]string{"extract", "--json"}, false}, want{0, "[]\n", ""}},
-		{"critic as JSON", args{[]string{"critic", "--json"}, false}, want{0, `{"critics":[],"reactions":[]}` + "\n", ""}},
+		{"critic as JSON", args{[]string{"critic", "--json"}, false}, want{0, `{"critics":[],"reactions":[],"capture":{"critic":"capture",` +
+			`"runs":0,"agree":0,"disputed":0,"capture_only":0,"conversation_only":0}}` + "\n", ""}},
 		{"effect as JSON", args{[]string{"effect", "--json"}, false}, want{0, arms, ""}},
 		{"replay as JSON", args{[]string{"replay", "--json"}, false}, want{0, replays, ""}},
 		{"replay as text", args{[]string{"replay"}, false}, want{0, "replay\tgit-c\tv1\tpassed\tmissed 0 of 1\toverreach 0 of 0\t2026-10-07T12:00:00Z\n", ""}},
@@ -104,6 +105,8 @@ func TestRunReportText(t *testing.T) {
 	withheld := `{"applied":[],"withheld":[{"id":"git-c","version":1}],` + drawn
 	marker := `{"at":"2026-10-07T00:00:00Z","cutoff":"2026-09-30T12:00:00Z"}`
 	member := `{"members":[{"name":"laya","answers":{"q":{"yes":0.9}}}]}`
+	// The capture line of records where neither inferred reader judged
+	capture := "critic\tcapture\truns 0\tagree 0\tdisputed 0\tcapture only 0\tconversation only 0\n"
 	tcs := []struct {
 		name string
 		args args
@@ -134,16 +137,16 @@ func TestRunReportText(t *testing.T) {
 				"\tdifference 0.500 [-0.391, 0.905]\twarnings insufficient,mixed_shares\n",
 		},
 		{"critic prints the window of every run first", args{"critic", "", []run{{"r1", `{"applied":[]}`}}, nil, member, nil},
-			"window\tall\ncritic\tclassifier laya\tjudged 1\tagree 0\tfalse pass 0\tfalse refuse 0\topen 1\n"},
+			"window\tall\ncritic\tclassifier laya\tjudged 1\tagree 0\tfalse pass 0\tfalse refuse 0\topen 1\n" + capture},
 		{"critic prints the window of the last prune first", args{"critic", marker, []run{{"r1", `{"applied":[]}`}}, nil, member, nil},
-			"window\t2026-09-30T12:00:00Z\ncritic\tclassifier laya\tjudged 1\tagree 0\tfalse pass 0\tfalse refuse 0\topen 1\n"},
-		{"critic without a critic prints the window alone", args{"critic", "", nil, nil, `{}`, nil}, "window\tall\n"},
+			"window\t2026-09-30T12:00:00Z\ncritic\tclassifier laya\tjudged 1\tagree 0\tfalse pass 0\tfalse refuse 0\topen 1\n" + capture},
+		{"critic without a critic prints the window and the capture line alone", args{"critic", "", nil, nil, `{}`, nil}, "window\tall\n" + capture},
 		{
-			"a reaction member follows the critics with its answers against the session verdict",
+			"a reaction member follows the critics with its answers against the session verdict and the capture line ends it",
 			args{"critic", "", []run{{"r1", `{"applied":[]}`}}, nil, member,
 				[]string{`{"members":[{"name":"laya","answers":{"corrects":{"yes":0.1},"approves":{"yes":0.1}}}]}`}},
 			"window\tall\ncritic\tclassifier laya\tjudged 1\tagree 0\tfalse pass 0\tfalse refuse 0\topen 1\n" +
-				"critic\treaction laya\tasked 1\tsure 0\tagree 0\tdisagree 0\tmissed correction 0\tmissed approval 0\tdeferred 0\n",
+				"critic\treaction laya\tasked 1\tsure 0\tagree 0\tdisagree 0\tmissed correction 0\tmissed approval 0\tdeferred 0\n" + capture,
 		},
 	}
 	for _, tc := range tcs {

@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-// Where a decision or an exposure came from
+// Where a decide, an expose, an answer or an intervention came from
 type Source string
 
 const (
@@ -91,7 +91,7 @@ func (d Draw) Check(s Source) error {
 // A pushed record names its unit and its draw id with a probability from 0 to 1 that is above 0 once drawn
 func (d Draw) pushed() error {
 	switch {
-	case d.P == nil || *d.P < 0 || *d.P > 1 || d.Drawn && *d.P == 0:
+	case d.P == nil || !(*d.P >= 0 && *d.P <= 1) || d.Drawn && *d.P == 0:
 		return fmt.Errorf("%w: a pushed record carries a probability from 0 to 1", ErrDrawInvalid)
 	case d.Unit == "" || !d.named():
 		return fmt.Errorf("%w: a pushed record names its unit and draw", ErrDrawInvalid)

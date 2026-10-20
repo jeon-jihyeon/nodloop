@@ -51,6 +51,12 @@ func TestRunsReport(t *testing.T) {
 			ID: "data", Version: 1, Kind: knowledge.KindMeaning, Content: "lag", Status: knowledge.StatusApproved, Approver: "ann",
 		}}
 	}
+	// The item as curate approved it without the person
+	carried := func() knowledge.Set {
+		s := item()
+		s[0].Approver = knowledge.ApproverNodloop
+		return s
+	}
 	traces := trace.Traces{
 		run("taught"), run("a1", v1), run("a2", v1), run("a3", v1), run("a4", v1), run("a5"),
 		{ID: "failed", Name: trace.NameRun, Error: "cancelled", Input: json.RawMessage(`{"applied":[{"id":"git-c","version":1}]}`)},
@@ -73,7 +79,7 @@ func TestRunsReport(t *testing.T) {
 				verdict("a3", feedback.VerdictEdit, feedback.ReasonApproach, 3*time.Hour),
 				verdict("a5", feedback.VerdictReject, feedback.ReasonOther, 3*time.Hour),
 			}, item()},
-			[]loop.RunItem{{ID: "git-c", Version: 1, Applied: 4, Judged: 3, Followed: 1, Repeat: 1, Settle: 2 * time.Hour}},
+			[]loop.RunItem{{ID: "git-c", Version: 1, Approver: "ann", Applied: 4, Judged: 3, Followed: 1, Repeat: 1, Settle: 2 * time.Hour}},
 		},
 		{
 			"a later approve replaces a correction and a session verdict counts apart",
@@ -82,7 +88,7 @@ func TestRunsReport(t *testing.T) {
 				verdict("a1", feedback.VerdictApprove, "", 4*time.Hour),
 				inferred("a2", feedback.VerdictApprove, "", 3*time.Hour),
 			}, item()},
-			[]loop.RunItem{{ID: "git-c", Version: 1, Applied: 4, Judged: 1, Followed: 1, InferredJudged: 1, InferredFollowed: 1}},
+			[]loop.RunItem{{ID: "git-c", Version: 1, Approver: "ann", Applied: 4, Judged: 1, Followed: 1, InferredJudged: 1, InferredFollowed: 1}},
 		},
 		{
 			"a person's verdict wins over a newer inferred one and an inferred correction teaches the code and the settle",
@@ -93,7 +99,12 @@ func TestRunsReport(t *testing.T) {
 				inferred("a2", feedback.VerdictReject, feedback.ReasonForm, 3*time.Hour),
 				inferred("a3", feedback.VerdictReject, feedback.ReasonFact, 3*time.Hour),
 			}, item()},
-			[]loop.RunItem{{ID: "git-c", Version: 1, Applied: 4, Judged: 1, Followed: 1, InferredJudged: 2, InferredRepeat: 1, Settle: time.Hour}},
+			[]loop.RunItem{{ID: "git-c", Version: 1, Approver: "ann", Applied: 4, Judged: 1, Followed: 1, InferredJudged: 2, InferredRepeat: 1, Settle: time.Hour}},
+		},
+		{
+			"a version nodloop approved names it as its approver",
+			args{nil, carried()},
+			[]loop.RunItem{{ID: "git-c", Version: 1, Approver: knowledge.ApproverNodloop, Applied: 4}},
 		},
 		{
 			"a named verdict without a proof counts apart from a proven one",
@@ -103,7 +114,7 @@ func TestRunsReport(t *testing.T) {
 				named("a3", feedback.VerdictApprove, "", 3*time.Hour),
 				{TraceID: "a4", Verdict: feedback.VerdictApprove, Time: at.Add(3 * time.Hour), Reviewer: "ci"},
 			}, item()},
-			[]loop.RunItem{{ID: "git-c", Version: 1, Applied: 4, Judged: 1, Followed: 1, NamedJudged: 3, NamedFollowed: 2, NamedRepeat: 1}},
+			[]loop.RunItem{{ID: "git-c", Version: 1, Approver: "ann", Applied: 4, Judged: 1, Followed: 1, NamedJudged: 3, NamedFollowed: 2, NamedRepeat: 1}},
 		},
 		{
 			"a person's verdict wins over both inferred readers and a run they dispute counts nowhere",
@@ -115,7 +126,7 @@ func TestRunsReport(t *testing.T) {
 				captured("a2", feedback.VerdictApprove, "", 4*time.Hour),
 				captured("a3", feedback.VerdictReject, feedback.ReasonOther, 3*time.Hour),
 			}, item()},
-			[]loop.RunItem{{ID: "git-c", Version: 1, Applied: 4, Judged: 1, Followed: 1, InferredJudged: 1, InferredRepeat: 1}},
+			[]loop.RunItem{{ID: "git-c", Version: 1, Approver: "ann", Applied: 4, Judged: 1, Followed: 1, InferredJudged: 1, InferredRepeat: 1}},
 		},
 	}
 	for _, tc := range tcs {
@@ -198,28 +209,33 @@ func TestRunsDrafts(t *testing.T) {
 		run("r1", "0.7.0"), run("r2", "0.7.0"), run("r3", ""),
 		{ID: "x1", Name: trace.NameExtract, Subject: "conversation", Ref: "r1", Output: json.RawMessage(`{"conclusion":"proposed","candidate":{"id":"a","version":1}}`)},
 		{ID: "x2", Name: trace.NameExtract, Subject: "conversation", Ref: "r2", Output: json.RawMessage(`{"conclusion":"proposed","candidate":{"id":"b","version":1}}`)},
+		{ID: "x3", Name: trace.NameExtract, Subject: "conversation", Ref: "r2", Output: json.RawMessage(`{"conclusion":"proposed","candidate":{"id":"n","version":1}}`)},
 	}
 	record := func(id string, status knowledge.Status, after time.Duration, drafted bool, cites string) knowledge.Knowledge {
-		return knowledge.Knowledge{ID: id, Version: 1, Status: status, Time: at.Add(after), Drafted: drafted,
+		return knowledge.Knowledge{ID: id, Version: 1, Status: status, Time: at.Add(after), Drafted: drafted, Approver: "ann",
 			Evidence: knowledge.Evidence{FeedbackTraceIDs: []string{cites}}}
 	}
+	carried := record("n", knowledge.StatusApproved, 2*time.Hour, true, "r2")
+	carried.Approver = knowledge.ApproverNodloop
 	// Newest first as the store lists them
 	items := knowledge.Set{
 		record("a", knowledge.StatusRetired, 5*time.Hour, true, "r1"),
 		record("b", knowledge.StatusRetired, 3*time.Hour, true, "r2"),
+		carried,
 		record("a", knowledge.StatusApproved, 2*time.Hour, true, "r1"),
 		record("c", knowledge.StatusCandidate, time.Hour, true, "r3"),
 		record("hand", knowledge.StatusCandidate, time.Hour, false, "r3"),
 		record("b", knowledge.StatusCandidate, time.Hour, true, "r2"),
+		record("n", knowledge.StatusCandidate, 0, true, "r2"),
 		record("a", knowledge.StatusCandidate, 0, true, "r1"),
 	}
 
 	got := loop.NewRuns(traces, nil).Drafts(items, traces)
 
 	assert.Equal(t, []loop.DraftRow{
-		{Version: "0.7.0", Path: "conversation", Drafted: 2, Approved: 1, Dropped: 1, Waiting: 0, Decide: 2 * time.Hour},
+		{Version: "0.7.0", Path: "conversation", Drafted: 3, Approved: 2, ApprovedNodloop: 1, Dropped: 1, Waiting: 0, Decide: 2 * time.Hour},
 		{Version: "unknown", Path: "unknown", Drafted: 1, Waiting: 1},
-	}, got)
+	}, got, "the approval nodloop carried out counts apart from the person's")
 }
 
 func TestRunsCritics(t *testing.T) {
@@ -296,6 +312,10 @@ func TestRunsReactions(t *testing.T) {
 		r.Critic, r.Asked = "reaction laya", 1
 		return []loop.ReactionRow{r}
 	}
+	// Every case reads the capture trace that made the classify trace c2 beside its own
+	capture := trace.Trace{ID: "p1", Name: trace.NameCapture, SessionID: "s1", Time: at, Output: json.RawMessage(`{"classify":["c2"]}`)}
+	captured := asked("reaction", sureApprove, true)
+	captured.ID = "c2"
 	type args struct {
 		trace trace.Trace
 		// Newest first as the store lists them
@@ -350,6 +370,11 @@ func TestRunsReactions(t *testing.T) {
 			row(loop.ReactionRow{}),
 		},
 		{
+			"a classify trace of the capture recorded no session verdict so the conversation judging alike after it agrees",
+			args{captured, feedback.Records{session(feedback.VerdictApprove, time.Second)}},
+			row(loop.ReactionRow{Sure: 1, Agree: 1}),
+		},
+		{
 			"a session verdict before the point asked is the conversation's",
 			args{asked("reaction", sureApprove, true), feedback.Records{session(feedback.VerdictApprove, -time.Minute)}},
 			row(loop.ReactionRow{Sure: 1, Agree: 1}),
@@ -373,9 +398,74 @@ func TestRunsReactions(t *testing.T) {
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got := loop.NewRuns(nil, tc.args.verdicts).Reactions(trace.Traces{tc.args.trace})
+			got := loop.NewRuns(nil, tc.args.verdicts).Reactions(trace.Traces{tc.args.trace, capture})
 
 			assert.Equal(t, tc.want, got)
+		})
+	}
+}
+
+// The verdicts of the capture against those of the conversation per run either judged
+func TestRunsCapture(t *testing.T) {
+	at := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	verdict := func(run, reviewer string, v feedback.Verdict, after time.Duration) feedback.Feedback {
+		return feedback.Feedback{TraceID: run, Time: at.Add(after), Verdict: v, Reviewer: reviewer}
+	}
+	said := func(run string, v feedback.Verdict, after time.Duration) feedback.Feedback {
+		return verdict(run, feedback.ReviewerSession, v, after)
+	}
+	heard := func(run string, v feedback.Verdict, after time.Duration) feedback.Feedback {
+		return verdict(run, feedback.ReviewerNodloop, v, after)
+	}
+	row := func(r loop.CaptureRow) loop.CaptureRow {
+		r.Critic = "capture"
+		return r
+	}
+	tcs := []struct {
+		name string
+		args feedback.Records
+		want loop.CaptureRow
+	}{
+		{
+			"an edit and a reject agree since both correct",
+			feedback.Records{said("r1", feedback.VerdictEdit, 0), heard("r1", feedback.VerdictReject, time.Minute)},
+			row(loop.CaptureRow{Runs: 1, Agree: 1}),
+		},
+		{
+			"a reject against an approve is disputed",
+			feedback.Records{said("r1", feedback.VerdictApprove, 0), heard("r1", feedback.VerdictReject, time.Minute)},
+			row(loop.CaptureRow{Runs: 1, Disputed: 1}),
+		},
+		{
+			"each reader alone counts apart",
+			feedback.Records{heard("r1", feedback.VerdictReject, 0), said("r2", feedback.VerdictApprove, 0)},
+			row(loop.CaptureRow{Runs: 2, CaptureOnly: 1, ConversationOnly: 1}),
+		},
+		{
+			"the newest verdict of a reader counts",
+			feedback.Records{
+				heard("r1", feedback.VerdictApprove, 2*time.Minute), heard("r1", feedback.VerdictReject, 0), said("r1", feedback.VerdictApprove, time.Minute),
+			},
+			row(loop.CaptureRow{Runs: 1, Agree: 1}),
+		},
+		{
+			"a withdraw takes back what the capture read before it",
+			feedback.Records{
+				said("r1", feedback.VerdictApprove, 2*time.Minute), verdict("r1", "ann", feedback.VerdictWithdraw, time.Minute),
+				heard("r1", feedback.VerdictReject, 0),
+			},
+			row(loop.CaptureRow{Runs: 1, ConversationOnly: 1}),
+		},
+		{
+			"a verdict of a person is no reader",
+			feedback.Records{verdict("r1", "ann", feedback.VerdictReject, 0)},
+			row(loop.CaptureRow{}),
+		},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.want, loop.NewRuns(nil, tc.args).Capture())
 		})
 	}
 }

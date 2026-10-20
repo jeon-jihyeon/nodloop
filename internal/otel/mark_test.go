@@ -18,11 +18,13 @@ func TestMarkerHold(t *testing.T) {
 		name string
 		// The files of the record directory before the hold by name
 		args map[string]string
-		want time.Time
+		want otel.Mark
 	}{
-		{"no mark reads as no export", nil, time.Time{}},
-		{"a mark reads its time", map[string]string{otel.MarkFile: `{"at":"2026-10-07T09:00:00Z"}`}, at},
-		{"a mark that does not decode reads as no export", map[string]string{otel.MarkFile: "{"}, time.Time{}},
+		{"no mark reads as no export", nil, otel.Mark{}},
+		{"a mark of the time alone reads its time", map[string]string{otel.MarkFile: `{"at":"2026-10-07T09:00:00Z"}`}, otel.Mark{At: at}},
+		{"a mark reads the cursor of each store", map[string]string{otel.MarkFile: `{"at":"2026-10-07T09:00:00Z","after":{"traces":"t1"}}`},
+			otel.Mark{At: at, After: map[string]string{"traces": "t1"}}},
+		{"a mark that does not decode reads as no export", map[string]string{otel.MarkFile: "{"}, otel.Mark{}},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
@@ -36,7 +38,7 @@ func TestMarkerHold(t *testing.T) {
 
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = held.Release() })
-			assert.True(t, tc.want.Equal(held.At), held.At)
+			assert.Equal(t, tc.want, held.Mark)
 		})
 	}
 }
@@ -49,19 +51,19 @@ func TestMarkerMove(t *testing.T) {
 	}
 	tcs := []struct {
 		name string
-		// The time the held mark moves to
-		args time.Time
+		// Where the held mark moves to
+		args otel.Mark
 		want want
 	}{
 		{
 			"a time in another zone is written in UTC",
-			time.Date(2026, 10, 7, 9, 0, 0, 0, time.FixedZone("x", 3600)),
+			otel.Mark{At: time.Date(2026, 10, 7, 9, 0, 0, 0, time.FixedZone("x", 3600))},
 			want{time.Date(2026, 10, 7, 8, 0, 0, 0, time.UTC), `{"at":"2026-10-07T08:00:00Z"}` + "\n"},
 		},
 		{
-			"a UTC time is written as it is",
-			time.Date(2026, 10, 7, 9, 0, 0, 0, time.UTC),
-			want{time.Date(2026, 10, 7, 9, 0, 0, 0, time.UTC), `{"at":"2026-10-07T09:00:00Z"}` + "\n"},
+			"a UTC time is written as it is with the cursor of each store",
+			otel.Mark{At: time.Date(2026, 10, 7, 9, 0, 0, 0, time.UTC), After: map[string]string{"traces": "t1", "verdicts": "v1"}},
+			want{time.Date(2026, 10, 7, 9, 0, 0, 0, time.UTC), `{"at":"2026-10-07T09:00:00Z","after":{"traces":"t1","verdicts":"v1"}}` + "\n"},
 		},
 	}
 	for _, tc := range tcs {
@@ -83,7 +85,8 @@ func TestMarkerMove(t *testing.T) {
 			require.NoError(t, err)
 
 			assert.Nil(t, second, "another export holds the mark")
-			assert.True(t, tc.args.Equal(held.At), "a moved mark keeps the time it moved to")
+			assert.True(t, tc.args.At.Equal(held.At), "a moved mark keeps the time it moved to")
+			assert.Equal(t, tc.args.After, again.After)
 			assert.True(t, tc.want.at.Equal(again.At), again.At)
 			assert.Equal(t, tc.want.file, string(b))
 		})
@@ -140,7 +143,7 @@ func TestHeldReleased(t *testing.T) {
 				require.NoError(t, held.Release())
 			}
 
-			moveErr, releaseErr := held.Move(at), held.Release()
+			moveErr, releaseErr := held.Move(otel.Mark{At: at}), held.Release()
 
 			assert.ErrorIs(t, moveErr, tc.want.moveErr)
 			assert.ErrorIs(t, releaseErr, tc.want.releaseErr)

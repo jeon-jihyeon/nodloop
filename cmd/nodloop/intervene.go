@@ -20,8 +20,8 @@ import (
 
 // One intervention of the write side from the command line in the payload of MCP intervene and POST /v1/interventions
 // 1. --payload reads the payload from a file or stdin and the action and the flags given win over it
-// 2. with the terminal proof it is the person's judgment under config approver or person, and otherwise an agent proposal
-// the person is asked about at the next stop of a session over the same records
+// 2. with the terminal proof it is the person's judgment under config approver or person
+// Otherwise it is an agent proposal the person is asked about at the next stop of a session over the same records
 func runIntervene(
 	args []string, getenv func(string) string, now func() time.Time, proof trace.Proof, stdin io.Reader, stdout, stderr io.Writer,
 ) int {
@@ -142,6 +142,6 @@ func (a app) intervener() (*curate.Intervener, error) {
 	}
 	return curate.NewIntervener(ledger, traces, curate.InterveneSetting{
 		Build: buildVersion(), Coverage: compactor.Coverage, Marks: curate.NewMarker(dir),
-		Cursor: func(at time.Time, id string) string { return schema.Cursor{Time: at, RecordID: id}.String() },
+		Cursor: schema.CursorAt,
 	}, a.now), nil
 }

@@ -6,9 +6,11 @@ import (
 	"encoding/json"
 	"maps"
 	"slices"
+	"sort"
 	"time"
 
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
+	"github.com/jeon-jihyeon/nodloop/internal/record"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
 )
 
@@ -29,9 +31,9 @@ type CurationReport struct {
 	Items       []ItemEffect    `json:"items"`
 }
 
-// The trace names report curation reads
+// The trace names report curation reads beside the knob traces every cycled snapshot holds
 var curationTraces = []trace.Name{
-	trace.NameRun, trace.NameRollup, trace.NameDecide, trace.NameKnob, trace.NameExpose, trace.NameAnswer, trace.NameIntervention,
+	trace.NameRun, trace.NameRollup, trace.NameDecide, trace.NameExpose, trace.NameAnswer, trace.NameIntervention,
 }
 
 // The curation report with every cycle whole as report effect reads it
@@ -41,11 +43,67 @@ func (s Stores) Curation(ctx context.Context, now time.Time) (CurationReport, er
 	if err != nil {
 		return CurationReport{}, err
 	}
-	return snap.Curation(now), nil
+	return snap.curation(now), nil
+}
+
+// The trace names the parts of the curation report the knobs of curate move on read
+var knobbedTraces = []trace.Name{trace.NameKnob, trace.NameDecide, trace.NameExpose, trace.NameAnswer, trace.NameIntervention}
+
+// The parts of the curation report the knobs of curate move on: the cycles, the kinds, the shadow, the CUSUM and the shift
+// 1. each reads only the records of the judge configuration of the newest knob event
+// The shift of its first cycle reads the cycle before too
+// 2. so every list starts at the start of the cycle before the one that holds the start of that configuration
+// A curate pass after a capture then reads a cycle or two of records and never every record
+// 3. the runs, rollups and outcomes no knob reads are left out with every other part of the report
+func (s Stores) Knobbed(ctx context.Context, now time.Time) (CurationReport, error) {
+	since, err := s.configured(ctx, now)
+	if err != nil {
+		return CurationReport{}, err
+	}
+	var all trace.Traces
+	for _, name := range knobbedTraces {
+		found, err := s.Traces.List(ctx, record.TraceFilter{Name: string(name), Since: since})
+		if err != nil {
+			return CurationReport{}, err
+		}
+		all = append(all, trace.RestoreAll(found)...)
+	}
+	e := newEvents(all, now)
+	asked, shifts := e.units(), e.shifts()
+	return CurationReport{Cycles: e.cycleRows(), Kinds: e.kinds(asked, shifts), Shadow: e.shadow(asked), CUSUM: e.cusum(asked), Shift: shifts}, nil
+}
+
+// The start of the cycle before the one that holds the start of the judge configuration of the newest knob event
+// 1. the knob traces are read newest first in reads that double until they mark both cycles
+// So the read goes back only as far as the knob trace of the cycle before
+// 2. the start of the first cycle when the configuration started in it
+// The oldest knob trace read is the first of the records once it follows none or the knob traces end
+// No record of curate comes before it so the runs of the time before it are never read
+// 3. the zero time reads every record with no knob trace, a newest one that names no start or knob traces that mark no cycle
+func (s Stores) configured(ctx context.Context, now time.Time) (time.Time, error) {
+	for limit := 2; ; limit *= 2 {
+		found, err := s.Traces.List(ctx, record.TraceFilter{Name: string(trace.NameKnob), Limit: limit})
+		knobs := trace.RestoreAll(found)
+		var newest, oldest knobInput
+		if err != nil || len(knobs) == 0 || json.Unmarshal(knobs[0].Input, &newest) != nil || newest.Judge.Start.IsZero() {
+			return time.Time{}, err
+		}
+		first := len(knobs) < limit || json.Unmarshal(knobs[len(knobs)-1].Input, &oldest) == nil && oldest.Before == ""
+		cycles := knobs.Cycles(now)
+		i := slices.IndexFunc(cycles, func(c trace.Cycle) bool { return c.Holds(newest.Judge.Start) })
+		switch {
+		case i >= 1:
+			return cycles[i-1].Start, nil
+		case first && len(cycles) > 0:
+			return cycles[0].Start, nil
+		case first:
+			return time.Time{}, nil
+		}
+	}
 }
 
 // The curation report over the curate events and the runs of the snapshot
-func (s Snapshot) Curation(now time.Time) CurationReport {
+func (s Snapshot) curation(now time.Time) CurationReport {
 	e := newEvents(s.traces, now)
 	asked, shifts, carried := e.units(), e.shifts(), s.carried()
 	return CurationReport{
@@ -80,10 +138,6 @@ const (
 	changeWithdraw    = "withdraw"
 	actionShadow      = "shadow"
 	actionAsk         = "ask"
-	// An intervention action a release may add that the overturns count
-	actionPause = "pause"
-	// The intervention a person asks for to see what was prepared, which counts as a touchpoint whatever its proof
-	actionDigest = "digest"
 )
 
 // The actions of a decide that carry a change out
@@ -171,10 +225,10 @@ func (a answerRecord) chose() bool {
 }
 
 type interventionInput struct {
-	Action    string          `json:"action"`
+	Action    trace.Action    `json:"action"`
 	ID        string          `json:"id"`
 	Version   int             `json:"version"`
-	Choice    string          `json:"choice"`
+	Choice    trace.Choice    `json:"choice"`
 	Authority trace.Authority `json:"authority"`
 }
 
@@ -216,6 +270,8 @@ type knobInput struct {
 		CUSUM cusumKnob `json:"cusum"`
 	} `json:"knobs"`
 	Judge judgeConfig `json:"judge"`
+	// The knob event this one follows and empty on the first knob event of the records
+	Before string `json:"before"`
 }
 
 // A knob trace as the report reads it
@@ -413,14 +469,14 @@ type period struct {
 	name, start string
 }
 
+// The cycles run in time order with no gap between two so the only one that may hold the time is the first that ends after it
 func (e events) periods(t time.Time) []period {
 	day := t.UTC().Truncate(24 * time.Hour)
 	monday := day.AddDate(0, 0, -(int(day.Weekday())+6)%7)
 	out := []period{{"week", monday.Format(trace.CycleDate)}}
-	for _, c := range e.cycles {
-		if c.Holds(t) {
-			out = append(out, period{"cycle", c.ID})
-		}
+	i := sort.Search(len(e.cycles), func(i int) bool { return e.cycles[i].End.After(t) })
+	if i < len(e.cycles) && e.cycles[i].Holds(t) {
+		out = append(out, period{"cycle", e.cycles[i].ID})
 	}
 	return out
 }
@@ -451,9 +507,10 @@ func (e events) touchpoints() []Touchpoints {
 	for _, a := range e.answers {
 		at(a.Time, func(row *touch) { row.answer(a) })
 	}
+	// A digest counts whatever its proof since the person asked to see what was prepared
 	for _, in := range e.interventions {
-		if in.in.Authority == trace.AuthorityPerson || in.in.Action == actionDigest {
-			at(in.Time, func(row *touch) { row.row.Interventions[in.in.Action]++ })
+		if in.in.Authority == trace.AuthorityPerson || in.in.Action == trace.ActionDigest {
+			at(in.Time, func(row *touch) { row.row.Interventions[string(in.in.Action)]++ })
 		}
 	}
 	keys := slices.SortedFunc(maps.Keys(rows), func(a, b period) int {

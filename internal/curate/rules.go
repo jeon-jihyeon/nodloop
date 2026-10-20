@@ -111,28 +111,27 @@ func (p *pass) corrected(ctx context.Context, k knowledge.Knowledge) (bool, erro
 // 4. room when its approval needs a compaction so its one question carries the prepared compaction
 // 5. drift when versions nodloop approved in the place reach the lessons a person approved there
 // 6. paused when a pause of the person covers its kind or its scope so no judge runs on it
-func (p *pass) asks(k knowledge.Knowledge, run trace.Trace, place AnchorPlace) (RuleCode, bool, error) {
+// The candidate comes from the set so Room finds its version and every folder it reads
+func (p *pass) asks(k knowledge.Knowledge, run trace.Trace, place AnchorPlace) (RuleCode, bool) {
 	cur, replaces := p.all.Approved().Find(k.ID)
 	switch {
 	case replaces && cur.Approver != knowledge.ApproverNodloop || k.Base > 0 && p.personDecided(k.ID, k.Base):
-		return RulePersonItem, true, nil
+		return RulePersonItem, true
 	case !p.all.PersonReaches(*k.Run):
-		return RuleScopeWider, true, nil
+		return RuleScopeWider, true
 	case k.Veto != nil || replaces && cur.Veto != nil:
-		return RuleVeto, true, nil
+		return RuleVeto, true
 	}
-	room, err := p.all.Room(k.ID, k.Version)
+	room, _ := p.all.Room(k.ID, k.Version)
 	switch {
-	case err != nil:
-		return "", false, err
 	case room.Chars > 0:
-		return RuleRoom, true, nil
+		return RuleRoom, true
 	case p.drifted(run, place):
-		return RuleDrift, true, nil
+		return RuleDrift, true
 	case p.ints.Paused(p.kindOf(k), *k.Run):
-		return RulePaused, true, nil
+		return RulePaused, true
 	}
-	return "", false, nil
+	return "", false
 }
 
 // The kind of change a waiting candidate makes

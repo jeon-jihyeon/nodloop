@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
+	"sync"
 
 	"github.com/jeon-jihyeon/nodloop/internal/loop"
 	"github.com/jeon-jihyeon/nodloop/internal/schema"
@@ -32,14 +34,18 @@ func (ks kinds) served() kinds {
 // Answers the OpenAPI document of the routes of the server
 // It names no tenant and no record so a client reads it without a key
 type openAPIHandler struct {
-	files   schema.Files
-	version string
+	// Built by the first request and answered as it is to every later one since the published files never change in a process
+	doc func() (json.RawMessage, error)
 	// Where a failure is written since its answer names none of it
 	log io.Writer
 }
 
+func newOpenAPIHandler(files schema.Files, version string, log io.Writer) openAPIHandler {
+	return openAPIHandler{doc: sync.OnceValues(func() (json.RawMessage, error) { return openAPIDocument(files, version) }), log: log}
+}
+
 func (h openAPIHandler) ServeHTTP(w http.ResponseWriter, _ *http.Request) {
-	doc, err := openAPIDocument(h.files, h.version)
+	doc, err := h.doc()
 	if err != nil {
 		fmt.Fprintf(h.log, "nodloop-server: openapi: %v\n", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -101,7 +107,8 @@ func openAPIDocument(files schema.Files, version string) (json.RawMessage, error
 	return json.Marshal(doc)
 }
 
-// The payload of POST /v1/interventions and its answer, whose intervention is the published record of its kind
+// The payload of POST /v1/interventions and its answer
+// The intervention of the answer is the published record of its kind
 // The enums come from the record types the published schemas are generated from
 func interveneSchemas() (map[string]any, map[string]any) {
 	actions := make([]any, 0, len(trace.Actions()))
@@ -158,13 +165,8 @@ func jsonOf(description string, s any) map[string]any {
 
 // The answers of a route behind a key with the answers of its own
 func keyed(ok map[string]any, more map[string]any) map[string]any {
-	out := map[string]any{
-		"200": ok, "401": text("no key or an unknown key"), "403": text("a role that may not read it"), "404": text("a name the route does not know"),
-		"500": text("an internal failure"),
-	}
-	for code, answer := range more {
-		out[code] = answer
-	}
+	out := map[string]any{"200": ok, "401": text("no key or an unknown key"), "403": text("a role the route is not open to"), "500": text("an internal failure")}
+	maps.Copy(out, more)
 	return out
 }
 
@@ -185,7 +187,6 @@ func interventionsPath() map[string]any {
 
 // The routes of the handler with their parameters and answers
 func paths(kindNames, reports []any) map[string]any {
-	answers := keyed
 	query := func(name, description string, s map[string]any) map[string]any {
 		return map[string]any{"name": name, "in": "query", "description": description, "schema": s}
 	}
@@ -206,14 +207,17 @@ func paths(kindNames, reports []any) map[string]any {
 				query("limit", "records per page, cut to 1000", map[string]any{"type": "integer", "default": schema.DefaultLimit, "maximum": schema.MaxLimit}),
 				query("content", "keep the free text of the kind", map[string]any{"type": "boolean", "default": false}),
 			},
-			"responses": answers(jsonOf("the page", map[string]any{"$ref": "#/components/schemas/page"}),
-				map[string]any{"400": text("a limit, a content flag or a cursor the page cannot read")}),
+			"responses": keyed(jsonOf("the page", map[string]any{"$ref": "#/components/schemas/page"}), map[string]any{
+				"400": text("a limit, a content flag or a cursor the page cannot read"), "404": text("a kind outside the published index or the guard log"),
+			}),
 		}},
 		"/v1/reports/{name}": map[string]any{"get": map[string]any{
 			"summary": "One report of the tenant of the key as JSON", "deprecated": true,
 			"description": "Removed in the next release since the record pages carry the contract",
 			"parameters":  []any{map[string]any{"name": "name", "in": "path", "required": true, "schema": map[string]any{"type": "string", "enum": reports}}},
-			"responses":   answers(jsonOf("the report, whose shape no published schema covers", map[string]any{}), nil),
+			"responses": keyed(jsonOf("the report, whose shape no published schema covers", map[string]any{}), map[string]any{
+				"404": text("a name of no report"),
+			}),
 		}},
 		"/mcp": map[string]any{"post": map[string]any{
 			"summary":     "The MCP tools of the role of the key over stateless streamable HTTP",

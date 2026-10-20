@@ -26,7 +26,7 @@ import (
 	vetofile "github.com/jeon-jihyeon/nodloop/internal/veto/file"
 )
 
-// When the records of a bench were written, the Sunday before the testkit clock starts
+// When the records of a bench were written on the Sunday before the testkit clock starts
 var written = time.Date(2026, 9, 20, 9, 0, 0, 0, time.UTC)
 
 // The scope of the runs of one repo in sessions
@@ -62,7 +62,7 @@ type bench struct {
 	client *llmmock.MockClient
 }
 
-// A bench whose ledger holds the person's lesson and the lessons given, each with its run and a person's reject on it
+// A bench whose ledger holds the person's lesson and the lessons given with the run of each and a person's reject on it
 // 1. the verdicts name more verdicts on a run after the reject in their order
 // 2. a run whose id starts with r-unrecorded gets its verdicts and no trace
 func newBench(t *testing.T, answer json.RawMessage, lessons []knowledge.Knowledge, verdicts map[string][]feedback.Verdict) bench {
@@ -318,18 +318,34 @@ func TestCuratorPassAgain(t *testing.T) {
 }
 
 // A decide a crash left before its ledger write is carried out by the next pass under the same decide and only while the version waits
+// 1. a join whose older candidate a person decided since still drops the newer one and joins nothing
+// 2. each kind is carried out by its own ledger call so a decide whose action is not the one of its kind writes nothing
 func TestCuratorPassRecovers(t *testing.T) {
 	candidate := knowledge.StatusCandidate
 	gone := lesson("k-gone", 1, "Run the tests before a commit", acme("acme"), knowledge.StatusRetired, "ann")
 	gone.Reason, gone.Time = knowledge.ReasonPerson, written.Add(time.Hour)
+	older := lesson("k-older", 1, "Name the failing test first", acme("acme"), candidate, "")
+	kept := lesson("k-older", 1, "Name the failing test first", acme("acme"), knowledge.StatusApproved, "ann")
+	kept.Time, kept.ApprovedAt = written.Add(time.Hour), written.Add(time.Hour)
+	newer := lesson("k-newer", 1, "Name the failing test first", acme("acme"), candidate, "")
+	drop := curate.Decision{
+		RuleCode: curate.RuleSameAsItem, Action: curate.ActionDrop, Reason: knowledge.ReasonDuplicate, Failure: curate.FailureHard,
+		Reopen: curate.ReopenPersonOnly,
+	}
+	join := curate.Decision{RuleCode: curate.RuleSameAsCandidate, Action: curate.ActionJoin, Reason: knowledge.ReasonDuplicate}
 	type args struct {
-		lessons []knowledge.Knowledge
-		id      string
+		lessons  []knowledge.Knowledge
+		change   curate.Change
+		decision curate.Decision
 	}
 	type want struct {
 		statuses []string
 		decision string
+		// The runs the evidence of the older candidate cites
+		older []string
+		err   error
 	}
+	dup := []knowledge.Knowledge{lesson("k-dup", 1, "Run the tests before a commit", acme("acme"), candidate, "")}
 	tcs := []struct {
 		name string
 		args args
@@ -337,13 +353,37 @@ func TestCuratorPassRecovers(t *testing.T) {
 	}{
 		{
 			"a drop with no record that names it is carried out",
-			args{[]knowledge.Knowledge{lesson("k-dup", 1, "Run the tests before a commit", acme("acme"), candidate, "")}, "k-dup"},
-			want{[]string{"k-dup v1 retired nodloop duplicate"}, "d-crash"},
+			args{dup, curate.Change{Kind: curate.ChangeDrop, ID: "k-dup", Version: 1, Anchor: 1}, drop},
+			want{[]string{"k-dup v1 retired nodloop duplicate"}, "d-crash", nil, nil},
 		},
 		{
 			"a drop of a version a person retired since is left as it is",
-			args{[]knowledge.Knowledge{lesson("k-gone", 1, "Run the tests before a commit", acme("acme"), candidate, ""), gone}, "k-gone"},
-			want{[]string{"k-gone v1 retired ann person"}, ""},
+			args{
+				[]knowledge.Knowledge{lesson("k-gone", 1, "Run the tests before a commit", acme("acme"), candidate, ""), gone},
+				curate.Change{Kind: curate.ChangeDrop, ID: "k-gone", Version: 1, Anchor: 1}, drop,
+			},
+			want{[]string{"k-gone v1 retired ann person"}, "", nil, nil},
+		},
+		{
+			"a join whose older candidate a person approved since drops the newer one and joins nothing",
+			args{
+				[]knowledge.Knowledge{older, kept, newer},
+				curate.Change{Kind: curate.ChangeJoin, ID: "k-newer", Version: 1, Old: []knowledge.Ref{ref("k-older")}, Anchor: 1}, join,
+			},
+			want{[]string{"k-newer v1 retired nodloop duplicate", "k-older v1 approved ann"}, "d-crash", []string{"r-k-older"}, nil},
+		},
+		{
+			"a compaction that would apply a waiting version writes nothing since only its coverage check approves it",
+			args{
+				dup, curate.Change{Kind: curate.ChangeCompaction, ID: "k-dup", Version: 1, Compaction: "c-1", Anchor: 1},
+				curate.Decision{Tier: 1, Action: curate.ActionApply},
+			},
+			want{[]string{"k-dup v1 candidate"}, "", nil, curate.ErrDecideInvalid},
+		},
+		{
+			"an add that would be dropped writes nothing since a drop is a change of its own",
+			args{dup, curate.Change{Kind: curate.ChangeAdd, ID: "k-dup", Version: 1, Anchor: 1}, drop},
+			want{[]string{"k-dup v1 candidate"}, "", nil, curate.ErrDecideInvalid},
 		},
 	}
 	ctx := context.Background()
@@ -351,28 +391,28 @@ func TestCuratorPassRecovers(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			b := newBench(t, nil, tc.args.lessons, nil)
+			id := tc.args.change.ID
 			event := curate.Event{
-				ID: "d-crash", Ref: "r-" + tc.args.id, Source: trace.SourcePush,
+				ID: "d-crash", Ref: "r-" + id, Source: trace.SourcePush,
 				Draw: trace.NewDraw("2026-09-21", "0.10.0+1a2b3c4d", "5eed", "d-crash", "audit", 0.05),
 			}
-			change := curate.Change{Kind: curate.ChangeDrop, ID: tc.args.id, Version: 1, Anchor: 1}
-			drop := curate.Decision{
-				RuleCode: curate.RuleSameAsItem, Action: curate.ActionDrop, Reason: knowledge.ReasonDuplicate, Failure: curate.FailureHard,
-				Reopen: curate.ReopenPersonOnly,
-			}
-			tr, err := event.Decide(change, drop, nil, written.Add(2*time.Hour))
+			tr, err := event.Decide(tc.args.change, tc.args.decision, nil, written.Add(2*time.Hour))
 			require.NoError(t, err)
 			require.NoError(t, b.stores.Traces.Append(ctx, tr.Record()))
 
 			got, err := b.curator().Pass(ctx, b.setting(t))
-			require.NoError(t, err)
+			assert.ErrorIs(t, err, tc.want.err)
 			again, err := b.curator().Pass(ctx, b.setting(t))
-			require.NoError(t, err)
+			assert.ErrorIs(t, err, tc.want.err)
 
 			assert.Empty(t, got.Decided)
 			assert.Empty(t, again.Decided)
 			assert.Equal(t, tc.want.statuses, statuses(t, b))
-			assert.Equal(t, tc.want.decision, b.decision(t, tc.args.id, 1))
+			assert.Equal(t, tc.want.decision, b.decision(t, id, 1))
+			all, err := b.stores.Ledger.All(ctx)
+			require.NoError(t, err)
+			joined, _ := all.Version("k-older", 1)
+			assert.Equal(t, tc.want.older, joined.Evidence.FeedbackTraceIDs)
 		})
 	}
 }
@@ -532,8 +572,9 @@ func (b bench) words(t *testing.T) {
 	}
 }
 
-// The person's words asking to drop a version nodloop approved withdraw it once the shadow ended
-// and on a version a person approved they ask the person, each once
+// The person's words asking to drop a version decide each version they name once
+// 1. a version nodloop approved is withdrawn once the shadow ended
+// 2. a version a person approved asks the person
 func TestCuratorPassWords(t *testing.T) {
 	ctx := context.Background()
 	b := newBench(t, nil, []knowledge.Knowledge{
@@ -609,49 +650,6 @@ func TestCuratorPassDue(t *testing.T) {
 	}, view(second.Due))
 }
 
-// The corrected runs of the window no extraction read and those whose only extraction failed
-func TestCuratorGaps(t *testing.T) {
-	ctx := context.Background()
-	b := newBench(t, nil, []knowledge.Knowledge{lesson("k-cited", 1, "Pin the base image", acme("acme"), knowledge.StatusCandidate, "")}, nil)
-	now := b.stores.Clock.Now()
-	labels := trace.Labels{"repo": {"acme"}}
-	for _, id := range []string{"r-gap", "r-failed-once", "r-failed-twice", "r-refused", "r-young"} {
-		b.correct(t, id, labels, []feedback.Verdict{feedback.VerdictReject})
-	}
-	b.correct(t, "r-approved", labels, []feedback.Verdict{feedback.VerdictReject, feedback.VerdictApprove})
-	young, err := feedback.New("r-young", feedback.VerdictReject, "", "", nil, "ann", now.Add(-10*time.Minute))
-	require.NoError(t, err)
-	require.NoError(t, b.stores.Feedback.Append(ctx, young.Record()))
-	inferred, err := trace.NewRun("tep", "", trace.Labels{"unit": {"a"}}, json.RawMessage(`{"applied":[]}`), []byte("an answer"), written)
-	require.NoError(t, err)
-	inferred.ID = "r-inferred"
-	require.NoError(t, b.stores.Traces.Append(ctx, inferred.Record()))
-	said, err := feedback.New("r-inferred", feedback.VerdictReject, "", "", nil, feedback.ReviewerSession, written.Add(time.Minute))
-	require.NoError(t, err)
-	require.NoError(t, b.stores.Feedback.Append(ctx, said.Record()))
-	failed, err := trace.NewRun("session", "", labels, json.RawMessage(`{"applied":[]}`), []byte("an answer"), written)
-	require.NoError(t, err)
-	failed.ID, failed.Error = "r-error", "the run failed"
-	require.NoError(t, b.stores.Traces.Append(ctx, failed.Record()))
-	onFailed, err := feedback.New("r-error", feedback.VerdictReject, "", "", nil, "ann", written.Add(time.Minute))
-	require.NoError(t, err)
-	require.NoError(t, b.stores.Feedback.Append(ctx, onFailed.Record()))
-	for i, e := range []struct{ run, conclusion string }{
-		{"r-failed-once", "failed"}, {"r-failed-twice", "failed"}, {"r-failed-twice", "failed"}, {"r-refused", "refused"},
-	} {
-		extract := trace.Trace{
-			ID: fmt.Sprintf("e-%d", i), Name: trace.NameExtract, Ref: e.run, Time: written.Add(time.Hour), Input: json.RawMessage(`{}`),
-			Output: json.RawMessage(`{"conclusion":"` + e.conclusion + `"}`),
-		}
-		require.NoError(t, b.stores.Traces.Append(ctx, extract.Record()))
-	}
-
-	got, err := b.curator().Gaps(ctx, time.Time{})
-
-	require.NoError(t, err)
-	assert.ElementsMatch(t, []string{"r-gap", "r-failed-once", "r-inferred"}, got)
-}
-
 // A store that cannot be read fails the pass and the gaps before anything is decided
 func TestCuratorPassUnreadable(t *testing.T) {
 	ctx := context.Background()
@@ -681,10 +679,14 @@ func TestCuratorPassEvidence(t *testing.T) {
 	retired.Reason = knowledge.ReasonPerson
 	turned := lesson("k-turned", 2, "Run the linter first", acme("acme"), candidate, "")
 	turned.Base, turned.Evidence.FeedbackTraceIDs = 1, []string{"r-turned"}
+	unscoped := lesson("k-unscoped", 1, "Name the failing test first", nil, candidate, "")
+	unscoped.Evidence.FeedbackTraceIDs = []string{"r-k-person"}
 	type args struct {
 		lessons []knowledge.Knowledge
 		// The window starts after every run of the bench
 		late bool
+		// Records of an earlier release appended as they are
+		legacy []knowledge.Knowledge
 	}
 	type want struct {
 		decided []string
@@ -697,19 +699,32 @@ func TestCuratorPassEvidence(t *testing.T) {
 	}{
 		{
 			"a run outside the window is read from the store",
-			args{[]knowledge.Knowledge{lesson("k-old", 1, "Name the failing test first", acme("acme"), candidate, "")}, true},
+			args{[]knowledge.Knowledge{lesson("k-old", 1, "Name the failing test first", acme("acme"), candidate, "")}, true, nil},
 			want{[]string{"add k-old v1 shadow  1"}, []string{"r-k-old"}},
 		},
-		{"a run never recorded leaves the change with no place of its own", args{[]knowledge.Knowledge{missing}, false}, want{[]string{"add k-missing v1 shadow  1"}, []string{"r-unrecorded"}}},
-		{"a candidate of an outcome alone cites the run of the outcome", args{[]knowledge.Knowledge{outcome}, false}, want{[]string{"add k-outcome v1 shadow  1"}, []string{"r-outcome"}}},
-		{"a candidate that cites no run waits as before", args{[]knowledge.Knowledge{uncited}, false}, want{[]string{}, []string{}}},
-		{"a version built on one a person retired asks the person", args{[]knowledge.Knowledge{retired, turned}, false}, want{[]string{"add k-turned v2 ask person_item 2"}, []string{"r-turned"}}},
+		{
+			"a run never recorded leaves the change with no place of its own", args{[]knowledge.Knowledge{missing}, false, nil},
+			want{[]string{"add k-missing v1 shadow  1"}, []string{"r-unrecorded"}},
+		},
+		{
+			"a candidate of an outcome alone cites the run of the outcome", args{[]knowledge.Knowledge{outcome}, false, nil},
+			want{[]string{"add k-outcome v1 shadow  1"}, []string{"r-outcome"}},
+		},
+		{"a candidate that cites no run waits as before", args{[]knowledge.Knowledge{uncited}, false, nil}, want{[]string{}, []string{}}},
+		{"a candidate of an earlier release scoped to no run waits as before", args{nil, false, []knowledge.Knowledge{unscoped}}, want{[]string{}, []string{}}},
+		{
+			"a version built on one a person retired asks the person", args{[]knowledge.Knowledge{retired, turned}, false, nil},
+			want{[]string{"add k-turned v2 ask person_item 2"}, []string{"r-turned"}},
+		},
 	}
 	ctx := context.Background()
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			b := newBench(t, answer(0.9, 0.02), tc.args.lessons, nil)
+			for _, k := range tc.args.legacy {
+				require.NoError(t, b.stores.Knowledge.Append(ctx, k.Record()))
+			}
 			setting := b.setting(t)
 			if tc.args.late {
 				setting.Window = written.Add(time.Hour)
@@ -735,6 +750,7 @@ func TestCuratorPassFails(t *testing.T) {
 	older := lesson("k-older", 1, "Keep commits small", acme("acme"), knowledge.StatusCandidate, "")
 	newer := lesson("k-newer", 1, "Keep commits small", acme("acme"), knowledge.StatusCandidate, "")
 	newer.Time, newer.Evidence.FeedbackTraceIDs = written.Add(time.Hour), []string{"r-k-newer", "r-k-newer2"}
+	carried := lesson("k-carried", 1, "Squash before a merge", acme("acme"), knowledge.StatusApproved, knowledge.ApproverNodloop)
 	type args struct {
 		lessons []knowledge.Knowledge
 		// The start of the cycle names few-shot decisions the records lack
@@ -747,6 +763,14 @@ func TestCuratorPassFails(t *testing.T) {
 		// The Monday of a knob event on record under the judge of the pass and the numbers the knobs move on
 		monday  time.Time
 		numbers curate.Numbers
+		// The error the reader of the numbers fails with
+		failed error
+		// An answer after the knob event on record so a pass inside the cycle reads the numbers
+		answered bool
+		// An agent proposed a judgment of the first lesson that no decide asks about yet
+		proposed bool
+		// The stops of a capture of the window
+		stops string
 	}
 	type want struct {
 		err      error
@@ -798,8 +822,42 @@ func TestCuratorPassFails(t *testing.T) {
 			want{assert.AnError, []string{"k-dup v1 candidate"}, 0},
 		},
 		{
-			"runs that cannot be read fail the pass", args{lessons: []knowledge.Knowledge{dup}, appends: -1, lists: 3, reads: -1, seed: "5eed"},
+			"interventions that cannot be read fail the pass", args{lessons: []knowledge.Knowledge{dup}, appends: -1, lists: 3, reads: -1, seed: "5eed"},
 			want{assert.AnError, []string{"k-dup v1 candidate"}, 0},
+		},
+		{
+			"runs that cannot be read fail the pass", args{lessons: []knowledge.Knowledge{dup}, appends: -1, lists: 4, reads: -1, seed: "5eed"},
+			want{assert.AnError, []string{"k-dup v1 candidate"}, 0},
+		},
+		{
+			"numbers that cannot be read at a cycle start fail the pass before anything is decided",
+			args{
+				lessons: []knowledge.Knowledge{dup}, appends: -1, lists: -1, reads: -1, seed: "5eed", monday: time.Date(2026, 9, 7, 0, 0, 0, 0, time.UTC),
+				failed: assert.AnError,
+			},
+			want{assert.AnError, []string{"k-dup v1 candidate"}, 0},
+		},
+		{
+			"numbers that cannot be read after an answer inside the cycle fail the pass before anything is decided",
+			args{
+				lessons: []knowledge.Knowledge{dup}, appends: -1, lists: -1, reads: -1, seed: "5eed", monday: time.Date(2026, 9, 21, 0, 0, 0, 0, time.UTC),
+				failed: assert.AnError, answered: true,
+			},
+			want{assert.AnError, []string{"k-dup v1 candidate"}, 0},
+		},
+		{
+			"a judge whose trace fails to append fails the change",
+			args{lessons: []knowledge.Knowledge{add}, appends: 1, lists: -1, reads: -1, seed: "5eed"}, want{assert.AnError, []string{"k-add v1 candidate"}, 0},
+		},
+		{
+			"a proposal whose decide fails to append joins the error of the pass",
+			args{lessons: []knowledge.Knowledge{add}, appends: 1, lists: -1, reads: -1, seed: "5eed", proposed: true},
+			want{assert.AnError, []string{"k-add v1 candidate"}, 0},
+		},
+		{
+			"a signal that cites no run fails its withdrawal",
+			args{lessons: []knowledge.Knowledge{carried}, appends: -1, lists: -1, reads: -1, seed: "5eed", stops: `[{"id":"k-carried","version":1}]`},
+			want{curate.ErrDecideInvalid, []string{"k-carried v1 approved nodloop"}, 0},
 		},
 		{
 			"extractions that cannot be read fail the withdrawals and the candidates are still decided",
@@ -810,7 +868,7 @@ func TestCuratorPassFails(t *testing.T) {
 			"a narrowing that fails to append fails the pass before anything is decided",
 			args{
 				lessons: []knowledge.Knowledge{dup}, appends: 0, lists: -1, reads: -1, seed: "5eed", monday: time.Date(2026, 9, 21, 0, 0, 0, 0, time.UTC),
-				numbers: curate.Numbers{Alarmed: []curate.Opening{{Kind: curate.ChangeAdd, Bin: curate.Bin1}}},
+				numbers: curate.Numbers{Alarmed: []curate.Opening{{Kind: curate.ChangeAdd, Bin: curate.Bin1}}}, answered: true,
 			},
 			want{assert.AnError, []string{"k-dup v1 candidate"}, 0},
 		},
@@ -842,10 +900,20 @@ func TestCuratorPassFails(t *testing.T) {
 			if !tc.args.monday.IsZero() {
 				b.cycleKnobs(t, tc.args.monday, sonnetJudge, func(*curate.Knobs) {})
 			}
+			if tc.args.answered {
+				b.answered(t, written.Add(time.Hour))
+			}
+			if tc.args.proposed {
+				r := curate.Request{Action: trace.ActionJudge, Target: tc.args.lessons[0].ID + ":1", Choice: trace.ChoiceKeep}
+				require.NoError(t, testkit.Err(b.intervener(nil).Intervene(ctx, r, agent)))
+			}
+			if tc.args.stops != "" {
+				b.captured(t, tc.args.stops)
+			}
 			traces := &testkit.FlakyTraces{Store: b.stores.Traces, Appends: failing(tc.args.appends), Lists: failing(tc.args.lists)}
 			verdicts := &testkit.FlakyFeedback{Store: b.stores.Feedback, Reads: failing(tc.args.reads)}
 			setting := b.setting(t)
-			setting.Seed, setting.Numbers = tc.args.seed, tc.args.numbers
+			setting.Seed, setting.Numbers = tc.args.seed, numbersOf(tc.args.numbers, tc.args.failed)
 			ledger := b.stores.Ledger
 			if tc.args.unreadable {
 				ledger = flakyLedger(t, b, 0)
@@ -887,37 +955,6 @@ func TestCuratorPassCorroborated(t *testing.T) {
 	assert.Equal(t, []string{"add k-add v1 shadow  1"}, decisionsOf(second.Decided))
 }
 
-// The gaps fail on verdicts or knowledge that cannot be read
-func TestCuratorGapsFails(t *testing.T) {
-	type args struct {
-		// Reads that pass before every later one fails
-		lists, verdicts, knowledge int
-	}
-	tcs := []struct {
-		name string
-		args args
-	}{
-		{"extractions that cannot be read", args{1, -1, 1 << 20}},
-		{"verdicts that cannot be read", args{-1, 0, 1 << 20}},
-		{"knowledge that cannot be read", args{-1, -1, 0}},
-	}
-	ctx := context.Background()
-	for _, tc := range tcs {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			b := newBench(t, nil, nil, nil)
-			traces := &testkit.FlakyTraces{Store: b.stores.Traces, Lists: failing(tc.args.lists)}
-			verdicts := &testkit.FlakyFeedback{Store: b.stores.Feedback, Reads: failing(tc.args.verdicts)}
-			curator := curate.New(flakyLedger(t, b, tc.args.knowledge), traces, verdicts, b.client, nil, seal, b.stores.Clock.Now)
-
-			got, err := curator.Gaps(ctx, time.Time{})
-
-			assert.ErrorIs(t, err, assert.AnError)
-			assert.Nil(t, got)
-		})
-	}
-}
-
 // A ledger over the records of the bench whose reads fail after the allowed ones
 func flakyLedger(t *testing.T, b bench, allowed int) *knowledge.Ledger {
 	t.Helper()
@@ -933,6 +970,27 @@ func failing(allowed int) testkit.Reads {
 		return testkit.Reads{}
 	}
 	return testkit.Reads{Allowed: allowed, Err: assert.AnError}
+}
+
+// A reader of the numbers of loop that gives the numbers or fails with the error
+func numbersOf(n curate.Numbers, err error) func(context.Context) (curate.Numbers, error) {
+	return func(context.Context) (curate.Numbers, error) { return n, err }
+}
+
+// An answer recorded at the time to a question no record names
+func (b bench) answered(t *testing.T, at time.Time) {
+	t.Helper()
+	tr := trace.Trace{ID: trace.NewID(at), Name: trace.NameAnswer, Ref: "x-answered", Time: at, Input: json.RawMessage(`{"decide":"d-answered"}`)}
+	require.NoError(t, b.stores.Traces.Append(context.Background(), tr.Record()))
+}
+
+// A capture of the window whose stops are the JSON given
+func (b bench) captured(t *testing.T, stops string) {
+	t.Helper()
+	tr := trace.Trace{
+		ID: "c-stops", Name: trace.NameCapture, Time: written.Add(time.Hour), Input: json.RawMessage(`{}`), Output: json.RawMessage(`{"stops":` + stops + `}`),
+	}
+	require.NoError(t, b.stores.Traces.Append(context.Background(), tr.Record()))
 }
 
 // The knob trace of the same cycle whose judge names a decision no record holds
@@ -967,6 +1025,89 @@ func TestCuratorPassJoin(t *testing.T) {
 	assert.Equal(t, []string{"k-newer v1 retired nodloop duplicate", "k-older v1 candidate"}, statuses(t, b))
 }
 
+// A join that cannot be carried out drops nothing and fails the pass while the older candidate is still decided
+func TestCuratorPassJoinFails(t *testing.T) {
+	older := lesson("k-older", 1, "Name the failing test first", acme("acme"), knowledge.StatusCandidate, "")
+	newer := lesson("k-newer", 1, "Name the failing test first", acme("acme"), knowledge.StatusCandidate, "")
+	newer.Time = written.Add(time.Hour)
+	type args struct {
+		// A join of the newer candidate on record that names no older one
+		joinless bool
+		// Gets of traces that pass before every later one fails and none fails when negative
+		gets int
+		// A trace of another name recorded after the run the newer candidate cites under its id
+		renamed bool
+	}
+	type want struct {
+		err      error
+		decided  []string
+		statuses []string
+	}
+	waiting := []string{"k-newer v1 candidate", "k-older v1 candidate"}
+	tcs := []struct {
+		name string
+		args args
+		want want
+	}{
+		{"a join on record that names no older candidate", args{true, -1, false}, want{curate.ErrDecideInvalid, []string{"add k-older v1 shadow  1"}, waiting}},
+		{
+			"a run of the evidence that cannot be read", args{false, 0, false},
+			want{assert.AnError, []string{"add k-older v1 shadow  1", "join k-newer v1 join same_as_candidate 0"}, waiting},
+		},
+		{
+			"a cited id whose newest trace is no run", args{false, -1, true},
+			want{trace.ErrNotRun, []string{"add k-older v1 shadow  1", "join k-newer v1 join same_as_candidate 0"}, waiting},
+		},
+	}
+	ctx := context.Background()
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			b := newBench(t, answer(0.9, 0.02), []knowledge.Knowledge{older, newer}, nil)
+			if tc.args.joinless {
+				joinless := trace.Trace{
+					ID: "d-joinless", Name: trace.NameDecide, Ref: "r-k-newer", Time: written.Add(2 * time.Hour),
+					Input:  json.RawMessage(`{"kind":"join","id":"k-newer","version":1,"anchor":1}`),
+					Output: json.RawMessage(`{"tier":0,"rule_code":"same_as_candidate","action":"join","reason":"duplicate"}`),
+				}
+				require.NoError(t, b.stores.Traces.Append(ctx, joinless.Record()))
+			}
+			if tc.args.renamed {
+				renamed := trace.Trace{ID: "r-k-newer", Name: trace.NameExtract, Ref: "r-k-newer", Time: written.Add(time.Hour), Input: json.RawMessage(`{}`)}
+				require.NoError(t, b.stores.Traces.Append(ctx, renamed.Record()))
+			}
+			traces := &testkit.FlakyTraces{Store: b.stores.Traces, Gets: failing(tc.args.gets)}
+			curator := curate.New(b.stores.Ledger, traces, b.stores.Feedback, b.client, nil, seal, b.stores.Clock.Now)
+
+			got, err := curator.Pass(ctx, b.setting(t))
+
+			assert.ErrorIs(t, err, tc.want.err)
+			assert.Equal(t, tc.want.decided, decisionsOf(got.Decided))
+			assert.Equal(t, tc.want.statuses, statuses(t, b))
+		})
+	}
+}
+
+// A ledger that cannot be read again after a write keeps the records the pass read last
+// So the later changes of the pass are decided on them and the questions due stay due
+func TestCuratorPassReloadFails(t *testing.T) {
+	ctx := context.Background()
+	b := newBench(t, answer(0.9, 0.02), []knowledge.Knowledge{
+		lesson("k-dup", 1, "Run the tests before a commit", acme("acme"), knowledge.StatusCandidate, ""),
+		lesson("k-add", 1, "Name the failing test first", acme("acme"), knowledge.StatusCandidate, ""),
+	}, nil)
+	curator := curate.New(flakyLedger(t, b, 1), b.stores.Traces, b.stores.Feedback, b.client, nil, seal, b.stores.Clock.Now)
+
+	got, err := curator.Pass(ctx, b.setting(t))
+
+	assert.ErrorIs(t, err, assert.AnError)
+	assert.Equal(t, []string{"add k-add v1 shadow  1", "drop k-dup v1 drop same_as_item 0"}, decisionsOf(got.Decided))
+	assert.Equal(t, []string{"k-add v1 candidate", "k-dup v1 retired nodloop duplicate"}, statuses(t, b))
+	shadows := slices.DeleteFunc(slices.Clone(got.Due), func(d curate.Due) bool { return d.Kind != curate.QuestionShadow })
+	require.Len(t, shadows, 1)
+	assert.Equal(t, ref("k-add"), shadows[0].Ref)
+}
+
 // The knob event of the cycle that starts on the Monday with the knobs the change gives under a judge of the settings
 // The judge starts at written so a pass under the same settings keeps it
 func (b bench) cycleKnobs(t *testing.T, monday time.Time, settings curate.JudgeSettings, change func(*curate.Knobs)) string {
@@ -997,9 +1138,10 @@ func changesOf(cs []curate.KnobChange) []string {
 
 // The knobs move on the numbers of loop before anything is decided and every offer waits for the person as a question
 // 1. an alarm inside the cycle narrows its kind and bin at once in a knob event of cause narrow and raises the audit p
-// 2. the first pass of a cycle narrows on the posterior and offers the next bin and the activation as decides of tier 2
-// 3. a cycle that starts a new judge configuration reads no number
-// 4. an offer the person granted since leaves no question
+// 2. a pass inside the cycle with no answer since the knob event reads no numbers since an alarm needs an answer
+// 3. the first pass of a cycle narrows on the posterior and offers the next bin and the activation as decides of tier 2
+// 4. a cycle that starts a new judge configuration reads no number
+// 5. an offer the person granted since leaves no question
 func TestCuratorPassKnobs(t *testing.T) {
 	this, before := time.Date(2026, 9, 21, 0, 0, 0, 0, time.UTC), time.Date(2026, 9, 7, 0, 0, 0, 0, time.UTC)
 	b1, b2 := curate.Opening{Kind: curate.ChangeAdd, Bin: curate.Bin1}, curate.Opening{Kind: curate.ChangeAdd, Bin: curate.Bin2}
@@ -1017,6 +1159,8 @@ func TestCuratorPassKnobs(t *testing.T) {
 		// Offers a pass of an earlier cycle prepared
 		offered []curate.Change
 		numbers curate.Numbers
+		// An answer after the knob event on record
+		answered bool
 	}
 	type want struct {
 		// The knob events the pass appended as "cause changes"
@@ -1027,7 +1171,10 @@ func TestCuratorPassKnobs(t *testing.T) {
 		tier1   float64
 		decided []string
 		due     []string
+		// How often the pass read the numbers
+		reads int
 	}
+	alarmed := curate.Numbers{Gauges: []curate.Gauge{{Opening: b1, Answers: 3, Differ: 3}}, Alarmed: []curate.Opening{b1}}
 	tcs := []struct {
 		name string
 		args args
@@ -1035,35 +1182,38 @@ func TestCuratorPassKnobs(t *testing.T) {
 	}{
 		{
 			"an alarm inside the cycle narrows its kind and bin at once and raises the audit p",
-			args{this, sonnetJudge, func(*curate.Knobs) {}, nil, curate.Numbers{
-				Gauges: []curate.Gauge{{Opening: b1, Answers: 3, Differ: 3}}, Alarmed: []curate.Opening{b1},
-			}},
-			want{[]string{"narrow [alarm add b1 3 of 3 raise p 0.3]"}, true, []curate.Opening{withdraw}, 0.3, []string{}, []string{}},
+			args{this, sonnetJudge, func(*curate.Knobs) {}, nil, alarmed, true},
+			want{[]string{"narrow [alarm add b1 3 of 3 raise p 0.3]"}, true, []curate.Opening{withdraw}, 0.3, []string{}, []string{}, 1},
 		},
 		{
 			"an alarm on a kind and bin already closed moves nothing and appends no knob event",
-			args{this, sonnetJudge, func(*curate.Knobs) {}, nil, curate.Numbers{Alarmed: []curate.Opening{b2}}},
-			want{[]string{}, false, []curate.Opening{b1, withdraw}, 0.15, []string{}, []string{}},
+			args{this, sonnetJudge, func(*curate.Knobs) {}, nil, curate.Numbers{Alarmed: []curate.Opening{b2}}, true},
+			want{[]string{}, false, []curate.Opening{b1, withdraw}, 0.15, []string{}, []string{}, 1},
+		},
+		{
+			"a pass inside the cycle with no answer since the knob event reads no numbers",
+			args{this, sonnetJudge, func(*curate.Knobs) {}, nil, alarmed, false},
+			want{[]string{}, false, []curate.Opening{b1, withdraw}, 0.15, []string{}, []string{}, 0},
 		},
 		{
 			"a cycle start narrows on the posterior and offers the next bin and the activation as questions",
-			args{before, sonnetJudge, func(*curate.Knobs) {}, nil, offers},
+			args{before, sonnetJudge, func(*curate.Knobs) {}, nil, offers, false},
 			want{
 				[]string{"start [posterior add b1 4 of 10 raise p 0.3]"}, false, []curate.Opening{withdraw}, 0.3,
-				[]string{"activate  v0 ask  2", "widen  v0 ask  2"}, []string{"direction activate", "direction widen add b2"},
+				[]string{"activate  v0 ask  2", "widen  v0 ask  2"}, []string{"direction activate", "direction widen add b2"}, 1,
 			},
 		},
 		{
 			"a cycle that starts a new judge configuration reads no number",
-			args{before, other, func(*curate.Knobs) {}, nil, offers},
-			want{[]string{"start []"}, false, []curate.Opening{b1, withdraw}, 0.15, []string{}, []string{}},
+			args{before, other, func(*curate.Knobs) {}, nil, offers, true},
+			want{[]string{"start []"}, false, []curate.Opening{b1, withdraw}, 0.15, []string{}, []string{}, 0},
 		},
 		{
 			"an offer the person granted since leaves no question",
 			args{this, sonnetJudge, func(k *curate.Knobs) { k.Open, k.Activated = append(k.Open, b2), true }, []curate.Change{
 				{Kind: curate.ChangeWiden, Opens: &b2, Anchor: 1}, {Kind: curate.ChangeActivate, Anchor: 1},
-			}, curate.Numbers{}},
-			want{[]string{}, false, []curate.Opening{b1, withdraw, b2}, 0.15, []string{}, []string{}},
+			}, curate.Numbers{}, false},
+			want{[]string{}, false, []curate.Opening{b1, withdraw, b2}, 0.15, []string{}, []string{}, 0},
 		},
 	}
 	ctx := context.Background()
@@ -1079,8 +1229,15 @@ func TestCuratorPassKnobs(t *testing.T) {
 				require.NoError(t, err)
 				require.NoError(t, b.stores.Traces.Append(ctx, tr.Record()))
 			}
+			if tc.args.answered {
+				b.answered(t, written.Add(time.Hour))
+			}
 			setting := b.setting(t)
-			setting.Numbers = tc.args.numbers
+			reads := 0
+			setting.Numbers = func(context.Context) (curate.Numbers, error) {
+				reads++
+				return tc.args.numbers, nil
+			}
 
 			got, err := b.curator().Pass(ctx, setting)
 
@@ -1100,8 +1257,45 @@ func TestCuratorPassKnobs(t *testing.T) {
 			slices.Sort(due)
 			assert.Equal(t, tc.want, want{
 				appended, got.Event.Before == onRecord && got.Event.Cause == curate.KnobNarrow, got.Event.Knobs.Open, got.Event.Knobs.Audit.Tier1,
-				decisionsOf(got.Decided), due,
+				decisionsOf(got.Decided), due, reads,
 			})
+		})
+	}
+}
+
+// A cycle start whose open kinds and bins all met their bound lowers the tier 1 audit p no further than the person set it
+func TestCuratorPassLowersToPersonsSetting(t *testing.T) {
+	ctx := context.Background()
+	type want struct {
+		tier1   float64
+		changes []string
+	}
+	tcs := []struct {
+		name string
+		// The tier 1 audit p the person set before the cycle start and none when 0
+		args float64
+		want want
+	}{
+		{"the p the person set stays", 0.3, want{0.3, []string{}}},
+		{"no setting of the person lowers to the floor", 0, want{0.05, []string{"lower p 0.05"}}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			b := newBench(t, nil, nil, nil)
+			b.cycleKnobs(t, time.Date(2026, 9, 7, 0, 0, 0, 0, time.UTC), sonnetJudge, func(*curate.Knobs) {})
+			if tc.args > 0 {
+				r := curate.Request{Action: trace.ActionKnob, Target: string(curate.KnobAuditTier1), Value: &tc.args}
+				require.NoError(t, testkit.Err(b.intervener(nil).Intervene(ctx, r, person)))
+			}
+			b1, withdraw := curate.Opening{Kind: curate.ChangeAdd, Bin: curate.Bin1}, curate.Opening{Kind: curate.ChangeWithdraw}
+			setting := b.setting(t)
+			setting.Numbers = numbersOf(curate.Numbers{Gauges: []curate.Gauge{{Opening: b1, Met: true}, {Opening: withdraw, Met: true}}}, nil)
+
+			got, err := b.curator().Pass(ctx, setting)
+
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, want{got.Event.Knobs.Audit.Tier1, changesOf(got.Event.Changes)})
 		})
 	}
 }
@@ -1159,13 +1353,83 @@ func TestCuratorPassJudgeReads(t *testing.T) {
 	require.Equal(t, []string{"update k-carried v2 ask kind_closed 2"}, decisionsOf(got.Decided))
 	require.Len(t, prompts, 3)
 	change := "replace [meaning] Squash before a merge\nwith [meaning] Squash and rebase before a merge\nscope: runs of session. repo=acme"
-	assert.Contains(t, prompts[0], "- approved [meaning] Squash before a merge\n\n## Change\n"+change+"\n")
-	assert.Contains(t, prompts[0], "- file plan.md\nLint before tests\n")
-	assert.Contains(t, prompts[0], "- file CLAUDE.md\nNever push to main\n")
-	assert.Contains(t, prompts[0], "- [meaning] Keep commits small\n")
+	quoted, err := json.Marshal(change)
+	require.NoError(t, err)
+	assert.Contains(t, prompts[0], "\"approved [meaning] Squash before a merge\"\n\n## Change\n"+string(quoted)+"\n")
+	assert.Contains(t, prompts[0], `"file plan.md\nLint before tests"`+"\n")
+	assert.Contains(t, prompts[0], `"file CLAUDE.md\nNever push to main"`+"\n")
+	assert.Contains(t, prompts[0], "\"[meaning] Keep commits small\"\n")
 	assert.NotContains(t, prompts[0], "gone.md")
-	assert.Contains(t, prompts[0], "- rebase it too before you merge\n")
+	assert.Contains(t, prompts[0], "\"rebase it too before you merge\"\n")
 	assert.NotContains(t, prompts[0], "the conversation's own summary")
 	assert.Equal(t, seal("approved [meaning] Squash before a merge\n"+change), got.Decided[0].Change.Diff)
 	assert.Equal(t, curate.OutcomeConform, got.Decided[0].Decision.Outcome)
+}
+
+// A version of a few-shot set that the person retired after the configuration started keeps its example and the judge still runs
+func TestCuratorPassShotsAsOfStart(t *testing.T) {
+	ctx := context.Background()
+	b := newBench(t, nil, []knowledge.Knowledge{
+		lesson("k-shot", 1, "Keep commits small", acme("acme"), knowledge.StatusApproved, "ann"),
+		lesson("k-first", 1, "Name the failing test first", acme("acme"), knowledge.StatusCandidate, ""),
+	}, nil)
+	var prompts []string
+	b.client = llmmock.NewMockClient(gomock.NewController(t))
+	b.client.EXPECT().Complete(gomock.Any(), gomock.Any()).AnyTimes().DoAndReturn(func(_ context.Context, req llm.Request) (llm.Response, error) {
+		prompts = append(prompts, req.Prompt)
+		return llm.Response{Output: answer(0.9, 0.02), Model: "claude-sonnet-5-5"}, nil
+	})
+	first, err := b.curator().Pass(ctx, b.setting(t))
+	require.NoError(t, err)
+	require.NoError(t, testkit.Err(b.stores.Ledger.Retire(ctx, "k-shot", 1, "ann")))
+	b.correct(t, "r-k-second", trace.Labels{"repo": {"acme"}}, []feedback.Verdict{feedback.VerdictReject})
+	second := lesson("k-second", 1, "Pin the base image", acme("acme"), knowledge.StatusCandidate, "")
+	require.NoError(t, testkit.Err(b.stores.Ledger.Import(ctx, []knowledge.Knowledge{second})))
+	prompts = nil
+
+	again, err := b.curator().Pass(ctx, b.setting(t))
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{"add k-first v1 shadow  1"}, decisionsOf(first.Decided))
+	assert.Equal(t, []string{"add k-second v1 shadow  1"}, decisionsOf(again.Decided))
+	require.Len(t, prompts, 3)
+	assert.Contains(t, prompts[0], "\"approved as drafted: Keep commits small\"\n")
+	assert.NotContains(t, prompts[0], "retired: Keep commits small")
+}
+
+// A trace reads back as a decide or a knob event only when it is one that decodes
+func TestRestoreDecideAndKnob(t *testing.T) {
+	decide := trace.Trace{
+		ID: "d1", Name: trace.NameDecide, Ref: "r-1", Time: written,
+		Input: json.RawMessage(`{"kind":"drop","id":"k-1","version":1,"anchor":1}`), Output: json.RawMessage(`{"tier":0,"action":"drop"}`),
+		Draw: &trace.Draw{Drawn: true},
+	}
+	knob := trace.Trace{ID: "n1", Name: trace.NameKnob, Time: written, Input: json.RawMessage(`{"cycle_id":"2026-09-21","seed":"5eed"}`)}
+	type want struct {
+		decide, knob bool
+	}
+	tcs := []struct {
+		name string
+		args trace.Trace
+		want want
+	}{
+		{"a decide", decide, want{true, false}},
+		{"a knob event", knob, want{false, true}},
+		{"a decide whose output does not decode", trace.Trace{Name: trace.NameDecide, Input: decide.Input, Output: json.RawMessage(`[`)}, want{false, false}},
+		{"a knob event with no cycle", trace.Trace{Name: trace.NameKnob, Input: json.RawMessage(`{}`)}, want{false, false}},
+		{"a trace of another name", trace.Trace{Name: trace.NameRun, Input: decide.Input, Output: decide.Output}, want{false, false}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			_, isDecide := curate.RestoreDecide(tc.args)
+			_, isKnob := curate.RestoreKnob(tc.args)
+			assert.Equal(t, tc.want, want{isDecide, isKnob})
+		})
+	}
+	got, _ := curate.RestoreDecide(decide)
+	assert.Equal(t, curate.Decided{
+		ID: "d1", Time: written, Ref: "r-1", Change: curate.Change{Kind: curate.ChangeDrop, ID: "k-1", Version: 1, Anchor: 1},
+		Decision: curate.Decision{Action: curate.ActionDrop}, Drawn: true,
+	}, got)
 }

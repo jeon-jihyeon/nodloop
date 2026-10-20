@@ -104,8 +104,14 @@ export interface Run {
   durationMs?: number;
 }
 
-/** The actions of the write side */
-export type InterventionAction = "judge" | "answer" | "dismiss" | "pause" | "resume" | "knob" | "reanchor" | "digest" | "reverse";
+/** The input of an intervention as the published schema of the record types it */
+type InterventionInput = InterventionRecord["input"];
+
+/**
+ * The actions of the write side
+ * Read from the generated record type so a new action of the published schema reaches the client
+ */
+export type InterventionAction = InterventionInput["action"];
 
 /** One intervention of the write side as MCP intervene and POST /v1/interventions take it */
 export interface InterventionRequest {
@@ -116,7 +122,7 @@ export interface InterventionRequest {
    */
   target?: string;
   /** keep, undo or scope for judge, or one of the two choices of the question for answer */
-  choice?: string;
+  choice?: NonNullable<InterventionInput["choice"]>;
   /** The labels of a scope choice, a pause, a reanchor or a digest */
   labels?: Labels;
   /** The value of a knob within its range */
@@ -127,11 +133,14 @@ export interface InterventionRequest {
 
 /** What one intervention recorded */
 export interface Intervention {
-  /** The intervention record in its published schema, absent when the person declined the form */
+  /**
+   * The intervention record in its published schema
+   * Absent when the person declined the form
+   */
   intervention?: InterventionRecord;
-  /** person when a key that proves a person decided, agent for a proposal the person is asked about */
-  authority?: "person" | "agent";
-  proof?: string;
+  /** person when a key that proves a person decided and agent for a proposal the person is asked about */
+  authority?: InterventionInput["authority"];
+  proof?: InterventionInput["proof"];
   /** The knowledge records it wrote */
   records: { id: string; version: number; status: string }[];
   /** The answer event an answer wrote */
@@ -147,7 +156,8 @@ export interface Intervention {
 
 /**
  * The reports report reads
- * @deprecated Page the raw records with records instead, which carry the published contract. report is removed in the next release
+ * @deprecated Page the raw records with records instead since they carry the published contract
+ * report is removed in the next release
  */
 export type ReportName = "loop" | "extract" | "critic" | "effect" | "health" | "replay";
 
@@ -165,13 +175,16 @@ export interface Report {
 /** One page of raw records in the published schema of their kind, oldest first */
 export interface Page<T = AnyRecord> {
   records: T[];
-  /** The cursor to pass as since for the next page, the same while no newer record is settled */
+  /**
+   * The cursor to pass as since for the next page
+   * It stays the same while no newer record is settled
+   */
   next: string;
 }
 
 /** What a page of records asks besides its kind */
 export interface PageOptions {
-  /** The next cursor of the page before, empty for the first page */
+  /** The next cursor of the page before and empty for the first page */
   since?: string;
   /** 100 by default and at most 1000 */
   limit?: number;
@@ -316,7 +329,8 @@ export class Client {
 
   /**
    * One report of the records as JSON with the start of the window it read
-   * @deprecated Page the raw records with records instead, which carry the published contract. report is removed in the next release
+   * @deprecated Page the raw records with records instead since they carry the published contract
+   * report is removed in the next release
    */
   async report(name: ReportName): Promise<Report> {
     const { report, since } = await this.call("report", { name });

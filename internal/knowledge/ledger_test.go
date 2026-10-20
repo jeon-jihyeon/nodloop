@@ -229,8 +229,6 @@ func TestLedgerPropose(t *testing.T) {
 	filled.Version, filled.Status, filled.Base = 7, knowledge.StatusApproved, 6
 	signed := draft
 	signed.Approver, signed.ApprovedAt, signed.Supersedes = "sam", at, 2
-	deferred := draft
-	deferred.DeferredIn = "s1"
 	verified := draft
 	verified.Basis = knowledge.BasisVerified
 	proposedVerified := proposed
@@ -288,7 +286,6 @@ func TestLedgerPropose(t *testing.T) {
 		},
 		{"version and status of the draft are replaced", args{draft: filled}, want{proposed, none, just, nil}},
 		{"approval fields of the draft are dropped", args{draft: signed}, want{proposed, none, just, nil}},
-		{"a session the draft names is dropped so a propose is never a deferral", args{draft: deferred}, want{proposed, none, just, nil}},
 		{
 			"a reason and a decision of the draft are dropped and the extract that proposed it stays",
 			args{draft: decided},
@@ -1742,6 +1739,8 @@ func TestLedgerFolder(t *testing.T) {
 	vetoed.ID, vetoed.Kind, vetoed.Veto = "k-veto", knowledge.KindJudgment, &knowledge.Veto{
 		Tool: "Bash", When: []knowledge.VetoCondition{{Field: "command", Match: `^x+$`}}, Example: map[string]any{"command": "xx"},
 	}
+	vetoedCandidate := candidate
+	vetoedCandidate.Kind, vetoedCandidate.Veto = knowledge.KindJudgment, vetoed.Veto
 	oldVersion := candidate
 	oldVersion.Status, oldVersion.Approver = knowledge.StatusApproved, "ann"
 	longer := candidate
@@ -1803,6 +1802,11 @@ func TestLedgerFolder(t *testing.T) {
 			"a judgment with a veto acts through the guard and joins no folder",
 			args{[]knowledge.Knowledge{vetoed, candidate}, 1},
 			want{knowledge.Folder{Chars: 115, Carried: knowledge.Set{}, Producer: "session"}, nil},
+		},
+		{
+			"a candidate with a veto acts through the guard and carries nothing",
+			args{[]knowledge.Knowledge{neighbour, vetoedCandidate}, 1},
+			want{knowledge.Folder{Carried: knowledge.Set{}}, nil},
 		},
 		{
 			"a new version is measured by its own text and replaces the approved one",

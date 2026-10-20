@@ -9,6 +9,8 @@ var (
 	ErrPointUnset = errors.New("classify: no endpoint set for the point")
 	// An endpoint without an absolute http or https URL
 	ErrEndpointInvalid = errors.New("classify: invalid endpoint")
+	// An endpoint URL that carries a user or a password where only an env variable may hold the key
+	ErrEndpointCredentials = errors.New("classify: the endpoint URL carries credentials. Name the env variable of the key with --key-env")
 	// A non 2xx answer of an endpoint
 	ErrStatus = errors.New("classify: endpoint answered an error status")
 	// A body that does not decode as the Jev answers or a probability outside 0 to 1

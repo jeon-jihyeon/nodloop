@@ -14,12 +14,8 @@ import (
 	"github.com/google/jsonschema-go/jsonschema"
 )
 
-const (
-	// Bytes of an error body a message quotes
-	bodyQuote = 200
-	// A structured answer fits in well under a megabyte so a larger body is a wrong endpoint and is cut before it fills memory
-	bodyLimit = 1 << 20
-)
+// A structured answer fits in well under a megabyte so a larger body is a wrong endpoint and is cut before it fills memory
+const bodyLimit = 1 << 20
 
 // An OpenAI compatible Chat Completions endpoint such as OpenAI or Gemini or Ollama or vLLM or a LiteLLM proxy
 type ChatCompletions struct {
@@ -115,7 +111,7 @@ func (c *ChatCompletions) Complete(ctx context.Context, req Request) (Response, 
 		}
 		res = res.add(again)
 		if out, invalid = schema.output(content); invalid != nil {
-			return Response{}, fmt.Errorf("%w: %w", ErrSchemaMismatch, invalid)
+			return Response{}, fmt.Errorf("%w: %s", ErrSchemaMismatch, refusedAt(invalid))
 		}
 	}
 	res.Output, res.Duration = out, c.now().Sub(start)
@@ -126,10 +122,8 @@ func (c *ChatCompletions) Complete(ctx context.Context, req Request) (Response, 
 func (c *ChatCompletions) call(ctx context.Context, req Request, messages []chatMessage) (Response, string, error) {
 	body := chatRequest{Model: cmp.Or(req.Model, c.model), Messages: messages, ResponseFormat: responseFormat{Type: "json_schema"}}
 	body.ResponseFormat.JSONSchema.Name, body.ResponseFormat.JSONSchema.Schema = "answer", req.Schema
-	b, err := json.Marshal(body)
-	if err != nil {
-		return Response{}, "", err
-	}
+	// The schema decoded in newAnswerSchema and the rest are strings so the body always encodes
+	b, _ := json.Marshal(body)
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/chat/completions", bytes.NewReader(b))
 	if err != nil {
 		return Response{}, "", err
@@ -179,8 +173,10 @@ func (c *ChatCompletions) do(ctx context.Context, req *http.Request) ([]byte, er
 	if err != nil {
 		return nil, err
 	}
+	// The error names the status alone since a trace and hook.log keep it
+	// and an endpoint that echoes its request would put the prompt in a field no export strips
 	if res.StatusCode < 200 || res.StatusCode > 299 {
-		return nil, fmt.Errorf("%w: %d %s", ErrStatus, res.StatusCode, b[:min(len(b), bodyQuote)])
+		return nil, fmt.Errorf("%w: %d", ErrStatus, res.StatusCode)
 	}
 	if len(b) > bodyLimit {
 		return nil, fmt.Errorf("%w: body over %d bytes", ErrResponseInvalid, bodyLimit)
@@ -214,9 +210,27 @@ func (s answerSchema) output(content string) (json.RawMessage, error) {
 	if err := s.resolved.Validate(v); err != nil {
 		return nil, err
 	}
+	// The content decoded above so it always compacts
 	var out bytes.Buffer
-	if err := json.Compact(&out, []byte(content)); err != nil {
-		return nil, err
-	}
+	_ = json.Compact(&out, []byte(content))
 	return out.Bytes(), nil
+}
+
+// The place in the schema an answer broke and the rule it broke without the refused value
+// 1. the validator quotes the value and the keys it did not expect so either may repeat the prompt
+// 2. the error reaches the classify trace and the span of a call that keep the person's words and the anchor only as an HMAC
+func refusedAt(err error) string {
+	msg := err.Error()
+	rule := func(s string) string {
+		if i := strings.IndexAny(s, `:"'[`); i >= 0 {
+			s = s[:i]
+		}
+		return strings.TrimSpace(s)
+	}
+	i := strings.LastIndex(msg, "validating ")
+	if i < 0 {
+		return rule(msg)
+	}
+	path, rest, _ := strings.Cut(msg[i+len("validating "):], ": ")
+	return path + ": " + rule(rest)
 }

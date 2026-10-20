@@ -3,6 +3,7 @@ package curate
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -71,7 +72,7 @@ func (c Choice) offered() bool {
 // The two choices the question of the decide offers with the one curate prepared first
 // 1. an audit of a change carried out: same or undo
 // 2. a widening, the activation and a proposal of an agent: yes or notyet
-// 3. drift: mine or review
+// 3. a reanchor or a change of rule drift: mine or review
 // 4. a compaction or a change that needs room: merge or separate
 // 5. any other change: keep or drop
 func (d Decided) Choices() [2]Choice {
@@ -80,12 +81,18 @@ func (d Decided) Choices() [2]Choice {
 		return [2]Choice{ChoiceSame, ChoiceUndo}
 	case d.Change.Kind.offered() || d.Change.Kind == ChangeIntervention:
 		return [2]Choice{ChoiceYes, ChoiceNotYet}
-	case d.Decision.RuleCode == RuleDrift:
+	case d.reanchors():
 		return [2]Choice{ChoiceMine, ChoiceReview}
 	case d.Change.Kind == ChangeCompaction || d.Decision.RuleCode == RuleRoom:
 		return [2]Choice{ChoiceMerge, ChoiceSeparate}
 	}
 	return [2]Choice{ChoiceKeep, ChoiceDrop}
+}
+
+// Whether the question of the decide asks the person to take the versions nodloop approved in the place as their own
+// A reanchor asks it and so does a change of rule drift since drift prepares a reanchor
+func (d Decided) reanchors() bool {
+	return d.Change.Kind == ChangeReanchor || d.Decision.RuleCode == RuleDrift
 }
 
 // Whether the choice reverses what curate carried out or differs from what the judge predicted
@@ -156,7 +163,7 @@ type Question struct {
 	Why string
 	// The person's own words that started the change
 	Words []string
-	// What else was prepared, each a short phrase
+	// What else was prepared as short phrases
 	Prepared []string
 }
 
@@ -170,18 +177,25 @@ const (
 )
 
 // The question in the lines of SPEC-curate Questions within MaxRunes
-// The quoted lessons and words shrink together until the text fits so the reply line always shows
+// 1. the quoted lessons and words shrink together until the text fits
+// 2. lines that still do not fit are cut before the reply line so the reply line always shows
 func (q Question) Text() string {
+	reply := fmt.Sprintf("\nReply %s or %s", q.Choices[0], q.Choices[1])
+	room := MaxRunes - utf8.RuneCountInString(reply)
 	limit := quoteRunes
-	text := q.render(limit)
-	for utf8.RuneCountInString(text) > MaxRunes && limit > quoteStep {
+	body := q.body(limit)
+	for utf8.RuneCountInString(body) > room && limit > quoteStep {
 		limit -= quoteStep
-		text = q.render(limit)
+		body = q.body(limit)
 	}
-	return string([]rune(text)[:min(utf8.RuneCountInString(text), MaxRunes)])
+	if r := []rune(body); len(r) > room {
+		body = string(r[:room-1]) + "…"
+	}
+	return body + reply
 }
 
-func (q Question) render(limit int) string {
+// The lines from One decision to Prepared with each quote cut at the limit
+func (q Question) body(limit int) string {
 	lessons := make([]any, 0, len(q.Lessons))
 	for _, l := range q.Lessons {
 		lessons = append(lessons, quoted(l, limit))
@@ -191,8 +205,7 @@ func (q Question) render(limit int) string {
 		prepared = append(prepared, "your words "+quoted(w, limit))
 	}
 	prepared = append(prepared, q.Prepared...)
-	return fmt.Sprintf("One decision for you: %s\nWhy you: %s\nPrepared: %s\nReply %s or %s",
-		fmt.Sprintf(q.Change, lessons...), q.Why, strings.Join(prepared, " · "), q.Choices[0], q.Choices[1])
+	return fmt.Sprintf("One decision for you: %s\nWhy you: %s\nPrepared: %s", fmt.Sprintf(q.Change, lessons...), q.Why, strings.Join(prepared, " · "))
 }
 
 // The text on one line in quotes cut at the runes with the cut marked
@@ -314,16 +327,18 @@ type AnswerOutput struct {
 // The answer event of the expose or the decide the event and the answer name with what it wrote
 // 1. the choice and the proof are known and the answer names the expose it answers or the decide of a question the person picked
 // 2. an answer of the person has a proof of a person and names the person
+// The reserved name nodloop is refused as every write a person decides refuses it
 // 3. no answer is recorded by code with no proof and wrote nothing
 func (e Event) Answer(a Answer, out AnswerOutput, now time.Time) (trace.Trace, error) {
 	unanswered := a.Choice == ChoiceNoAnswer
+	named := knowledge.CheckApprover(a.Person)
 	switch {
 	case !slices.Contains(Choices(), a.Choice) || !a.Proof.Valid() || e.Ref == "" && a.Decide == "":
 		return trace.Trace{}, fmt.Errorf("%w: choice %q and proof %q of the expose %q", ErrReplyInvalid, a.Choice, a.Proof, e.Ref)
 	case unanswered && (a.Proof != trace.ProofNone || a.Person != "" || len(out.Records) > 0 || out.Carried != ""):
 		return trace.Trace{}, fmt.Errorf("%w: no answer has no proof, names no person and writes nothing", ErrReplyInvalid)
-	case !unanswered && (a.Proof.Authority() != trace.AuthorityPerson || a.Person == ""):
-		return trace.Trace{}, fmt.Errorf("%w: an answer of the person has the proof of a person and names the person", ErrReplyInvalid)
+	case !unanswered && (a.Proof.Authority() != trace.AuthorityPerson || named != nil):
+		return trace.Trace{}, errors.Join(fmt.Errorf("%w: an answer of the person has the proof of a person and names the person", ErrReplyInvalid), named)
 	}
 	a.Authority = a.Proof.Authority()
 	if out.Records == nil {

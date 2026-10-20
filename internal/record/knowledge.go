@@ -28,7 +28,6 @@ type Knowledge struct {
 	Veto           *Veto     `json:"veto,omitempty"`
 	Compaction     string    `json:"compaction,omitempty"`
 	CompactionSize int       `json:"compaction_size,omitempty"`
-	DeferredIn     string    `json:"deferred_in,omitempty"`
 	// The version of the published schema knowledge
 	// A line of an earlier release lacks it and reads as version 1
 	SchemaVersion int `json:"schema_version,omitempty"`

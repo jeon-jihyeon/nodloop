@@ -84,15 +84,11 @@ func (c recordsCommand) plan(ctx context.Context) error {
 
 // Removes the runs past retention whatever the daily marker says and prints how many traces the store removed
 // 1. the marker keeps the cutoff of the retention so the reports over the directory read from it on
-// The prune keeps to the start of the open cycle when that is earlier so it never removes a run after the mark
-// 2. it is claimed only once the plan read every store so a plan that fails leaves the window as it was
-// 3. a marker another process holds means a prune runs there and this one removes nothing
+// 2. the prune keeps to the start of the open cycle when that is earlier so it never removes a run after the mark
+// 3. the marker is claimed only once the plan read every store so a plan that fails leaves the window as it was
+// 4. a marker another process holds means a prune runs there and this one removes nothing
 func (c recordsCommand) prune(ctx context.Context) error {
 	retainer, cutoff, err := c.retention()
-	if err != nil {
-		return err
-	}
-	dir, err := c.app.makeRecordDir()
 	if err != nil {
 		return err
 	}
@@ -100,7 +96,8 @@ func (c recordsCommand) prune(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	claimed, err := retain.NewMarker(dir).Claim(ctx, c.app.now(), cutoff, 0)
+	// The record directory exists once the retainer opened its stores
+	claimed, err := retain.NewMarker(c.app.cfg.recordDir).Claim(ctx, c.app.now(), cutoff, 0)
 	if err != nil {
 		return err
 	}

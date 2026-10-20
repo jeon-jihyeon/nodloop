@@ -238,11 +238,11 @@ func (c packageCommand) tables(k schema.Kind, page schema.Records, content bool,
 // The foreign keys of the fields of the kind that name a kind the package holds
 func (c packageCommand) foreignKeys(kind string, newest map[string]int) []datapackage.ForeignKey {
 	var out []datapackage.ForeignKey
-	for _, field := range slices.Sorted(maps.Keys(c.kinds.foreign(kind))) {
-		target := c.kinds.foreign(kind)[field]
-		if version, ok := newest[target]; ok {
+	foreign := c.kinds.foreign(kind)
+	for _, field := range slices.Sorted(maps.Keys(foreign)) {
+		if version, ok := newest[foreign[field]]; ok {
 			out = append(out, datapackage.ForeignKey{
-				Fields: []string{field}, Reference: datapackage.Reference{Resource: tableName(target, version), Fields: []string{"record_id"}},
+				Fields: []string{field}, Reference: datapackage.Reference{Resource: tableName(foreign[field], version), Fields: []string{"record_id"}},
 			})
 		}
 	}

@@ -141,7 +141,7 @@ func (a Anchor) Taking(taken map[knowledge.Ref]string) Anchor {
 	return a
 }
 
-// The versions a person approved and those nodloop approved that the person took, in id order
+// The versions a person approved and those nodloop approved that the person took in id order
 func (a Anchor) Items() knowledge.Set {
 	out := a.all.PersonApproved()
 	for _, k := range a.all.Approved() {
@@ -271,11 +271,12 @@ func (a Anchor) Places(runs trace.Traces) []AnchorPlace {
 			of.sessions[r.SessionID] = true
 		}
 	}
+	anchored := a.Items()
 	out := make([]AnchorPlace, 0, len(byPlace))
 	for _, key := range slices.Sorted(maps.Keys(byPlace)) {
 		of := byPlace[key]
 		items := knowledge.Set{}
-		for _, k := range a.Items() {
+		for _, k := range anchored {
 			if k.Run != nil && slices.ContainsFunc(of.labels, func(l trace.Labels) bool { return k.Run.Admits(of.place.Producer, l) }) {
 				items = append(items, k)
 			}

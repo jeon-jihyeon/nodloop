@@ -257,8 +257,12 @@ func (c configCommand) retention(value string) error {
 }
 
 // Prints the saved mode or deferred, or saves the one given
-// A mode of an earlier release still reads but is never saved again
+// 1. a mode of an earlier release still reads but is never saved again
+// 2. saving needs the terminal proof since whether the reactions of the person are recorded is theirs to decide
 func (c configCommand) sessionMode(value string) error {
+	if value != "" && c.proof == trace.ProofNone {
+		return fmt.Errorf("session_mode: %w", errPersonOnly)
+	}
 	if value == "" {
 		uc, err := c.home.readConfig()
 		if err != nil {

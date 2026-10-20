@@ -36,6 +36,8 @@ var (
 	ErrReviewerRequired = feedback.ErrReviewerRequired
 	// A Judgment or an Outcome under the name only the capture of the session records its verdicts under
 	ErrReviewerReserved = feedback.ErrReviewerReserved
+	// An Approve, ApproveIn or Retire that names no approver
+	ErrApproverRequired = knowledge.ErrApproverRequired
 	// An Approve, ApproveIn or Retire under the name only what nodloop carries out is recorded under
 	ErrApproverReserved = knowledge.ErrApproverReserved
 	// A Query whose kind is no kind of the published index

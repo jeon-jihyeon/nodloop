@@ -12,6 +12,7 @@ import (
 
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	"github.com/jeon-jihyeon/nodloop/internal/mcp"
+	"github.com/jeon-jihyeon/nodloop/internal/trace"
 	"github.com/jeon-jihyeon/nodloop/internal/userconfig"
 )
 
@@ -65,6 +66,21 @@ func (c serverConfig) match(token string) (serverKey, bool) {
 	return serverKey{}, false
 }
 
+// The keys as serve accepts them from a config.json that may have been edited by hand
+// 1. no key is named nodloop since a key name becomes the approver of every judgment under it
+// 2. every tenant is one path element since it names a directory under the record directory
+func (c serverConfig) check() error {
+	if c.has(knowledge.ApproverNodloop) {
+		return fmt.Errorf("%w: remove the key %s and add it again under another name", knowledge.ErrApproverReserved, knowledge.ApproverNodloop)
+	}
+	for _, t := range c.tenants() {
+		if !tenantName.MatchString(t) {
+			return fmt.Errorf("%w: %q. Use lower case letters, digits, - and _", errTenantInvalid, t)
+		}
+	}
+	return nil
+}
+
 func (c serverConfig) has(name string) bool {
 	for _, k := range c.Keys {
 		if k.Name == name {
@@ -86,7 +102,7 @@ func (c serverConfig) without(name string) serverConfig {
 }
 
 // key add, list and remove manage the keys serve accepts
-func runKey(args []string, getenv func(string) string, stdout, stderr io.Writer) int {
+func runKey(args []string, getenv func(string) string, proof trace.Proof, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		return fail(stderr, "key", fmt.Errorf("%w %q", errUnknownAction, ""))
 	}
@@ -106,7 +122,7 @@ func runKey(args []string, getenv func(string) string, stdout, stderr io.Writer)
 	if err := h.Read(&uc); err != nil {
 		return fail(stderr, "key", err)
 	}
-	cmd := serverCommand{home: h, keys: uc.Server, out: stdout}
+	cmd := serverCommand{home: h, keys: uc.Server, proof: proof, out: stdout}
 	switch args[0] {
 	case "add":
 		err = cmd.add(serverKey{Name: name, Tenant: *tenant, Role: mcp.Role(*role), Person: *person})
@@ -126,7 +142,10 @@ func runKey(args []string, getenv func(string) string, stdout, stderr io.Writer)
 type serverCommand struct {
 	home userconfig.Home
 	keys serverConfig
-	out  io.Writer
+	// Whether a person typed the command at a terminal of their own
+	// A key a person holds proves the person under every call so only such a command adds one
+	proof trace.Proof
+	out   io.Writer
 }
 
 // Prints the new key once and saves its hash
@@ -137,6 +156,8 @@ func (c serverCommand) add(k serverKey) error {
 		return fmt.Errorf("add: a key name %w", errRequired)
 	case k.Name == knowledge.ApproverNodloop:
 		return fmt.Errorf("add: %w, since a key name becomes the approver", knowledge.ErrApproverReserved)
+	case k.Person && c.proof != trace.ProofTerminal:
+		return fmt.Errorf("add: %w", errPersonUnproven)
 	case !tenantName.MatchString(k.Tenant):
 		return fmt.Errorf("%w: %q. Use lower case letters, digits, - and _", errTenantInvalid, k.Tenant)
 	case !k.Role.Valid():

@@ -1,11 +1,13 @@
 import json
 from collections.abc import Callable
 from pathlib import Path
+from typing import get_args, get_type_hints
 
 import pytest
 from mcp.shared.exceptions import MCPError
 
-from nodloop import Client, Ref, ToolError
+from nodloop import Client, InterventionAction, Ref, ToolError
+from nodloop.records import InterventionRecordInput
 
 # Approves a version as the person at a terminal of their own, the approve fixture of conftest
 Approve = Callable[..., None]
@@ -35,7 +37,7 @@ async def test_loop(binary: str, records: str, approve: Approve) -> None:
     assert (proposal.status, proposal.approver, bool(proposal.proposal)) == ("candidate", "", True)
     assert before.items == []
     assert [i.id for i in acme.items] == ["refund-window"]
-    assert acme.text.startswith("nodloop: corrections a person approved")
+    assert acme.text.startswith("nodloop: corrections for work in this place that a person approved or nodloop carried out")
     assert "- [refund-window v1 judgment] Quote the refund window before the steps" in acme.text
     assert globex.items == [] and globex.text == ""
     assert nxt
@@ -332,3 +334,8 @@ async def test_records_over_the_server(server: tuple[str, str, str], tmp_path: P
         page = await c.records("run", content=True)
 
     assert [(r["record_id"], r["output"]) for r in page.records] == [(FIRST, "refund steps"), (SECOND, "the window is 30 days")]
+
+
+def test_intervention_actions_match_the_published_schema() -> None:
+    """The actions intervene takes are those of the intervention record generated from the published schema"""
+    assert get_args(InterventionAction) == get_args(get_type_hints(InterventionRecordInput)["action"])

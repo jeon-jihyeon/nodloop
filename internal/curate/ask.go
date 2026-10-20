@@ -53,6 +53,21 @@ func (x shownExpose) asks() bool {
 	return x.Kind != QuestionNotice
 }
 
+// The exposes of the records in their order with what each showed
+type shownExposes []shownExpose
+
+// The exposes of the traces that decode under a draw
+func shownOf(ts trace.Traces) shownExposes {
+	var out shownExposes
+	for _, t := range ts {
+		var x Exposure
+		if json.Unmarshal(t.Input, &x) == nil && t.Draw != nil {
+			out = append(out, shownExpose{Trace: t, Exposure: x})
+		}
+	}
+	return out
+}
+
 // The purposes of the draws of a question curate pushes beside the audit and the shadow pick
 const (
 	drawDirection = "direction"
@@ -67,10 +82,11 @@ func (iv *Intervener) Ask(ctx context.Context, a Asking) (Shown, error) {
 	if len(a.Mark.Due) == 0 || a.Session == "" {
 		return Shown{}, nil
 	}
-	s, err := iv.readOf(ctx, []trace.Name{trace.NameIntervention, trace.NameAnswer, trace.NameDecide, trace.NameExpose, trace.NameAnchor})
+	s, err := iv.readOf(ctx, []trace.Name{trace.NameIntervention, trace.NameAnswer, trace.NameDecide, trace.NameExpose, trace.NameKnob, trace.NameAnchor})
 	if err != nil {
 		return Shown{}, err
 	}
+	a.Mark = a.Mark.inForce(s.knobs, iv.now())
 	open := s.open(a.Mark.Due)
 	if due, ok := s.proposalDue(open, a.Session); ok {
 		return iv.show(ctx, a, s, due, trace.Draw{CycleID: a.Mark.CycleID, PolicyVersion: a.Mark.PolicyVersion}, trace.SourceManual)
@@ -87,6 +103,15 @@ func (iv *Intervener) Ask(ctx context.Context, a Asking) (Shown, error) {
 		return Shown{}, err
 	}
 	return iv.show(ctx, a, s, due, draw, trace.SourcePush)
+}
+
+// The mark with the policy version of the knob event in force in its cycle
+// A person's raise appends a knob event inside the cycle at once and the mark keeps the version before it until the next pass
+func (m Mark) inForce(knobs knobTraces, now time.Time) Mark {
+	if ev, _, ok := knobs.current(now); ok && ev.CycleID == m.CycleID {
+		m.PolicyVersion = ev.PolicyVersion
+	}
+	return m
 }
 
 // The due questions in their order that no answer that holds settled and no dismiss closed
@@ -261,9 +286,9 @@ func (iv *Intervener) question(ctx context.Context, a Asking, s state, due Due, 
 		q.Change, q.Lessons = carriedWords(d, k)
 	case d.Change.Kind == ChangeIntervention:
 		q.Change, q.Prepared = s.proposalWords(d.Change.Proposal), []string{"asked for in this conversation"}
-	case d.Change.Kind == ChangeWiden || d.Change.Kind == ChangeActivate:
+	case d.Change.Kind.offered():
 		q.Change, q.Prepared = s.offerWords(d)
-	case d.Decision.RuleCode == RuleDrift:
+	case d.reanchors():
 		q.Change, q.Prepared = "take the lessons nodloop added in this place as your own", []string{"/nodloop:nod shows them first"}
 	case d.Change.Kind == ChangeCompaction:
 		q.Change = "approve the merge of lessons that was prepared"
@@ -292,11 +317,13 @@ func (s state) why(kind QuestionKind, d Decided) string {
 		return "until you say yes nothing reaches a run without your approval"
 	case d.Change.Kind == ChangeIntervention:
 		return "an agent proposed it and only you decide it"
+	case d.reanchors():
+		return "lessons nodloop added here outnumber the ones you confirmed"
 	}
 	why := map[RuleCode]string{
 		RulePersonItem: "it changes a lesson you approved", RuleScopeWider: "it reaches a place you have not decided on",
 		RuleVeto: "it touches a block rule", RuleRoom: "it needs room, so lessons would be merged",
-		RuleDrift: "lessons nodloop added here outnumber the ones you confirmed", RulePaused: "you paused what nodloop carries out here",
+		RulePaused: "you paused what nodloop carries out here",
 	}
 	if w, ok := why[d.Decision.RuleCode]; ok {
 		return w
@@ -440,9 +467,14 @@ func (iv *Intervener) Notice(ctx context.Context, a Asking) (Shown, error) {
 	if err != nil || !ok || len(changed) == 0 {
 		return Shown{}, err
 	}
+	knobs, err := iv.traces.List(ctx, record.TraceFilter{Name: string(trace.NameKnob)})
+	if err != nil {
+		return Shown{}, err
+	}
+	m := a.Mark.inForce(knobTraces(trace.RestoreAll(knobs)), iv.now())
 	line := noticeLine(changed)
 	x := Exposure{Kind: QuestionNotice, Surface: SurfaceMessage, Rules: QuestionRules, Text: a.Seal(line), Round: 1, Run: a.Run, Runes: utf8.RuneCountInString(line)}
-	draw := trace.NewDraw(a.Mark.CycleID, a.Mark.PolicyVersion, a.Mark.Seed, a.Session, drawNotice, 1)
+	draw := trace.NewDraw(m.CycleID, m.PolicyVersion, m.Seed, a.Session, drawNotice, 1)
 	tr, err := Event{Session: a.Session, Source: trace.SourcePush, Draw: draw}.Expose(x, iv.now())
 	if err != nil {
 		return Shown{}, err
@@ -501,7 +533,11 @@ func carriedOut(all knowledge.Set, place knowledge.RunScope, since time.Time) kn
 	return out
 }
 
+// The words a notice ends with so the person always reads how to take a change back
+const noticeTail = ". /nodloop:nod shows them and takes any back"
+
 // The one line of a notice within MaxRunes with the lessons it names in quotes
+// Lessons that do not fit are cut before noticeTail
 func noticeLine(changed knowledge.Set) string {
 	var applied, withdrew, lessons []string
 	for _, k := range changed {
@@ -519,12 +555,11 @@ func noticeLine(changed knowledge.Set) string {
 	if len(withdrew) > 0 {
 		did = append(did, "withdrew "+lessonsOf(len(withdrew)))
 	}
-	line := fmt.Sprintf("From your earlier decisions nodloop %s here: %s. /nodloop:nod shows them and takes any back",
-		strings.Join(did, " and "), strings.Join(lessons, " · "))
-	if utf8.RuneCountInString(line) <= MaxRunes {
-		return line
+	head := fmt.Sprintf("From your earlier decisions nodloop %s here: %s", strings.Join(did, " and "), strings.Join(lessons, " · "))
+	if r, room := []rune(head), MaxRunes-utf8.RuneCountInString(noticeTail); len(r) > room {
+		head = string(r[:room-1]) + "…"
 	}
-	return string([]rune(line)[:MaxRunes-1]) + "…"
+	return head + noticeTail
 }
 
 // The count of lessons a notice names with one as a lesson
@@ -569,14 +604,20 @@ type Replied struct {
 // 1. the reply word of the prompt hook and the AskUserQuestion click of the capture both prove the person with proof reply
 // 2. the answer names the expose and takes its source and draw so a pushed answer adds no intervention trace
 // 3. a question closed since matches with nothing recorded so the input is still no verdict
+// 4. the exposes of the session are read first and the rest of the records only once the input names a choice of one
+// So an input that answers nothing reads one kind of trace
 func (iv *Intervener) Reply(ctx context.Context, r Reply) (Replied, error) {
-	s, err := iv.read(ctx)
+	found, err := iv.traces.List(ctx, record.TraceFilter{Name: string(trace.NameExpose), SessionID: r.Session})
 	if err != nil {
 		return Replied{}, err
 	}
-	x, choice, ok := s.replied(r)
+	x, choice, ok := shownOf(trace.RestoreAll(found)).replied(r)
 	if !ok {
 		return Replied{}, nil
+	}
+	s, err := iv.read(ctx)
+	if err != nil {
+		return Replied{}, err
 	}
 	out := Replied{Matched: true, Choice: choice}
 	d := s.decides[x.Ref]
@@ -597,9 +638,9 @@ const replyMarks = ".,!;:"
 // The question of the session the input answers with the choice it names
 // 1. a click names its question by the key of its header
 // 2. a typed word answers the question shown after the answer the person read
-func (s state) replied(r Reply) (shownExpose, Choice, bool) {
+func (xs shownExposes) replied(r Reply) (shownExpose, Choice, bool) {
 	word := Choice(strings.TrimRight(strings.ToLower(strings.TrimSpace(r.Word)), replyMarks))
-	for _, x := range s.shown {
+	for _, x := range xs {
 		named := r.Key != "" && x.Key == r.Key || r.Key == "" && r.Run != "" && x.Run == r.Run
 		if x.SessionID == r.Session && x.asks() && named && slices.Contains(x.Choices, word) {
 			return x, word, true

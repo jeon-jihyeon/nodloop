@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/jeon-jihyeon/nodloop/internal/llm"
+	"github.com/jeon-jihyeon/nodloop/internal/trace"
 )
 
 const probeSchema = `{"type":"object","properties":{"answer":{"type":"integer"}},"required":["answer"]}`
@@ -61,7 +62,8 @@ func (f failedLLM) Complete(context.Context, llm.Request) (llm.Response, error) 
 	return llm.Response{}, f.err
 }
 
-func runLLM(args []string, getenv func(string) string, client llm.Client, now func() time.Time, stdout, stderr io.Writer) int {
+// The proof is the terminal proof of the process since the backend of every model call also answers as the judge of curate
+func runLLM(args []string, getenv func(string) string, client llm.Client, now func() time.Time, proof trace.Proof, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		return fail(stderr, "llm", errNoAction)
 	}
@@ -72,7 +74,7 @@ func runLLM(args []string, getenv func(string) string, client llm.Client, now fu
 	if err != nil {
 		return parseFailed(err)
 	}
-	cmd := llmCommand{home: homeDir(getenv("HOME")), client: client, now: now, out: stdout}
+	cmd := llmCommand{home: homeDir(getenv("HOME")), client: client, now: now, proof: proof, out: stdout}
 	command := "llm " + args[0]
 	switch args[0] {
 	case "probe":
@@ -104,7 +106,10 @@ type llmCommand struct {
 	home   homeDir
 	client llm.Client
 	now    func() time.Time
-	out    io.Writer
+	// The terminal proof of the process
+	// The backend changes only with it so an agent never swaps the model that judges for the person
+	proof trace.Proof
+	out   io.Writer
 }
 
 // Minimal real request that checks login and structured output and cost in one call
@@ -152,6 +157,9 @@ func (c llmCommand) config() (llm.Config, error) {
 
 // Saves the backend so every later command builds its client from it
 func (c llmCommand) set(cfg llm.Config) error {
+	if c.proof == trace.ProofNone {
+		return fmt.Errorf("set: %w", errPersonOnly)
+	}
 	if c.home == "" {
 		return errHomeUnknown
 	}
@@ -180,6 +188,9 @@ func (c llmCommand) set(cfg llm.Config) error {
 
 // Every command calls claude again
 func (c llmCommand) unset() error {
+	if c.proof == trace.ProofNone {
+		return fmt.Errorf("unset: %w", errPersonOnly)
+	}
 	if c.home == "" {
 		return errHomeUnknown
 	}

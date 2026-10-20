@@ -68,6 +68,16 @@ func (as Answers) Of(qs Questions) Answers {
 	return out
 }
 
+// The answers with their reasons left out as a classify trace keeps them
+// A critic reason quotes the draft and the correction that only the stripped text of an extract trace may hold
+func (as Answers) probabilities() Answers {
+	out := make(Answers, len(as))
+	for name, a := range as {
+		out[name] = Answer{Yes: a.Yes}
+	}
+	return out
+}
+
 // Every question has an answer and every probability lies between 0 and 1
 // NaN fails too since no record could hold it
 func (as Answers) check(qs Questions) error {

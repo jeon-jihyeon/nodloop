@@ -116,10 +116,38 @@ func TestKnobsStart(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			got := tc.args.knobs.Start(tc.args.numbers)
+			got := tc.args.knobs.Start(tc.args.numbers, 0)
 
 			assert.Equal(t, tc.want, want{got.Knobs.Open, got.Knobs.Audit.Tier1, got.Changes, got.Offers})
 			assert.Equal(t, curate.StartKnobs().Open, start.Open, "the knobs the pass started from stay as they were")
+		})
+	}
+}
+
+// The tier 1 audit p the person set is the least a lowering at a cycle start leaves until the person changes it
+func TestKnobsStartSetByPerson(t *testing.T) {
+	bound := curate.Numbers{Gauges: []curate.Gauge{met(add1, 43), met(withdraw, 43)}}
+	type want struct {
+		tier1   float64
+		changes []curate.KnobChange
+	}
+	tcs := []struct {
+		name string
+		// The audit p of the knobs and the one the person set
+		args [2]float64
+		want want
+	}{
+		{"a lowering stops at the p the person set", [2]float64{0.3, 0.2}, want{0.2, []curate.KnobChange{{Rule: curate.KnobLower, P: 0.2}}}},
+		{"a p at the one the person set stays", [2]float64{0.2, 0.2}, want{0.2, nil}},
+		{"no p the person set lowers to the floor", [2]float64{0.15, 0}, want{0.05, []curate.KnobChange{{Rule: curate.KnobLower, P: 0.05}}}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := knobs(func(k *curate.Knobs) { k.Audit.Tier1 = tc.args[0] }).Start(bound, tc.args[1])
+
+			assert.Equal(t, tc.want, want{got.Knobs.Audit.Tier1, got.Changes})
 		})
 	}
 }

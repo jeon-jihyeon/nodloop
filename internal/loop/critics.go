@@ -16,6 +16,7 @@ import (
 type CriticReport struct {
 	Critics   []CriticRow   `json:"critics"`
 	Reactions []ReactionRow `json:"reactions"`
+	Capture   CaptureRow    `json:"capture"`
 }
 
 // How often one critic agreed with what a person later decided on the same run
@@ -147,18 +148,38 @@ type ReactionRow struct {
 	Deferred int `json:"deferred"`
 }
 
+// The output of a capture trace as the report reads it
+type captureRecord struct {
+	// The classify traces the capture made
+	Classify []string `json:"classify"`
+}
+
 // One row per member of the reaction point in name order
 // 1. each answer is held against the latest verdict the conversation inferred on its run
 // 2. a run without one counts only in asked
 // 3. a run whose latest session verdict the point recorded itself counts only in asked since it cannot disagree with itself
+// 4. the capture records its verdicts under reviewer nodloop so a classify trace a capture trace names recorded no session verdict
 func (r Runs) Reactions(traces trace.Traces) []ReactionRow {
+	captured := map[string]bool{}
+	for _, tr := range traces {
+		var rec captureRecord
+		if tr.Name == trace.NameCapture && json.Unmarshal(tr.Output, &rec) == nil {
+			for _, id := range rec.Classify {
+				captured[id] = true
+			}
+		}
+	}
 	rows := map[string]*ReactionRow{}
 	for _, tr := range traces {
 		var rec classifyRecord
 		if tr.Name != trace.NameClassify || tr.Subject != string(classify.PointReaction) || json.Unmarshal(tr.Output, &rec) != nil {
 			continue
 		}
-		verdict, judged := r.conversationVerdict(tr.Ref, tr.Time, classify.Answers(rec.Answers).Verdict())
+		recorded := classify.Answers(rec.Answers).Verdict()
+		if captured[tr.ID] {
+			recorded = ""
+		}
+		verdict, judged := r.conversationVerdict(tr.Ref, tr.Time, recorded)
 		for _, m := range rec.Members {
 			if m.Error != "" {
 				continue
@@ -183,6 +204,7 @@ func (r Runs) Reactions(traces trace.Traces) []ReactionRow {
 // 1. the point records its own verdict right after the classify trace of the time asked
 // 2. so the first session record from then on with the verdict the point called is its own
 // 3. that record still being the latest leaves nothing the conversation decided
+// 4. recorded is empty where the point recorded no session verdict so the latest one is the conversation's
 // A verdict of the capture is no session record so it never stands for the conversation
 func (r Runs) conversationVerdict(run string, asked time.Time, recorded feedback.Verdict) (feedback.Feedback, bool) {
 	latest := r.conversation[run].Latest()
@@ -226,6 +248,49 @@ func (row *ReactionRow) count(as answers, verdict feedback.Feedback, judged bool
 	default:
 		row.Disagree++
 	}
+}
+
+// How the verdicts the capture read in the person's words stood against the verdicts the conversation inferred
+// The runs they dispute teach nothing and the runs only the capture judged rest on no other reader
+type CaptureRow struct {
+	// capture
+	Critic string `json:"critic"`
+	// Runs either reader judged
+	Runs int `json:"runs"`
+	// Both judged whether the run corrects alike
+	Agree int `json:"agree"`
+	// They judged it on opposite sides so the run has no inferred verdict
+	Disputed int `json:"disputed"`
+	// Only the capture judged
+	CaptureOnly int `json:"capture_only"`
+	// Only the conversation judged so the capture read no verdict in the words after the run
+	ConversationOnly int `json:"conversation_only"`
+}
+
+// The capture row over every run the verdicts name
+// 1. each reader holds its newest verdict per run and a withdraw of anyone takes it back as Inferred reconciles them
+// 2. a judged run is never pruned so the row reads every verdict and not only the window
+func (r Runs) Capture() CaptureRow {
+	row := CaptureRow{Critic: "capture"}
+	for run, said := range r.said {
+		heard, read := r.heard[run]
+		row.Runs++
+		switch {
+		case !read:
+			row.ConversationOnly++
+		case said.Corrects() == heard.Corrects():
+			row.Agree++
+		default:
+			row.Disputed++
+		}
+	}
+	for run := range r.heard {
+		if _, spoke := r.said[run]; !spoke {
+			row.Runs++
+			row.CaptureOnly++
+		}
+	}
+	return row
 }
 
 // What people decided per run over every record that cites it as feedback

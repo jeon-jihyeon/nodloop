@@ -187,13 +187,13 @@ func (k Knobs) Alarm(n Numbers) Move {
 	return m
 }
 
-// The knobs of the first pass of a cycle
+// The knobs of the first pass of a cycle with the tier 1 audit p the person set and 0 when the person set none
 // 1. the alarm narrows as inside a cycle and so does a posterior that puts the differ rate above the target with probability over 0.5
 // 2. a narrowing or a judge shift doubles the tier 1 audit p up to 0.3 and never lowers one the person set higher
-// 3. else the tier 1 audit p goes down to 0.05 once every open kind and bin met its bound
+// 3. else the tier 1 audit p goes down to 0.05 once every open kind and bin met its bound and never below what the person set
 // 4. the first kind and bin closed before the pass whose bound was met is offered as a widen question
 // 5. the activation is offered once two closed cycles ran in shadow on the configuration and the shadow answers of add met the bound
-func (k Knobs) Start(n Numbers) Move {
+func (k Knobs) Start(n Numbers, set float64) Move {
 	m := Move{Knobs: k}
 	m.alarm(n)
 	for _, g := range n.Gauges {
@@ -205,7 +205,7 @@ func (k Knobs) Start(n Numbers) Move {
 	case len(m.Changes) > 0 || n.Shift:
 		m.raise()
 	case m.Knobs.met(n):
-		m.lower()
+		m.lower(set)
 	}
 	m.offer(k, n)
 	return m
@@ -237,12 +237,15 @@ func (m *Move) raise() {
 	m.Changes = append(m.Changes, KnobChange{Rule: KnobRaise, P: p})
 }
 
-func (m *Move) lower() {
-	if m.Knobs.Audit.Tier1 <= auditFloor {
+// The tier 1 audit p down to the floor or to the p the person set when that is higher
+// The person's setting stands until the person changes it so no automatic move goes under it
+func (m *Move) lower(set float64) {
+	p := max(auditFloor, set)
+	if m.Knobs.Audit.Tier1 <= p {
 		return
 	}
-	m.Knobs.Audit.Tier1 = auditFloor
-	m.Changes = append(m.Changes, KnobChange{Rule: KnobLower, P: auditFloor})
+	m.Knobs.Audit.Tier1 = p
+	m.Changes = append(m.Changes, KnobChange{Rule: KnobLower, P: p})
 }
 
 // Whether the knobs open a kind and bin and every open one met its bound

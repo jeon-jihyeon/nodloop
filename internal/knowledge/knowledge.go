@@ -119,9 +119,6 @@ type Knowledge struct {
 	// Drafts of the compaction proposal on each of its candidates
 	// Fewer candidates than this mean the proposal was cut between two appends
 	CompactionSize int `json:"compaction_size,omitempty"`
-	// The session of a deferral record an earlier release wrote when a stop asked the candidate
-	// Such a record reads as the candidate record it copied and no write carries it again
-	DeferredIn string `json:"deferred_in,omitempty"`
 }
 
 // Runes of approved knowledge one run carries
@@ -258,17 +255,16 @@ func (k Knowledge) transition(status Status, approver string, now time.Time) (Kn
 
 // The record of a status change without the transition checks
 // 1. only for a change the caller already knows is allowed
-// 2. the newest record of a candidate may be a deferral record of an earlier release so the change clears the session it names
-// 3. the reason and the decision belong to the record that set them so the caller names its own
+// 2. the reason and the decision belong to the record that set them so the caller names its own
 func (k Knowledge) changed(status Status, approver string, now time.Time) Knowledge {
-	k.Status, k.Approver, k.Time, k.DeferredIn, k.Reason, k.Decision = status, approver, now, "", "", ""
+	k.Status, k.Approver, k.Time, k.Reason, k.Decision = status, approver, now, "", ""
 	if status == StatusApproved {
 		k.ApprovedAt = now
 	}
 	return k
 }
 
-// A record of a person's decision on a version: an approval or a retire
+// A record that decides a version: an approval or a retire by a person or by nodloop
 // A reaffirm keeps the time of the approval so it is no decision
 func (k Knowledge) Decided() bool {
 	return k.Status == StatusRetired || k.Status == StatusApproved && k.ApprovedAt.Equal(k.Time)

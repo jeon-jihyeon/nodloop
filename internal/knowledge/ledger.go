@@ -43,13 +43,15 @@ type VetoSink interface {
 
 // Every write appends new records and none edits an earlier one
 // 1. a proposal is always a candidate
-// 2. approve, retire, reaffirm and a compaction approval need an approver other than the reserved name and follow the allowed status changes
-// 3. the clock is read here in UTC and every record of one call carries that time
-// 4. approve and retire and import and reaffirm end by exporting the approved vetoes and rules
-// A refused approve or retire exports them too so its retry repairs an export a killed call left behind
-// 5. approve refuses an approval that pushes a run past RunChars or grows one already past it
+// 2. approve, retire, reaffirm, restore, reverse and a compaction approval decide for a person
+// They need an approver other than the reserved name and follow the allowed status changes
+// 3. apply, withdraw and drop write the reserved name under the decide of curate and refuse what only a person decides
+// 4. the clock is read here in UTC and every record of one call carries that time
+// 5. every write that may change the approved items ends by exporting the approved vetoes and rules
+// A refused approve, retire, apply, withdraw, restore or reverse exports them too so its retry repairs an export a killed call left behind
+// 6. approve refuses an approval that pushes a run past RunChars or grows one already past it
 // and import never checks it
-// 6. every write decides under the store lock on the records as they are then
+// 7. every write decides under the store lock on the records as they are then
 // So two writers at once never both pass a check that only one of them may pass and neither refuses the other
 // A failed export returns ErrExport after the records are appended so the caller knows the status changed
 type Ledger struct {
@@ -199,7 +201,8 @@ func (l *Ledger) Corroborate(ctx context.Context, id string, version int, run tr
 		if err != nil {
 			return nil, err
 		}
-		k = slices.Concat(records, all).taught(Knowledge{ID: id, Version: version})
+		// The record just written or the one that already cited the run
+		k = slices.Concat(records, all).newestCandidates()[id]
 		return records, nil
 	})
 	if err != nil {

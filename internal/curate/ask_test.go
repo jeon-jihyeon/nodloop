@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -212,7 +211,7 @@ func TestIntervenerAskOwnSession(t *testing.T) {
 	}{
 		{"the question of a run of the session comes first", args{"s-r-k-dup", -1}, want{"direction k-dup 1 push 1", nil}},
 		{"the oldest comes first in any other session", args{"s-new", -1}, want{"direction k-ask 1 push 1", nil}},
-		{"runs that cannot be read fail the stop", args{"s-r-k-dup", 5}, want{"", assert.AnError}},
+		{"runs that cannot be read fail the stop", args{"s-r-k-dup", 6}, want{"", assert.AnError}},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
@@ -397,13 +396,40 @@ func TestIntervenerReplyRecords(t *testing.T) {
 	assert.Empty(t, d.interventions(t), "a pushed answer adds no intervention")
 }
 
-// A reply whose records cannot be read fails and matches nothing
+// A reply reads the exposes of its session first and the rest of the records only for an input that names a choice of one
 func TestIntervenerReplyUnreadable(t *testing.T) {
-	d := newDesk(t)
-	got, err := d.flakyIntervener(0, -1).Reply(context.Background(), curate.Reply{Session: "s-new", Run: "run-s-new", Word: "keep", Person: "ann"})
+	ctx := context.Background()
+	type args struct {
+		// Lists of traces that pass before every later one fails
+		lists int
+		word  string
+	}
+	type want struct {
+		matched bool
+		err     error
+	}
+	tcs := []struct {
+		name string
+		args args
+		want want
+	}{
+		{"exposes that cannot be read fail the reply", args{0, "keep"}, want{false, assert.AnError}},
+		{"records that cannot be read after the exposes fail a reply that names a choice", args{1, "keep"}, want{false, assert.AnError}},
+		{"an input that names no choice reads no record past the exposes", args{1, "maybe"}, want{false, nil}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			d := newDesk(t)
+			_, err := d.iv.Ask(ctx, d.stopIn(t, "s-new", "svc", true))
+			require.NoError(t, err)
 
-	assert.ErrorIs(t, err, assert.AnError)
-	assert.False(t, got.Matched)
+			got, err := d.flakyIntervener(tc.args.lists, -1).Reply(ctx, curate.Reply{Session: "s-new", Run: "run-s-new", Word: tc.args.word, Person: "ann"})
+
+			assert.ErrorIs(t, err, tc.want.err)
+			assert.Equal(t, tc.want.matched, got.Matched)
+		})
+	}
 }
 
 // The notice names what curate carried out in the place once per session and only what came after the last notice there
@@ -515,6 +541,7 @@ func TestIntervenerNoticeFails(t *testing.T) {
 		args args
 	}{
 		{"exposes that cannot be read", args{0, -1}},
+		{"knob events that cannot be read", args{1, -1}},
 		{"a notice that cannot be appended", args{-1, 0}},
 	}
 	for _, tc := range tcs {
@@ -545,7 +572,6 @@ func TestIntervenerNoticeRunGone(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.NotEmpty(t, got.Notice)
-	assert.False(t, errors.Is(err, record.ErrTraceNotFound))
 }
 
 // Each kind of question names its change, why it needs the person, what was prepared and the two choices of its decide
@@ -612,6 +638,12 @@ func TestIntervenerAskText(t *testing.T) {
 			"One decision for you: take the lessons nodloop added in this place as your own\n" +
 				"Why you: lessons nodloop added here outnumber the ones you confirmed\nPrepared: your words \"words on r-k-add\" · /nodloop:nod shows them first\n" +
 				"Reply mine or review",
+		},
+		{
+			"a reanchor asks to take the lessons nodloop added as the person's own",
+			args{curate.QuestionDirection, asking("r-k-add", curate.Change{Kind: curate.ChangeReanchor, Anchor: 1}, "")},
+			"One decision for you: take the lessons nodloop added in this place as your own\n" +
+				"Why you: lessons nodloop added here outnumber the ones you confirmed\nPrepared: /nodloop:nod shows them first\nReply mine or review",
 		},
 		{
 			"a pause sends the change to the person",
@@ -935,7 +967,7 @@ func TestNoticeable(t *testing.T) {
 	}
 }
 
-// Many lessons in one notice are counted and cut at 600 runes
+// Many lessons in one notice are counted and cut at 600 runes before the words that say how to take one back
 func TestIntervenerNoticeMany(t *testing.T) {
 	var many []knowledge.Knowledge
 	for i := range 8 {
@@ -949,16 +981,8 @@ func TestIntervenerNoticeMany(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.True(t, strings.HasPrefix(got.Notice, "From your earlier decisions nodloop applied 8 lessons here: "), got.Notice)
+	assert.True(t, strings.HasSuffix(got.Notice, "…. /nodloop:nod shows them and takes any back"), got.Notice)
 	assert.Equal(t, curate.MaxRunes, utf8.RuneCountInString(got.Notice))
-}
-
-// A store whose Get fails with an error that is no missing trace
-type ungettable struct {
-	curate.TraceStore
-}
-
-func (ungettable) Get(context.Context, string) (record.Trace, error) {
-	return record.Trace{}, assert.AnError
 }
 
 // The run of an earlier notice that cannot be read fails the notice
@@ -967,8 +991,9 @@ func TestIntervenerNoticeEarlier(t *testing.T) {
 	ctx := context.Background()
 	type args struct {
 		// The run the earlier notice names
-		run  string
-		gets bool
+		run string
+		// Gets of traces that pass before every later one fails and none fails when negative
+		gets int
 	}
 	type want struct {
 		shown bool
@@ -979,8 +1004,8 @@ func TestIntervenerNoticeEarlier(t *testing.T) {
 		args args
 		want want
 	}{
-		{"a notice of a stop with no run is one of another place", args{"", false}, want{true, nil}},
-		{"a run that cannot be read fails the notice", args{"run-s-old", true}, want{false, assert.AnError}},
+		{"a notice of a stop with no run is one of another place", args{"", -1}, want{true, nil}},
+		{"a run that cannot be read fails the notice", args{"run-s-old", 0}, want{false, assert.AnError}},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
@@ -990,10 +1015,7 @@ func TestIntervenerNoticeEarlier(t *testing.T) {
 			old.Run = tc.args.run
 			_, err := b.intervener(nil).Notice(ctx, old)
 			require.NoError(t, err)
-			var traces curate.TraceStore = b.stores.Traces
-			if tc.args.gets {
-				traces = ungettable{b.stores.Traces}
-			}
+			traces := &testkit.FlakyTraces{Store: b.stores.Traces, Gets: failing(tc.args.gets)}
 			iv := curate.NewIntervener(b.stores.Ledger, traces, curate.InterveneSetting{Build: "0.10.0"}, b.stores.Clock.Now)
 
 			got, err := iv.Notice(ctx, b.noticeStop(t, "s-new", "work"))
@@ -1004,12 +1026,14 @@ func TestIntervenerNoticeEarlier(t *testing.T) {
 	}
 }
 
-// A ledger that cannot be read fails the stop, the reply and the notice and shows nothing
+// A ledger that cannot be read fails the stop, the reply to a question shown and the notice and shows nothing
 func TestIntervenerAskUnreadableLedger(t *testing.T) {
 	ctx := context.Background()
 	d := newDesk(t)
-	iv := curate.NewIntervener(flakyLedger(t, d.bench, 0), d.stores.Traces, curate.InterveneSetting{Build: "0.10.0"}, d.stores.Clock.Now)
 	a := d.stopIn(t, "s-new", "svc", true)
+	_, err := d.iv.Ask(ctx, a)
+	require.NoError(t, err)
+	iv := curate.NewIntervener(flakyLedger(t, d.bench, 0), d.stores.Traces, curate.InterveneSetting{Build: "0.10.0"}, d.stores.Clock.Now)
 
 	asked, askErr := iv.Ask(ctx, a)
 	replied, replyErr := iv.Reply(ctx, curate.Reply{Session: "s-new", Run: "run-s-new", Word: "keep", Person: "ann"})
@@ -1055,4 +1079,42 @@ func TestIntervenerNoticeRecords(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, failed.Notice)
 	assert.NotEmpty(t, got.Notice, "the question of the session is no notice")
+}
+
+// A question and a notice shown after a person's raise inside the cycle carry the policy version of the knob event of that raise
+// The mark keeps the version before the raise until the next pass
+func TestIntervenerAskPolicyInForce(t *testing.T) {
+	ctx := context.Background()
+	carried := lesson("k-carried", 1, "Squash before a merge", acme("svc"), knowledge.StatusApproved, knowledge.ApproverNodloop)
+	carried.Decision = "d-carried"
+	b := newBench(t, answer(0.9, 0.02), []knowledge.Knowledge{
+		lesson("k-ask", 1, "Use the staging cluster", acme("svc"), knowledge.StatusCandidate, ""), carried,
+	}, nil)
+	first, err := b.curator().Pass(ctx, b.setting(t))
+	require.NoError(t, err)
+	marker := curate.NewMarker(b.stores.Dir)
+	held, err := marker.Hold()
+	require.NoError(t, err)
+	require.NoError(t, held.Write(first.Mark(written)))
+	require.NoError(t, held.Release())
+	iv := b.intervener(marker)
+	raised := 0.3
+	require.NoError(t, testkit.Err(iv.Intervene(ctx, curate.Request{Action: trace.ActionKnob, Target: string(curate.KnobAuditTier1), Value: &raised}, person)))
+	knobs, err := b.stores.Traces.List(ctx, record.TraceFilter{Name: string(trace.NameKnob)})
+	require.NoError(t, err)
+	inForce, ok := curate.RestoreKnob(trace.Restore(knobs[0]))
+	require.True(t, ok)
+	m, err := curate.ReadMark(b.stores.Dir)
+	require.NoError(t, err)
+	b.correct(t, "run-s-new", trace.Labels{"repo": {"svc"}}, nil)
+	a := curate.Asking{Session: "s-new", Run: "run-s-new", Place: *acme("svc"), Pushed: true, Mark: m, Seal: hexSeal, Words: runWords}
+
+	asked, err := iv.Ask(ctx, a)
+	require.NoError(t, err)
+	a.Session = "s-other"
+	noticed, err := iv.Notice(ctx, a)
+	require.NoError(t, err)
+
+	require.NotEqual(t, m.PolicyVersion, inForce.PolicyVersion, "the raise moved the policy version")
+	assert.Equal(t, []string{inForce.PolicyVersion, inForce.PolicyVersion}, []string{asked.Expose.Draw.PolicyVersion, noticed.Expose.Draw.PolicyVersion})
 }

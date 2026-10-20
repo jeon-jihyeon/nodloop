@@ -34,9 +34,13 @@ linters:
     # knowledge is the ledger and the application packages sit above it
     # compact and extract are imported by mcp and cmd and the server
     # loop and retain are imported by those and the nodloop package at the module root
-    # consolidate is imported by cmd alone, curate by mcp, cmd, the server and the nodloop package, and application packages never import each other
+    # consolidate is imported by cmd alone
+    # curate is imported by mcp and cmd and the server and the nodloop package
+    # Application packages never import each other
     # markfile holds the mark file and its lock that consolidate, curate, retain and otel share since they cannot import each other
-    # schema reads the published record schemas and textkey holds the HMAC key, and both sit in infrastructure
+    # markfile imports nothing of the module so it sits in the domain below the application packages
+    # schema reads the published record schemas and textkey holds the HMAC key
+    # Both sit in infrastructure
     # datapackage writes a Data Package folder from fields and rows and imports nothing of the module
     # No package imports a producer: a producer reaches the core through the MCP tools or the CLI
     # cmd/nodloop is the composition root and imports everything
@@ -54,6 +58,7 @@ linters:
             - "**/internal/atomicfile/**"
             - "**/internal/classify/**"
             - "**/internal/userconfig/**"
+            - "**/internal/markfile/**"
           deny:
             - pkg: github.com/jeon-jihyeon/nodloop/internal/knowledge
               desc: domain packages do not import knowledge
@@ -69,6 +74,12 @@ linters:
               desc: domain packages do not import consolidate
             - pkg: github.com/jeon-jihyeon/nodloop/internal/curate
               desc: domain packages do not import curate
+            - pkg: github.com/jeon-jihyeon/nodloop/internal/replay
+              desc: domain packages do not import replay
+            - pkg: github.com/jeon-jihyeon/nodloop/internal/otel
+              desc: domain packages never send telemetry
+            - pkg: github.com/jeon-jihyeon/nodloop/internal/datapackage
+              desc: domain packages never write a Data Package
             - pkg: github.com/jeon-jihyeon/nodloop/internal/guard
               desc: domain packages do not import guard
             - pkg: github.com/jeon-jihyeon/nodloop/internal/mcp
@@ -90,7 +101,6 @@ linters:
             - "**/internal/feedback/file/**"
             - "**/internal/knowledge/file/**"
             - "**/internal/otel/**"
-            - "**/internal/markfile/**"
             - "**/internal/schema/**"
             - "**/internal/textkey/**"
             - "**/internal/pg/**"
@@ -104,6 +114,12 @@ linters:
               desc: stores and adapters take and return shapes of their own and the ledger converts them into knowledge
             - pkg: github.com/jeon-jihyeon/nodloop/internal/retain$
               desc: a store keeps the prune mark as a record shape and retain converts it
+            - pkg: github.com/jeon-jihyeon/nodloop/internal/mcp
+              desc: infrastructure sits below the controllers
+            - pkg: github.com/jeon-jihyeon/nodloop/internal/guard
+              desc: infrastructure sits below the controllers
+            - pkg: github.com/jeon-jihyeon/nodloop/cmd
+              desc: nothing imports cmd
         datapackage:
           files:
             - "**/internal/datapackage/**"
@@ -111,6 +127,13 @@ linters:
           deny:
             - pkg: github.com/jeon-jihyeon/nodloop/
               desc: the Data Package writer takes fields and rows and imports no package of the module
+        terminal:
+          files:
+            - "**/internal/terminal/**"
+            - "!$test"
+          deny:
+            - pkg: github.com/jeon-jihyeon/nodloop/
+              desc: terminal reads the streams and the environment it is handed and imports no package of the module
         published:
           files:
             - "**/schema/schema.go"
@@ -129,6 +152,7 @@ linters:
             - "**/internal/atomicfile/**"
             - "**/internal/userconfig/**"
             - "**/internal/classify/**"
+            - "**/internal/markfile/**"
             - "**/internal/knowledge/**"
             - "**/internal/compact/**"
             - "**/internal/extract/**"
@@ -170,6 +194,8 @@ linters:
               desc: application code never touches the jsonl format
             - pkg: github.com/jeon-jihyeon/nodloop/internal/otel
               desc: application code never sends telemetry
+            - pkg: github.com/jeon-jihyeon/nodloop/internal/datapackage
+              desc: application code never writes a Data Package
             - pkg: github.com/jeon-jihyeon/nodloop/internal/guard
               desc: application packages do not import guard
             - pkg: github.com/jeon-jihyeon/nodloop/internal/mcp
@@ -324,6 +350,14 @@ linters:
               desc: the hook needs vetoes only
             - pkg: github.com/jeon-jihyeon/nodloop/internal/loop
               desc: the hook needs vetoes only
+            - pkg: github.com/jeon-jihyeon/nodloop/internal/replay
+              desc: the hook needs vetoes only
+            - pkg: github.com/jeon-jihyeon/nodloop/internal/retain
+              desc: the hook needs vetoes only
+            - pkg: github.com/jeon-jihyeon/nodloop/internal/consolidate
+              desc: the hook needs vetoes only
+            - pkg: github.com/jeon-jihyeon/nodloop/internal/curate
+              desc: the hook needs vetoes only
             - pkg: github.com/jeon-jihyeon/nodloop/internal/mcp
               desc: guard does not import mcp
             - pkg: github.com/jeon-jihyeon/nodloop/internal/testkit
@@ -358,6 +392,10 @@ linters:
             - pkg: github.com/jeon-jihyeon/nodloop/internal/loop
               desc: the harness opens stores and never a module under test
             - pkg: github.com/jeon-jihyeon/nodloop/internal/mcp
+              desc: the harness opens stores and never a module under test
+            - pkg: github.com/jeon-jihyeon/nodloop/internal/replay
+              desc: the harness opens stores and never a module under test
+            - pkg: github.com/jeon-jihyeon/nodloop/internal/retain
               desc: the harness opens stores and never a module under test
             - pkg: github.com/jeon-jihyeon/nodloop/internal/consolidate
               desc: the harness opens stores and never a module under test

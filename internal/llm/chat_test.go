@@ -167,9 +167,9 @@ func TestChatCompletionsComplete(t *testing.T) {
 		{"a second failure returns the validation error", args{"", request, []reply{wrong, wrong}},
 			want{err: llm.ErrSchemaMismatch, errText: "answer", sent: sends("qwen3", "", request, first, resent)}},
 		{"a failed resend returns its error", args{"", request, []reply{wrong, {http.StatusBadGateway, "down"}}},
-			want{err: llm.ErrStatus, errText: "502 down", sent: sends("qwen3", "", request, first, resent)}},
-		{"a non 2xx status quotes 200 bytes of the body", args{"", request, []reply{{http.StatusUnauthorized, strings.Repeat("e", 300)}}},
-			want{err: llm.ErrStatus, errText: "401 " + strings.Repeat("e", 200), sent: sends("qwen3", "", request, first)}},
+			want{err: llm.ErrStatus, errText: "error status: 502", sent: sends("qwen3", "", request, first, resent)}},
+		{"a non 2xx status names the status alone and never the body", args{"", request, []reply{{http.StatusUnauthorized, "echoed secret prompt"}}},
+			want{err: llm.ErrStatus, errText: "error status: 401", sent: sends("qwen3", "", request, first)}},
 		{"a body past a megabyte is a wrong endpoint", args{"", request, []reply{{http.StatusOK, strings.Repeat(" ", 1<<20+1)}}},
 			want{err: llm.ErrResponseInvalid, errText: "body over", sent: sends("qwen3", "", request, first)}},
 		{"a body that is no chat completion fails", args{"", request, []reply{{http.StatusOK, "<html>"}}},
@@ -205,6 +205,7 @@ func TestChatCompletionsComplete(t *testing.T) {
 			defer mu.Unlock()
 			assert.ErrorIs(t, err, tc.want.err)
 			assert.Contains(t, errText(err), tc.want.errText)
+			assert.NotContains(t, errText(err), "secret", "an error quotes no body an endpoint answered")
 			assert.Equal(t, tc.want.res, res)
 			assert.Equal(t, tc.want.sent, got)
 		})
@@ -257,6 +258,38 @@ func TestChatCompletionsCompleteResend(t *testing.T) {
 			assert.Equal(t, "user", got[1].Messages[2]["role"])
 			assert.Contains(t, got[1].Messages[2]["content"], "Your answer was refused: ")
 			assert.Contains(t, got[1].Messages[2]["content"], tc.want.refusal)
+		})
+	}
+}
+
+// An answer refused twice fails naming where the schema refused it and never the value it refused
+func TestChatCompletionsCompleteRefusedTwice(t *testing.T) {
+	t.Parallel()
+	tcs := []struct {
+		name string
+		// The content of both answers
+		args string
+		want string
+	}{
+		{"a value of the wrong type", `{"answer":"ann said never print it"}`, "llm: answer does not match the schema: /properties/answer: type"},
+		{"a value under a rule that quotes it", `{"answer":-1}`, "llm: answer does not match the schema: /properties/answer: minimum"},
+		{"a key the schema does not allow", `{"answer":1,"ann said never print it":1}`, "llm: answer does not match the schema: root: unexpected additional properties"},
+		{"an answer that is no JSON", "ann said never print it", "llm: answer does not match the schema: not JSON"},
+	}
+	strict := `{"type":"object","additionalProperties":false,"properties":{"answer":{"type":"integer","minimum":0}},"required":["answer"]}`
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = w.Write([]byte(completion(tc.args, 1, 1, 0, 0)))
+			}))
+			t.Cleanup(srv.Close)
+
+			_, err := llm.NewChatCompletions(srv.URL, "m", "", 0, steppingClock()).
+				Complete(context.Background(), llm.Request{Prompt: "hello", Schema: json.RawMessage(strict)})
+
+			require.ErrorIs(t, err, llm.ErrSchemaMismatch)
+			assert.Equal(t, tc.want, err.Error())
 		})
 	}
 }
@@ -398,6 +431,10 @@ func TestConfigCheck(t *testing.T) {
 			llm.ErrBaseURLCredentials},
 		{"chat with a user in the base URL", llm.Config{Backend: llm.BackendChat, BaseURL: "https://ann@example.com/v1", Model: "qwen3"},
 			llm.ErrBaseURLCredentials},
+		{"chat with a token in the query of the base URL", llm.Config{Backend: llm.BackendChat, BaseURL: "https://example.com/v1?key=k1", Model: "qwen3"},
+			llm.ErrBaseURLInvalid},
+		{"chat with a fragment in the base URL", llm.Config{Backend: llm.BackendChat, BaseURL: "https://example.com/v1#k1", Model: "qwen3"},
+			llm.ErrBaseURLInvalid},
 		{"another backend", llm.Config{Backend: "responses"}, llm.ErrBackendUnknown},
 	}
 	for _, tc := range tcs {

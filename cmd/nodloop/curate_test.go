@@ -37,11 +37,14 @@ func noStart([]string) error {
 	return nil
 }
 
-// The starter of a test that looks at other starts with the daily curate pass left out
-// Every stop of a fresh record directory in a mode that infers starts it
+// The starter of a test that looks at other starts with the curate work every stop of a mode that infers starts left out
+// 1. the daily curate pass of a fresh record directory
+// 2. the capture of a stop with no transcript, which extracts and curates the answer its turn followed
 func besideCurate(start starter) starter {
 	return func(args []string) error {
-		if slices.Equal(args, []string{"knowledge", "curate", "--daily"}) {
+		daily := slices.Equal(args, []string{"knowledge", "curate", "--daily"})
+		untranscribed := len(args) == 4 && slices.Equal(args[:3], []string{"session", "capture", "--session"})
+		if daily || untranscribed {
 			return nil
 		}
 		return start(args)
@@ -338,8 +341,8 @@ func TestRunKnowledgeCurateJudge(t *testing.T) {
 	plan := filepath.Join(t.TempDir(), "plan.md")
 	require.NoError(t, os.WriteFile(plan, []byte("Lint before tests"), 0o600))
 	var stderr bytes.Buffer
-	require.Equal(t, 0, runClassifier([]string{"set", "judge", "--url", srv.URL}, getenv, now, &bytes.Buffer{}, &stderr), stderr.String())
-	require.Equal(t, 0, runLLM([]string{"set", "chat", "--base-url", "http://192.0.2.1/v1", "--model", "acme-model"}, getenv, nil, now, &bytes.Buffer{}, &stderr),
+	require.Equal(t, 0, runClassifier([]string{"set", "judge", "--url", srv.URL}, getenv, now, atTerminal, &bytes.Buffer{}, &stderr), stderr.String())
+	require.Equal(t, 0, runLLM([]string{"set", "chat", "--base-url", "http://192.0.2.1/v1", "--model", "acme-model"}, getenv, nil, now, atTerminal, &bytes.Buffer{}, &stderr),
 		stderr.String())
 	require.Equal(t, 0, runAnchor([]string{"add", plan}, getenv, now, atTerminal, &bytes.Buffer{}, &stderr), stderr.String())
 	var prompts []string
@@ -355,7 +358,7 @@ func TestRunKnowledgeCurateJudge(t *testing.T) {
 	require.Equal(t, 0, code, stderr.String())
 	assert.Equal(t, "shadow\tadd\tk-add\tv1\ttier 1\tconform\n", stdout.String())
 	require.Len(t, prompts, 3)
-	assert.Contains(t, prompts[0], "- file "+plan+"\nLint before tests\n")
+	assert.Contains(t, prompts[0], `"file `+plan+`\nLint before tests"`)
 	assert.True(t, strings.HasSuffix(prompts[0], " model acme-model"), prompts[0])
 	store, err := tracefile.New(records)
 	require.NoError(t, err)
@@ -369,6 +372,60 @@ func TestRunKnowledgeCurateJudge(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal(classified[0].Output, &out))
 	assert.Len(t, out.Members, 4)
+}
+
+// A pass reads the numbers of report curation only when its knobs can move on them
+// 1. the first pass of a cycle on the judge configuration of the cycle before and a pass inside a cycle after an answer newer than its knob event read them
+// 2. a pass inside a cycle with no newer answer and a cycle that starts a new judge read none
+// The outcome store only the numbers open cannot be opened, so a pass that reads them fails with no mark written
+// A temp file a stopped rewrite left beside the outcomes needs their lock, which a directory stands in the way of
+func TestRunKnowledgeCurateNumbers(t *testing.T) {
+	answered := func(r *curationRecords) {
+		r.knobs(0, func(k *curate.Knobs) { k.Activated = true })
+		r.audit(0, 0.15, curate.ChoiceSame)
+	}
+	quiet := func(r *curationRecords) { r.knobs(0, func(k *curate.Knobs) { k.Activated = true }) }
+	secondCycle := curationMonday.AddDate(0, 0, 15).Add(9 * time.Hour)
+	type args struct {
+		flags []string
+		fill  func(r *curationRecords)
+		now   time.Time
+	}
+	type want struct {
+		code   int
+		stderr string
+		marked bool
+	}
+	tcs := []struct {
+		name string
+		args args
+		want want
+	}{
+		{"the first pass of a cycle on the same judge", args{[]string{"curate"}, quiet, secondCycle}, want{1, "outcome", false}},
+		{"a pass inside a cycle after a newer answer", args{[]string{"curate"}, answered, curationMonday.AddDate(0, 0, 7)}, want{1, "outcome", false}},
+		{"a pass inside a cycle with no newer answer", args{[]string{"curate"}, quiet, curationMonday.AddDate(0, 0, 7)}, want{0, "", true}},
+		{"a cycle that starts a new judge", args{[]string{"curate", "--model", "claude-haiku-4-5"}, quiet, secondCycle}, want{0, "", true}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			r := newCurationRecords(t)
+			tc.args.fill(r)
+			require.NoError(t, os.WriteFile(filepath.Join(r.records, "outcomes.jsonl.tmp"), nil, 0o600))
+			require.NoError(t, os.Mkdir(filepath.Join(r.records, "outcomes.jsonl.lock"), 0o755))
+			home := t.TempDir()
+			getenv := func(k string) string { return map[string]string{"HOME": home, envRecordDir: r.records}[k] }
+			var stdout, stderr bytes.Buffer
+
+			code := runKnowledge(tc.args.flags, getenv, curateClient(t), func() time.Time { return tc.args.now }, trace.ProofNone, &stdout, &stderr)
+
+			assert.Equal(t, tc.want.code, code, stderr.String())
+			assert.Contains(t, stderr.String(), tc.want.stderr)
+			mark, err := curate.ReadMark(r.records)
+			require.NoError(t, err)
+			assert.Equal(t, tc.want.marked, mark.CycleID != "")
+		})
+	}
 }
 
 // knowledge curate fails on a mark or records it cannot read and leaves the mark as it was

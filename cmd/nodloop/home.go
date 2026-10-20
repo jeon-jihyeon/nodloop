@@ -15,7 +15,7 @@ type userConfig struct {
 	RecordDir string `json:"record_dir,omitempty"`
 	// The name a person gave to approve under, saved so a review asks for it once
 	Approver string `json:"approver,omitempty"`
-	// The share of conversation turns whose prompt receives no item so report effect has a comparison
+	// The share of conversations whose prompts receive no item so report effect has a comparison
 	Holdout float64 `json:"holdout,omitempty"`
 	// Whole days of unjudged and uncited runs a prune keeps and 0 for every run
 	Retention int `json:"retention,omitempty"`

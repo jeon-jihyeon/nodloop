@@ -40,10 +40,10 @@ const (
 	// Runes of the items and their lead
 	// The session note follows only in the room left under contextRunes so it never pushes an item out
 	promptRunes = 9_800
-	// How far back the hooks look for the previous run of a session
-	// 1. the hooks read the records from the end and stop here so the first prompt of a session reads one window of runs
-	// 2. a session resumed after it starts without a previous run
+	// How far back the hooks and the capture look for the runs, turns, refills, captures and exposes of a session
+	// 1. the reads go from the end of the records and stop here so a new session reads one window and never the records of every session
 	// The busiest day so far recorded 573 runs so a week of such days is about 4000 runs
+	// 2. a session resumed after it starts without a previous run
 	// 3. the shortest retention so a prune never removes the run a turn names
 	sessionWindow = retain.MinDays * 24 * time.Hour
 )
@@ -75,13 +75,13 @@ func runHook(args []string, getenv func(string) string, start starter, now func(
 		fmt.Fprintln(stderr, "nodloop hook:", err)
 		return 0
 	}
-	mark, err := a.mark()
-	if err != nil {
-		fmt.Fprintln(stderr, "nodloop hook:", err)
+	mark, markErr := a.mark()
+	if markErr != nil {
+		fmt.Fprintln(stderr, "nodloop hook:", markErr)
 	}
 	cmd := hookCommand{
 		app: a, detach: start, out: stdout, mode: mode, host: h,
-		plugin: cmp.Or(getenv(envPluginVersion), buildVersion()), holdout: a.cfg.holdout, hold: mark.Knobs.Hold(), mark: mark,
+		plugin: cmp.Or(getenv(envPluginVersion), buildVersion()), holdout: a.cfg.holdout, hold: mark.Knobs.Hold(), mark: mark, marked: markErr == nil,
 		unconfirmed: newUnconfirmed(a.cfg.recordDir, a.cfg.home, getenv(envClaudeConfigDir)),
 	}
 	if a.cfg.otel != nil {
@@ -99,6 +99,7 @@ func runHook(args []string, getenv func(string) string, start starter, now func(
 	return 0
 }
 
+// hookArgs admits only the actions of hostActions so the one left after the others is instructions
 func (c hookCommand) run(ctx context.Context, action string, in hookInput, labels trace.Labels) error {
 	switch action {
 	case "prompt":
@@ -110,10 +111,8 @@ func (c hookCommand) run(ctx context.Context, action string, in hookInput, label
 	case "subagent":
 		_, err := c.addItems(ctx, "SubagentStart", in.SessionID, labels)
 		return err
-	case "instructions":
-		return c.instructions(ctx, in)
 	}
-	return fmt.Errorf("%w %q", errUnknownAction, action)
+	return c.instructions(ctx, in)
 }
 
 // The fields of the Claude Code hook input the hooks read
@@ -123,7 +122,7 @@ type hookInput struct {
 	Cwd       string `json:"cwd"`
 	// How the session started, read by the start hook
 	Source string `json:"source"`
-	// Read only for the reaction point and never stored except as the reason of a reject it records
+	// Read only for the reaction point and the first word of a reply and never stored except as the reason of a reject the point records
 	Prompt               string `json:"prompt"`
 	LastAssistantMessage string `json:"last_assistant_message"`
 	// True when the stop ends a turn a stop hook continued
@@ -148,8 +147,11 @@ type hookCommand struct {
 	// The share of sessions that miss each version nodloop approved
 	// 0 until curate.json turns it on so every hook gives what it gave before the hold
 	hold knowledge.ItemHold
-	// curate.json as the hooks read it with the questions due
+	// curate.json as the hooks read it once per call with the questions due
 	mark curate.Mark
+	// Whether curate.json could be read
+	// One that could not is reported once and starts no daily pass since the pass could not hold it either
+	marked bool
 	// The reaction point the user set up and nil when the conversation judges alone
 	reaction *classify.Plan
 	// Starts the OTLP export after every recorded run and nil when config.json holds no otel target
@@ -167,7 +169,8 @@ type hookCommand struct {
 // 5. the start of the turn is recorded first so the stop knows how long the turn took
 // 6. the note and the reaction point name the newest answer since a run a stop hook continued answers the stop and never the person
 // 7. the versions the item hold keeps from the session are left out of every turn
-// 8. a first word that answers the question shown after that answer is recorded as the person's answer and never judged
+// 8. a first word that names a choice of the question shown after that answer is never judged
+// The capture records it as the person's answer from the transcript after the turn
 func (c hookCommand) prompt(ctx context.Context, sessionID, message string, labels trace.Labels) error {
 	turnErr := c.recordTurn(ctx, sessionID)
 	all, allErr := c.all(ctx)
@@ -175,10 +178,10 @@ func (c hookCommand) prompt(ctx context.Context, sessionID, message string, labe
 		return allErr
 	}
 	runs, runsErr := c.recentRuns(ctx, sessionID)
-	refill, refillErr := c.refill(ctx, sessionID)
-	runsErr = errors.Join(runsErr, refillErr)
 	answered := runs.answered()
 	previous := trace.Traces(answered).Newest()
+	refill, refillErr := c.refill(ctx, sessionID, previous.Time)
+	runsErr = errors.Join(runsErr, refillErr)
 	items := hookItems(all.For(sessionProducer, labels))
 	if c.holdout.WithholdsRun(sessionProducer, sessionID) {
 		items = nil
@@ -187,14 +190,11 @@ func (c hookCommand) prompt(ctx context.Context, sessionID, message string, labe
 	replied, replyErr := c.reply(ctx, sessionID, previous, message)
 	var recorded feedback.Verdict
 	var reactErr error
-	if !replied.Matched {
+	if replied == "" {
 		recorded, reactErr = c.react(ctx, turn{run: previous, message: message})
 	}
 	note := c.note(sessionID, previous)
-	note.recorded, note.reply = recorded, replied.Matched
-	if replied.Answer != "" {
-		note.replied = replied.Choice
-	}
+	note.recorded, note.replied = recorded, replied
 	text := items.context(answered.inContext(knowledge.Set(items), refill), held, note)
 	runsErr = errors.Join(turnErr, allErr, runsErr, replyErr, reactErr)
 	if text == "" {
@@ -307,10 +307,8 @@ func (c hookCommand) recordRefill(ctx context.Context, sessionID string, added k
 	if err != nil {
 		return err
 	}
-	input, err := json.Marshal(in)
-	if err != nil {
-		return err
-	}
+	// Refs and strings always encode
+	input, _ := json.Marshal(in)
 	store, err := c.app.traces()
 	if err != nil {
 		return err
@@ -320,8 +318,10 @@ func (c hookCommand) recordRefill(ctx context.Context, sessionID string, added k
 	return store.Append(ctx, tr.Record())
 }
 
-// The newest refill of the session within sessionWindow or none
-func (c hookCommand) refill(ctx context.Context, sessionID string) (trace.Trace, error) {
+// The newest refill of the session since the newest answer or none
+// 1. a refill before that answer names no context the answer did not record so the read stops at its time
+// 2. with no answer the read goes back sessionWindow
+func (c hookCommand) refill(ctx context.Context, sessionID string, answered time.Time) (trace.Trace, error) {
 	if sessionID == "" {
 		return trace.Trace{}, nil
 	}
@@ -329,7 +329,7 @@ func (c hookCommand) refill(ctx context.Context, sessionID string) (trace.Trace,
 	if err != nil {
 		return trace.Trace{}, err
 	}
-	since := c.app.now().Add(-sessionWindow)
+	since := cmp.Or(answered, c.app.now().Add(-sessionWindow))
 	found, err := store.List(ctx, record.TraceFilter{Name: string(trace.NameRefill), SessionID: sessionID, Since: since, Limit: 1})
 	return trace.Traces(trace.RestoreAll(found)).Newest(), err
 }
@@ -420,7 +420,7 @@ func (ts sessionTurns) inContext(items knowledge.Set, refill trace.Trace) []know
 // so the turn never waits for them
 // A failure to start one is printed and the others still start
 // A failed record starts no export since no new run waits to be sent
-// 4. the capture reads the person's words and extracts the previous run so the stop drafts nothing itself
+// 4. the capture reads the person's words and extracts the run they corrected so the stop drafts nothing itself
 // 5. a host whose stop input carries no answer records no run and still starts the background work
 // 6. the stop talks to the person last and only when everything before it went through and no stop hook continued the turn
 func (c hookCommand) stop(ctx context.Context, sessionID string, labels trace.Labels, answer reply, continued bool, t transcript) error {
@@ -445,22 +445,30 @@ func (c hookCommand) stop(ctx context.Context, sessionID string, labels trace.La
 	if c.export != nil && c.host.answers() && failed == nil {
 		failed = c.app.startExport(c.export)
 	}
-	failed = errors.Join(failed, c.capture(sessionID, t), c.prune(ctx), c.consolidate(all), c.curate())
+	failed = errors.Join(failed, c.capture(sessionID, t, continued), c.prune(ctx), c.consolidate(all), c.curate())
 	if failed == nil && !continued && sessionID != "" {
 		failed = c.talk(ctx, sessionID, knowledge.RunScope{Producer: sessionProducer, Labels: labels}, run.ID, all)
 	}
 	return errors.Join(corrupt, failed)
 }
 
-// Starts the capture of the person's words from the transcript in a process of its own
-// 1. every mode starts it after a stop of a host that records runs since a click on a question asked in manual mode is read there too
-// 2. a stop without a session id or a transcript path starts none since the capture reads one session from its offset
-// 3. a stop of a turn a stop hook continued starts one too since the person may have written during that turn
-func (c hookCommand) capture(sessionID string, t transcript) error {
-	if !c.host.answers() || sessionID == "" || t == "" {
+// Starts the capture of the session in a process of its own after a stop of a host that records runs
+// 1. a stop without a session id starts none since the capture reads one session
+// 2. with a transcript the capture reads it starts in every mode and after a turn a stop hook continued too
+// A click on a question asked in manual mode or during that turn is read there
+// 3. without one, as on Codex, it starts only after an answer of a mode that infers
+// The capture then reads no message and extracts the answer the turn followed when the conversation corrected it
+// So that correction is decided at the next stop as on Claude Code and never waits for the daily pass
+func (c hookCommand) capture(sessionID string, t transcript, continued bool) error {
+	switch {
+	case !c.host.answers() || sessionID == "":
+		return nil
+	case c.host.transcripts() && t != "":
+		return c.detach([]string{"session", "capture", "--session", sessionID, "--transcript", string(t)})
+	case continued || !c.mode.infers():
 		return nil
 	}
-	return c.detach([]string{"session", "capture", "--session", sessionID, "--transcript", string(t)})
+	return c.detach([]string{"session", "capture", "--session", sessionID})
 }
 
 // The answer as a run of the session with every fitting item of the place in its context and the duration of its turn
@@ -483,10 +491,8 @@ func (c hookCommand) record(
 	}
 	in.Continued = continued
 	in = c.hold.Drawn(in, shown, sessionProducer, sessionID)
-	input, err := json.Marshal(c.holdout.Drawn(in, sessionProducer, sessionID))
-	if err != nil {
-		return trace.Trace{}, err
-	}
+	// Refs, strings, flags and shares in [0, 1) always encode
+	input, _ := json.Marshal(c.holdout.Drawn(in, sessionProducer, sessionID))
 	tr, err := trace.NewRun(sessionProducer, "", labels, input, []byte(answer.text()), c.app.now())
 	if err != nil {
 		return trace.Trace{}, err
@@ -594,9 +600,7 @@ type sessionNote struct {
 	run string
 	// The verdict the reaction point recorded on that answer and empty when the conversation judges it
 	recorded feedback.Verdict
-	// Whether the first word named a choice of the question shown after that answer so the message judges nothing
-	reply bool
-	// The choice that word answered and empty when it recorded no answer
+	// The choice the first word named of the question shown after that answer so the message judges nothing
 	replied curate.Choice
 }
 
@@ -616,7 +620,7 @@ func (n sessionNote) text() string {
 	switch {
 	case n.replied != "":
 		return fmt.Sprintf(replyNote, n.replied)
-	case n.run == "", n.reply, n.recorded == feedback.VerdictApprove:
+	case n.run == "", n.recorded == feedback.VerdictApprove:
 		return ""
 	case n.recorded == feedback.VerdictReject:
 		return fmt.Sprintf(recordedNote, n.run)

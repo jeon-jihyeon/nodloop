@@ -15,7 +15,7 @@ type Point string
 const (
 	PointCritic   Point = "critic"   // the second reader of a drafted lesson
 	PointReaction Point = "reaction" // whether the user's message corrects or approves the previous answer
-	PointJudge    Point = "judge"    // whether the anchor lines of a place settle a change of curate and whether it goes against one
+	PointJudge    Point = "judge"    // whether the anchor of a place or the person's words settle a change of curate and whether it goes against them
 )
 
 func Points() []Point {
@@ -45,10 +45,14 @@ type Endpoint struct {
 	KeyEnv string `json:"key_env,omitempty"`
 }
 
+// A URL with a user or a password is refused since config.json and classifier list would keep it in the open
 func (e Endpoint) check() error {
 	u, err := url.Parse(e.URL)
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 		return fmt.Errorf("%w: %q is not an absolute http or https URL", ErrEndpointInvalid, e.URL)
+	}
+	if u.User != nil {
+		return ErrEndpointCredentials
 	}
 	return nil
 }

@@ -109,8 +109,7 @@ func (e *Extractor) Reaction(ctx context.Context, runID string) (Reaction, error
 	if err != nil {
 		return Reaction{}, err
 	}
-	records := feedback.RestoreAll(verdicts)
-	latest := slices.Concat(records.Human().Latest(), records.Inferred())
+	latest := feedback.RestoreAll(verdicts).Reconciled()
 	if len(latest) == 0 || !latest[0].Corrects() {
 		return Reaction{}, fmt.Errorf("%w: %s", ErrNotCorrected, runID)
 	}
@@ -225,7 +224,7 @@ func (r Reaction) review(ctx context.Context, critic Classifier, d Draft) (Attem
 	return a, err
 }
 
-// A critic that records its answers in a classify trace and names it, as the plan of a point does
+// A critic that records its answers in a classify trace and names it as the plan of a point does
 type Ruler interface {
 	Rule(ctx context.Context, req classify.Request) (classify.Ruling, error)
 }
@@ -414,7 +413,7 @@ func (r Reaction) String() string {
 	if len(r.Verdict.Edited) > 0 {
 		fmt.Fprintf(&b, "\n\n## Edited output\n\n%s", text(r.Verdict.Edited))
 	}
-	// Approved items first, then the candidates and then the retired versions with their retire reason
+	// Approved items first then the candidates and then the retired versions with their retire reason
 	// Each line names its status and who decided it so the drafter and the critic tell them apart
 	for _, part := range []struct {
 		title string

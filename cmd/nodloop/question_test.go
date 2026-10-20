@@ -218,6 +218,19 @@ func TestRunHookStopQuestionRules(t *testing.T) {
 		code := runIntervene([]string{"--payload", "-"}, b.getenv, b.now, trace.ProofNone, strings.NewReader(payload), &out, &stderr)
 		require.Equal(t, 0, code, stderr.String())
 	}
+	// Session s0 was asked the question and its person answered it, which curate.json still lists until the next pass
+	answered := func(t *testing.T, b questionBench) {
+		b.hook(t, "stop", "claude-code", strings.Replace(questionStop, "s1", "s0", 1), b.svc, noStart)
+		runs := b.traces(t, trace.NameRun)
+		iv, err := (app{cfg: config{recordDir: b.records}, now: b.now}).intervener()
+		require.NoError(t, err)
+		replied, err := iv.Reply(context.Background(), curate.Reply{Session: "s0", Run: runs[0].ID, Word: "keep", Person: unnamedPerson})
+		require.NoError(t, err)
+		require.NotEmpty(t, replied.Answer)
+	}
+	corrupt := func(t *testing.T, b questionBench) {
+		hookAppend(t, filepath.Join(b.records, "traces.jsonl"), "{\n")
+	}
 	tcs := []struct {
 		name string
 		args args
@@ -230,6 +243,8 @@ func TestRunHookStopQuestionRules(t *testing.T) {
 		{"a failed start asks nothing", args{questionStop, "svc", nil, func([]string) error { return errors.New("no process") }, nil}, want{"", "no process"}},
 		{"manual mode asks the proposal the session made", args{questionStop, "acme", map[string]string{envSession: "manual"}, noStart, propose},
 			want{"nodloop question for you\nOne decision for you: keep the lesson \"Name the failing test first\"\n", ""}},
+		{"a question another session answered asks nothing", args{questionStop, "svc", nil, noStart, answered}, want{"", ""}},
+		{"exposes that cannot be read ask nothing and say why", args{questionStop, "svc", nil, noStart, corrupt}, want{"", "corrupt"}},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
@@ -250,36 +265,29 @@ func TestRunHookStopQuestionRules(t *testing.T) {
 	}
 }
 
-// The first word of the next prompt that names a choice of the question is recorded as the person's answer and never judged
-// 1. the answer carries proof reply and the ledger record names it under approver of config.json or else person
-// 2. the prompt gets the reply note in place of the reaction note
-// 3. any other first word, another session and a prompt after another answer record nothing
+// The first word of the next prompt that names a choice of the question is never judged and records no answer
+// 1. the prompt gets the reply note in place of the reaction note
+// 2. any other first word, another session and a prompt after another answer get the notes as before
+// 3. any process can pipe a prompt into the hook so nothing it reads there decides for the person
 func TestRunHookPromptReply(t *testing.T) {
 	type args struct {
 		prompt string
 		// A turn the session took between the question and the prompt
 		between bool
 	}
-	type want struct {
-		answers  []string
-		statuses []string
-		note     string
-	}
-	waiting := []string{"k-add v1 candidate", "k-person v1 approved ann", "k-wide v1 candidate"}
 	tcs := []struct {
 		name string
 		args args
-		want want
+		want string
 	}{
 		{
-			"a reply word keeps the change under the person",
+			"a reply word gets the reply note and decides nothing",
 			args{`{"session_id":"s1","cwd":"{repo}","prompt":"Keep. And show the cluster list"}`, false},
-			want{[]string{"keep reply person"}, []string{"k-add v1 candidate", "k-person v1 approved ann", "k-wide v1 approved person"},
-				"nodloop: the user's first word keep answered the nodloop question and nodloop recorded it."},
+			"nodloop: the user's first word keep answers the nodloop question and nodloop records the answer after this turn.",
 		},
-		{"another first word answers nothing", args{`{"session_id":"s1","cwd":"{repo}","prompt":"show the cluster list"}`, false}, want{[]string{}, waiting, "nodloop: your previous answer"}},
-		{"another session answers nothing", args{`{"session_id":"s2","cwd":"{repo}","prompt":"keep"}`, false}, want{[]string{}, waiting, ""}},
-		{"a reply after another answer answers nothing", args{`{"session_id":"s1","cwd":"{repo}","prompt":"keep"}`, true}, want{[]string{}, waiting, "nodloop: your previous answer"}},
+		{"another first word gets the reaction note", args{`{"session_id":"s1","cwd":"{repo}","prompt":"show the cluster list"}`, false}, "nodloop: your previous answer"},
+		{"another session gets no note", args{`{"session_id":"s2","cwd":"{repo}","prompt":"keep"}`, false}, ""},
+		{"a reply after another answer gets the reaction note", args{`{"session_id":"s1","cwd":"{repo}","prompt":"keep"}`, true}, "nodloop: your previous answer"},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
@@ -296,9 +304,10 @@ func TestRunHookPromptReply(t *testing.T) {
 
 			_, added := hookOutput(t, []byte(out))
 			assert.Empty(t, stderr)
-			assert.Equal(t, tc.want.answers, questionAnswers(t, b))
-			assert.Equal(t, tc.want.statuses, curateStatuses(t, b.records))
-			assert.Contains(t, added, tc.want.note)
+			assert.Empty(t, questionAnswers(t, b))
+			assert.Equal(t, []string{"k-add v1 candidate", "k-person v1 approved ann", "k-wide v1 candidate"}, curateStatuses(t, b.records))
+			assert.Contains(t, added, tc.want)
+			assert.Equal(t, tc.want == "", added == "")
 		})
 	}
 }
@@ -315,14 +324,25 @@ func questionAnswers(t *testing.T, b questionBench) []string {
 	return out
 }
 
-// The answer of a reply word names the expose it answers and the ledger record names the answer
-func TestRunHookPromptReplyRecords(t *testing.T) {
+// The reply word the person typed is recorded by the capture of the turn from the transcript Claude Code keeps
+// The answer names the expose it answers and the ledger record names the answer under the person
+func TestRunHookReplyCaptured(t *testing.T) {
 	b := newQuestionBench(t, map[string]string{})
 	b.hook(t, "stop", "claude-code", questionStop, b.svc, noStart)
 	expose, _ := b.exposed(t)
+	b.hook(t, "prompt", "claude-code", `{"session_id":"s1","cwd":"{repo}","prompt":"keep, and show the cluster list"}`, b.svc, noStart)
+	dir := filepath.Join(b.getenv("HOME"), ".claude", "projects", "-work-svc")
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	path := filepath.Join(dir, "s1.jsonl")
+	typed := b.traces(t, trace.NameRun)[0].Time.Add(time.Second).Format(time.RFC3339Nano)
+	require.NoError(t, os.WriteFile(path, []byte(`{"type":"user","message":{"content":"keep, and show the cluster list"},"timestamp":"`+typed+`"}`+"\n"), 0o600))
+	require.Empty(t, b.traces(t, trace.NameAnswer), "the prompt hook records no answer")
+	var stdout, stderr bytes.Buffer
 
-	b.hook(t, "prompt", "claude-code", `{"session_id":"s1","cwd":"{repo}","prompt":"keep"}`, b.svc, noStart)
+	code := runSession([]string{"capture", "--session", "s1", "--transcript", path}, b.getenv, curateClient(t), b.now, noStart, &stdout, &stderr)
 
+	require.Equal(t, 0, code, stderr.String())
+	assert.Equal(t, []string{"keep reply person"}, questionAnswers(t, b))
 	answers := b.traces(t, trace.NameAnswer)
 	require.Len(t, answers, 1)
 	items, err := knowledgefile.New(b.records)
@@ -397,19 +417,112 @@ func TestRunHookStopQuestionFails(t *testing.T) {
 	}
 }
 
-// A prompt whose reply cannot be read reports why on stderr and records no answer
-// A corrupt line of the knowledge records leaves the items to the prompt and fails the read of the reply
-func TestRunHookPromptReplyFails(t *testing.T) {
-	b := newQuestionBench(t, nil)
-	stdout, _ := b.hook(t, "stop", "claude-code", questionStop, b.svc, noStart)
-	require.NotEmpty(t, stdout)
-	f, err := os.OpenFile(filepath.Join(b.records, "knowledge.jsonl"), os.O_APPEND|os.O_WRONLY, 0o600)
-	require.NoError(t, err)
-	_, err = f.WriteString("not json\n")
-	require.NoError(t, errors.Join(err, f.Close()))
+// A stop that curate.json and the exposes of its session leave nothing to show asks curate nothing and makes no key
+// So a broken key fails no such stop while it fails the first stop of a session that asks
+func TestRunHookStopAsksCurateOnlyWhenDue(t *testing.T) {
+	type args struct {
+		repo string
+		env  map[string]string
+		// The session asked its question at a stop before
+		asked bool
+	}
+	tcs := []struct {
+		name string
+		args args
+		want string
+	}{
+		{"the first stop of a session reaches curate", args{"svc", nil, false}, "nodloop hook: "},
+		{"a session that was asked its question does not", args{"svc", nil, true}, ""},
+		{"a place no question reaches does not", args{"work", nil, false}, ""},
+		{"a mode that pushes nothing does not", args{"svc", map[string]string{envSession: "manual"}, false}, ""},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			b := newQuestionBench(t, tc.args.env)
+			repo := map[string]string{"svc": b.svc, "work": b.work}[tc.args.repo]
+			if tc.args.asked {
+				stdout, _ := b.hook(t, "stop", "claude-code", questionStop, repo, noStart)
+				require.NotEmpty(t, stdout)
+			}
+			key := filepath.Join(b.records, "hmac.key")
+			require.NoError(t, os.RemoveAll(key))
+			require.NoError(t, os.Mkdir(key, 0o700))
 
-	_, stderr := b.hook(t, "prompt", "claude-code", `{"session_id":"s1","cwd":"{repo}","prompt":"keep"}`, b.svc, noStart)
+			stdout, stderr := b.hook(t, "stop", "claude-code", questionStop, repo, noStart)
 
-	assert.Contains(t, stderr, "nodloop hook: ")
-	assert.Empty(t, questionAnswers(t, b))
+			assert.Empty(t, stdout)
+			assert.Contains(t, stderr, tc.want)
+			assert.Equal(t, tc.want == "", stderr == "")
+		})
+	}
+}
+
+// What the exposes of a session tell a hook before it asks curate
+// 1. a typed word answers a question the stop asked after the run it followed, case and trailing punctuation ignored
+// 2. a pushed question spends the one question of the session and a proposal the person asked for does not
+// 3. a notice is the one notice of the session
+func TestSessionExposes(t *testing.T) {
+	expose := func(kind curate.QuestionKind, source trace.Source, run string) trace.Trace {
+		in := `{"kind":"` + string(kind) + `","run":"` + run + `","choices":["keep","drop"]}`
+		return trace.Trace{Name: trace.NameExpose, Subject: string(kind), Source: source, Input: json.RawMessage(in)}
+	}
+	type args struct {
+		shown sessionExposes
+		run   string
+		word  string
+	}
+	type want struct {
+		asked, pushed, noticed bool
+		named                  curate.Choice
+	}
+	tcs := []struct {
+		name string
+		args args
+		want want
+	}{
+		{"a question pushed after the run", args{sessionExposes{expose(curate.QuestionDirection, trace.SourcePush, "r1")}, "r1", "Keep,"}, want{true, true, false, "keep"}},
+		{"a question after another run", args{sessionExposes{expose(curate.QuestionAudit, trace.SourcePush, "r2")}, "r1", "keep"}, want{false, true, false, ""}},
+		{"a word that names no choice", args{sessionExposes{expose(curate.QuestionDirection, trace.SourcePush, "r1")}, "r1", "maybe"}, want{true, true, false, ""}},
+		{"a proposal the person asked for", args{sessionExposes{expose(curate.QuestionDirection, trace.SourceManual, "r1")}, "r1", "drop"}, want{true, false, false, "drop"}},
+		{"a notice", args{sessionExposes{expose(curate.QuestionNotice, trace.SourcePush, "r1")}, "r1", "keep"}, want{false, false, true, ""}},
+		{"an input that does not decode", args{sessionExposes{{Name: trace.NameExpose, Input: json.RawMessage(`"x"`)}}, "r1", "keep"}, want{false, false, false, ""}},
+		{"no expose", args{nil, "r1", "keep"}, want{}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := want{tc.args.shown.asked(tc.args.run), tc.args.shown.pushed(), tc.args.shown.noticed(), tc.args.shown.named(tc.args.run, tc.args.word)}
+			assert.Equal(t, tc.want, got)
+		})
+	}
+}
+
+// What curate.json leaves due for the stop of a session in a place
+// 1. a proposal is due only in the session that made it
+// 2. a question curate pushes is due where its place admits the place of the stop and everywhere without a place
+func TestDueQuestions(t *testing.T) {
+	acme := knowledge.RunScope{Producer: sessionProducer, Labels: trace.Labels{"repo": {"acme"}}}
+	place := knowledge.RunScope{Producer: sessionProducer, Labels: trace.Labels{"repo": {"acme"}, "dir": {"."}}}
+	type want struct {
+		proposed, reaching bool
+	}
+	tcs := []struct {
+		name string
+		args dueQuestions
+		want want
+	}{
+		{"a proposal of the session", dueQuestions{{Proposal: "i1", Session: "s1"}}, want{true, false}},
+		{"a proposal of another session", dueQuestions{{Proposal: "i1", Session: "s2"}}, want{false, false}},
+		{"a question of the place", dueQuestions{{Place: &acme}}, want{false, true}},
+		{"a question of every place", dueQuestions{{}}, want{false, true}},
+		{"a question of another place", dueQuestions{{Place: &knowledge.RunScope{Producer: sessionProducer, Labels: trace.Labels{"repo": {"svc"}}}}}, want{false, false}},
+		{"nothing due", nil, want{}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.want, want{tc.args.proposed("s1"), tc.args.reaching(place)})
+		})
+	}
 }

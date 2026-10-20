@@ -132,7 +132,7 @@ func (c *Consolidator) consolidate(ctx context.Context, producer string, cluster
 		dropped = append(dropped, refused...)
 	}
 	failed := errors.Join(calls...)
-	return res, errors.Join(failed, c.record(ctx, producer, in, res, errors.Join(failed, errors.Join(dropped...)), meter.Take(), start))
+	return res, errors.Join(failed, c.record(ctx, producer, in, res, errors.Join(slices.Concat(calls, dropped)...), meter.Take(), start))
 }
 
 // The groups the model found in the cluster
@@ -197,14 +197,9 @@ func (cl cluster) checkGroup(g Group, taken map[knowledge.Ref]bool) error {
 
 // Appends the consolidate trace of the producer
 func (c *Consolidator) record(ctx context.Context, producer string, in TraceInput, res Result, failed error, spent llm.Response, start time.Time) error {
-	input, err := json.Marshal(in)
-	if err != nil {
-		return err
-	}
-	output, err := json.Marshal(res)
-	if err != nil {
-		return err
-	}
+	// Refs, counts and the reasons of the groups always encode
+	input, _ := json.Marshal(in)
+	output, _ := json.Marshal(res)
 	now := c.now()
 	tr := trace.Trace{
 		ID: trace.NewID(now), Name: trace.NameConsolidate, Subject: producer, Time: now, Model: cmp.Or(spent.Model, c.model),

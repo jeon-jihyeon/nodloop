@@ -367,7 +367,7 @@ func TestRunHookPromptModes(t *testing.T) {
 				_, _ = w.Write([]byte(`{"answers":{"corrects":{"noul":0.95},"approves":{"noul":0.05}}}`))
 			}))
 			t.Cleanup(srv.Close)
-			require.Equal(t, 0, runClassifier([]string{"set", "reaction", "--url", srv.URL}, getenv, now, &bytes.Buffer{}, &bytes.Buffer{}))
+			require.Equal(t, 0, runClassifier([]string{"set", "reaction", "--url", srv.URL}, getenv, now, atTerminal, &bytes.Buffer{}, &bytes.Buffer{}))
 		},
 	}
 	for _, tc := range tcs {
@@ -742,6 +742,9 @@ func hookFixture(t *testing.T, stdin, repo string) string {
 }
 
 // The stop hook starts the capture of the person's words on the transcript it names and drafts nothing itself
+// 1. a transcript of Claude Code is read in every mode and after a turn a stop hook continued
+// 2. without one the capture reads no message and extracts the answer the turn followed, only after an answer of a mode that infers
+// 3. a Codex transcript is in a format the capture cannot read so a Codex stop starts the capture without it
 func TestRunHookStopCapture(t *testing.T) {
 	type args struct {
 		// The hook input with {repo} for the repository of the approved item
@@ -755,37 +758,42 @@ func TestRunHookStopCapture(t *testing.T) {
 	}
 	type want struct {
 		// Runs of the session recorded
-		runs     int
-		captures bool
-		stderr   string
+		runs int
+		// The arguments of the capture after session capture and none when it started none
+		capture []string
+		stderr  string
 	}
 	stop := `{"session_id":"s1","cwd":"{repo}","last_assistant_message":"done","transcript_path":"/work/s1.jsonl"}`
+	read := []string{"--session", "s1", "--transcript", "/work/s1.jsonl"}
+	untranscribed := []string{"--session", "s1"}
+	none := strings.Replace(stop, `"/work/s1.jsonl"`, `""`, 1)
+	continued := `"done","stop_hook_active":true`
 	tcs := []struct {
 		name string
 		args args
 		want want
 	}{
-		{"a stop with a transcript starts the capture of its session", args{stdin: stop}, want{runs: 1, captures: true}},
-		{
-			"a stop of a turn a stop hook continued starts it too",
-			args{stdin: strings.Replace(stop, `"done"`, `"done","stop_hook_active":true`, 1)},
-			want{runs: 1, captures: true},
-		},
-		{"manual starts the capture for the answers to its questions", args{stdin: stop, session: "manual"}, want{runs: 1, captures: true}},
-		{"immediate of an earlier release starts it like deferred", args{stdin: stop, session: "immediate"}, want{runs: 1, captures: true}},
-		{"a stop without a transcript starts none", args{stdin: strings.Replace(stop, `"/work/s1.jsonl"`, `""`, 1)}, want{runs: 1}},
+		{"a stop with a transcript starts the capture of its session", args{stdin: stop}, want{runs: 1, capture: read}},
+		{"a stop of a turn a stop hook continued starts it too", args{stdin: strings.Replace(stop, `"done"`, continued, 1)}, want{runs: 1, capture: read}},
+		{"manual starts the capture for the answers to its questions", args{stdin: stop, session: "manual"}, want{runs: 1, capture: read}},
+		{"immediate of an earlier release starts it like deferred", args{stdin: stop, session: "immediate"}, want{runs: 1, capture: read}},
+		{"a stop without a transcript starts the capture of the answer its turn followed", args{stdin: none}, want{runs: 1, capture: untranscribed}},
+		{"a continued stop without a transcript starts none", args{stdin: strings.Replace(none, `"done"`, continued, 1)}, want{runs: 1}},
+		{"manual without a transcript starts none since it extracts nothing", args{stdin: none, session: "manual"}, want{runs: 1}},
 		{"a stop without a session starts none", args{stdin: strings.Replace(stop, `"s1"`, `""`, 1)}, want{}},
-		{"a codex stop with a null transcript starts none", args{stdin: strings.Replace(stop, `"/work/s1.jsonl"`, "null", 1), host: "codex"}, want{runs: 1}},
+		{"a Codex stop with a null transcript starts it without one", args{stdin: "codex_stop.json", host: "codex"}, want{runs: 1, capture: untranscribed}},
+		{"a Codex stop with a transcript starts it without one", args{stdin: stop, host: "codex"}, want{runs: 1, capture: untranscribed}},
+		{"a Cursor stop records no run and starts none", args{stdin: "cursor_stop.json", host: "cursor"}, want{}},
 		{"an empty answer starts nothing", args{stdin: strings.Replace(stop, `"done"`, `""`, 1)}, want{}},
 		{
 			"a failed start is printed and the answer is still recorded",
 			args{stdin: stop, startErr: errors.New("no process")},
-			want{runs: 1, captures: true, stderr: "nodloop hook: no process"},
+			want{runs: 1, capture: read, stderr: "nodloop hook: no process"},
 		},
 		{
 			"an answer that fails to record still starts the capture",
 			args{stdin: stop, mode: 0o400},
-			want{captures: true, stderr: "permission denied"},
+			want{capture: read, stderr: "permission denied"},
 		},
 	}
 	for _, tc := range tcs {
@@ -798,19 +806,18 @@ func TestRunHookStopCapture(t *testing.T) {
 			getenv := func(k string) string {
 				return map[string]string{"HOME": home, envRecordDir: records, envSession: tc.args.session}[k]
 			}
-			var started [][]string
-			start := besideCurate(func(args []string) error {
-				started = append(started, args)
+			var captures [][]string
+			start := func(args []string) error {
+				if args[0] == "session" {
+					captures = append(captures, args[2:])
+				}
 				return tc.args.startErr
-			})
-			require.NoError(t, os.Chmod(filepath.Join(records, "traces.jsonl"), cmp.Or(tc.args.mode, 0o600)))
-			hook := []string{"stop"}
-			if tc.args.host != "" {
-				hook = append(hook, "--host", tc.args.host)
 			}
+			require.NoError(t, os.Chmod(filepath.Join(records, "traces.jsonl"), cmp.Or(tc.args.mode, 0o600)))
+			hook := []string{"stop", "--host", cmp.Or(tc.args.host, "claude-code")}
 			var stderr bytes.Buffer
 
-			code := runHook(hook, getenv, start, hookClock(), strings.NewReader(strings.ReplaceAll(tc.args.stdin, "{repo}", repo)), &bytes.Buffer{}, &stderr)
+			code := runHook(hook, getenv, start, hookClock(), strings.NewReader(hookFixture(t, tc.args.stdin, repo)), &bytes.Buffer{}, &stderr)
 
 			assert.Equal(t, 0, code)
 			assert.Contains(t, stderr.String(), tc.want.stderr)
@@ -820,8 +827,7 @@ func TestRunHookStopCapture(t *testing.T) {
 			runs, err := store.List(context.Background(), record.TraceFilter{Name: string(trace.NameRun), SessionID: "s1"})
 			require.NoError(t, err)
 			assert.Len(t, runs, tc.want.runs)
-			captured := map[bool][][]string{true: {{"session", "capture", "--session", "s1", "--transcript", "/work/s1.jsonl"}}}[tc.want.captures]
-			assert.Equal(t, captured, started)
+			assert.Equal(t, map[bool][][]string{true: {tc.want.capture}}[tc.want.capture != nil], captures)
 		})
 	}
 }
@@ -861,7 +867,7 @@ func TestRunReportLoop(t *testing.T) {
 			[]string{"loop"},
 			want{stdout: "window\tall\nloop\truns 2\tjudged 1\tnamed 0\tinferred 0\tcorrected 0\twaiting 0\tapproved 1\n" +
 				"scope\tunknown\titems 1\tsingle session 0\tnever applied 0\n" +
-				"git-c\tv1\tapplied 1\tfollowed 1 of 1\trepeat 0\tnamed followed 0 of 0\tnamed repeat 0\tinferred followed 0 of 0\tinferred repeat 0\tsettle -\n" +
+				"git-c\tv1\tapplied 1\tfollowed 1 of 1\trepeat 0\tnamed followed 0 of 0\tnamed repeat 0\tinferred followed 0 of 0\tinferred repeat 0\tsettle -\tapprover ann\n" +
 				"misapplied\tnot measured: no label says which runs an item should have reached\n"},
 		},
 		{
@@ -869,7 +875,7 @@ func TestRunReportLoop(t *testing.T) {
 			[]string{"loop", "--json"},
 			want{stdout: `{"totals":{"runs":2,"judged":1,"named":0,"inferred":0,"corrected":0,"waiting":0,"approved":1},` +
 				`"scopes":[{"version":"unknown","items":1,"single_session":0,"never_applied":0}],"drafts":[],` +
-				`"items":[{"id":"git-c","version":1,"applied":1,"judged":1,"followed":1,"repeat":0,` +
+				`"items":[{"id":"git-c","version":1,"approver":"ann","applied":1,"judged":1,"followed":1,"repeat":0,` +
 				`"named_judged":0,"named_followed":0,"named_repeat":0,` +
 				`"inferred_judged":0,"inferred_followed":0,"inferred_repeat":0,"settle_ns":0}]}` + "\n"},
 		},
@@ -1113,7 +1119,7 @@ func TestHookItemsContextNote(t *testing.T) {
 	}{
 		{"no items leaves the note alone", nil, want{note: true}},
 		{"a small item leaves room", item(100), want{note: true, lead: true}},
-		{"an item at the prompt cap leaves none", item(promptRunes - 250), want{lead: true}},
+		{"an item at the prompt cap leaves none", item(promptRunes - len([]rune(knowledge.PromptLead+"- [a v1 judgment] \n"))), want{lead: true}},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1481,7 +1487,7 @@ func TestRunHookReaction(t *testing.T) {
 			getenv := func(k string) string { return map[string]string{"HOME": home, envRecordDir: records}[k] }
 			now := hookClock()
 			var setStderr bytes.Buffer
-			require.Equal(t, 0, runClassifier([]string{"set", "reaction", "--url", srv.URL}, getenv, now, &bytes.Buffer{}, &setStderr), setStderr.String())
+			require.Equal(t, 0, runClassifier([]string{"set", "reaction", "--url", srv.URL}, getenv, now, atTerminal, &bytes.Buffer{}, &setStderr), setStderr.String())
 			run := hookPromptSetup(t, getenv, now, repo, true, false, false)
 			stdin := `{"session_id":"s1","cwd":"` + repo + `","prompt":"` + message + `"}`
 			var stdout, stderr bytes.Buffer
@@ -1538,7 +1544,7 @@ func TestRunHookContinued(t *testing.T) {
 			getenv := func(k string) string { return map[string]string{"HOME": home, envRecordDir: records}[k] }
 			now := hookClock()
 			var setStderr bytes.Buffer
-			require.Equal(t, 0, runClassifier([]string{"set", "reaction", "--url", srv.URL}, getenv, now, &bytes.Buffer{}, &setStderr), setStderr.String())
+			require.Equal(t, 0, runClassifier([]string{"set", "reaction", "--url", srv.URL}, getenv, now, atTerminal, &bytes.Buffer{}, &setStderr), setStderr.String())
 			for i, continued := range tc.args {
 				stdin := fmt.Sprintf(`{"session_id":"s1","cwd":%q,"last_assistant_message":"answer %d","stop_hook_active":%t}`, repo, i, continued)
 				require.Equal(t, 0, runHook([]string{"stop"}, getenv, noStart, now, strings.NewReader(stdin), &bytes.Buffer{}, &bytes.Buffer{}))

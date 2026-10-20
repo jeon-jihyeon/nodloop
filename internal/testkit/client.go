@@ -70,13 +70,18 @@ func (c Client) Text(t *testing.T, name string, args any) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	return joinedText(res), nil
+}
+
+// The text contents of a result joined by a space
+func joinedText(res *sdk.CallToolResult) string {
 	var texts []string
 	for _, content := range res.Content {
 		if text, ok := content.(*sdk.TextContent); ok {
 			texts = append(texts, text.Text)
 		}
 	}
-	return strings.Join(texts, " "), nil
+	return strings.Join(texts, " ")
 }
 
 // A tool error result returns ErrTool with the text content as message
@@ -89,25 +94,19 @@ func (c Client) call(t *testing.T, name string, args any) (*sdk.CallToolResult, 
 // A tool error result returns ErrTool with the text content as message
 func (c Client) CallParams(t *testing.T, params *sdk.CallToolParams) (*sdk.CallToolResult, error) {
 	t.Helper()
-	name := params.Name
 	res, err := c.session.CallTool(t.Context(), params)
-	require.NoError(t, err, "%s: protocol error", name)
+	require.NoError(t, err, "%s: protocol error", params.Name)
 	if !res.IsError {
 		return res, nil
 	}
-	var texts []string
-	for _, content := range res.Content {
-		if text, ok := content.(*sdk.TextContent); ok {
-			texts = append(texts, text.Text)
-		}
-	}
-	return nil, fmt.Errorf("%w: %s", ErrTool, strings.Join(texts, " "))
+	return nil, fmt.Errorf("%w: %s", ErrTool, joinedText(res))
 }
 
 func (c Client) Tools(t *testing.T) []string {
 	t.Helper()
-	names := make([]string, 0)
-	for _, tool := range c.listed(t) {
+	tools := c.listed(t)
+	names := make([]string, 0, len(tools))
+	for _, tool := range tools {
 		names = append(names, tool.Name)
 	}
 	return names

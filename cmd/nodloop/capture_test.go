@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -10,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -156,13 +158,21 @@ func newCaptureBench(t *testing.T, stops []captureStop, env map[string]string) c
 	return b
 }
 
-// A copy of a transcript of testdata/transcripts the capture can read
-func transcriptCopy(t *testing.T, name string) string {
+// Where Claude Code keeps the transcript of session s1 of a checkout under the home of the bench
+func (b captureBench) transcriptPath(t *testing.T) string {
 	t.Helper()
-	b, err := os.ReadFile(filepath.Join("testdata", "transcripts", name))
+	dir := filepath.Join(b.getenv("HOME"), ".claude", "projects", "-work-acme")
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	return filepath.Join(dir, "s1.jsonl")
+}
+
+// A copy of a transcript of testdata/transcripts where Claude Code keeps the transcript of session s1
+func (b captureBench) transcript(t *testing.T, name string) string {
+	t.Helper()
+	content, err := os.ReadFile(filepath.Join("testdata", "transcripts", name))
 	require.NoError(t, err)
-	path := filepath.Join(t.TempDir(), name)
-	require.NoError(t, os.WriteFile(path, b, 0o600))
+	path := b.transcriptPath(t)
+	require.NoError(t, os.WriteFile(path, content, 0o600))
 	return path
 }
 
@@ -373,7 +383,7 @@ func TestRunSessionCapture(t *testing.T) {
 			b := newCaptureBench(t, tc.args.stops, map[string]string{envSession: tc.args.mode})
 			client, calls := captureClient(t, tc.args.reaction, nil)
 
-			code, stdout, stderr := b.capture(t, client, transcriptCopy(t, tc.args.transcript), captureDay.Add(80*time.Second))
+			code, stdout, stderr := b.capture(t, client, b.transcript(t, tc.args.transcript), captureDay.Add(80*time.Second))
 
 			require.Equal(t, 0, code, stderr)
 			assert.Equal(t, tc.want.verdicts, b.verdicts(t))
@@ -416,7 +426,7 @@ func TestRunSessionCaptureManual(t *testing.T) {
 			b := newCaptureBench(t, twoStops, map[string]string{envSession: tc.args})
 			client, calls := captureClient(t, sureReject, nil)
 
-			code, stdout, stderr := b.capture(t, client, transcriptCopy(t, "correction.jsonl"), captureDay.Add(80*time.Second))
+			code, stdout, stderr := b.capture(t, client, b.transcript(t, "correction.jsonl"), captureDay.Add(80*time.Second))
 
 			require.Equal(t, 0, code, stderr)
 			assert.Equal(t, tc.want.stdout, stdout)
@@ -436,7 +446,7 @@ func TestRunSessionCaptureOffset(t *testing.T) {
 	rest := strings.Join(lines[7:], "")
 	b := newCaptureBench(t, twoStops, nil)
 	client, calls := captureClient(t, sureReject, nil)
-	path := filepath.Join(t.TempDir(), "s1.jsonl")
+	path := b.transcriptPath(t)
 	write := func(content string) {
 		f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 		require.NoError(t, err)
@@ -500,7 +510,7 @@ func TestRunSessionCaptureFirst(t *testing.T) {
 			}
 			client, calls := captureClient(t, sureNeither, nil)
 
-			code, _, stderr := b.capture(t, client, transcriptCopy(t, "correction.jsonl"), captureDay.Add(80*time.Second))
+			code, _, stderr := b.capture(t, client, b.transcript(t, "correction.jsonl"), captureDay.Add(80*time.Second))
 
 			require.Equal(t, 0, code, stderr)
 			_, out := b.captured(t)
@@ -566,7 +576,7 @@ func TestRunSessionCaptureExtracts(t *testing.T) {
 			}
 			client, calls := captureClient(t, tc.args.reaction, nil)
 
-			code, stdout, stderr := b.capture(t, client, transcriptCopy(t, "correction.jsonl"), captureDay.Add(80*time.Second))
+			code, stdout, stderr := b.capture(t, client, b.transcript(t, "correction.jsonl"), captureDay.Add(80*time.Second))
 
 			require.Equal(t, 0, code, stderr)
 			assert.Equal(t, tc.want.extracts, strings.Contains(stdout, "extract\t"+b.runs[0]+"\n"), stdout)
@@ -577,12 +587,87 @@ func TestRunSessionCaptureExtracts(t *testing.T) {
 	}
 }
 
+// A capture with no transcript, as the stop of Codex starts it, reads no message and records no capture trace
+// 1. it extracts the answer the newest turn followed when the verdict the conversation recorded corrects it and runs the curate pass
+// 2. no turn, an approve, a mode that infers nothing and traces that cannot be read extract nothing
+// 3. a corrupt line of the traces is reported and the rest is read
+func TestRunSessionCaptureWithoutTranscript(t *testing.T) {
+	type args struct {
+		verdict string
+		// The turn of the session starts between the two answers
+		turn bool
+		mode string
+		// A line of the traces that does not decode or traces.jsonl as a directory
+		corrupt, unreadable bool
+		// knowledge.jsonl as a directory
+		knowledgeDir bool
+	}
+	type want struct {
+		code   int
+		stderr string
+		// The extraction of the answer starts and the drafter drafts its lesson
+		follows, drafts bool
+	}
+	tcs := []struct {
+		name string
+		args args
+		want want
+	}{
+		{"a correction the conversation recorded on the answer the turn followed", args{verdict: "reject", turn: true}, want{0, "", true, true}},
+		{"no turn follows nothing", args{verdict: "reject"}, want{0, "", false, false}},
+		{"an approve extracts nothing", args{verdict: "approve", turn: true}, want{0, "", false, false}},
+		{"manual extracts nothing", args{verdict: "reject", turn: true, mode: "manual"}, want{0, "", false, false}},
+		{"a corrupt line is reported and the rest is read", args{verdict: "reject", turn: true, corrupt: true}, want{1, "corrupt", true, false}},
+		{"traces that cannot be read fail", args{verdict: "reject", turn: true, unreadable: true}, want{1, "trace", false, false}},
+		{"knowledge that cannot be read fails", args{verdict: "reject", turn: true, knowledgeDir: true}, want{1, "knowledge", false, false}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			b := newCaptureBench(t, twoStops, map[string]string{envSession: tc.args.mode})
+			at := func() time.Time { return captureDay.Add(75 * time.Second) }
+			var stderr bytes.Buffer
+			flags := []string{"add", "--trace", b.runs[0], "--verdict", tc.args.verdict, "--reason", "too long", "--reviewer", "session"}
+			require.Equal(t, 0, runFeedback(flags, b.getenv, at, trace.ProofNone, &bytes.Buffer{}, &stderr), stderr.String())
+			store, err := tracefile.New(b.records)
+			require.NoError(t, err)
+			if tc.args.turn {
+				started := captureDay.Add(30 * time.Second)
+				turn := trace.Trace{ID: trace.NewID(started), Name: trace.NameTurn, SessionID: "s1", Time: started, Input: json.RawMessage(`{}`)}
+				require.NoError(t, store.Append(context.Background(), turn.Record()))
+			}
+			if tc.args.corrupt {
+				hookAppend(t, filepath.Join(b.records, "traces.jsonl"), "{\n")
+			}
+			for file, dir := range map[string]bool{"traces.jsonl": tc.args.unreadable, "knowledge.jsonl": tc.args.knowledgeDir} {
+				if dir {
+					require.NoError(t, os.RemoveAll(filepath.Join(b.records, file)))
+					require.NoError(t, os.Mkdir(filepath.Join(b.records, file), 0o755))
+				}
+			}
+			client, calls := captureClient(t, sureNeither, nil)
+			var stdout bytes.Buffer
+			stderr.Reset()
+
+			code := runSession([]string{"capture", "--session", "s1"}, b.getenv, client, func() time.Time { return captureDay.Add(80 * time.Second) }, noStart,
+				&stdout, &stderr)
+
+			assert.Equal(t, tc.want.code, code, stderr.String())
+			assert.Contains(t, stderr.String(), tc.want.stderr)
+			assert.Equal(t, tc.want.follows, strings.Contains(stdout.String(), "extract\t"+b.runs[0]+"\n"), stdout.String())
+			assert.Equal(t, tc.want.drafts, calls.draft == 1)
+			assert.Zero(t, calls.reaction)
+			assert.Empty(t, b.traces(t, trace.NameCapture))
+		})
+	}
+}
+
 // An extraction that fails prints why and leaves the curate pass out since it proposed nothing
 func TestRunSessionCaptureExtractFails(t *testing.T) {
 	b := newCaptureBench(t, twoStops, nil)
 	client, calls := draftingClient(t, sureReject, nil, `"no draft"`)
 
-	code, stdout, stderr := b.capture(t, client, transcriptCopy(t, "correction.jsonl"), captureDay.Add(80*time.Second))
+	code, stdout, stderr := b.capture(t, client, b.transcript(t, "correction.jsonl"), captureDay.Add(80*time.Second))
 
 	require.Equal(t, 0, code, stderr)
 	assert.Contains(t, stdout, "extract\t"+b.runs[0]+"\tnot extracted: ")
@@ -596,7 +681,7 @@ func TestRunSessionCaptureSignal(t *testing.T) {
 	b := newCaptureBench(t, twoStops, nil)
 	client, calls := captureClient(t, `{"corrects":0.1,"approves":0.05,"stops_git-c_v1":0.97}`, nil)
 
-	code, stdout, stderr := b.capture(t, client, transcriptCopy(t, "stops.jsonl"), captureDay.Add(80*time.Second))
+	code, stdout, stderr := b.capture(t, client, b.transcript(t, "stops.jsonl"), captureDay.Add(80*time.Second))
 
 	require.Equal(t, 0, code, stderr)
 	assert.Zero(t, calls.draft)
@@ -622,7 +707,7 @@ func TestRunSessionCaptureWords(t *testing.T) {
 		`{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Added a log line."}]},"timestamp":"2026-10-13T09:00:05.000Z"}`,
 		`{"type":"user","message":{"role":"user","content":` + string(content) + `},"timestamp":"2026-10-13T09:01:00.000Z"}`,
 	}, "\n") + "\n"
-	path := filepath.Join(t.TempDir(), "s1.jsonl")
+	path := b.transcriptPath(t)
 	require.NoError(t, os.WriteFile(path, []byte(transcript), 0o600))
 	client, _ := captureClient(t, sureReject, nil)
 
@@ -678,7 +763,7 @@ func TestRunSessionCaptureFails(t *testing.T) {
 	}{
 		{"no action fails", args{args: []string{}}, want{1, "an action is required", false}},
 		{"an unknown action fails with the usage", args{args: []string{"replay"}}, want{1, "unknown action \"replay\"", false}},
-		{"no session fails", args{args: []string{"capture", "--transcript", "x"}}, want{1, "--session and --transcript is required", false}},
+		{"no session fails", args{args: []string{"capture", "--transcript", "x"}}, want{1, "--session is required", false}},
 		{"an unknown flag fails", args{args: []string{"capture", "--nope"}}, want{1, "flag provided but not defined", false}},
 		{"an unknown session mode fails", args{env: map[string]string{envSession: "always"}}, want{1, "unknown session mode", false}},
 		{"a transcript that does not exist fails", args{args: []string{"capture", "--session", "s1", "--transcript", "missing.jsonl"}}, want{1, "missing.jsonl", false}},
@@ -692,6 +777,7 @@ func TestRunSessionCaptureFails(t *testing.T) {
 		{"a record directory below a file fails", args{underFile: true}, want{1, "not a directory", false}},
 		{"traces that cannot be read fail", args{dirs: []string{"traces.jsonl"}}, want{1, "trace", false}},
 		{"a key that cannot seal the person's words fails", args{key: "short"}, want{1, "key", false}},
+		{"a curate pass that cannot hold its mark fails after the read", args{dirs: []string{curate.MarkFile}}, want{1, "mark", true}},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
@@ -734,7 +820,7 @@ func TestRunSessionCaptureFails(t *testing.T) {
 			client, _ := captureClient(t, sureReject, fails)
 			args := tc.args.args
 			if args == nil {
-				args = []string{"capture", "--session", "s1", "--transcript", transcriptCopy(t, "correction.jsonl")}
+				args = []string{"capture", "--session", "s1", "--transcript", b.transcript(t, "correction.jsonl")}
 			}
 			var stdout, stderr bytes.Buffer
 
@@ -743,6 +829,85 @@ func TestRunSessionCaptureFails(t *testing.T) {
 			assert.Equal(t, tc.want.code, code, stderr.String())
 			assert.Contains(t, stderr.String(), tc.want.stderr)
 			assert.Equal(t, tc.want.captured, len(b.traces(t, trace.NameCapture)) == 1)
+		})
+	}
+}
+
+// The capture reads only the transcript Claude Code keeps for the session so no command an agent runs can name a file of its own
+// 1. <projects>/<project>/<session>.jsonl under .claude of home, or under CLAUDE_CONFIG_DIR when it is set
+// 2. any other file is refused before anything is read or recorded
+func TestRunSessionCaptureTranscript(t *testing.T) {
+	type args struct {
+		// The path below home the transcript is written to
+		path string
+		// A link below home to the transcript in place of the transcript itself and none when empty
+		link string
+		// CLAUDE_CONFIG_DIR below home and none when empty
+		config string
+		// The transcript is never written
+		missing bool
+	}
+	type want struct {
+		code     int
+		stderr   string
+		captured bool
+	}
+	tcs := []struct {
+		name string
+		args args
+		want want
+	}{
+		{"the transcript of the session is read", args{path: ".claude/projects/-work-acme/s1.jsonl"}, want{0, "", true}},
+		{"the transcript under CLAUDE_CONFIG_DIR is read", args{path: "config/projects/-work-acme/s1.jsonl", config: "config"}, want{0, "", true}},
+		{"a file outside the projects folder is refused", args{path: "notes/s1.jsonl"}, want{1, errTranscriptForeign.Error(), false}},
+		{"the transcript of another session is refused", args{path: ".claude/projects/-work-acme/s2.jsonl"}, want{1, errTranscriptForeign.Error(), false}},
+		{"a file below a project folder is refused", args{path: ".claude/projects/-work-acme/s1/s1.jsonl"}, want{1, errTranscriptForeign.Error(), false}},
+		{
+			"a link in the projects folder to a file outside it is refused",
+			args{path: "notes/s1.jsonl", link: ".claude/projects/-work-acme/s1.jsonl"}, want{1, errTranscriptForeign.Error(), false},
+		},
+		{
+			"the projects folder of home is refused while CLAUDE_CONFIG_DIR names another",
+			args{path: ".claude/projects/-work-acme/s1.jsonl", config: "config"}, want{1, errTranscriptForeign.Error(), false},
+		},
+		{"a transcript of the session that is not there yet fails at its read", args{path: ".claude/projects/-work-acme/s1.jsonl", missing: true}, want{1, "s1.jsonl", false}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			env := map[string]string{}
+			if tc.args.link != "" && runtime.GOOS == "windows" {
+				t.Skip("a link needs a privilege on windows")
+			}
+			b := newCaptureBench(t, twoStops, nil)
+			home := b.getenv("HOME")
+			if tc.args.config != "" {
+				env[envClaudeConfigDir] = filepath.Join(home, tc.args.config)
+			}
+			content, err := os.ReadFile(filepath.Join("testdata", "transcripts", "correction.jsonl"))
+			require.NoError(t, err)
+			path := filepath.Join(home, tc.args.path)
+			require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+			if !tc.args.missing {
+				require.NoError(t, os.WriteFile(path, content, 0o600))
+			}
+			if tc.args.link != "" {
+				link := filepath.Join(home, tc.args.link)
+				require.NoError(t, os.MkdirAll(filepath.Dir(link), 0o755))
+				require.NoError(t, os.Symlink(path, link))
+				path = link
+			}
+			client, _ := captureClient(t, sureReject, nil)
+			getenv := func(k string) string { return cmp.Or(env[k], b.getenv(k)) }
+			var stdout, stderr bytes.Buffer
+
+			code := runSession([]string{"capture", "--session", "s1", "--transcript", path}, getenv, client, func() time.Time { return captureDay.Add(80 * time.Second) },
+				noStart, &stdout, &stderr)
+
+			assert.Equal(t, tc.want.code, code, stderr.String())
+			assert.Contains(t, stderr.String(), tc.want.stderr)
+			assert.Equal(t, tc.want.captured, len(b.traces(t, trace.NameCapture)) == 1)
+			assert.Equal(t, tc.want.captured, len(b.verdicts(t)) == 1)
 		})
 	}
 }
@@ -770,10 +935,10 @@ func TestRunSessionCaptureEndpoint(t *testing.T) {
 			t.Cleanup(srv.Close)
 			b := newCaptureBench(t, twoStops, nil)
 			var stderr bytes.Buffer
-			require.Equal(t, 0, runClassifier([]string{"set", "reaction", "--url", srv.URL}, b.getenv, time.Now, &bytes.Buffer{}, &stderr), stderr.String())
+			require.Equal(t, 0, runClassifier([]string{"set", "reaction", "--url", srv.URL}, b.getenv, time.Now, atTerminal, &bytes.Buffer{}, &stderr), stderr.String())
 			client, calls := captureClient(t, sureReject, nil)
 
-			code, _, errOut := b.capture(t, client, transcriptCopy(t, "correction.jsonl"), captureDay.Add(80*time.Second))
+			code, _, errOut := b.capture(t, client, b.transcript(t, "correction.jsonl"), captureDay.Add(80*time.Second))
 
 			require.Equal(t, 0, code, errOut)
 			reactions := slices.DeleteFunc(b.traces(t, trace.NameClassify), func(tr trace.Trace) bool { return tr.Subject != string(classify.PointReaction) })
@@ -924,6 +1089,12 @@ func TestTranscriptEntryWords(t *testing.T) {
 		{"a slash command", `{"type":"user","message":{"content":"<command-name>/clear</command-name>"}}`, ""},
 		{"a shell mode line", `{"type":"user","message":{"content":"<bash-input>ls</bash-input>"}}`, ""},
 		{"an interruption", `{"type":"user","message":{"content":[{"type":"text","text":"[Request interrupted by user for tool use]"}]}}`, ""},
+		{"the selection an IDE attached before the typed words",
+			`{"type":"user","message":{"content":[{"type":"text","text":"<ide_selection>The user selected the lines 1 to 2 of /work/acme/x.go</ide_selection>"},{"type":"text","text":"no, keep it"}]}}`,
+			"no, keep it"},
+		{"a reminder of the host after the typed words",
+			`{"type":"user","message":{"content":[{"type":"text","text":"use git -C"},{"type":"text","text":" <system-reminder>a note</system-reminder>"}]}}`, "use git -C"},
+		{"an IDE file alone", `{"type":"user","message":{"content":[{"type":"text","text":"<ide_opened_file>The user opened /work/acme/x.go</ide_opened_file>"}]}}`, ""},
 		{"a content of another shape", `{"type":"user","message":{"content":7}}`, ""},
 		{"no content", `{"type":"user"}`, ""},
 	}
@@ -976,6 +1147,50 @@ func TestTranscriptRead(t *testing.T) {
 	}
 	_, err := transcript(t.TempDir()).read(0)
 	assert.Error(t, err, "a directory reads as no transcript")
+}
+
+// A call that asks a question of the stop waits with every line after it for the next capture until its result is written
+// So the click is read beside its call and the result of no other tool stands for one
+func TestTranscriptReadWaitsForTheClick(t *testing.T) {
+	typed := func(text string) string {
+		return `{"type":"user","message":{"content":"` + text + `"},"timestamp":"2026-10-13T09:00:00Z"}` + "\n"
+	}
+	call := func(header string) string {
+		return `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"AskUserQuestion",` +
+			`"input":{"questions":[{"question":"Keep it?","header":"` + header + `"}]}}]}}` + "\n"
+	}
+	result := `{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1"}]},"toolUseResult":{"answers":{"Keep it?":"Keep"}},` +
+		`"timestamp":"2026-10-13T09:00:30Z"}` + "\n"
+	type want struct {
+		to    int
+		texts []string
+	}
+	tcs := []struct {
+		name string
+		args []string
+		want want
+	}{
+		{"a call with no result waits with the lines after it", []string{typed("a"), call("nodloop k3x9")}, want{len(typed("a")), []string{"a"}}},
+		{"its result reads the click beside it", []string{typed("a"), call("nodloop k3x9"), result}, want{len(typed("a") + call("nodloop k3x9") + result), []string{"a", "Keep"}}},
+		{"a message typed after it ends the wait", []string{typed("a"), call("nodloop k3x9"), typed("b")}, want{len(typed("a") + call("nodloop k3x9") + typed("b")), []string{"a", "b"}}},
+		{"a call that asks no question of the stop waits for nothing", []string{typed("a"), call("Env")}, want{len(typed("a") + call("Env")), []string{"a"}}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			path := filepath.Join(t.TempDir(), "s1.jsonl")
+			require.NoError(t, os.WriteFile(path, []byte(strings.Join(tc.args, "")), 0o600))
+
+			got, err := transcript(path).read(0)
+
+			require.NoError(t, err)
+			texts := []string{}
+			for _, m := range got.messages {
+				texts = append(texts, m.text)
+			}
+			assert.Equal(t, tc.want, want{int(got.input.To), texts})
+		})
+	}
 }
 
 // The answer a message judges is the newest run before it that no stop hook continued
@@ -1051,7 +1266,7 @@ func TestRunSessionCaptureAnswers(t *testing.T) {
 	type args struct {
 		transcript string
 		stops      []captureStop
-		// Whether the prompt hook recorded the answer before the capture
+		// Whether an answer of the write side closed the question before the capture
 		answered bool
 	}
 	type want struct {
@@ -1067,7 +1282,7 @@ func TestRunSessionCaptureAnswers(t *testing.T) {
 	}{
 		{"a click on the question keeps the lesson under the person", args{"askuser.jsonl", clicked, false}, want{1, 1, 0, "approved person"}},
 		{"a reply word typed after the answer the question followed keeps it", args{"reply.jsonl", typed, false}, want{1, 1, 0, "approved person"}},
-		{"a reply the prompt hook recorded already records nothing more", args{"reply.jsonl", typed, true}, want{1, 0, 0, "approved person"}},
+		{"a reply to a question answered already records nothing more", args{"reply.jsonl", typed, true}, want{1, 0, 0, "approved person"}},
 		{"another message after the question is judged as before", args{"correction.jsonl", twoStops, false}, want{1, 0, 1, "candidate"}},
 	}
 	for _, tc := range tcs {
@@ -1083,7 +1298,7 @@ func TestRunSessionCaptureAnswers(t *testing.T) {
 			}
 			client, calls := captureClient(t, sureNeither, nil)
 
-			code, stdout, stderr := b.capture(t, client, transcriptCopy(t, tc.args.transcript), captureDay.Add(80*time.Second))
+			code, stdout, stderr := b.capture(t, client, b.transcript(t, tc.args.transcript), captureDay.Add(80*time.Second))
 
 			require.Equal(t, 0, code, stderr)
 			_, out := b.captured(t)
@@ -1106,15 +1321,37 @@ func (failingReplier) Reply(context.Context, curate.Reply) (curate.Replied, erro
 }
 
 // A message whose reply cannot be read is judged by no one so a reply never becomes a verdict
+// A typed message after an answer whose stop asked no question reads no reply
 func TestMessageReaderReplyFails(t *testing.T) {
 	run, err := trace.NewRun(sessionProducer, "", nil, nil, []byte("an answer"), captureDay)
 	require.NoError(t, err)
-	r := messageReader{session: "s1", replies: failingReplier{}, person: unnamedPerson}
+	type args struct {
+		// The run the stop asked its question after
+		asked string
+		key   string
+	}
+	tcs := []struct {
+		name string
+		args args
+		want error
+	}{
+		{"a typed word after the question reads the reply", args{asked: run.ID}, assert.AnError},
+		{"a click reads the reply", args{key: "k3x9"}, assert.AnError},
+		{"a typed word after an answer whose stop asked nothing reads none", args{asked: "r-other"}, nil},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			shown := sessionExposes{{Name: trace.NameExpose, Subject: "direction", Input: json.RawMessage(`{"kind":"direction","run":"` + tc.args.asked + `"}`)}}
+			r := messageReader{session: "s1", replies: failingReplier{}, person: unnamedPerson, shown: shown}
+			messages := personMessages{{text: "keep", at: captureDay.Add(time.Second), key: tc.args.key}}
 
-	out, err := r.judge(context.Background(), personMessages{{text: "keep", at: captureDay.Add(time.Second)}}, sessionTurns{run})
+			out, err := r.judge(context.Background(), messages, sessionTurns{run})
 
-	assert.ErrorIs(t, err, assert.AnError)
-	assert.Equal(t, []any{1, 0, 0}, []any{out.Messages, out.Answers, len(out.Runs)})
+			assert.ErrorIs(t, err, tc.want)
+			assert.Equal(t, []any{1, 0, 0}, []any{out.Messages, out.Answers, len(out.Runs)})
+		})
+	}
 }
 
 // The labels the person picked on questions of the stop as an AskUserQuestion result names them
@@ -1134,10 +1371,15 @@ func TestTranscriptEntryClicks(t *testing.T) {
 			want{[]string{"Keep"}, []string{"k3x9"}},
 		},
 		{
-			"the questions of the result name the header",
+			"a result of a call the read does not hold is no click whatever its questions name",
 			`{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t9"}]},` +
 				`"toolUseResult":{"questions":[{"question":"Drop it?","header":"nodloop ab12"}],"answers":{"Drop it?":"drop"}}}`,
-			want{[]string{"drop"}, []string{"ab12"}},
+			want{[]string{}, []string{}},
+		},
+		{
+			"a result whose answers name the question of a call under another id is no click",
+			`{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t9"}]},"toolUseResult":{"answers":{"Keep it?":"Keep"}}}`,
+			want{[]string{}, []string{}},
 		},
 		{"a header of no question of the stop is no click", `{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t2"}]},"toolUseResult":{"answers":{"Which env?":"dev"}}}`,
 			want{[]string{}, []string{}}},

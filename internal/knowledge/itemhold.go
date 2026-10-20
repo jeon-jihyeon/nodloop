@@ -77,9 +77,3 @@ type Eligible struct {
 	// 3. every version of a session the holdout withheld has 0
 	PInclude float64 `json:"p_include"`
 }
-
-// Whether curate approved the version and no person reaffirmed it since
-// The latest approve or reaffirm names who stood behind the version last
-func (k Knowledge) carriedOut() bool {
-	return k.Approver == ApproverNodloop
-}

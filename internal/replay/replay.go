@@ -176,13 +176,15 @@ func (g *gathered) add(run trace.Trace, expect Expect) {
 }
 
 // The corrected runs the item cites and the newest approved runs its scope admits
+// The verdict of a run is a person's latest and else the one the conversation and the capture leave together
+// So a run they dispute teaches nothing and is no case
 func (r *Replayer) cases(ctx context.Context, item knowledge.Knowledge) (gathered, error) {
 	verdicts, err := r.verdicts.List(ctx, record.FeedbackFilter{})
 	if err != nil {
 		return gathered{}, err
 	}
 	latest := map[string]feedback.Feedback{}
-	for _, v := range feedback.RestoreAll(verdicts).Latest() {
+	for _, v := range feedback.RestoreAll(verdicts).Reconciled() {
 		latest[v.TraceID] = v
 	}
 	g := gathered{outputs: map[string]string{}}
@@ -220,8 +222,8 @@ func (r *Replayer) corrected(ctx context.Context, item knowledge.Knowledge, late
 	return nil
 }
 
-// The newest approvedCases runs the item never reached whose latest verdict approves them
-// The verdict is a person's or one a session inferred
+// The newest approvedCases runs the item never reached whose verdict approves them
+// The verdict is a person's or one the inferred readers leave
 func (r *Replayer) approved(ctx context.Context, item knowledge.Knowledge, latest map[string]feedback.Feedback, g *gathered) error {
 	found, err := r.traces.List(ctx, record.TraceFilter{Name: string(trace.NameRun)})
 	if err != nil {
@@ -275,10 +277,8 @@ type TraceInput struct {
 
 // The output is the judgment or empty when failure names why there is none
 func (r *Replayer) record(ctx context.Context, item knowledge.Knowledge, res llm.Response, output json.RawMessage, failure string) error {
-	input, err := json.Marshal(TraceInput{ID: item.ID, Version: item.Version, Content: item.Content})
-	if err != nil {
-		return err
-	}
+	// An id, a version and a text always encode
+	input, _ := json.Marshal(TraceInput{ID: item.ID, Version: item.Version, Content: item.Content})
 	now := r.now()
 	tr := trace.Trace{
 		ID: trace.NewID(now), Name: trace.NameReplay, Subject: item.ID, Time: now, Model: cmp.Or(res.Model, r.model),

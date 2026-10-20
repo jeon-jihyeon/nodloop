@@ -72,6 +72,12 @@ func (h host) answers() bool {
 	return h == hostClaudeCode || h == hostCodex
 }
 
+// Whether the transcript its stop names is the Claude Code JSONL the capture reads
+// Codex names a transcript whose format it keeps no stable interface for hooks
+func (h host) transcripts() bool {
+	return h == hostClaudeCode
+}
+
 // Whether a prompt hook adds the items so a session start adds them only when the context lost them
 func (h host) prompts() bool {
 	return slices.Contains(hostActions[h], "prompt")

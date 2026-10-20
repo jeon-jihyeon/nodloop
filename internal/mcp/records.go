@@ -3,10 +3,12 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"sync"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/jeon-jihyeon/nodloop/internal/schema"
+	"github.com/jeon-jihyeon/nodloop/internal/trace"
 )
 
 // One kind of the published index
@@ -36,16 +38,34 @@ func (s *Server) records(ctx context.Context, _ *sdk.CallToolRequest, in records
 	return nil, recordsAnswer{Records: page.Records, Next: page.Next}, nil
 }
 
-// The kinds of the published index the binary embeds
-func recordKinds() []any {
+// The published index the binary embeds read once by the first server that needs it
+var publishedIndex = sync.OnceValue(func() schema.Index {
 	ix, err := schema.Published.Index()
 	if err != nil {
 		// The embedded index always decodes since a test reads it
 		panic(err)
 	}
-	out := make([]any, 0, len(ix.Kinds))
-	for _, k := range ix.Kinds {
+	return ix
+})
+
+// The kinds of the published index the binary embeds
+func recordKinds() []any {
+	kinds := publishedIndex().Kinds
+	out := make([]any, 0, len(kinds))
+	for _, k := range kinds {
 		out = append(out, k.Name)
 	}
 	return out
+}
+
+// The trace in the published schema of its kind
+// The embedded index holds every trace name since a test checks each has its file
+// A trace a store accepted has an id and always encodes
+func published(t trace.Trace) json.RawMessage {
+	k, err := publishedIndex().Kind(string(t.Name))
+	if err != nil {
+		panic(err)
+	}
+	rec, _ := k.Record(t.Record())
+	return rec.JSON
 }
