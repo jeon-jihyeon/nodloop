@@ -108,6 +108,9 @@
         },
         "run": {
           "type": "string"
+        },
+        "runes": {
+          "type": "integer"
         }
       },
       "required": [

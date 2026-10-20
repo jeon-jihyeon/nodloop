@@ -306,6 +306,10 @@ func TestCuratorPassAgain(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, []string{"add k-add v1 shadow  1", "drop k-dup v1 drop same_as_item 0"}, decisionsOf(first.Decided))
+	judged := slices.IndexFunc(first.Decided, func(d curate.Decided) bool { return d.Change.ID == "k-add" })
+	require.GreaterOrEqual(t, judged, 0)
+	require.NotNil(t, first.Decided[judged].Decision.Confidence)
+	assert.InDelta(t, 0.98, *first.Decided[judged].Decision.Confidence, 1e-9, "the decide keeps the mean confidence its bin reads")
 	assert.Equal(t, []string{}, decisionsOf(second.Decided))
 	require.Equal(t, []string{"add k-add v1 apply  1"}, decisionsOf(third.Decided))
 	assert.Equal(t, []string{"k-add v1 approved nodloop", "k-dup v1 retired nodloop duplicate"}, statuses(t, b))
@@ -694,6 +698,9 @@ func TestCuratorPassFails(t *testing.T) {
 		seed                  string
 		// The knowledge cannot be read
 		unreadable bool
+		// The Monday of a knob event on record under the judge of the pass and the numbers the knobs move on
+		monday  time.Time
+		numbers curate.Numbers
 	}
 	type want struct {
 		err      error
@@ -753,6 +760,22 @@ func TestCuratorPassFails(t *testing.T) {
 			args{lessons: []knowledge.Knowledge{dup}, appends: -1, lists: 4, reads: -1, seed: "5eed"},
 			want{assert.AnError, []string{"k-dup v1 retired nodloop duplicate"}, 1},
 		},
+		{
+			"a narrowing that fails to append fails the pass before anything is decided",
+			args{
+				lessons: []knowledge.Knowledge{dup}, appends: 0, lists: -1, reads: -1, seed: "5eed", monday: time.Date(2026, 9, 21, 0, 0, 0, 0, time.UTC),
+				numbers: curate.Numbers{Alarmed: []curate.Opening{{Kind: curate.ChangeAdd, Bin: curate.Bin1}}},
+			},
+			want{assert.AnError, []string{"k-dup v1 candidate"}, 0},
+		},
+		{
+			"an offer whose decide fails to append joins the error of the pass",
+			args{
+				lessons: []knowledge.Knowledge{dup}, appends: 1, lists: -1, reads: -1, seed: "5eed", monday: time.Date(2026, 9, 7, 0, 0, 0, 0, time.UTC),
+				numbers: curate.Numbers{ShadowCycles: 2, ShadowMet: true},
+			},
+			want{assert.AnError, []string{"k-dup v1 candidate"}, 0},
+		},
 	}
 	ctx := context.Background()
 	for _, tc := range tcs {
@@ -765,10 +788,13 @@ func TestCuratorPassFails(t *testing.T) {
 				require.NoError(t, err)
 				require.NoError(t, b.stores.Traces.Append(ctx, unknownShots(t, knobs[0]).Record()))
 			}
+			if !tc.args.monday.IsZero() {
+				b.cycleKnobs(t, tc.args.monday, sonnetJudge, func(*curate.Knobs) {})
+			}
 			traces := &testkit.FlakyTraces{Store: b.stores.Traces, Appends: failing(tc.args.appends), Lists: failing(tc.args.lists)}
 			verdicts := &testkit.FlakyFeedback{Store: b.stores.Feedback, Reads: failing(tc.args.reads)}
 			setting := b.setting(t)
-			setting.Seed = tc.args.seed
+			setting.Seed, setting.Numbers = tc.args.seed, tc.args.numbers
 			ledger := b.stores.Ledger
 			if tc.args.unreadable {
 				ledger = flakyLedger(t, b, 0)
@@ -888,6 +914,154 @@ func TestCuratorPassJoin(t *testing.T) {
 	assert.Equal(t, []string{"add k-older v1 shadow  1", "join k-newer v1 join same_as_candidate 0"}, decisionsOf(got.Decided))
 	assert.Equal(t, []string{"r-k-older", "r-k-newer"}, joined.Evidence.FeedbackTraceIDs)
 	assert.Equal(t, []string{"k-newer v1 retired nodloop duplicate", "k-older v1 candidate"}, statuses(t, b))
+}
+
+// The knob event of the cycle that starts on the Monday with the knobs the change gives under a judge of the settings
+// The judge starts at written so a pass under the same settings keeps it
+func (b bench) cycleKnobs(t *testing.T, monday time.Time, settings curate.JudgeSettings, change func(*curate.Knobs)) string {
+	t.Helper()
+	ev := curate.KnobEvent{
+		CycleID: monday.Format(trace.CycleDate), Start: monday, Seed: "5eed", Cause: curate.KnobStart,
+		Judge: curate.JudgeConfig{}.Next(settings, nil, written), Knobs: curate.StartKnobs(),
+	}
+	change(&ev.Knobs)
+	tr, err := ev.Trace("0.10.0", written)
+	require.NoError(t, err)
+	require.NoError(t, b.stores.Traces.Append(context.Background(), tr.Record()))
+	return tr.ID
+}
+
+// The knob changes as "rule kind bin differ of answers" or "rule p" in their order
+func changesOf(cs []curate.KnobChange) []string {
+	out := []string{}
+	for _, c := range cs {
+		if c.Opening == nil {
+			out = append(out, fmt.Sprintf("%s p %v", c.Rule, c.P))
+			continue
+		}
+		out = append(out, strings.TrimSpace(fmt.Sprintf("%s %s %s %d of %d", c.Rule, c.Opening.Kind, c.Opening.Bin, c.Differ, c.Answers)))
+	}
+	return out
+}
+
+// The knobs move on the numbers of loop before anything is decided and every offer waits for the person as a question
+// 1. an alarm inside the cycle narrows its kind and bin at once in a knob event of cause narrow and raises the audit p
+// 2. the first pass of a cycle narrows on the posterior and offers the next bin and the activation as decides of tier 2
+// 3. a cycle that starts a new judge configuration reads no number
+// 4. an offer the person granted since leaves no question
+func TestCuratorPassKnobs(t *testing.T) {
+	this, before := time.Date(2026, 9, 21, 0, 0, 0, 0, time.UTC), time.Date(2026, 9, 7, 0, 0, 0, 0, time.UTC)
+	b1, b2 := curate.Opening{Kind: curate.ChangeAdd, Bin: curate.Bin1}, curate.Opening{Kind: curate.ChangeAdd, Bin: curate.Bin2}
+	withdraw := curate.Opening{Kind: curate.ChangeWithdraw}
+	offers := curate.Numbers{
+		Gauges: []curate.Gauge{{Opening: b1, Answers: 10, Differ: 4, Above: 0.9}, {Opening: b2, Answers: 43, Met: true}}, ShadowCycles: 2, ShadowMet: true,
+	}
+	other := sonnetJudge
+	other.Effort = "max"
+	type args struct {
+		// The Monday of the knob event on record before the pass and the judge it ran
+		monday time.Time
+		judge  curate.JudgeSettings
+		knobs  func(*curate.Knobs)
+		// Offers a pass of an earlier cycle prepared
+		offered []curate.Change
+		numbers curate.Numbers
+	}
+	type want struct {
+		// The knob events the pass appended as "cause changes"
+		appended []string
+		// Whether a narrowing follows the knob event on record
+		follows bool
+		open    []curate.Opening
+		tier1   float64
+		decided []string
+		due     []string
+	}
+	tcs := []struct {
+		name string
+		args args
+		want want
+	}{
+		{
+			"an alarm inside the cycle narrows its kind and bin at once and raises the audit p",
+			args{this, sonnetJudge, func(*curate.Knobs) {}, nil, curate.Numbers{
+				Gauges: []curate.Gauge{{Opening: b1, Answers: 3, Differ: 3}}, Alarmed: []curate.Opening{b1},
+			}},
+			want{[]string{"narrow [alarm add b1 3 of 3 raise p 0.3]"}, true, []curate.Opening{withdraw}, 0.3, []string{}, []string{}},
+		},
+		{
+			"an alarm on a kind and bin already closed moves nothing and appends no knob event",
+			args{this, sonnetJudge, func(*curate.Knobs) {}, nil, curate.Numbers{Alarmed: []curate.Opening{b2}}},
+			want{[]string{}, false, []curate.Opening{b1, withdraw}, 0.15, []string{}, []string{}},
+		},
+		{
+			"a cycle start narrows on the posterior and offers the next bin and the activation as questions",
+			args{before, sonnetJudge, func(*curate.Knobs) {}, nil, offers},
+			want{
+				[]string{"start [posterior add b1 4 of 10 raise p 0.3]"}, false, []curate.Opening{withdraw}, 0.3,
+				[]string{"activate  v0 ask  2", "widen  v0 ask  2"}, []string{"direction activate", "direction widen add b2"},
+			},
+		},
+		{
+			"a cycle that starts a new judge configuration reads no number",
+			args{before, other, func(*curate.Knobs) {}, nil, offers},
+			want{[]string{"start []"}, false, []curate.Opening{b1, withdraw}, 0.15, []string{}, []string{}},
+		},
+		{
+			"an offer the person granted since leaves no question",
+			args{this, sonnetJudge, func(k *curate.Knobs) { k.Open, k.Activated = append(k.Open, b2), true }, []curate.Change{
+				{Kind: curate.ChangeWiden, Opens: &b2, Anchor: 1}, {Kind: curate.ChangeActivate, Anchor: 1},
+			}, curate.Numbers{}},
+			want{[]string{}, false, []curate.Opening{b1, withdraw, b2}, 0.15, []string{}, []string{}},
+		},
+	}
+	ctx := context.Background()
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			b := newBench(t, nil, nil, nil)
+			onRecord := b.cycleKnobs(t, tc.args.monday, tc.args.judge, tc.args.knobs)
+			for i, c := range tc.args.offered {
+				id := fmt.Sprintf("d-offer%d", i)
+				ev := curate.Event{ID: id, Source: trace.SourcePush, Draw: trace.NewDraw("2026-09-21", "0.10.0+1a2b3c4d", "5eed", id, "audit", 0)}
+				tr, err := ev.Decide(c, curate.Decision{Tier: 2, Action: curate.ActionAsk}, nil, written)
+				require.NoError(t, err)
+				require.NoError(t, b.stores.Traces.Append(ctx, tr.Record()))
+			}
+			setting := b.setting(t)
+			setting.Numbers = tc.args.numbers
+
+			got, err := b.curator().Pass(ctx, setting)
+
+			require.NoError(t, err)
+			knobs, err := b.stores.Traces.List(ctx, record.TraceFilter{Name: string(trace.NameKnob)})
+			require.NoError(t, err)
+			appended := []string{}
+			for _, tr := range knobs[:len(knobs)-1] {
+				ev, ok := curate.RestoreKnob(trace.Restore(tr))
+				require.True(t, ok)
+				appended = append(appended, fmt.Sprintf("%s %v", ev.Cause, changesOf(ev.Changes)))
+			}
+			due := []string{}
+			for _, d := range got.Due {
+				due = append(due, strings.TrimSpace(fmt.Sprintf("%s %s %s", d.Kind, d.Change, opensOf(got.Decided, d.Decide))))
+			}
+			slices.Sort(due)
+			assert.Equal(t, tc.want, want{
+				appended, got.Event.Before == onRecord && got.Event.Cause == curate.KnobNarrow, got.Event.Knobs.Open, got.Event.Knobs.Audit.Tier1,
+				decisionsOf(got.Decided), due,
+			})
+		})
+	}
+}
+
+// The kind and bin the decide of the id opens as "kind bin" and empty for any other decide
+func opensOf(ds []curate.Decided, id string) string {
+	i := slices.IndexFunc(ds, func(d curate.Decided) bool { return d.ID == id && d.Change.Opens != nil })
+	if i < 0 {
+		return ""
+	}
+	return fmt.Sprintf("%s %s", ds[i].Change.Opens.Kind, ds[i].Change.Opens.Bin)
 }
 
 // The judge reads the change as a replacement, the lessons of the place, the files it reads now and what nodloop carried out there

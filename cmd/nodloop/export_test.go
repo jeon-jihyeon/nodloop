@@ -603,10 +603,10 @@ func TestRunHookStopStartsTheExport(t *testing.T) {
 				return cmp.Or(map[string]string{"HOME": home, envRecordDir: records}[k], tc.args.env[k])
 			}
 			var starts []string
-			start := func(args []string) error {
+			start := besideCurate(func(args []string) error {
 				starts = append(starts, strings.ReplaceAll(strings.Join(args, " "), records, "{records}"))
 				return tc.args.err
-			}
+			})
 			var stderr bytes.Buffer
 
 			code := runHook(append([]string{"stop"}, tc.args.flags...), getenv, start, func() time.Time { return exportAt },
@@ -634,7 +634,7 @@ func TestExportWithNoCommand(t *testing.T) {
 	now := func() time.Time { return at }
 	out.Reset()
 	// The MCP server may call it off the test goroutine so it fails by its error and never through require
-	start := func(args []string) error {
+	start := besideCurate(func(args []string) error {
 		if args[0] != "export" {
 			return fmt.Errorf("started %v", args)
 		}
@@ -642,7 +642,7 @@ func TestExportWithNoCommand(t *testing.T) {
 			return fmt.Errorf("export exited %d: %s", code, out.String())
 		}
 		return nil
-	}
+	})
 	stdin := `{"session_id":"s1","cwd":"` + repo + `","prompt":"go","last_assistant_message":"done"}`
 	var stderr bytes.Buffer
 	require.Equal(t, 0, runHook([]string{"prompt"}, getenv, start, now, strings.NewReader(stdin), &bytes.Buffer{}, &stderr))

@@ -39,6 +39,8 @@ type config struct {
 	approver string
 	// The files the person designates as direction
 	anchor []string
+	// The model client of config.json so the judge of curate names the model of a chat endpoint
+	llm llm.Config
 }
 
 // The record directory as the flag, then NODLOOP_RECORD_DIR, then config.json, then the default under home
@@ -58,6 +60,7 @@ func resolveConfig(getenv func(string) string, recordDir string) (config, error)
 	return config{
 		recordDir: records, home: h, classifiers: uc.classifierConfig, holdout: knowledge.Holdout(uc.Holdout),
 		retention: retain.Days(uc.Retention), sessionMode: uc.SessionMode, otel: uc.OTel, approver: uc.Approver, anchor: uc.Anchor.Files,
+		llm: uc.LLM,
 	}, nil
 }
 

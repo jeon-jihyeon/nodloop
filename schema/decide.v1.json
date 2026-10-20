@@ -93,6 +93,40 @@
         },
         "diff": {
           "type": "string"
+        },
+        "opens": {
+          "type": [
+            "null",
+            "object"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "add",
+                "update",
+                "join",
+                "drop",
+                "withdraw",
+                "compaction",
+                "reanchor",
+                "widen",
+                "activate"
+              ]
+            },
+            "bin": {
+              "type": "string",
+              "enum": [
+                "b1",
+                "b2",
+                "b3",
+                "b4"
+              ]
+            }
+          },
+          "required": [
+            "kind"
+          ]
         }
       },
       "required": [
@@ -151,6 +185,12 @@
             "b2",
             "b3",
             "b4"
+          ]
+        },
+        "confidence": {
+          "type": [
+            "null",
+            "number"
           ]
         },
         "action": {

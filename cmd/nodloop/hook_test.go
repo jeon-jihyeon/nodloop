@@ -214,7 +214,7 @@ func TestRunHookPrompt(t *testing.T) {
 			stdin := place.Replace(tc.args.stdin)
 			var stdout, stderr bytes.Buffer
 
-			code := runHook([]string{"prompt"}, getenv, nil, now, strings.NewReader(stdin), &stdout, &stderr)
+			code := runHook([]string{"prompt"}, getenv, noStart, now, strings.NewReader(stdin), &stdout, &stderr)
 
 			event, added := hookOutput(t, stdout.Bytes())
 			assert.Equal(t, 0, code)
@@ -291,7 +291,7 @@ func TestRunHookPromptDelta(t *testing.T) {
 				return func() string {
 					var stdout, stderr bytes.Buffer
 					stdin := fmt.Sprintf(`{"session_id":"s1","cwd":%q,"source":"compact","last_assistant_message":"done","stop_hook_active":%t}`, repo, continued)
-					require.Equal(t, 0, runHook([]string{action}, getenv, nil, now, strings.NewReader(stdin), &stdout, &stderr))
+					require.Equal(t, 0, runHook([]string{action}, getenv, noStart, now, strings.NewReader(stdin), &stdout, &stderr))
 					require.Empty(t, stderr.String())
 					return stdout.String()
 				}
@@ -383,7 +383,7 @@ func TestRunHookPromptModes(t *testing.T) {
 			stdin := `{"session_id":"s1","cwd":"` + repo + `","prompt":"that was wrong"}`
 			var stdout, stderr bytes.Buffer
 
-			code := runHook([]string{"prompt"}, inMode, nil, now, strings.NewReader(stdin), &stdout, &stderr)
+			code := runHook([]string{"prompt"}, inMode, noStart, now, strings.NewReader(stdin), &stdout, &stderr)
 
 			event, added := hookOutput(t, stdout.Bytes())
 			assert.Equal(t, 0, code)
@@ -433,7 +433,7 @@ func TestRunHookSessionMode(t *testing.T) {
 			stdin := `{"session_id":"s1","cwd":"` + repo + `"}`
 			var stdout, stderr bytes.Buffer
 
-			code := runHook([]string{"prompt"}, getenv, nil, now, strings.NewReader(stdin), &stdout, &stderr)
+			code := runHook([]string{"prompt"}, getenv, noStart, now, strings.NewReader(stdin), &stdout, &stderr)
 
 			assert.Equal(t, 0, code)
 			assert.True(t, strings.HasPrefix(stderr.String(), tc.want.stderr), stderr.String())
@@ -506,7 +506,7 @@ func TestRunHookStart(t *testing.T) {
 			stdin := `{"session_id":"s1","cwd":"` + cwd + `","source":"` + tc.args.source + `"}`
 			var stdout, stderr bytes.Buffer
 
-			code := runHook([]string{cmp.Or(tc.args.action, "start")}, getenv, nil, now, strings.NewReader(stdin), &stdout, &stderr)
+			code := runHook([]string{cmp.Or(tc.args.action, "start")}, getenv, noStart, now, strings.NewReader(stdin), &stdout, &stderr)
 
 			event, added := hookOutput(t, stdout.Bytes())
 			assert.Equal(t, 0, code)
@@ -537,10 +537,10 @@ func TestRunHookPromptAfterStart(t *testing.T) {
 			getenv := envOf(map[string]string{"HOME": home, envRecordDir: records, envSession: "manual"})
 			now := hookClock()
 			start := `{"session_id":"s2","cwd":"` + repo + `","source":"` + tc.args + `"}`
-			require.Equal(t, 0, runHook([]string{"start"}, getenv, nil, now, strings.NewReader(start), &bytes.Buffer{}, &bytes.Buffer{}))
+			require.Equal(t, 0, runHook([]string{"start"}, getenv, noStart, now, strings.NewReader(start), &bytes.Buffer{}, &bytes.Buffer{}))
 			var stdout, stderr bytes.Buffer
 
-			code := runHook([]string{"prompt"}, getenv, nil, now, strings.NewReader(`{"session_id":"s2","cwd":"`+repo+`"}`), &stdout, &stderr)
+			code := runHook([]string{"prompt"}, getenv, noStart, now, strings.NewReader(`{"session_id":"s2","cwd":"`+repo+`"}`), &stdout, &stderr)
 
 			_, added := hookOutput(t, stdout.Bytes())
 			assert.Equal(t, 0, code)
@@ -571,7 +571,7 @@ func hookPromptSetup(t *testing.T, getenv func(string) string, now func() time.T
 		return ""
 	}
 	stdin := `{"session_id":"s1","cwd":"` + repo + `","last_assistant_message":"done"}`
-	require.Equal(t, 0, runHook([]string{"stop"}, getenv, nil, now, strings.NewReader(stdin), &bytes.Buffer{}, &bytes.Buffer{}))
+	require.Equal(t, 0, runHook([]string{"stop"}, getenv, noStart, now, strings.NewReader(stdin), &bytes.Buffer{}, &bytes.Buffer{}))
 	runs, err := store.List(context.Background(), record.TraceFilter{Name: string(trace.NameRun), SessionID: "s1"})
 	require.NoError(t, err)
 	require.Len(t, runs, 1)
@@ -711,7 +711,7 @@ func TestRunHookStop(t *testing.T) {
 			stdin := hookFixture(t, tc.args.stdin, repo)
 			var stdout, stderr bytes.Buffer
 
-			code := runHook(append([]string{"stop"}, tc.args.flags...), getenv, nil, hookClock(), strings.NewReader(stdin), &stdout, &stderr)
+			code := runHook(append([]string{"stop"}, tc.args.flags...), getenv, noStart, hookClock(), strings.NewReader(stdin), &stdout, &stderr)
 
 			store, err := tracefile.New(records)
 			require.NoError(t, err)
@@ -821,10 +821,10 @@ func TestRunHookStopExtract(t *testing.T) {
 			}
 			now := hookClock()
 			var started [][]string
-			start := func(args []string) error {
+			start := besideCurate(func(args []string) error {
 				started = append(started, args)
 				return tc.args.startErr
-			}
+			})
 			stop := func(answer string, continued bool) string {
 				var stderr bytes.Buffer
 				stdin := fmt.Sprintf(`{"session_id":"s1","cwd":%q,"last_assistant_message":%q,"stop_hook_active":%t}`, repo, answer, continued)
@@ -897,10 +897,10 @@ func TestRunHookStopWindow(t *testing.T) {
 			at := first
 			now := func() time.Time { return at }
 			var started [][]string
-			start := func(args []string) error {
+			start := besideCurate(func(args []string) error {
 				started = append(started, args)
 				return nil
-			}
+			})
 			stdin := `{"session_id":"s1","cwd":"` + repo + `","last_assistant_message":"done"}`
 			require.Equal(t, 0, runHook([]string{"stop"}, getenv, start, now, strings.NewReader(stdin), &bytes.Buffer{}, &bytes.Buffer{}))
 			store, err := tracefile.New(records)
@@ -979,7 +979,7 @@ func TestRunReportLoop(t *testing.T) {
 			getenv := func(k string) string { return map[string]string{"HOME": home, envRecordDir: records}[k] }
 			now := hookClock()
 			stdin := `{"session_id":"s2","cwd":"` + repo + `","last_assistant_message":"git -C repo status"}`
-			require.Equal(t, 0, runHook([]string{"stop"}, getenv, nil, now, strings.NewReader(stdin), &bytes.Buffer{}, &bytes.Buffer{}))
+			require.Equal(t, 0, runHook([]string{"stop"}, getenv, noStart, now, strings.NewReader(stdin), &bytes.Buffer{}, &bytes.Buffer{}))
 			store, err := tracefile.New(records)
 			require.NoError(t, err)
 			runs, err := store.List(context.Background(), record.TraceFilter{Name: string(trace.NameRun), SessionID: "s2"})
@@ -1364,8 +1364,8 @@ func TestRunHookHoldout(t *testing.T) {
 			var prompts bytes.Buffer
 			for _, session := range []string{"s1", "s1", ""} {
 				stdin := `{"session_id":"` + session + `","cwd":"` + repo + `","last_assistant_message":"done"}`
-				require.Equal(t, 0, runHook([]string{"prompt"}, getenv, nil, now, strings.NewReader(stdin), &prompts, &bytes.Buffer{}))
-				require.Equal(t, 0, runHook([]string{"stop"}, getenv, nil, now, strings.NewReader(stdin), &bytes.Buffer{}, &bytes.Buffer{}))
+				require.Equal(t, 0, runHook([]string{"prompt"}, getenv, noStart, now, strings.NewReader(stdin), &prompts, &bytes.Buffer{}))
+				require.Equal(t, 0, runHook([]string{"stop"}, getenv, noStart, now, strings.NewReader(stdin), &bytes.Buffer{}, &bytes.Buffer{}))
 			}
 
 			store, err := tracefile.New(records)
@@ -1471,7 +1471,7 @@ func TestRunHookItemHold(t *testing.T) {
 
 			for _, action := range []string{"prompt", "stop", "prompt", "subagent", "start"} {
 				var stdout bytes.Buffer
-				require.Equal(t, 0, runHook([]string{action}, getenv, nil, now, strings.NewReader(in), &stdout, &stderr))
+				require.Equal(t, 0, runHook([]string{action}, getenv, noStart, now, strings.NewReader(in), &stdout, &stderr))
 				got = append(got, stdout.String())
 			}
 
@@ -1583,7 +1583,7 @@ func TestRunHookReaction(t *testing.T) {
 			stdin := `{"session_id":"s1","cwd":"` + repo + `","prompt":"` + message + `"}`
 			var stdout, stderr bytes.Buffer
 
-			code := runHook([]string{"prompt"}, getenv, nil, now, strings.NewReader(stdin), &stdout, &stderr)
+			code := runHook([]string{"prompt"}, getenv, noStart, now, strings.NewReader(stdin), &stdout, &stderr)
 
 			event, added := hookOutput(t, stdout.Bytes())
 			store, err := feedbackfile.New(records)
@@ -1638,7 +1638,7 @@ func TestRunHookContinued(t *testing.T) {
 			require.Equal(t, 0, runClassifier([]string{"set", "reaction", "--url", srv.URL}, getenv, now, &bytes.Buffer{}, &setStderr), setStderr.String())
 			for i, continued := range tc.args {
 				stdin := fmt.Sprintf(`{"session_id":"s1","cwd":%q,"last_assistant_message":"answer %d","stop_hook_active":%t}`, repo, i, continued)
-				require.Equal(t, 0, runHook([]string{"stop"}, getenv, nil, now, strings.NewReader(stdin), &bytes.Buffer{}, &bytes.Buffer{}))
+				require.Equal(t, 0, runHook([]string{"stop"}, getenv, noStart, now, strings.NewReader(stdin), &bytes.Buffer{}, &bytes.Buffer{}))
 			}
 			traces, err := tracefile.New(records)
 			require.NoError(t, err)
@@ -1654,7 +1654,7 @@ func TestRunHookContinued(t *testing.T) {
 			stdin := fmt.Sprintf(`{"session_id":"s1","cwd":%q,"prompt":"that was wrong, use git -C"}`, repo)
 			var stdout, stderr bytes.Buffer
 
-			code := runHook([]string{"prompt"}, getenv, nil, now, strings.NewReader(stdin), &stdout, &stderr)
+			code := runHook([]string{"prompt"}, getenv, noStart, now, strings.NewReader(stdin), &stdout, &stderr)
 
 			_, added := hookOutput(t, stdout.Bytes())
 			verdicts, err := feedbackfile.New(records)
@@ -1742,8 +1742,8 @@ func TestRunHookCorruptLine(t *testing.T) {
 			stdin := `{"session_id":"s1","cwd":"` + repo + `","last_assistant_message":"done"}`
 			var prompt, promptErr, stopErr bytes.Buffer
 
-			promptCode := runHook([]string{"prompt"}, getenv, nil, now, strings.NewReader(stdin), &prompt, &promptErr)
-			stopCode := runHook([]string{"stop"}, getenv, nil, now, strings.NewReader(stdin), &bytes.Buffer{}, &stopErr)
+			promptCode := runHook([]string{"prompt"}, getenv, noStart, now, strings.NewReader(stdin), &prompt, &promptErr)
+			stopCode := runHook([]string{"stop"}, getenv, noStart, now, strings.NewReader(stdin), &bytes.Buffer{}, &stopErr)
 
 			store, err := tracefile.New(records)
 			require.NoError(t, err)
@@ -1798,7 +1798,7 @@ func TestRunHookTurnDuration(t *testing.T) {
 				at = at.Add(s.wait)
 				stdin := fmt.Sprintf(`{"session_id":"s1","cwd":%q,"prompt":"go on","last_assistant_message":"done","stop_hook_active":%t}`, repo, s.continued)
 				var stdout, stderr bytes.Buffer
-				require.Equal(t, 0, runHook([]string{s.action}, getenv, nil, now, strings.NewReader(stdin), &stdout, &stderr))
+				require.Equal(t, 0, runHook([]string{s.action}, getenv, noStart, now, strings.NewReader(stdin), &stdout, &stderr))
 				require.Empty(t, stderr.String())
 			}
 

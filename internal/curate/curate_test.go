@@ -30,7 +30,8 @@ func decided(id string, p float64) curate.Event {
 }
 
 func TestEventDecide(t *testing.T) {
-	share := 1.0
+	share, over := 1.0, 1.5
+	update := curate.Opening{Kind: curate.ChangeUpdate, Bin: curate.Bin1}
 	drop := curate.Change{Kind: curate.ChangeDrop, ID: "k-1", Version: 1, Anchor: 3}
 	dropped := curate.Decision{
 		Tier: 0, RuleCode: curate.RuleSameAsItem, Action: curate.ActionDrop, Reason: knowledge.ReasonDuplicate,
@@ -80,10 +81,34 @@ func TestEventDecide(t *testing.T) {
 			want{`{"kind":"add","id":"k-2","version":1,"extract":"e-1","anchor":3,"diff":"` + hmac + `"}`, `{"tier":1,"action":"retry"}`, "judge timed out", nil},
 		},
 		{
-			"a widening names no version",
-			args{decided("d4", 1), curate.Change{Kind: curate.ChangeWiden, Anchor: 3}, curate.Decision{Tier: 2, Action: curate.ActionAsk}, nil},
-			want{`{"kind":"widen","anchor":3}`, `{"tier":2,"action":"ask"}`, "", nil},
+			"a widening names the kind and bin it opens and no version",
+			args{decided("d4", 1), curate.Change{Kind: curate.ChangeWiden, Anchor: 3, Opens: &update}, curate.Decision{Tier: 2, Action: curate.ActionAsk}, nil},
+			want{`{"kind":"widen","anchor":3,"opens":{"kind":"update","bin":"b1"}}`, `{"tier":2,"action":"ask"}`, "", nil},
 		},
+		{
+			"a decision of the judge carries its confidence",
+			args{decided("d4", 0.15), add, with(applied, func(d *curate.Decision) { d.Confidence = &share }), nil},
+			want{
+				`{"kind":"add","id":"k-2","version":1,"extract":"e-1","anchor":3,"diff":"` + hmac + `"}`,
+				`{"tier":1,"judge":"c-1","outcome":"conform","vote":1,"bin":"b1","confidence":1,"action":"apply"}`, "", nil,
+			},
+		},
+		{
+			"a widening without what it opens is refused",
+			args{decided("d5", 1), curate.Change{Kind: curate.ChangeWiden, Anchor: 3}, curate.Decision{Tier: 2, Action: curate.ActionAsk}, nil},
+			want{err: curate.ErrDecideInvalid},
+		},
+		{
+			"a widening of a kind tier 1 never carries out is refused",
+			args{decided("d5", 1), curate.Change{Kind: curate.ChangeWiden, Anchor: 3, Opens: &curate.Opening{Kind: curate.ChangeDrop}}, curate.Decision{Tier: 2, Action: curate.ActionAsk}, nil},
+			want{err: curate.ErrDecideInvalid},
+		},
+		{
+			"another change naming what it opens is refused",
+			args{decided("d5", 1), curate.Change{Kind: curate.ChangeActivate, Anchor: 3, Opens: &update}, curate.Decision{Tier: 2, Action: curate.ActionAsk}, nil},
+			want{err: curate.ErrDecideInvalid},
+		},
+		{"a confidence past 1 is refused", args{decided("d5", 1), add, with(applied, func(d *curate.Decision) { d.Confidence = &over }), nil}, want{err: curate.ErrDecideInvalid}},
 		{"an unknown kind is refused", args{decided("d5", 1), curate.Change{Kind: "merge"}, applied, nil}, want{err: curate.ErrDecideInvalid}},
 		{"a change of a version without it is refused", args{decided("d5", 1), curate.Change{Kind: curate.ChangeAdd, ID: "k-2"}, applied, nil}, want{err: curate.ErrDecideInvalid}},
 		{"a compaction without its id is refused", args{decided("d5", 1), curate.Change{Kind: curate.ChangeCompaction}, applied, nil}, want{err: curate.ErrDecideInvalid}},

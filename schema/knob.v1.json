@@ -222,6 +222,66 @@
         },
         "before": {
           "type": "string"
+        },
+        "changes": {
+          "type": [
+            "null",
+            "array"
+          ],
+          "items": {
+            "type": "object",
+            "properties": {
+              "rule": {
+                "type": "string"
+              },
+              "opening": {
+                "type": [
+                  "null",
+                  "object"
+                ],
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "add",
+                      "update",
+                      "join",
+                      "drop",
+                      "withdraw",
+                      "compaction",
+                      "reanchor",
+                      "widen",
+                      "activate"
+                    ]
+                  },
+                  "bin": {
+                    "type": "string",
+                    "enum": [
+                      "b1",
+                      "b2",
+                      "b3",
+                      "b4"
+                    ]
+                  }
+                },
+                "required": [
+                  "kind"
+                ]
+              },
+              "answers": {
+                "type": "integer"
+              },
+              "differ": {
+                "type": "integer"
+              },
+              "p": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "rule"
+            ]
+          }
         }
       },
       "required": [

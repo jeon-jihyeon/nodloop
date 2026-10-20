@@ -78,10 +78,10 @@ func TestRunHookStopStartsTheDailyConsolidate(t *testing.T) {
 				require.NoError(t, os.WriteFile(filepath.Join(records, consolidate.MarkFile), []byte(tc.args.mark), 0o600))
 			}
 			var got [][]string
-			start := func(args []string) error {
+			start := besideCurate(func(args []string) error {
 				got = append(got, args)
 				return nil
-			}
+			})
 			stdin := `{"session_id":"s1","cwd":"` + repo + `","last_assistant_message":"done"}`
 			var stderr bytes.Buffer
 
@@ -112,10 +112,10 @@ func TestRunHookStopConsolidatesOncePerDay(t *testing.T) {
 			t.Parallel()
 			getenv, records, repo := consolidateHome(t, 2, "")
 			var started [][]string
-			start := func(args []string) error {
+			start := besideCurate(func(args []string) error {
 				started = append(started, args)
 				return nil
-			}
+			})
 			stdin := `{"session_id":"s1","cwd":"` + repo + `","last_assistant_message":"done"}`
 			client := llmmock.NewMockClient(gomock.NewController(t))
 			client.EXPECT().Complete(gomock.Any(), gomock.Any()).Return(llm.Response{Output: json.RawMessage(`{"groups":[]}`)}, nil).Times(tc.want)

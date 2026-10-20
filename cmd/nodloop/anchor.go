@@ -71,6 +71,8 @@ type anchorState struct {
 	absent []string
 	// The start of the window the sessions and their rules files are read from
 	since time.Time
+	// When the newest version was recorded and zero before the first
+	at time.Time
 }
 
 // The anchor of every place the runs of the window carry
@@ -210,8 +212,8 @@ func (c anchorCommand) refresh(ctx context.Context) (anchorState, error) {
 		return anchorState{}, err
 	}
 	designated, absent := c.designated(key)
-	state.anchor, state.absent = curate.NewAnchor(all, designated, loaded), absent
-	next, changed := state.anchor.Next(newest)
+	state.anchor, state.absent, state.at = curate.NewAnchor(all, designated, loaded), absent, newest.at
+	next, changed := state.anchor.Next(newest.version)
 	state.version = next
 	if !changed {
 		return state, nil
@@ -220,25 +222,33 @@ func (c anchorCommand) refresh(ctx context.Context) (anchorState, error) {
 	if err != nil {
 		return anchorState{}, err
 	}
+	state.at = tr.Time
 	return state, store.Append(ctx, tr.Record())
 }
 
+// The newest anchor version with the time it was recorded
+type recordedAnchor struct {
+	version curate.AnchorVersion
+	at      time.Time
+}
+
 // The rules files sessions loaded since the start of the window and the newest anchor version
-func (c anchorCommand) recorded(ctx context.Context, store *tracefile.Store, since time.Time) ([]curate.Loaded, curate.AnchorVersion, error) {
+func (c anchorCommand) recorded(ctx context.Context, store *tracefile.Store, since time.Time) ([]curate.Loaded, recordedAnchor, error) {
 	found, err := store.List(ctx, record.TraceFilter{Name: string(trace.NameInstructions), Since: since})
 	if err != nil {
-		return nil, curate.AnchorVersion{}, err
+		return nil, recordedAnchor{}, err
 	}
 	loaded, err := instructionsTraces(trace.RestoreAll(found)).loaded()
 	if err != nil {
-		return nil, curate.AnchorVersion{}, err
+		return nil, recordedAnchor{}, err
 	}
 	versions, err := store.List(ctx, record.TraceFilter{Name: string(trace.NameAnchor), Limit: 1})
 	if err != nil {
-		return nil, curate.AnchorVersion{}, err
+		return nil, recordedAnchor{}, err
 	}
-	newest, err := curate.RestoreAnchor(trace.RestoreAll(versions).Newest())
-	return loaded, newest, err
+	tr := trace.RestoreAll(versions).Newest()
+	newest, err := curate.RestoreAnchor(tr)
+	return loaded, recordedAnchor{version: newest, at: tr.Time}, err
 }
 
 // The designated files that can be read with the HMAC of their content and the paths of those that cannot

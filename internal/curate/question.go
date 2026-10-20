@@ -86,7 +86,12 @@ type Exposure struct {
 	Round int `json:"round"`
 	// The run of the answer the question followed
 	Run string `json:"run,omitempty"`
+	// The runes of the text shown so the touchpoints read the size of what was asked without the text
+	Runes int `json:"runes,omitempty"`
 }
+
+// The runes a question or a notice may show at most
+const MaxRunes = 600
 
 // A notice asks nothing and a question names its key, its two choices and what it asks about
 func (x Exposure) check(asks string) error {
@@ -96,6 +101,8 @@ func (x Exposure) check(asks string) error {
 		return fmt.Errorf("%w: kind %q on surface %q", ErrExposeInvalid, x.Kind, x.Surface)
 	case x.Rules == "" || x.Round < 1 || x.Round > 2 || err != nil || len(b) != 32:
 		return fmt.Errorf("%w: rules %q, round %d and the HMAC of the text", ErrExposeInvalid, x.Rules, x.Round)
+	case x.Runes < 0 || x.Runes > MaxRunes:
+		return fmt.Errorf("%w: a text of %d runes", ErrExposeInvalid, x.Runes)
 	case x.Kind == QuestionNotice && (x.Surface != SurfaceMessage || x.Key != "" || len(x.Choices) > 0):
 		return fmt.Errorf("%w: a notice is one line that asks nothing", ErrExposeInvalid)
 	case x.Kind == QuestionNotice:

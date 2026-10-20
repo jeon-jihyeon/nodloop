@@ -65,6 +65,14 @@ func TestEventExpose(t *testing.T) {
 			want{`{"kind":"direction","key":"a7k2","change":{"id":"k-1","version":1},"surface":"additional_context","rules":"1",` +
 				`"choices":["keep","drop"],"text":"` + hmac + `","round":1,"run":"run-1"}`, nil},
 		},
+		{
+			"a question records the runes of its text at the most it may show",
+			args{pushed(), with(audit, func(x *curate.Exposure) { x.Runes = curate.MaxRunes })},
+			want{`{"kind":"audit","key":"a7k2","change":{"id":"k-1","version":1},"surface":"additional_context","rules":"1",` +
+				`"choices":["same","undo"],"text":"` + hmac + `","round":1,"run":"run-1","runes":600}`, nil},
+		},
+		{"a text past the runes a question may show is refused", args{pushed(), with(audit, func(x *curate.Exposure) { x.Runes = curate.MaxRunes + 1 })}, want{err: curate.ErrExposeInvalid}},
+		{"a negative count of runes is refused", args{pushed(), with(notice, func(x *curate.Exposure) { x.Runes = -1 })}, want{err: curate.ErrExposeInvalid}},
 		{"an unknown kind is refused", args{pushed(), with(audit, func(x *curate.Exposure) { x.Kind = "draft" })}, want{err: curate.ErrExposeInvalid}},
 		{"an unknown surface is refused", args{pushed(), with(audit, func(x *curate.Exposure) { x.Surface = "block" })}, want{err: curate.ErrExposeInvalid}},
 		{"a third round is refused", args{pushed(), with(audit, func(x *curate.Exposure) { x.Round = 3 })}, want{err: curate.ErrExposeInvalid}},

@@ -165,7 +165,7 @@ func TestRunHookInstructions(t *testing.T) {
 			}
 			var stdout, stderr bytes.Buffer
 
-			code := runHook(append([]string{"instructions"}, tc.args.flags...), envOf(env), nil, hookClock(), strings.NewReader(place.Replace(tc.args.stdin)), &stdout, &stderr)
+			code := runHook(append([]string{"instructions"}, tc.args.flags...), envOf(env), noStart, hookClock(), strings.NewReader(place.Replace(tc.args.stdin)), &stdout, &stderr)
 
 			assert.Equal(t, 0, code)
 			assert.Empty(t, stdout.String())
@@ -183,7 +183,7 @@ func TestRunHookInstructionsHMAC(t *testing.T) {
 	stdin := place.Replace(`{"session_id":"s1","file_path":"{repo}/CLAUDE.md","memory_type":"instructions","load_reason":"include"}`)
 	var stderr bytes.Buffer
 
-	require.Equal(t, 0, runHook([]string{"instructions"}, env, nil, hookClock(), strings.NewReader(stdin), &bytes.Buffer{}, &stderr))
+	require.Equal(t, 0, runHook([]string{"instructions"}, env, noStart, hookClock(), strings.NewReader(stdin), &bytes.Buffer{}, &stderr))
 
 	require.Empty(t, stderr.String())
 	key, err := textkey.Load(records)
@@ -286,7 +286,7 @@ func TestRunHookInstructionsFailures(t *testing.T) {
 			stdin := place.Replace(`{"session_id":"s1","file_path":"{repo}/CLAUDE.md","memory_type":"instructions"}`)
 			var stderr bytes.Buffer
 
-			code := runHook([]string{"instructions"}, env, nil, hookClock(), strings.NewReader(stdin), &bytes.Buffer{}, &stderr)
+			code := runHook([]string{"instructions"}, env, noStart, hookClock(), strings.NewReader(stdin), &bytes.Buffer{}, &stderr)
 
 			assert.Equal(t, 0, code)
 			assert.Contains(t, stderr.String(), tc.want)

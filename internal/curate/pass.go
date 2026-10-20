@@ -67,6 +67,8 @@ type Setting struct {
 	Temp   TempDirs
 	// The text of an anchor file read at check time
 	Read func(path string) (string, error)
+	// What the curation report of loop found that the knobs move on
+	Numbers Numbers
 }
 
 // One decide as a pass made it or reads it back
@@ -90,11 +92,16 @@ func RestoreDecide(t trace.Trace) (Decided, bool) {
 	return d, true
 }
 
-// What the decide is about: the version of a candidate or the signal of a withdrawal
+// What the decide is about: the version of a candidate, the signal of a withdrawal or the kind and bin an offer opens
 // A newer decide of the same subject replaces an older one
 func (d Decided) subject() string {
-	if d.Change.Kind == ChangeWithdraw {
+	switch {
+	case d.Change.Kind == ChangeWithdraw:
 		return "signal " + d.Change.Signal
+	case d.Change.Opens != nil:
+		return fmt.Sprintf("widen %s %s", d.Change.Opens.Kind, d.Change.Opens.Bin)
+	case d.Change.Kind.offered():
+		return string(d.Change.Kind)
 	}
 	return fmt.Sprintf("version %s v%d", d.Change.ID, d.Change.Version)
 }
@@ -132,6 +139,8 @@ type pass struct {
 	*Curator
 	s     Setting
 	event KnobEvent
+	// The widenings and the activation the knobs offered at the start of the cycle
+	offers []Offer
 	// Every knowledge record read again after each write
 	all knowledge.Set
 	// Every decide newest first with those of this pass
@@ -149,16 +158,18 @@ type pass struct {
 
 // One pass over what the background prepared
 // 1. the first pass of a cycle appends its knob event and every decide draws under its seed
-// 2. a decide a crash left without its ledger write is carried out first under the same decide
-// 3. a conflict an extraction found with a version nodloop approved is decided once as a withdrawal
-// 4. each waiting candidate version is decided once and again only after a retry, after corroborate joined new evidence or once the shadow ended
-// 5. a failure on one change joins the error and the pass goes on with the next
+// 2. the knobs move on the numbers of loop before anything is decided so a narrowing holds for the whole pass
+// 3. a decide a crash left without its ledger write is carried out first under the same decide
+// 4. each widening and the activation the knobs offered is prepared as a question
+// 5. a conflict an extraction found with a version nodloop approved is decided once as a withdrawal
+// 6. each waiting candidate version is decided once and again only after a retry, after corroborate joined new evidence or once the shadow ended
+// 7. a failure on one change joins the error and the pass goes on with the next
 func (c *Curator) Pass(ctx context.Context, s Setting) (Result, error) {
 	p, err := c.open(ctx, s)
 	if err != nil {
 		return Result{}, err
 	}
-	failed := errors.Join(p.recover(ctx), p.withdrawals(ctx), p.candidates(ctx))
+	failed := errors.Join(p.recover(ctx), p.offered(ctx), p.withdrawals(ctx), p.candidates(ctx))
 	return Result{Event: p.event, Decided: p.made, Due: p.due()}, failed
 }
 
@@ -213,21 +224,53 @@ func (p *pass) reload(ctx context.Context) error {
 	return err
 }
 
-// The knob event of the cycle that holds now and the one the pass starts when none marks it yet
+// The knob event of the cycle that holds now with the move of the knobs on the numbers of loop
+// 1. a pass inside the cycle hands the numbers to Alarm and appends a narrowing of the same cycle only when a knob moved
+// 2. the first pass of a cycle hands them to Start and appends the knob event of the cycle with the move and its offers
+// 3. a cycle that starts a new judge configuration reads no number since every answer was given under another judge
 func (p *pass) cycle(ctx context.Context, knobs knobTraces) error {
 	now := p.now()
-	if ev, ok := knobs.current(now); ok {
-		p.event = ev
-		return nil
+	if ev, id, ok := knobs.current(now); ok {
+		move := ev.Knobs.Alarm(p.s.Numbers)
+		if len(move.Changes) == 0 {
+			p.event = ev
+			return nil
+		}
+		ev.Cause, ev.Before = KnobNarrow, id
+		return p.append(ctx, ev, move, now)
 	}
-	ev := knobs.next(now, p.s.Seed, p.s.Judge, p.s.Anchor.Shots(p.s.Judge.StartAt(now)))
+	ev, started := knobs.next(now, p.s.Seed, p.s.Judge, p.s.Anchor.Shots(p.s.Judge.StartAt(now)))
+	numbers := p.s.Numbers
+	if started {
+		numbers = Numbers{}
+	}
+	return p.append(ctx, ev, ev.Knobs.Start(numbers), now)
+}
+
+// Appends the knob event with the knobs and the changes of the move and runs the pass under it
+// The offers wait for the pass to prepare them once the event is on record
+func (p *pass) append(ctx context.Context, ev KnobEvent, m Move, now time.Time) error {
+	ev.Knobs, ev.Changes = m.Knobs, m.Changes
 	ev.PolicyVersion = ev.Policy(p.s.Build)
 	tr, err := ev.Trace(p.s.Build, now)
 	if err != nil {
 		return err
 	}
-	p.event = ev
-	return p.traces.Append(ctx, tr.Record())
+	if err := p.traces.Append(ctx, tr.Record()); err != nil {
+		return err
+	}
+	p.event, p.offers = ev, m.Offers
+	return nil
+}
+
+// Prepares each widening and the activation the knobs offered as a question of the person
+// Only the person's yes moves a knob so the decide asks and carries out nothing
+func (p *pass) offered(ctx context.Context) error {
+	var errs []error
+	for _, o := range p.offers {
+		errs = append(errs, p.settle(ctx, "", ruling{change: o.Change(p.s.Version.Version), decision: Decision{Tier: topTier, Action: ActionAsk}}))
+	}
+	return errors.Join(errs...)
 }
 
 // Carries out the decides a crash left before their ledger write in the order they were made
@@ -242,9 +285,16 @@ func (p *pass) recover(ctx context.Context) error {
 	return errors.Join(errs...)
 }
 
-// Whether the version is still in the state the decide found it in
-// A withdrawal finds a version nodloop approved and every other change a waiting candidate
+// Whether what the decide is about is still in the state the decide found it in
+// 1. a widening finds its kind and bin closed and the activation finds the shadow on
+// 2. a withdrawal finds a version nodloop approved and every other change a waiting candidate
 func (p *pass) waits(d Decided) bool {
+	switch {
+	case d.Change.Opens != nil:
+		return !p.event.Knobs.Opens(*d.Change.Opens)
+	case d.Change.Kind == ChangeActivate:
+		return !p.event.Knobs.Activated
+	}
 	k, err := p.all.Version(d.Change.ID, d.Change.Version)
 	if d.Change.Kind == ChangeWithdraw {
 		return err == nil && k.Status == knowledge.StatusApproved && k.Approver == knowledge.ApproverNodloop
@@ -381,7 +431,7 @@ func (p *pass) sort(ctx context.Context, k knowledge.Knowledge, ref string, retr
 
 // The judge on the change and the tier its outcome gives
 // 1. a member that failed leaves the change for the next pass once with action retry and then it is decided as split
-// 2. the outcome, the vote and the bin stay on the decide whatever the tier
+// 2. the outcome, the vote, the bin and the confidence it reads stay on the decide whatever the tier
 func (p *pass) judged(ctx context.Context, r *ruling, k knowledge.Knowledge, ref string, run trace.Trace, place AnchorPlace, retried bool) error {
 	cs, err := p.caseOf(ctx, k, r.change.Kind, run, place)
 	if err != nil {
@@ -399,7 +449,7 @@ func (p *pass) judged(ctx context.Context, r *ruling, k knowledge.Knowledge, ref
 		return nil
 	}
 	share := j.Share
-	r.decision = Decision{Judge: j.Trace, Outcome: j.Outcome, Vote: &share, Bin: j.Bin}
+	r.decision = Decision{Judge: j.Trace, Outcome: j.Outcome, Vote: &share, Bin: j.Bin, Confidence: j.Confidence}
 	if r.failed != nil {
 		r.decision.Outcome, r.failed = OutcomeSplit, nil
 	}

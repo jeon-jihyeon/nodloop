@@ -31,6 +31,10 @@ const JudgeEffort = "high"
 // Claude returns no logprob and its newer models refuse a non default temperature so resolution comes from varied prompts
 const variants = 3
 
+// Time each member of the judge may take
+// A member that answers later fails its call so the change waits for the next pass
+const JudgeTimeout = 60 * time.Second
+
 // What a judge configuration starts from
 // A change of any of them is a new judge whose bound and posteriors start again
 type JudgeSettings struct {
@@ -172,19 +176,28 @@ func (vs Votes) conforming() Votes {
 	return out
 }
 
-// The bin of the mean confidence of the conforming answers to against and empty when no member conforms
-// 1. a conforming answer to against lies below one half so its confidence is one minus its yes
-// 2. the mean is read in hundredths since members state round values and a float error must never move one across an edge
-func (vs Votes) Bin() Bin {
+// The mean confidence of the conforming answers to against and false when no member conforms
+// A conforming answer to against lies below one half so its confidence is one minus its yes
+func (vs Votes) Confidence() (float64, bool) {
 	conform := vs.conforming()
 	if len(conform) == 0 {
-		return ""
+		return 0, false
 	}
 	sum := 0.0
 	for _, v := range conform {
 		sum += 1 - v.Answers["against"].Yes
 	}
-	switch hundredths := math.Round(100 * sum / float64(len(conform))); {
+	return sum / float64(len(conform)), true
+}
+
+// The bin of the mean confidence and empty when no member conforms
+// The mean is read in hundredths since members state round values and a float error must never move one across an edge
+func (vs Votes) Bin() Bin {
+	mean, ok := vs.Confidence()
+	if !ok {
+		return ""
+	}
+	switch hundredths := math.Round(100 * mean); {
 	case hundredths >= 95:
 		return Bin1
 	case hundredths >= 85:
@@ -238,6 +251,8 @@ type Judgment struct {
 	Share float64
 	// Empty when no member conforms
 	Bin Bin
+	// The mean confidence the bin reads and nil when no member conforms
+	Confidence *float64
 	// The classify trace of the answers
 	Trace string
 	// The errors of the members that gave no answer
@@ -267,7 +282,11 @@ func (j *Judge) Judge(ctx context.Context, ref string, c Case) (Judgment, error)
 		return Judgment{}, err
 	}
 	votes := Votes(ballot.Votes)
-	return Judgment{Outcome: votes.Outcome(), Share: votes.Share(), Bin: votes.Bin(), Trace: ballot.TraceID, Err: votes.Err()}, nil
+	judged := Judgment{Outcome: votes.Outcome(), Share: votes.Share(), Bin: votes.Bin(), Trace: ballot.TraceID, Err: votes.Err()}
+	if mean, ok := votes.Confidence(); ok {
+		judged.Confidence = &mean
+	}
+	return judged, nil
 }
 
 // One decision of the person a variant shows as an example
@@ -386,8 +405,7 @@ type JudgeConfig struct {
 // 2. any change starts a new one with sets drawn from the decisions before the pinned start or else before now
 // The decisions are the pool as it stood at that start so a later decision never moves a set
 func (c JudgeConfig) Next(s JudgeSettings, decisions Shots, now time.Time) JudgeConfig {
-	same := c.Model == s.Model && c.Effort == s.Effort && c.Kept == s.Kept && c.Refused == s.Refused
-	if !c.Start.IsZero() && same && c.Prompt == PromptVersion && (s.Start.IsZero() || s.Start.Equal(c.Start)) {
+	if c.keeps(s) {
 		return c
 	}
 	start := s.StartAt(now)
@@ -395,6 +413,13 @@ func (c JudgeConfig) Next(s JudgeSettings, decisions Shots, now time.Time) Judge
 		Model: s.Model, Effort: s.Effort, Prompt: PromptVersion, Start: start, Sets: decisions.Draw(start, s.Kept, s.Refused), Kept: s.Kept,
 		Refused: s.Refused,
 	}
+}
+
+// Whether a judge of the settings goes on under the configuration
+// A configuration that never started keeps nothing
+func (c JudgeConfig) keeps(s JudgeSettings) bool {
+	same := c.Model == s.Model && c.Effort == s.Effort && c.Kept == s.Kept && c.Refused == s.Refused
+	return !c.Start.IsZero() && same && c.Prompt == PromptVersion && (s.Start.IsZero() || s.Start.Equal(c.Start))
 }
 
 // The claude members of the configuration with one variant and its few-shot set each
@@ -481,6 +506,8 @@ func (j ClaudeJudge) Reply(ctx context.Context, req classify.Request) (classify.
 	if err := json.Unmarshal([]byte(req.State), &c); err != nil {
 		return reply, fmt.Errorf("%w: %w", ErrCaseInvalid, err)
 	}
+	ctx, cancel := context.WithTimeout(ctx, JudgeTimeout)
+	defer cancel()
 	res, err := j.client.Complete(ctx, llm.Request{
 		System: judgeRules, Prompt: j.prompt(c), Schema: json.RawMessage(judgeSchema), Model: j.model, Effort: j.effort,
 	})

@@ -42,7 +42,7 @@ func (f *knowledgeFlags) bind(fs *flag.FlagSet) {
 	fs.BoolVar(&f.replay, "replay", false, "check: also replay every new item of the compaction against its outputs")
 	fs.BoolVar(&f.everywhere, "everywhere", false, "approve: approve a candidate for every run of its producer")
 	fs.BoolVar(&f.daily, "daily", false,
-		"consolidate: run only when consolidate.json is a day old and print nothing, as the stop hook starts it")
+		"consolidate and curate: run only when consolidate.json or curate.json is a day old, as the stop hook starts it")
 	fs.BoolVar(&f.newLabels, "new-labels", false, "propose: allow label values no recorded run carries yet such as a new tenant")
 	fs.StringVar(&f.id, "id", "", "knowledge id. propose generates one when empty")
 	fs.IntVar(&f.version, "version", 0, "the version to act on. 0 means the approved one for reaffirm and the current one for replay")
@@ -72,7 +72,8 @@ func (f *knowledgeFlags) bind(fs *flag.FlagSet) {
 		`propose: a tool_input JSON object the veto must block such as {"command":"sed -i s/a/b/ f"}`)
 	fs.StringVar(&f.from, "from", "",
 		"propose and extract: a run a person corrected by edit or reject. propose fills producer, labels and evidence from it unless given")
-	fs.StringVar(&f.model, "model", "", "compact, check, extract, replay and consolidate: model alias or name. Empty means the llm default")
+	fs.StringVar(&f.model, "model", "",
+		"compact, check, extract, replay, consolidate and curate: model alias or name. Empty means the llm default and for the judge of curate its own")
 }
 
 // The candidate the propose flags describe
@@ -169,6 +170,9 @@ func runKnowledge(
 		err = flags.runReplay(ctx, id, a, client, stdout)
 	case args[0] == "consolidate":
 		err = flags.runConsolidate(ctx, a, client, stdout)
+		a.exportAfter(detached(a.cfg.home.hookLog()), stderr)
+	case args[0] == "curate":
+		err = flags.runCurate(ctx, a, client, getenv, stdout)
 		a.exportAfter(detached(a.cfg.home.hookLog()), stderr)
 	default:
 		err = flags.runRecords(ctx, args[0], id, a, proof, stdout)

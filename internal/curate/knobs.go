@@ -89,6 +89,8 @@ type KnobEvent struct {
 	Cause KnobCause   `json:"cause"`
 	// The knob event this one follows: the one of the cycle before at a start and the one of the same cycle at a narrowing
 	Before string `json:"before,omitempty"`
+	// Each knob that moved with the numbers behind it
+	Changes []KnobChange `json:"changes,omitempty"`
 }
 
 // The build version with the first 8 hex of SHA-256 of the knobs and the judge as semver build metadata
@@ -137,26 +139,26 @@ func RestoreKnob(t trace.Trace) (KnobEvent, bool) {
 // The knob traces of the trace store newest first
 type knobTraces trace.Traces
 
-// The knob event of the cycle that holds now and false when no knob trace of that cycle exists yet
+// The knob event of the cycle that holds now with the id of its trace and false when no knob trace of that cycle exists yet
 // A narrowing appends a later event of the same id so the newest one of the cycle holds its knobs
-func (ts knobTraces) current(now time.Time) (KnobEvent, bool) {
+func (ts knobTraces) current(now time.Time) (KnobEvent, string, bool) {
 	open, ok := trace.Traces(ts).Cycles(now).Open(now)
 	if !ok {
-		return KnobEvent{}, false
+		return KnobEvent{}, "", false
 	}
 	for _, t := range ts {
 		if k, ok := RestoreKnob(t); ok && k.CycleID == open.ID {
-			return k, true
+			return k, t.ID, true
 		}
 	}
-	return KnobEvent{}, false
+	return KnobEvent{}, "", false
 }
 
-// The knob event a pass at now starts the cycle with
+// The knob event a pass at now starts the cycle with and whether a judge configuration starts with it
 // 1. the cycle starts where the knob traces mark the one that holds now or at 00:00 UTC on the Monday of now before the first
 // 2. it carries the knobs of the newest event before it or the start knobs and its judge on or starts one from the settings
 // 3. the seed is new so no draw of the cycle can be known before it starts
-func (ts knobTraces) next(now time.Time, seed string, settings JudgeSettings, shots Shots) KnobEvent {
+func (ts knobTraces) next(now time.Time, seed string, settings JudgeSettings, shots Shots) (KnobEvent, bool) {
 	start := monday(now)
 	if open, ok := trace.Traces(ts).Cycles(now).Open(now); ok {
 		start = open.Start
@@ -170,7 +172,7 @@ func (ts knobTraces) next(now time.Time, seed string, settings JudgeSettings, sh
 		}
 	}
 	ev.Judge = before.Judge.Next(settings, shots, now)
-	return ev
+	return ev, !before.Judge.keeps(settings)
 }
 
 // 00:00 UTC on the Monday of the week of t
