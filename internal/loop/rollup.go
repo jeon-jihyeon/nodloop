@@ -97,9 +97,13 @@ func (u *ItemUnit) add(held, judged, corrected bool) {
 }
 
 // The runs and their eligible versions per version and unit in the order of id, version and unit
-func (r Runs) items() []ItemRollup {
+// A run inside the cycle of a rollup counts nothing since the rollup counted it
+func (r Runs) items(rolled Rollups) []ItemRollup {
 	units := map[knowledge.Ref]map[string]*ItemUnit{}
 	for id, in := range r.inputs {
+		if rolled.covers(r.times[id]) {
+			continue
+		}
 		fb, judged := r.verdicts[id]
 		for _, e := range in.Eligible {
 			ref := e.Ref
@@ -183,6 +187,6 @@ func (s Stores) Rollup(ctx context.Context, c trace.Cycle) (json.RawMessage, err
 	// A rollup of strings, numbers and times always encodes
 	return json.Marshal(Rollup{
 		CycleID: c.ID, Start: c.Start, End: c.End,
-		Producers: joined.tally(items, feedback.RestoreOutcomes(outcomes), nil).producers(), Items: joined.items(),
+		Producers: joined.tally(items, feedback.RestoreOutcomes(outcomes), nil).producers(), Items: joined.items(nil),
 	})
 }

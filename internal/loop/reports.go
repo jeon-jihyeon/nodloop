@@ -113,15 +113,15 @@ func (s Stores) Snapshot(ctx context.Context, name ReportName) (Snapshot, error)
 	if name != ReportEffect {
 		return s.snapshot(ctx, name.traces(), s.Since)
 	}
-	return s.effect(ctx)
+	return s.cycled(ctx, name.traces())
 }
 
-// The snapshot of report effect with every cycle whole
+// The snapshot of the names with every cycle whole as report effect and report curation read it
 // 1. the runs before the first cycle are read in the window as every report reads them
 // 2. a cycle is read whole from its start since no prune removes a run of a cycle that has no rollup
 // 3. a closed cycle with a rollup reads from the rollup and the runs a prune left in it count nothing
 // So the counts of a closed cycle are the same before and after the prune of its runs
-func (s Stores) effect(ctx context.Context) (Snapshot, error) {
+func (s Stores) cycled(ctx context.Context, names []trace.Name) (Snapshot, error) {
 	marks, err := s.list(ctx, trace.NameKnob, s.Since)
 	if err != nil {
 		return Snapshot{}, err
@@ -130,7 +130,7 @@ func (s Stores) effect(ctx context.Context) (Snapshot, error) {
 	if first, ok := marks.FirstCycle(); ok && first.Start.Before(since) {
 		since = first.Start
 	}
-	snap, err := s.snapshot(ctx, ReportEffect.traces(), since)
+	snap, err := s.snapshot(ctx, names, since)
 	if err != nil {
 		return Snapshot{}, err
 	}

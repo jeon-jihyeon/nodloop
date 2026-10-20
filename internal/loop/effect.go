@@ -316,7 +316,8 @@ func (a *effectArms) finish(since time.Time) []EffectRow {
 	case srm != nil && *srm < SRMThreshold:
 		warnings = append(warnings, WarnSRM)
 	case applied.Rate != nil && withheld.Rate != nil:
-		diff, low, high = newcombe(applied, withheld)
+		diff, low, high = newcombe(
+			interval{applied.Rate, applied.RateLow, applied.RateHigh}, interval{withheld.Rate, withheld.RateLow, withheld.RateHigh})
 	}
 	if p, ok := judgedRates[0].differs(judgedRates[1]); ok && p < JudgedRateThreshold {
 		warnings = append(warnings, WarnJudgedRate)
@@ -394,7 +395,7 @@ type effective struct {
 // 1. the design effect is the cluster robust variance of the ratio over the binomial variance and never below 1
 // 2. units of one run each give a design effect of 1 so the counts stay as they are
 // 3. a rate of 0 or 1 has no binomial variance and keeps its counts
-func clustered(units map[string]*UnitRollup, part func(*UnitRollup) (int, int)) effective {
+func clustered[U any](units map[string]U, part func(U) (int, int)) effective {
 	var x, n float64
 	for _, u := range units {
 		ux, un := part(u)
@@ -444,11 +445,16 @@ func (e effective) wilson() (*float64, *float64, *float64) {
 	return ptr(p), ptr(max(0, center-half)), ptr(min(1, center+half))
 }
 
+// A rate with its 95 percent interval
+type interval struct {
+	rate, low, high *float64
+}
+
 // The rate of a minus the rate of b with the Newcombe hybrid score interval built from their Wilson intervals
-func newcombe(a, b *EffectRow) (*float64, *float64, *float64) {
-	d := *a.Rate - *b.Rate
-	low := d - math.Hypot(*a.Rate-*a.RateLow, *b.RateHigh-*b.Rate)
-	high := d + math.Hypot(*a.RateHigh-*a.Rate, *b.Rate-*b.RateLow)
+func newcombe(a, b interval) (*float64, *float64, *float64) {
+	d := *a.rate - *b.rate
+	low := d - math.Hypot(*a.rate-*a.low, *b.high-*b.rate)
+	high := d + math.Hypot(*a.high-*a.rate, *b.rate-*b.low)
 	return ptr(d), ptr(low), ptr(high)
 }
 

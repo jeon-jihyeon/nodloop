@@ -270,7 +270,7 @@ func TestRunsEffectFromRollups(t *testing.T) {
 	}, got)
 }
 
-// A store that fails to read fails the rollup and the effect report that reads it
+// A store that fails to read fails the rollup and the effect and curation reports that read it
 func TestStoresRollupFails(t *testing.T) {
 	tcs := []struct {
 		name string
@@ -295,9 +295,11 @@ func TestStoresRollupFails(t *testing.T) {
 
 			_, rollupErr := r.stores(time.Time{}).Rollup(context.Background(), firstCycle())
 			_, effectErr := r.stores(time.Time{}).Snapshot(context.Background(), loop.ReportEffect)
+			_, curationErr := r.stores(time.Time{}).Curation(context.Background(), cycleDay(20))
 
 			assert.Error(t, rollupErr)
 			assert.Error(t, effectErr)
+			assert.Error(t, curationErr)
 		})
 	}
 }
