@@ -225,6 +225,12 @@ func (c Case) state() string {
 	return string(b)
 }
 
+// The cumulative diff since the anchor version that a decide keeps as an HMAC
+// The changes carried out come first and the change judged last
+func (c Case) diff() string {
+	return strings.Join(slices.Concat(c.Carried, []string{c.Change}), "\n")
+}
+
 // What the judge found on one change as its decide records it
 type Judgment struct {
 	Outcome Outcome

@@ -17,9 +17,6 @@ import (
 var drawn = curate.KnobEvent{CycleID: "2026-09-21", PolicyVersion: "0.10.0+1a2b3c4d", Seed: "5eed"}
 
 // The audit draws on the decide id under the seed so one decide always draws alike and a share of p draws about p
-// When the pass of the fixtures wrote its records
-var written = time.Date(2026, 9, 20, 9, 0, 0, 0, time.UTC)
-
 func TestKnobEventAuditDraw(t *testing.T) {
 	type args struct {
 		event curate.KnobEvent
