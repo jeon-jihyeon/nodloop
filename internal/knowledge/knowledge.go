@@ -255,6 +255,12 @@ func (k Knowledge) changed(status Status, approver string, now time.Time) Knowle
 	return k
 }
 
+// A record of a person's decision on a version: an approval or a retire
+// A reaffirm keeps the time of the approval so it is no decision
+func (k Knowledge) Decided() bool {
+	return k.Status == StatusRetired || k.Status == StatusApproved && k.ApprovedAt.Equal(k.Time)
+}
+
 // When runs began to receive the version
 // 1. an approved version reaches runs from its approval and a reaffirm or retirement later keeps that time
 // 2. a version never approved reached no run so its newest record stands in

@@ -1,5 +1,7 @@
 package otel
 
+import "strconv"
+
 // The OTLP JSON of an ExportTraceServiceRequest with only the fields nodloop fills
 // The protobuf body is written from the same values
 type request struct {
@@ -92,6 +94,11 @@ type array struct {
 
 func str(key, s string) attribute {
 	return attribute{Key: key, Value: value{String: &s}}
+}
+
+func integer(key string, n int64) attribute {
+	s := strconv.FormatInt(n, 10)
+	return attribute{Key: key, Value: value{Int: &s}}
 }
 
 func double(key string, f float64) attribute {

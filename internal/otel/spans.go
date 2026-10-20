@@ -5,10 +5,14 @@ import (
 	"maps"
 	"slices"
 	"strconv"
+	"strings"
 )
 
 // Span kinds of the OTLP data model
-const kindInternal = 1
+const (
+	kindInternal = 1
+	kindClient   = 3
+)
 
 // The status code of a span that failed
 const statusError = 2
@@ -21,6 +25,7 @@ const (
 	keySession    = "session.id"
 	keyCoversa    = "gen_ai.conversation.id"
 	operationTurn = "invoke_agent"
+	operationChat = "chat"
 )
 
 // The session under the key of each convention since every receiver reads only its own
@@ -87,6 +92,23 @@ func (r Run) holdout() []attribute {
 	return append(out, str("nodloop.holdout.arm", "withheld"))
 }
 
+// The review question as a span of no length at the moment the stop asked it
+func (r Review) span(content bool) span {
+	ids := ReviewSpan(r.Run, r.SessionID, r.Candidate, r.Time)
+	s := span{
+		TraceID: ids.TraceID, SpanID: ids.SpanID, Name: "nodloop.review " + r.Candidate.ID, Kind: kindInternal,
+		Start: nanos(r.Time), End: nanos(r.Time),
+		Attributes: append([]attribute{str(keyKind, "CHAIN"), str("nodloop.knowledge.candidate", r.Candidate.ref())}, session(r.SessionID)...),
+	}
+	if r.Run != "" {
+		s.Parent = RunSpan(r.Run).SpanID
+	}
+	if content {
+		s.Attributes = appendStr(s.Attributes, "nodloop.knowledge.content", r.Content)
+	}
+	return s
+}
+
 // The evaluation as a carrier span of no length with one link to what it evaluates
 // The OpenInference annotation spec takes feedback given after the fact on such a span
 func (e Evaluation) span(content bool) span {
@@ -97,6 +119,63 @@ func (e Evaluation) span(content bool) span {
 	}
 	if !e.Target.IsZero() {
 		s.Links = []link{{TraceID: e.Target.TraceID, SpanID: e.Target.SpanID}}
+	}
+	return s
+}
+
+// The model step as an invoke_agent root and its inference child when a model ran
+// 1. the root names the step in the trace list of every tool
+// 2. the child is the inference span whose usage and cost the tools read
+func (c Call) spans() []span {
+	ids := CallSpan(c.ID)
+	agent := "nodloop." + c.Name
+	root := span{
+		TraceID: ids.TraceID, SpanID: ids.SpanID, Name: operationTurn + " " + agent, Kind: kindInternal,
+		Start: nanos(c.Time.Add(-c.Duration)), End: nanos(c.Time),
+		Attributes: []attribute{str(keyOperation, operationTurn), str(keyAgent, agent), str(keyKind, "AGENT"), str("nodloop.trace.id", c.ID)},
+	}
+	root.Attributes = append(root.Attributes, session(c.SessionID)...)
+	root.Attributes = appendStr(root.Attributes, "nodloop.subject", c.Subject)
+	root.Attributes = appendStr(root.Attributes, "nodloop.extract.conclusion", c.Conclusion)
+	root.Attributes = appendStr(root.Attributes, "nodloop.classify.point", c.Point)
+	root.Attributes = appendStr(root.Attributes, "nodloop.compaction.id", c.Compaction)
+	if c.Candidate != nil {
+		root.Attributes = append(root.Attributes, str("nodloop.knowledge.candidate", c.Candidate.ref()))
+	}
+	for _, l := range c.Links {
+		root.Links = append(root.Links, link(l))
+	}
+	if c.Error != "" {
+		root.failed("nodloop."+c.Name+"_failed", c.Error)
+	}
+	if c.Model == "" && c.Usage.empty() {
+		return []span{root}
+	}
+	return []span{root, c.inference(root)}
+}
+
+// The inference span of the conventions under the root of the step
+// Input tokens count the cache read and write as the Anthropic rule of the conventions does
+func (c Call) inference(root span) span {
+	ids := CallSpan(c.ID).chat(c.ID)
+	s := span{
+		TraceID: ids.TraceID, SpanID: ids.SpanID, Parent: root.SpanID, Name: strings.TrimSpace(operationChat + " " + c.Model), Kind: kindClient,
+		Start: root.Start, End: root.End,
+		Attributes: append([]attribute{str(keyOperation, operationChat), str(keyKind, "LLM")}, session(c.SessionID)...),
+	}
+	if strings.HasPrefix(c.Model, "claude") {
+		s.Attributes = append(s.Attributes, str("gen_ai.provider.name", "anthropic"))
+	}
+	s.Attributes = appendStr(s.Attributes, "gen_ai.request.model", c.Model)
+	s.Attributes = appendStr(s.Attributes, "gen_ai.response.model", c.Model)
+	u := c.Usage
+	s.Attributes = appendInt(s.Attributes, "gen_ai.usage.input_tokens", u.Input+u.CacheRead+u.CacheWrite)
+	s.Attributes = appendInt(s.Attributes, "gen_ai.usage.output_tokens", u.Output)
+	s.Attributes = appendInt(s.Attributes, "gen_ai.usage.cache_read.input_tokens", u.CacheRead)
+	s.Attributes = appendInt(s.Attributes, "gen_ai.usage.cache_write.input_tokens", u.CacheWrite)
+	s.Attributes = appendInt(s.Attributes, "gen_ai.usage.reasoning.output_tokens", u.Thinking)
+	if u.CostUSD > 0 {
+		s.Attributes = append(s.Attributes, double("llm.cost.total", u.CostUSD))
 	}
 	return s
 }
@@ -134,4 +213,12 @@ func appendStr(attrs []attribute, key, s string) []attribute {
 		return attrs
 	}
 	return append(attrs, str(key, s))
+}
+
+// A count of zero is left out since it says nothing a tool can show
+func appendInt(attrs []attribute, key string, n int) []attribute {
+	if n == 0 {
+		return attrs
+	}
+	return append(attrs, integer(key, int64(n)))
 }

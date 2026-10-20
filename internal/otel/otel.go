@@ -65,8 +65,11 @@ func New(cfg Config) *Exporter {
 // How many records of each kind reached the collector
 type Sent struct {
 	Runs       int
+	Reviews    int
 	Verdicts   int
 	Outcomes   int
+	Decisions  int
+	Calls      int
 	LogRecords int
 }
 
@@ -115,14 +118,23 @@ func (e *Exporter) Export(ctx context.Context, b Batch) (Sent, error) {
 	return sent, nil
 }
 
-// Every span of the batch in the order runs, evaluations
+// Every span of the batch in the order runs, reviews, evaluations, model steps
 func (b Batch) items(content bool) []item {
 	var out []item
 	for _, r := range b.Runs {
 		out = append(out, item{kind: "run", span: r.span(content), last: true})
 	}
+	for _, r := range b.Reviews {
+		out = append(out, item{kind: "review", span: r.span(content), last: true})
+	}
 	for _, ev := range b.Evaluations {
 		out = append(out, item{kind: string(ev.Name), span: ev.span(content), last: true})
+	}
+	for _, c := range b.Calls {
+		spans := c.spans()
+		for i, s := range spans {
+			out = append(out, item{kind: "call", span: s, last: i == len(spans)-1})
+		}
 	}
 	return out
 }
@@ -131,10 +143,16 @@ func (s *Sent) count(kind string) {
 	switch kind {
 	case "run":
 		s.Runs++
+	case "review":
+		s.Reviews++
 	case string(EvaluationVerdict):
 		s.Verdicts++
 	case string(EvaluationOutcome):
 		s.Outcomes++
+	case string(EvaluationReview):
+		s.Decisions++
+	case "call":
+		s.Calls++
 	}
 }
 
