@@ -136,6 +136,23 @@ type result struct {
 	TotalCostUSD     float64         `json:"total_cost_usd"`
 	DurationMS       int64           `json:"duration_ms"`
 	Usage            usage           `json:"usage"`
+	// The usage per model id the call ran on
+	ModelUsage map[string]struct {
+		OutputTokens int `json:"outputTokens"`
+	} `json:"modelUsage"`
+}
+
+// The model id that wrote the most output tokens and empty when the result names none
+// claude may run a small model beside the one asked so the model that answered is the one that wrote most
+// A tie goes to the lower id so the answer never depends on map order
+func (r result) model() string {
+	model, most := "", -1
+	for id, u := range r.ModelUsage {
+		if u.OutputTokens > most || u.OutputTokens == most && id < model {
+			model, most = id, u.OutputTokens
+		}
+	}
+	return model
 }
 
 type usage struct {
@@ -175,5 +192,6 @@ func (r result) response() (Response, error) {
 		CacheRead:      r.Usage.CacheReadInputTokens,
 		CacheCreate:    r.Usage.CacheCreationInputTokens,
 		Duration:       time.Duration(r.DurationMS) * time.Millisecond,
+		Model:          r.model(),
 	}, nil
 }

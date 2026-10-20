@@ -1,6 +1,7 @@
 package compact
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -67,7 +68,8 @@ func (c *Compactor) Check(ctx context.Context, client llm.Client, id, model stri
 	if err := json.Unmarshal(res.Output, &answer); err != nil {
 		return knowledge.Coverage{}, fmt.Errorf("%w: %w", ErrCoverageInvalid, err)
 	}
-	return c.Record(ctx, id, answer.Items)
+	res.Model = cmp.Or(res.Model, model)
+	return c.record(ctx, id, answer.Items, res)
 }
 
 // Records the coverage a checker wrote for the compaction, such as a model call or the conversation
@@ -75,6 +77,12 @@ func (c *Compactor) Check(ctx context.Context, client llm.Client, id, model stri
 // 2. an id outside the compaction or an old item answered twice fails with ErrCoverageInvalid
 // 3. the coverage is a trace of name check whose session is the compaction id, and the newest one counts
 func (c *Compactor) Record(ctx context.Context, id string, answers []CoverageAnswer) (knowledge.Coverage, error) {
+	return c.record(ctx, id, answers, llm.Response{})
+}
+
+// The coverage with the model, the usage and the duration of the call that wrote it
+// A checker that called no model leaves them empty
+func (c *Compactor) record(ctx context.Context, id string, answers []CoverageAnswer, spent llm.Response) (knowledge.Coverage, error) {
 	compaction, err := c.ledger.Compaction(ctx, id)
 	if err != nil {
 		return knowledge.Coverage{}, err
@@ -106,7 +114,8 @@ func (c *Compactor) Record(ctx context.Context, id string, answers []CoverageAns
 	}
 	now := c.now()
 	check := trace.Trace{
-		ID: trace.NewID(now), Name: trace.NameCheck, SessionID: id, Time: now, Input: json.RawMessage("{}"), Output: out,
+		ID: trace.NewID(now), Name: trace.NameCheck, SessionID: id, Time: now, Model: spent.Model, Input: json.RawMessage("{}"), Output: out,
+		Usage: spent.Usage(), DurationMS: spent.Duration.Milliseconds(),
 	}
 	if err := c.checks.Append(ctx, check.Record()); err != nil {
 		return knowledge.Coverage{}, err

@@ -1,14 +1,17 @@
 package compact
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	"github.com/jeon-jihyeon/nodloop/internal/llm"
+	"github.com/jeon-jihyeon/nodloop/internal/trace"
 )
 
 // The system prompt of the CLI draft and part of the compaction answer so both paths see one contract
@@ -127,10 +130,37 @@ func (rs refusals) has(err error) bool {
 // A refusal of the code checks is sent back once with its text so the model corrects it in one more call
 // The second refusal is returned as it is
 // A folder with a pending compaction is refused before the model call because its draft would be refused
+// Every draft that reaches the model is recorded as a compact trace with the usage and the wall time of its calls
 func (c *Compactor) Draft(ctx context.Context, client llm.Client, f Folder, model, author string) (knowledge.Compaction, error) {
 	if f.Pending != "" {
 		return knowledge.Compaction{}, fmt.Errorf("%w: %s", knowledge.ErrCompactionPending, f.Pending)
 	}
+	start := c.now()
+	meter := llm.NewMeter(client)
+	proposed, err := c.draft(ctx, meter, f, model, author)
+	if recErr := c.recordDraft(ctx, f.Anchor, proposed.ID, meter.Take(), model, start, err); recErr != nil {
+		return proposed, errors.Join(err, recErr)
+	}
+	return proposed, err
+}
+
+// The compact trace of one draft
+// The session is the compaction id once proposed so the trace sits beside its coverage checks
+func (c *Compactor) recordDraft(
+	ctx context.Context, anchor, compaction string, spent llm.Response, model string, start time.Time, failed error,
+) error {
+	now := c.now()
+	tr := trace.Trace{
+		ID: trace.NewID(now), Name: trace.NameCompact, SessionID: compaction, Subject: anchor, Time: now,
+		Model: cmp.Or(spent.Model, model), Input: json.RawMessage("{}"), Usage: spent.Usage(), DurationMS: now.Sub(start).Milliseconds(),
+	}
+	if failed != nil {
+		tr.Error = failed.Error()
+	}
+	return c.checks.Append(ctx, tr.Record())
+}
+
+func (c *Compactor) draft(ctx context.Context, client llm.Client, f Folder, model, author string) (knowledge.Compaction, error) {
 	prompt := f.String()
 	d, err := c.complete(ctx, client, prompt, model)
 	if err != nil {

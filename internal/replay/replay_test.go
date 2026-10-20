@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -100,7 +101,7 @@ func TestReplayerReplay(t *testing.T) {
 	client.EXPECT().Complete(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, req llm.Request) (llm.Response, error) {
 		prompt = req.Prompt
 		assert.Equal(t, replay.Rules, req.System)
-		return llm.Response{CostUSD: 0.02, Output: json.RawMessage(fmt.Sprintf(`{"cases":[`+
+		return llm.Response{CostUSD: 0.02, Duration: 1500 * time.Millisecond, Model: "claude-haiku-4-5", Output: json.RawMessage(fmt.Sprintf(`{"cases":[`+
 			`{"run":%q,"breaks":true,"why":"it called the valve a sensor"},`+
 			`{"run":%q,"breaks":false,"why":"it already says valve"},`+
 			`{"run":%q,"breaks":true,"why":"IDV 11 would become a valve"}]}`, s.corrected, s.near, s.far))}, nil
@@ -127,6 +128,8 @@ func TestReplayerReplay(t *testing.T) {
 	require.Len(t, traces, 1)
 	assert.Equal(t, "idv", traces[0].Subject)
 	assert.InDelta(t, 0.02, traces[0].Usage.CostUSD, 1e-9)
+	assert.Equal(t, int64(1500), traces[0].DurationMS)
+	assert.Equal(t, "claude-haiku-4-5", traces[0].Model)
 	var recorded replay.Result
 	require.NoError(t, json.Unmarshal(traces[0].Output, &recorded))
 	assert.Equal(t, got, recorded)

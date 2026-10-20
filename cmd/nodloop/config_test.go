@@ -185,7 +185,7 @@ func TestRunConfigList(t *testing.T) {
 			"nothing saved lists the defaults",
 			args{"", nil},
 			"record_dir\t<home>/.nodloop/records\tdefault\nsession_mode\tdeferred\tdefault\napprover\t-\tdefault\nholdout\t0\tdefault\nretention\t0\tdefault\n" +
-				"decision_points\t-\tdefault\nclaude binary\tclaude\tdefault\nmodel\tsonnet\tdefault\n",
+				"decision_points\t-\tdefault\nllm\tclaude\tdefault\nclaude binary\tclaude\tdefault\nmodel\tsonnet\tdefault\n",
 		},
 		{
 			"config.json and the environment name their source and the environment wins",
@@ -195,8 +195,20 @@ func TestRunConfigList(t *testing.T) {
 				map[string]string{envRecordDir: "/env", envSession: "off", envLLMModel: "opus"},
 			},
 			"record_dir\t/env\tNODLOOP_RECORD_DIR\nsession_mode\toff\tNODLOOP_SESSION\napprover\tann\tconfig.json\nholdout\t0.1\tconfig.json\nretention\t30\tconfig.json\n" +
-				"decision_points\tcritic\tconfig.json\nclaude binary\tclaude\tdefault\n" +
+				"decision_points\tcritic\tconfig.json\nllm\tclaude\tdefault\nclaude binary\tclaude\tdefault\n" +
 				"model\topus\tNODLOOP_LLM_MODEL\n",
+		},
+		{
+			"a chat backend names its endpoint and its model and NODLOOP_LLM_MODEL stays with claude",
+			args{`{"llm":{"backend":"chat","base_url":"http://localhost:11434/v1","model":"qwen3"}}`, map[string]string{envLLMModel: "opus"}},
+			"record_dir\t<home>/.nodloop/records\tdefault\nsession_mode\tdeferred\tdefault\napprover\t-\tdefault\nholdout\t0\tdefault\nretention\t0\tdefault\n" +
+				"decision_points\t-\tdefault\nllm\tchat http://localhost:11434/v1\tconfig.json\nclaude binary\tclaude\tdefault\nmodel\tqwen3\tconfig.json\n",
+		},
+		{
+			"a claude model of config.json is the model without NODLOOP_LLM_MODEL",
+			args{`{"llm":{"backend":"claude","model":"haiku"}}`, nil},
+			"record_dir\t<home>/.nodloop/records\tdefault\nsession_mode\tdeferred\tdefault\napprover\t-\tdefault\nholdout\t0\tdefault\nretention\t0\tdefault\n" +
+				"decision_points\t-\tdefault\nllm\tclaude\tconfig.json\nclaude binary\tclaude\tdefault\nmodel\thaiku\tconfig.json\n",
 		},
 		{
 			"an unreadable classifier setup shows its error in its row",
@@ -204,29 +216,25 @@ func TestRunConfigList(t *testing.T) {
 			"record_dir\t<home>/.nodloop/records\tdefault\nsession_mode\tdeferred\tdefault\napprover\t-\tdefault\nholdout\t0\tdefault\nretention\t0\tdefault\n" +
 				"decision_points\tclassifier setup no longer run: decisions.critic in config.json asks [a b]. " +
 				"Run nodloop classifier set critic --url <url> to ask one endpoint before claude\tconfig.json\n" +
-				"claude binary\tclaude\tdefault\nmodel\tsonnet\tdefault\n",
+				"llm\tclaude\tdefault\nclaude binary\tclaude\tdefault\nmodel\tsonnet\tdefault\n",
 		},
 		{
 			"an invalid NODLOOP_SESSION shows its error in its row",
 			args{"", map[string]string{envSession: "later"}},
 			"record_dir\t<home>/.nodloop/records\tdefault\n" +
 				"session_mode\tunknown session mode: NODLOOP_SESSION is \"later\". Use deferred, immediate, manual or off\tNODLOOP_SESSION\n" +
-				"approver\t-\tdefault\nholdout\t0\tdefault\nretention\t0\tdefault\ndecision_points\t-\tdefault\nclaude binary\tclaude\tdefault\nmodel\tsonnet\tdefault\n",
+				"approver\t-\tdefault\nholdout\t0\tdefault\nretention\t0\tdefault\ndecision_points\t-\tdefault\nllm\tclaude\tdefault\nclaude binary\tclaude\tdefault\nmodel\tsonnet\tdefault\n",
 		},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			home := homeDir(t.TempDir())
-			require.NoError(t, os.MkdirAll(home.dir(), 0o755))
-			if tc.args.saved != "" {
-				require.NoError(t, os.WriteFile(home.config().ConfigPath(), []byte(tc.args.saved), 0o600))
-			}
+			home := savedHome(t, tc.args.saved)
 			env := map[string]string{"HOME": string(home)}
 			maps.Copy(env, tc.args.env)
 			var stdout, stderr bytes.Buffer
 
-			code := runConfig(nil, func(k string) string { return env[k] }, &stdout, &stderr)
+			code := runConfig(nil, envOf(env), &stdout, &stderr)
 
 			assert.Equal(t, 0, code, stderr.String())
 			assert.Equal(t, strings.ReplaceAll(tc.want, "<home>", string(home)), stdout.String())

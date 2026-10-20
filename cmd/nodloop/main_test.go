@@ -8,30 +8,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"github.com/jeon-jihyeon/nodloop/internal/llm"
 )
-
-func TestClaudeCLI(t *testing.T) {
-	tcs := []struct {
-		name string
-		args map[string]string
-		want *llm.ClaudeCLI
-	}{
-		{
-			"env names the binary and the default model",
-			map[string]string{envClaudeBin: "/opt/claude", envLLMModel: "opus"},
-			llm.NewClaudeCLI("/opt/claude", "opus", "", 0),
-		},
-		{"empty env leaves the llm defaults", nil, llm.NewClaudeCLI("", "", "", 0)},
-	}
-	for _, tc := range tcs {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			assert.Equal(t, tc.want, claudeCLI(func(k string) string { return tc.args[k] }))
-		})
-	}
-}
 
 func TestRun(t *testing.T) {
 	plain, err := os.ReadFile("testdata/bash_plain.json")
