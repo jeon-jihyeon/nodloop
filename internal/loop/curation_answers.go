@@ -27,7 +27,8 @@ type units []unit
 
 // The units of the pushed questions about decisions of curate
 // 1. a record the person asked for or gave by command and a choice of an agent never count since no draw stands behind them
-// 2. a question about an agent proposal and a notice sample no judgment of curate
+// 2. a question about an agent proposal, a widening or the activation and a notice sample no judgment of curate
+// since none prepares a change the choice could overturn
 // 3. the latest answer about a decide counts once
 // 4. an audit weighs by the p its decide was drawn at and any other question by the p of its expose
 func (e events) units() units {
@@ -48,7 +49,8 @@ func (e events) unit(a answerRecord) (unit, bool) {
 	switch {
 	case !asked || !decided || a.Source != trace.SourcePush || x.Source != trace.SourcePush:
 		return unit{}, false
-	case x.in.Kind == questionNotice || d.out.RuleCode == ruleProposal || a.in.Choice != choiceNoAnswer && !a.chose():
+	case x.in.Kind == questionNotice || d.out.RuleCode == ruleProposal || slices.Contains(offeredKinds, d.in.Kind) ||
+		a.in.Choice != choiceNoAnswer && !a.chose():
 		return unit{}, false
 	}
 	drawn := x.Draw

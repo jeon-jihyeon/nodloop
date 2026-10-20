@@ -20,9 +20,22 @@ const reactionTimeout = 5 * time.Second
 const (
 	// Runes of the previous answer the reaction point reads
 	reactionAnswerRunes = 4000
-	// Runes of the user's message a recorded reject keeps as its reason
-	reactionReasonRunes = 500
+	// Runes of the person's words a verdict of the reaction point or the capture keeps as its reason
+	reasonRunes = 500
 )
+
+// The words the person typed after an answer
+type personWords string
+
+// The words as the reason of a verdict: redacted and cut at reasonRunes
+// The judge reads them back through the reasons of the capture so both see the same text
+func (w personWords) reason() string {
+	reason := feedback.Redact(string(w))
+	if utf8.RuneCountInString(reason) > reasonRunes {
+		reason = string([]rune(reason)[:reasonRunes])
+	}
+	return reason
+}
 
 // The name the reaction point records its built in member under since that member is the conversation and no model
 const conversationMember = "conversation"
@@ -75,10 +88,7 @@ func (c hookCommand) react(ctx context.Context, t turn) (feedback.Verdict, error
 	}
 	code, reason := feedback.ReasonCode(""), ""
 	if v == feedback.VerdictReject {
-		code, reason = feedback.ReasonOther, feedback.Redact(t.message)
-		if utf8.RuneCountInString(reason) > reactionReasonRunes {
-			reason = string([]rune(reason)[:reactionReasonRunes])
-		}
+		code, reason = feedback.ReasonOther, personWords(t.message).reason()
 	}
 	fb, err := feedback.New(t.run.ID, v, code, reason, nil, feedback.ReviewerSession, c.app.now())
 	if err != nil {

@@ -188,7 +188,9 @@
         "session_id",
         "output.runs",
         "output.records",
-        "output.classify"
+        "output.classify",
+        "output.stops",
+        "output.stops.run"
       ],
       "text": []
     },

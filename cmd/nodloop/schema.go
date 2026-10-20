@@ -112,7 +112,7 @@ var publishedKinds = kindTable{
 		reflect.TypeFor[instructionsInput](), nil, []string{"session_id"}, []string{"input.path"}),
 	traceKind(trace.NameCapture, "One pass of the capture over a transcript of a session with the records it wrote",
 		reflect.TypeFor[captureInput](), reflect.TypeFor[captureOutput](),
-		[]string{"session_id", "output.runs", "output.records", "output.classify"}, []string{}),
+		[]string{"session_id", "output.runs", "output.records", "output.classify", "output.stops", "output.stops.run"}, []string{}),
 	traceKind(trace.NameDecide, "One change curate judged with the audit draw of the decision",
 		reflect.TypeFor[curate.Change](), reflect.TypeFor[curate.Decision](),
 		[]string{

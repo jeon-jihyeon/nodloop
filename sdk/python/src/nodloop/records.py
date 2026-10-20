@@ -656,6 +656,12 @@ CaptureRecordInput = TypedDict(
 )
 
 
+class CaptureRecordOutputStops(TypedDict):
+    id: str
+    version: int
+    run: str
+
+
 class CaptureRecordOutput(TypedDict):
     messages: int
     verdicts: int
@@ -664,6 +670,7 @@ class CaptureRecordOutput(TypedDict):
     runs: list[str] | None
     records: list[str] | None
     classify: list[str] | None
+    stops: list[CaptureRecordOutputStops] | None
 
 
 class _CaptureRecordUsageRequired(TypedDict):

@@ -460,6 +460,11 @@ export interface CaptureRecord {
     runs: string[] | null;
     records: string[] | null;
     classify: string[] | null;
+    stops: {
+      id: string;
+      version: number;
+      run: string;
+    }[] | null;
   };
   error?: string;
   usage: {

@@ -162,6 +162,21 @@ func curationOf(t *testing.T, traces []trace.Trace, items []knowledge.Knowledge,
 	return report
 }
 
+// The tier 2 estimate reads the direction answers about changes and none about a widening or the activation
+// since those ask what curate may do and prepare no change the choice could overturn
+func TestCurationEstimateOffers(t *testing.T) {
+	direction := func(kind, choice string, overturn bool) ask {
+		return ask{cycle: 0, tier: 2, kind: kind, question: "direction", p: 1, choice: choice, overturn: overturn, source: trace.SourcePush}
+	}
+
+	r := curation(t, []string{"high"}, []ask{
+		direction("add", "drop", true), direction("add", "keep", false), direction("widen", "yes", false), direction("activate", "notyet", false),
+	})
+
+	require.Len(t, r.Estimates, 1)
+	assert.Equal(t, []int{2, 2, 1}, []int{r.Estimates[0].Tier, r.Estimates[0].Answered, r.Estimates[0].Differ})
+}
+
 // The statistics of curation over the answers of the person
 // 1. the anytime valid bound against values computed apart, met by 43 answers with no differ and 66 with one and not by 42 or 65 with one
 // 2. the Hájek estimate and the Kish size over two p values and the worst case over no answer

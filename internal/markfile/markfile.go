@@ -29,6 +29,25 @@ func Hold[M any](path string) (*Held[M], error) {
 	if err != nil || !locked {
 		return nil, errors.Join(err, file.Close())
 	}
+	return held[M](file)
+}
+
+// Takes the file at path once no other process holds it and reads its mark
+// A process that must start where the one before it ended waits for it instead of ending
+func Wait[M any](path string) (*Held[M], error) {
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	if err := lock(file); err != nil {
+		return nil, errors.Join(err, file.Close())
+	}
+	return held[M](file)
+}
+
+// The locked file with the mark it holds
+// A mark that does not decode reads as the zero mark
+func held[M any](file *os.File) (*Held[M], error) {
 	b, err := io.ReadAll(file)
 	if err != nil {
 		return nil, errors.Join(err, file.Close())
