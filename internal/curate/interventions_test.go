@@ -2,6 +2,7 @@ package curate_test
 
 import (
 	"context"
+	"fmt"
 	"slices"
 	"testing"
 	"time"
@@ -26,7 +27,7 @@ func (b bench) knobEvents(t *testing.T) []string {
 	for _, tr := range slices.Backward(found) {
 		ev, ok := curate.RestoreKnob(trace.Restore(tr))
 		require.True(t, ok)
-		out = append(out, string(ev.Cause)+" "+string(rune('0'+int(ev.Knobs.Audit.Tier1*10))))
+		out = append(out, fmt.Sprintf("%s %g", ev.Cause, ev.Knobs.Audit.Tier1))
 	}
 	return out
 }
@@ -49,9 +50,9 @@ func TestIntervenerRaise(t *testing.T) {
 		args args
 		want want
 	}{
-		{"a raise appends a narrowing of the cycle", args{0.3, -1}, want{[]string{"start 1", "narrow 3"}, nil}},
-		{"a lower appends nothing", args{0.05, -1}, want{[]string{"start 1"}, nil}},
-		{"a raise whose narrowing cannot be appended fails after the intervention", args{0.3, 1}, want{[]string{"start 1"}, assert.AnError}},
+		{"a raise appends a narrowing of the cycle", args{0.3, -1}, want{[]string{"start 0.15", "narrow 0.3"}, nil}},
+		{"a lower appends nothing", args{0.05, -1}, want{[]string{"start 0.15"}, nil}},
+		{"a raise whose narrowing cannot be appended fails after the intervention", args{0.3, 1}, want{[]string{"start 0.15"}, assert.AnError}},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
@@ -208,6 +209,85 @@ func TestInterventionsPaused(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			assert.Equal(t, tc.want, curate.RestoreInterventions(tc.args.traces).Paused(tc.args.kind, tc.args.scope))
+		})
+	}
+}
+
+// The fold carries out the person's settings since the cycle start in the order made
+// and follows a chain of reverses back to the yes it gives or takes back
+func TestInterventionsKnobs(t *testing.T) {
+	at := time.Date(2026, 9, 22, 0, 0, 0, 0, time.UTC)
+	ev := curate.KnobEvent{CycleID: "2026-09-21", PolicyVersion: "0.10.0+1a2b3c4d", Seed: "5eed"}
+	minute := func(n int) time.Time { return at.Add(time.Duration(n) * time.Minute) }
+	decide := func(id string, c curate.Change) trace.Trace {
+		tr, err := curate.Event{ID: id, Source: trace.SourcePush, Draw: ev.AuditDraw(id, 0)}.
+			Decide(c, curate.Decision{Tier: 2, Action: curate.ActionAsk}, nil, minute(0))
+		require.NoError(t, err)
+		return tr
+	}
+	answer := func(id, decide string, n int) trace.Trace {
+		self := trace.Draw{CycleID: ev.CycleID, PolicyVersion: ev.PolicyVersion}
+		tr, err := curate.Event{ID: id, Source: trace.SourceManual, Draw: self}.
+			Answer(curate.Answer{Choice: curate.ChoiceYes, Decide: decide, Proof: trace.ProofKey, Person: "ann"}, curate.AnswerOutput{}, minute(n))
+		require.NoError(t, err)
+		return tr
+	}
+	intervene := func(id string, in trace.Intervention, out trace.InterventionOutput, n int) trace.Trace {
+		in.Proof, in.Person = trace.ProofKey, "ann"
+		tr, err := in.Trace(id, "", trace.SourceManual, out, minute(n))
+		require.NoError(t, err)
+		return tr
+	}
+	reverse := func(id, target string, n int) trace.Trace {
+		return intervene(id, trace.Intervention{Action: trace.ActionReverse, Reverses: target}, trace.InterventionOutput{}, n)
+	}
+	update1 := curate.Opening{Kind: curate.ChangeUpdate, Bin: curate.Bin1}
+	hold := 0.2
+	widened := trace.Traces{
+		decide("d-w", curate.Change{Kind: curate.ChangeWiden, Opens: &update1, Anchor: 1}),
+		answer("a-1", "d-w", 1),
+		intervene("i-1", trace.Intervention{Action: trace.ActionAnswer, Decide: "d-w", Choice: trace.ChoiceYes}, trace.InterventionOutput{Answer: "a-1"}, 2),
+	}
+	type args struct {
+		traces trace.Traces
+		// The cycle start the settings come after
+		after time.Time
+	}
+	type want struct {
+		opens bool
+		hold  knowledge.ItemHold
+	}
+	tcs := []struct {
+		name string
+		args args
+		want want
+	}{
+		{"a setting after the cycle start", args{trace.Traces{
+			intervene("i-k", trace.Intervention{Action: trace.ActionKnob, Knob: "item_hold", Value: &hold}, trace.InterventionOutput{}, 1),
+		}, time.Time{}}, want{false, 0.2}},
+		{"a setting before the cycle start is in the knobs already", args{trace.Traces{
+			intervene("i-k", trace.Intervention{Action: trace.ActionKnob, Knob: "item_hold", Value: &hold}, trace.InterventionOutput{}, 1),
+		}, minute(2)}, want{false, 0.1}},
+		{"a yes to a widening opens its kind and bin", args{widened, time.Time{}}, want{true, 0.1}},
+		{"a reverse of the yes closes it", args{slices.Concat(widened, trace.Traces{reverse("r-1", "i-1", 3)}), time.Time{}}, want{false, 0.1}},
+		{"a reverse of that reverse opens it again", args{slices.Concat(widened, trace.Traces{reverse("r-1", "i-1", 3), reverse("r-2", "r-1", 4)}), time.Time{}},
+			want{true, 0.1}},
+		{"a reverse of that reverse in the next cycle opens it again", args{
+			slices.Concat(widened, trace.Traces{reverse("r-1", "i-1", 3), reverse("r-2", "r-1", 5)}), minute(4),
+		}, want{true, 0.1}},
+		{"a yes to a question no decide asks sets nothing", args{widened[1:], time.Time{}}, want{false, 0.1}},
+		{"a yes to a proposal sets no knob", args{trace.Traces{
+			decide("d-p", curate.Change{Kind: curate.ChangeIntervention, Proposal: "p-1", Anchor: 1}), answer("a-1", "d-p", 1),
+		}, time.Time{}}, want{false, 0.1}},
+		{"reverses that name each other set nothing", args{trace.Traces{reverse("r-1", "r-2", 1), reverse("r-2", "r-1", 2)}, time.Time{}}, want{false, 0.1}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := curate.RestoreInterventions(tc.args.traces).Knobs(curate.StartKnobs(), tc.args.after)
+
+			assert.Equal(t, tc.want, want{got.Opens(update1), got.ItemHold})
 		})
 	}
 }

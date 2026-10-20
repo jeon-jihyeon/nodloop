@@ -63,6 +63,13 @@ func TestRunKnowledgeExtract(t *testing.T) {
 		var stderr bytes.Buffer
 		require.Equal(t, 0, runKnowledge([]string{"retire", "git-c", "--version", "1", "--approver", "ann"}, getenv, nil, now, atTerminal, &bytes.Buffer{}, &stderr), stderr.String())
 	}
+	// A directory in place of the backup of a record file so the file cannot open
+	blocked := func(name string) setup {
+		return func(t *testing.T, getenv func(string) string, _ func() time.Time, _, _ string) {
+			t.Helper()
+			require.NoError(t, os.Mkdir(filepath.Join(getenv(envRecordDir), name), 0o755))
+		}
+	}
 	conflict := `{"relation":"conflict","relates_to":"git-c","kind":"judgment","content":"Change into the directory before running git"}`
 	type args struct {
 		init  setup
@@ -93,6 +100,9 @@ func TestRunKnowledgeExtract(t *testing.T) {
 		{"a conflict proposes the next version of the item", args{approved, from, []string{conflict, passed}},
 			want{0, []string{"relation\tconflict\n", "related\tgit-c\tv1\t", "candidate\tgit-c\tv2\t", "next\t" + extractNext[extract.RelationConflict] + "\n"}, ""}},
 		{"no run to learn from fails before any model call", args{approved, nil, nil}, want{1, nil, "--from is required"}},
+		{"a knowledge file that cannot open fails before any model call", args{blocked("knowledge.jsonl.bak"), from, nil}, want{1, nil, "knowledge file: "}},
+		{"a run file that cannot open fails before any model call", args{blocked("traces.jsonl.bak"), from, nil}, want{1, nil, "trace file: open failed"}},
+		{"a verdict file that cannot open fails before any model call", args{blocked("feedback.jsonl.bak"), from, nil}, want{1, nil, "feedback file: "}},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
@@ -182,6 +192,9 @@ func TestRunKnowledgeExtractPreparedCompaction(t *testing.T) {
 			want{code: 1, drafts: 1, stdout: "next\t", stderr: "prepared compaction"}},
 		{"a failed check leaves the compaction unchecked beside the candidate", args{items: []int{4400, 4400}, draft: merged, coverage: `not json`},
 			want{code: 1, drafts: 1, checks: 1, stdout: "next\t", stderr: "prepared compaction"}},
+		{"a check that loses a fact says the coverage failed", args{items: []int{4400, 4400}, draft: merged,
+			coverage: `{"items":[{"old":"a","covered_by":["a"]},{"old":"b","covered_by":["a"],"lost":["the window"]}]}`},
+			want{drafts: 1, checks: 1, stdout: "\tcoverage failed: "}},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {

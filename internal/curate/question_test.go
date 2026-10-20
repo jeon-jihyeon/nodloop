@@ -1,6 +1,7 @@
 package curate_test
 
 import (
+	"slices"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -178,6 +179,11 @@ func TestEventAnswer(t *testing.T) {
 		},
 		{"an answer without the person is refused", args{answered, curate.Answer{Choice: curate.ChoiceSame, Proof: trace.ProofReply}, curate.AnswerOutput{}}, want{err: curate.ErrReplyInvalid}},
 		{
+			"an answer under the reserved name nodloop is refused",
+			args{answered, curate.Answer{Choice: curate.ChoiceSame, Proof: trace.ProofReply, Person: knowledge.ApproverNodloop}, curate.AnswerOutput{}},
+			want{err: knowledge.ErrApproverReserved},
+		},
+		{
 			"no answer with a proof is refused",
 			args{answered, curate.Answer{Choice: curate.ChoiceNoAnswer, Proof: trace.ProofReply}, curate.AnswerOutput{}}, want{err: curate.ErrReplyInvalid},
 		},
@@ -218,8 +224,9 @@ func TestEventAnswerFields(t *testing.T) {
 }
 
 // A question reads as the lines of SPEC-curate within 600 runes with no id
-// 1. quoted lessons and words go on one line and shrink together until the text fits so the reply line always shows
-// 2. a question with nothing else prepared still has its Prepared line
+// 1. quoted lessons and words go on one line and shrink together until the text fits
+// 2. lines that still do not fit are cut before the reply line so it always shows
+// 3. a question with nothing else prepared still has its Prepared line
 func TestQuestionText(t *testing.T) {
 	long := strings.Repeat("run the tests with the race detector ", 20)
 	type args struct {
@@ -256,6 +263,11 @@ func TestQuestionText(t *testing.T) {
 			"long quotes shrink together and the reply line shows",
 			args{with(func(q *curate.Question) { q.Lessons, q.Words = []string{long, long}, []string{long} })},
 			want{"One decision for you: add the lesson \"run the tests", "Reply keep or drop", 586},
+		},
+		{
+			"words that do not fit at the shortest quotes are cut before the reply line",
+			args{with(func(q *curate.Question) { q.Lessons, q.Words = []string{long}, slices.Repeat([]string{long}, 30) })},
+			want{"One decision for you: add the lesson \"run the tests", "…\nReply keep or drop", curate.MaxRunes},
 		},
 	}
 	for _, tc := range tcs {

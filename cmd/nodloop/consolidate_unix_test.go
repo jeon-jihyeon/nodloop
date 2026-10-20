@@ -21,13 +21,17 @@ import (
 // A consolidate while another holds the mark asks nothing
 // The manual run says so and the daily one stays silent
 func TestRunKnowledgeConsolidateWhileAnotherRuns(t *testing.T) {
+	type want struct {
+		code   int
+		stderr string
+	}
 	tcs := []struct {
 		name string
 		args []string
-		want string
+		want want
 	}{
-		{"a manual run says another runs", []string{"consolidate"}, "nodloop knowledge: another consolidate is running\n"},
-		{"a daily run stays silent", []string{"consolidate", "--daily"}, ""},
+		{"a manual run says another runs", []string{"consolidate"}, want{1, "nodloop knowledge: another consolidate is running\n"}},
+		{"a daily run stays silent", []string{"consolidate", "--daily"}, want{0, ""}},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
@@ -40,9 +44,9 @@ func TestRunKnowledgeConsolidateWhileAnotherRuns(t *testing.T) {
 			client := llmmock.NewMockClient(gomock.NewController(t))
 			var stderr bytes.Buffer
 
-			runKnowledge(tc.args, getenv, client, func() time.Time { return consolidateNow }, atTerminal, &bytes.Buffer{}, &stderr)
+			code := runKnowledge(tc.args, getenv, client, func() time.Time { return consolidateNow }, atTerminal, &bytes.Buffer{}, &stderr)
 
-			assert.Equal(t, tc.want, stderr.String())
+			assert.Equal(t, tc.want, want{code, stderr.String()})
 		})
 	}
 }

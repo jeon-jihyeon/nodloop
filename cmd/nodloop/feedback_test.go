@@ -66,6 +66,54 @@ func TestRunFeedbackAddProof(t *testing.T) {
 	}
 }
 
+// A verdict that names no run, an edit file that cannot be read or a verdict file that cannot take it records nothing
+func TestRunFeedbackAddRefused(t *testing.T) {
+	type args struct {
+		// The flags after the run and the reviewer with {run} for the recorded run and {dir} for the home
+		flags []string
+		// A directory made under the records
+		dir string
+	}
+	tcs := []struct {
+		name string
+		args args
+		// What stderr holds
+		want string
+	}{
+		{"no verdict", args{[]string{"--trace", "{run}"}, ""}, "add: --trace and a --verdict of approve or edit or reject or withdraw is required"},
+		{"an edit file that cannot be read", args{[]string{"--trace", "{run}", "--verdict", "edit", "--edited", "{dir}/missing.json"}, ""}, "--edited: open "},
+		{"a run that is not recorded", args{[]string{"--trace", "r-unknown", "--verdict", "reject"}, ""}, record.ErrTraceNotFound.Error()},
+		{"a verdict file that cannot open", args{[]string{"--trace", "{run}", "--verdict", "reject"}, "feedback.jsonl.bak"}, "feedback file: "},
+		{"a verdict file that takes no line", args{[]string{"--trace", "{run}", "--verdict", "reject"}, "feedback.jsonl"}, "feedback file: append failed"},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir, records := t.TempDir(), t.TempDir()
+			getenv := envOf(map[string]string{"HOME": dir, envRecordDir: records})
+			now := func() time.Time { return time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC) }
+			out := filepath.Join(dir, "out.txt")
+			require.NoError(t, os.WriteFile(out, []byte("git -C repo status"), 0o600))
+			var id, stderr bytes.Buffer
+			require.Equal(t, 0, runRun([]string{"record", "--producer", "session", "--output", out}, getenv, now, &id, &bytes.Buffer{}))
+			require.NoError(t, os.MkdirAll(filepath.Join(records, tc.args.dir), 0o755))
+			placed := strings.NewReplacer("{run}", strings.TrimSpace(id.String()), "{dir}", dir)
+			args := []string{"add", "--reviewer", "ann"}
+			for _, f := range tc.args.flags {
+				args = append(args, placed.Replace(f))
+			}
+
+			code := runFeedback(args, getenv, now, atTerminal, &bytes.Buffer{}, &stderr)
+
+			assert.Equal(t, 1, code)
+			assert.Contains(t, stderr.String(), tc.want)
+			// A missing file or a directory in its place reads as no verdict
+			verdicts, _ := os.ReadFile(filepath.Join(records, "feedback.jsonl"))
+			assert.Empty(t, string(verdicts))
+		})
+	}
+}
+
 // The reserved name of the capture is refused from a person's terminal and from a script and nothing is recorded
 func TestRunFeedbackReviewerReserved(t *testing.T) {
 	at := time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)

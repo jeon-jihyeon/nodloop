@@ -2,6 +2,7 @@ package curate_test
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"slices"
@@ -100,6 +101,31 @@ func (d desk) asking(t *testing.T, ref string, c curate.Change, rule curate.Rule
 	return id
 }
 
+// Appends a decide of the cycle of the first pass that carried out the change in tier 1 with its audit drawn
+func (d desk) audited(t *testing.T, ref string, c curate.Change) string {
+	t.Helper()
+	now := d.stores.Clock.Now()
+	id := trace.NewID(now)
+	tr, err := curate.Event{ID: id, Ref: ref, Source: trace.SourcePush, Draw: d.first.Event.AuditDraw(id, 1)}.
+		Decide(c, curate.Decision{Tier: 1, Outcome: curate.OutcomeConform, Bin: curate.Bin1, Action: curate.ActionApply}, nil, now)
+	require.NoError(t, err)
+	require.NoError(t, d.stores.Traces.Append(context.Background(), tr.Record()))
+	return id
+}
+
+// Appends the expose that showed the question of the decide in session s-1 under the key ab12 and returns its id
+func (d desk) expose(t *testing.T, decide string) string {
+	t.Helper()
+	shown := curate.Event{Session: "s-1", Ref: decide, Source: trace.SourcePush, Draw: d.first.Event.AuditDraw("s-1", 1)}
+	x, err := shown.Expose(curate.Exposure{
+		Kind: curate.QuestionDirection, Key: "ab12", Surface: curate.SurfaceContext, Rules: curate.QuestionRules,
+		Choices: []curate.Choice{curate.ChoiceKeep, curate.ChoiceDrop}, Text: hex.EncodeToString(make([]byte, 32)), Round: 1,
+	}, d.stores.Clock.Now())
+	require.NoError(t, err)
+	require.NoError(t, d.stores.Traces.Append(context.Background(), x.Record()))
+	return x.ID
+}
+
 // The fold of the interventions, answers and decides of the records
 func (b bench) folded(t *testing.T) curate.Interventions {
 	t.Helper()
@@ -172,7 +198,7 @@ func TestIntervenerReverse(t *testing.T) {
 	ctx := context.Background()
 	value := func(v float64) *float64 { return &v }
 	type args struct {
-		// Interventions of the person before the one under test, answering the id the request takes
+		// Interventions of the person before the one under test that answer the id the request takes
 		setup   func(t *testing.T, d desk) string
 		request func(t *testing.T, d desk, prior string) curate.Request
 	}
@@ -223,6 +249,12 @@ func TestIntervenerReverse(t *testing.T) {
 		{"answer drop retires the version of a direction question", args{request: answering("k-ask", trace.ChoiceDrop)}},
 		{"answer keep of a shadow question approves its version", args{request: answering("k-add", trace.ChoiceKeep)}},
 		{"answer undo of an audit restores what tier 0 dropped", args{request: answering("k-dup", trace.ChoiceUndo)}},
+		{"answer undo of an audit retires what tier 1 approved", args{
+			setup: func(t *testing.T, d desk) string {
+				return d.audited(t, "r-k-carried", curate.Change{Kind: curate.ChangeAdd, ID: "k-carried", Version: 1, Anchor: 1})
+			},
+			request: answerPrior(trace.ChoiceUndo),
+		}},
 		{"answer mine takes the versions nodloop approved in the place", args{
 			setup: func(t *testing.T, d desk) string {
 				return d.asking(t, "r-k-carried", curate.Change{Kind: curate.ChangeAdd, ID: "k-add", Version: 1, Anchor: 1}, curate.RuleDrift)
@@ -258,6 +290,14 @@ func TestIntervenerReverse(t *testing.T) {
 		{"knob raises the tier 0 audit share", args{request: knob("audit_tier0", 0.5)}},
 		{"knob sets the item hold", args{request: knob("item_hold", 0.2)}},
 		{"knob sets the weeks of a cycle", args{request: knob("cycle_weeks", 4)}},
+		{"knob set again in the cycle returns to the setting before it", args{
+			setup: func(t *testing.T, d desk) string {
+				_, err := d.iv.Intervene(ctx, curate.Request{Action: trace.ActionKnob, Target: "item_hold", Value: value(0.2)}, person)
+				require.NoError(t, err)
+				return ""
+			},
+			request: knob("item_hold", 0.15),
+		}},
 		{"reanchor takes the versions nodloop approved in a place", args{request: func(*testing.T, desk, string) curate.Request {
 			return curate.Request{Action: trace.ActionReanchor, Target: "session", Labels: trace.Labels{"repo": {"work"}}}
 		}}},

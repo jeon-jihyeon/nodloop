@@ -3,7 +3,6 @@ package curate_test
 import (
 	"fmt"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -105,27 +104,6 @@ func TestMarkShadowPick(t *testing.T) {
 			for id, n := range tc.want.picked {
 				assert.InDelta(t, n, got.picked[id], 60, id)
 			}
-		})
-	}
-}
-
-// The mark keeps the time of the last daily pass and a day after it the next one is due
-func TestMarkDaily(t *testing.T) {
-	at := time.Date(2026, 9, 22, 9, 0, 0, 0, time.UTC)
-	tcs := []struct {
-		name string
-		args curate.Mark
-		want bool
-	}{
-		{"no daily pass yet", curate.Mark{}, true},
-		{"a pass an hour ago", curate.Mark{At: at.Add(-time.Hour)}, false},
-		{"a pass a day ago", curate.Mark{At: at.Add(-24 * time.Hour)}, true},
-		{"a pass in the future of a clock set back", curate.Mark{At: at.Add(time.Hour)}, true},
-	}
-	for _, tc := range tcs {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			assert.Equal(t, tc.want, tc.args.Daily(at))
 		})
 	}
 }

@@ -104,6 +104,8 @@ func TestRunRecordsPrune(t *testing.T) {
 			0, "pruned 0 traces older than 2026-08-13T12:00:00Z\n", "^$", every, true,
 		}},
 		{"no retention names the setting", args{"", []string{"prune"}, ""}, want{1, "", "^nodloop records: .*nodloop config retention", every, false}},
+		{"a dry run without retention names the setting", args{"", []string{"prune", "--dry-run"}, ""},
+			want{1, "", "^nodloop records: .*nodloop config retention", every, false}},
 		{"a retention under a week is refused", args{"3", []string{"prune"}, ""}, want{1, "", "^nodloop records: retain: retention too short: 3", every, false}},
 		{"a plan that cannot read a verdict fails", args{"30", []string{"prune"}, "not json\n"}, want{1, "", "^nodloop records: .*corrupt", every, false}},
 		{"a dry run that cannot read a verdict fails", args{"30", []string{"prune", "--dry-run"}, "not json\n"}, want{1, "", "^nodloop records: .*corrupt", every, false}},
@@ -150,6 +152,41 @@ func TestRunRecordsPruneRemovalFails(t *testing.T) {
 	assert.Empty(t, stdout.String())
 	assert.Regexp(t, "^nodloop records: trace file: prune failed: ", stderr.String())
 	assert.Equal(t, []string{"old-unjudged", "old-classify", "old-judged", "recent"}, traceIDs(t, records))
+}
+
+// A prune whose mark cannot be claimed or whose record dir cannot be made removes nothing
+func TestRunRecordsPruneRefused(t *testing.T) {
+	type args struct {
+		// A directory made under the records
+		dir string
+		// The record dir under the records where regular is a file
+		recordDir string
+	}
+	tcs := []struct {
+		name string
+		args args
+		// A pattern of stderr
+		want string
+	}{
+		{"a mark that is a directory fails after the plan", args{retain.MarkerFile, "."}, "^nodloop records: .*" + retain.MarkerFile},
+		{"a record dir that is a file fails", args{"unused", "regular"}, "^nodloop records: record dir: "},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			getenv, records := pruneHome(t, "30")
+			require.NoError(t, os.Mkdir(filepath.Join(records, tc.args.dir), 0o755))
+			require.NoError(t, os.WriteFile(filepath.Join(records, "regular"), nil, 0o600))
+			var stdout, stderr bytes.Buffer
+
+			code := runRecords([]string{"prune", "--record-dir", filepath.Join(records, tc.args.recordDir)}, getenv, func() time.Time { return pruneNow }, &stdout, &stderr)
+
+			assert.Equal(t, 1, code)
+			assert.Empty(t, stdout.String())
+			assert.Regexp(t, tc.want, stderr.String())
+			assert.Equal(t, []string{"old-unjudged", "old-classify", "old-judged", "recent"}, traceIDs(t, records))
+		})
+	}
 }
 
 // Appends the text to the file and appends nothing for an empty text
