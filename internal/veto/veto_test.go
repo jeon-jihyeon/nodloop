@@ -10,6 +10,25 @@ import (
 	"github.com/jeon-jihyeon/nodloop/internal/veto"
 )
 
+func TestActionValid(t *testing.T) {
+	tcs := []struct {
+		name string
+		args veto.Action
+		want bool
+	}{
+		{"block is valid", veto.ActionBlock, true},
+		{"ask is valid", veto.ActionAsk, true},
+		{"warn is unknown", "warn", false},
+		{"empty is unknown since New reads it as block", "", false},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.want, tc.args.Valid())
+		})
+	}
+}
+
 func TestMatches(t *testing.T) {
 	b, err := os.ReadFile("testdata/valid.yaml")
 	require.NoError(t, err)

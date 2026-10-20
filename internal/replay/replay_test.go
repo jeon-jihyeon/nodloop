@@ -160,6 +160,84 @@ func TestReplayerReplayAfterReaffirm(t *testing.T) {
 	assert.Contains(t, prompt, "IDV 11 is a temperature drift")
 }
 
+// A run reads its verdict as every report joins them so a run the conversation and the capture dispute is no case
+func TestReplayerReplayReconcilesVerdicts(t *testing.T) {
+	type verdict struct {
+		reviewer string
+		verdict  feedback.Verdict
+	}
+	type args struct {
+		// The verdicts on the cited run and on a run of the scope oldest first
+		cited, approved []verdict
+	}
+	type want struct {
+		// Each case as the run and what it expects
+		cases []string
+		err   error
+	}
+	session, captured := feedback.ReviewerSession, feedback.ReviewerNodloop
+	tcs := []struct {
+		name string
+		args args
+		want want
+	}{
+		{
+			"a correction and an approval the conversation inferred are cases",
+			args{[]verdict{{session, feedback.VerdictReject}}, []verdict{{session, feedback.VerdictApprove}}},
+			want{[]string{"cited breaks", "approved keeps"}, nil},
+		},
+		{
+			"runs the conversation and the capture dispute are no case",
+			args{
+				[]verdict{{captured, feedback.VerdictApprove}, {session, feedback.VerdictReject}},
+				[]verdict{{captured, feedback.VerdictReject}, {session, feedback.VerdictApprove}},
+			},
+			want{[]string{}, replay.ErrNoCases},
+		},
+		{
+			"a person's verdict wins over a newer inferred one",
+			args{
+				[]verdict{{"ann", feedback.VerdictReject}, {session, feedback.VerdictApprove}},
+				[]verdict{{"ann", feedback.VerdictApprove}, {captured, feedback.VerdictReject}},
+			},
+			want{[]string{"cited breaks", "approved keeps"}, nil},
+		},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ctx := context.Background()
+			st := testkit.Open(t)
+			cited := recordRun(t, st, "plant", "IDV 14 reads as a sensor fault", "")
+			approved := recordRun(t, st, "plant", "IDV 14 is the cooling valve", "")
+			for run, verdicts := range map[string][]verdict{cited: tc.args.cited, approved: tc.args.approved} {
+				for _, v := range verdicts {
+					fb := feedback.Feedback{TraceID: run, Verdict: v.verdict, Reviewer: v.reviewer, Time: st.Clock.Now()}
+					require.NoError(t, st.Feedback.Append(ctx, fb.Record()))
+				}
+			}
+			_, _, err := st.Ledger.Propose(ctx, knowledge.Knowledge{
+				ID: "idv", Kind: knowledge.KindMeaning, Content: "Every IDV fault is a valve fault", Author: "author",
+				Run:      &knowledge.RunScope{Producer: "session", Labels: trace.Labels{"repo": {"plant"}}},
+				Evidence: knowledge.Evidence{FeedbackTraceIDs: []string{cited}},
+			})
+			require.NoError(t, err)
+			client := llmmock.NewMockClient(gomock.NewController(t))
+			client.EXPECT().Complete(gomock.Any(), gomock.Any()).DoAndReturn(answerAll).MaxTimes(1)
+
+			got, err := replay.New(st.Ledger, st.Traces, st.Feedback, client, "", st.Clock.Now).Replay(ctx, "idv", 0)
+
+			names := map[string]string{cited: "cited", approved: "approved"}
+			cases := []string{}
+			for _, c := range got.Cases {
+				cases = append(cases, names[c.Run]+" "+string(c.Expect))
+			}
+			assert.ErrorIs(t, err, tc.want.err)
+			assert.Equal(t, tc.want.cases, cases)
+		})
+	}
+}
+
 // Only the newest approved runs of the scope are judged so one model call holds them
 func TestReplayerReplayCapsApprovedRuns(t *testing.T) {
 	st := testkit.Open(t)

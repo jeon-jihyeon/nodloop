@@ -31,11 +31,16 @@ func TestKindStrip(t *testing.T) {
 		{"a field below an array goes from each element", args{"extract",
 			`{"record_kind":"extract","output":{"attempts":[{"draft":{"content":"x"},"critique":"c","error":"e","pass":true},{"draft":null}],"candidate":{"id":"k1"}}}`},
 			want{json: `{"record_kind":"extract","output":{"attempts":[{"pass":true},{}],"candidate":{"id":"k1"}}}`}},
+		{"the refusal an extract failed on goes", args{"extract", `{"record_kind":"extract","ref":"r1","error":"critic refused: it copies the line \"ann\""}`},
+			want{json: `{"record_kind":"extract","ref":"r1"}`}},
 		{"a path through a field of another shape leaves it", args{"check", `{"record_kind":"check","output":{"items":"none"}}`},
 			want{json: `{"record_kind":"check","output":{"items":"none"}}`}},
 		{"a kind without text keeps the record", args{"turn", `{"record_kind":"turn","input":{}}`}, want{json: `{"record_kind":"turn","input":{}}`}},
 		{"an object cut short is refused", args{"verdict", `{"record_kind":"verdict","reason":`}, want{err: schema.ErrRecordInvalid}},
 		{"an array cut short is refused", args{"extract", `{"output":{"attempts":[{"draft":1},`}, want{err: schema.ErrRecordInvalid}},
+		{"a list of records cut short is refused", args{"extract", `[{"output":{}},`}, want{err: schema.ErrRecordInvalid}},
+		{"a key that is no string is refused", args{"verdict", `{1:"wrong"}`}, want{err: schema.ErrRecordInvalid}},
+		{"an empty record stays as it is", args{"verdict", ``}, want{json: ``}},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
@@ -71,6 +76,7 @@ func TestKindPropertiesRefuses(t *testing.T) {
 		want error
 	}{
 		{"no object", `[]`, schema.ErrIndexInvalid},
+		{"an empty file", ``, schema.ErrIndexInvalid},
 		{"properties that are no object", `{"properties":[]}`, schema.ErrIndexInvalid},
 		{"a file cut short", `{"properties":{"a":`, schema.ErrIndexInvalid},
 	}

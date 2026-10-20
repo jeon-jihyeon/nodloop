@@ -48,6 +48,8 @@ func TestNameValid(t *testing.T) {
 	}{
 		{"run is known", trace.NameRun, true},
 		{"check is known", trace.NameCheck, true},
+		{"consolidate is known", trace.NameConsolidate, true},
+		{"refill is known", trace.NameRefill, true},
 		{"turn is known", trace.NameTurn, true},
 		{"compact is known", trace.NameCompact, true},
 		{"intervention is known", trace.NameIntervention, true},

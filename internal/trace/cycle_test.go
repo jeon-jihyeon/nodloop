@@ -59,8 +59,9 @@ func TestTracesCycles(t *testing.T) {
 			[]string{"2026-08-31 2026-08-31 2026-09-14"},
 		},
 		{
-			"a knob trace that does not decode or has no length marks nothing",
+			"a knob trace that does not decode or has no start or no length marks nothing",
 			args{trace.Traces{
+				{ID: "k4", Name: trace.NameKnob, Time: day("2026-08-17"), Input: json.RawMessage(`{"cycle_id":"2026-08-17","knobs":{"cycle_weeks":1}}`)},
 				{ID: "k3", Name: trace.NameKnob, Time: day("2026-08-31"), Input: json.RawMessage(`not json`)},
 				knob("k2", "2026-08-24", 0, day("2026-08-24")),
 				knob("k1", "2026-08-31", 1, day("2026-08-31")),
@@ -85,7 +86,7 @@ func TestTracesCycles(t *testing.T) {
 	}
 }
 
-// The open cycle is the first that has not ended and a time lies in the cycle from its start up to its end
+// The open cycle is the first that has not ended
 func TestCyclesOpen(t *testing.T) {
 	start := time.Date(2026, 8, 31, 0, 0, 0, 0, time.UTC)
 	cycles := trace.Traces{knob("k1", "2026-08-31", 2, start)}.Cycles(start.Add(20 * 24 * time.Hour))
@@ -109,7 +110,27 @@ func TestCyclesOpen(t *testing.T) {
 			assert.Equal(t, tc.want, want{c.ID, ok})
 		})
 	}
-	assert.Equal(t, []bool{true, false, false}, []bool{cycles[0].Holds(start), cycles[0].Holds(start.Add(-time.Second)), cycles[0].Holds(cycles[0].End)})
+}
+
+// A time lies in the cycle from its start up to its end
+func TestCycleHolds(t *testing.T) {
+	start := time.Date(2026, 8, 31, 0, 0, 0, 0, time.UTC)
+	cycle := trace.Cycle{ID: "2026-08-31", Start: start, End: start.Add(14 * 24 * time.Hour)}
+	tcs := []struct {
+		name string
+		args time.Time
+		want bool
+	}{
+		{"the start lies in the cycle", start, true},
+		{"a second before the start does not", start.Add(-time.Second), false},
+		{"the end belongs to the next cycle", cycle.End, false},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.want, cycle.Holds(tc.args))
+		})
+	}
 }
 
 // The first cycle stands however far the cycles run on and there is none before the first knob trace

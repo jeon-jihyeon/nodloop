@@ -238,17 +238,92 @@ func TestExtractorPropose(t *testing.T) {
 	}
 }
 
-// A run without a correction teaches nothing
-func TestExtractorReactionNotCorrected(t *testing.T) {
-	ctx := context.Background()
-	s, e, runID := corrected(t)
-	fb, err := feedback.New(runID, feedback.VerdictApprove, "", "", nil, "ann", s.Clock.Now())
-	require.NoError(t, err)
-	require.NoError(t, s.Feedback.Append(ctx, fb.Record()))
+// A reaction resolves only for a successful run whose verdict still corrects it
+// A later approve or withdraw, a trace that is no successful run and a failed read refuse it
+func TestExtractorReaction(t *testing.T) {
+	type args struct {
+		// The trace the reaction reads and the corrected run when empty
+		run string
+		// Verdicts of ann recorded on the corrected run after its edit
+		later []feedback.Verdict
+		// Reads of the verdicts and of the ledger allowed before each fails
+		verdictReads, ledgerReads int
+	}
+	tcs := []struct {
+		name string
+		args args
+		want error
+	}{
+		{"a corrected run resolves", args{verdictReads: 1, ledgerReads: 1}, nil},
+		{"an approve after the correction teaches nothing", args{later: []feedback.Verdict{feedback.VerdictApprove}, verdictReads: 1, ledgerReads: 1},
+			extract.ErrNotCorrected},
+		{"a withdrawn correction teaches nothing", args{later: []feedback.Verdict{feedback.VerdictWithdraw}, verdictReads: 1, ledgerReads: 1},
+			extract.ErrNotCorrected},
+		{"an unknown run fails", args{run: "t-unknown", verdictReads: 1, ledgerReads: 1}, record.ErrTraceNotFound},
+		{"a trace that is no run fails", args{run: "t-classify", verdictReads: 1, ledgerReads: 1}, trace.ErrNotRun},
+		{"a failed run fails", args{run: "t-failed", verdictReads: 1, ledgerReads: 1}, trace.ErrFailedRun},
+		{"a verdict read that fails fails the reaction", args{ledgerReads: 1}, assert.AnError},
+		{"a ledger read that fails fails the reaction", args{verdictReads: 1}, assert.AnError},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ctx := context.Background()
+			s, _, runID := corrected(t)
+			require.NoError(t, s.Traces.Append(ctx, trace.Trace{ID: "t-classify", Name: trace.NameClassify, Time: s.Clock.Now()}.Record()))
+			failed, err := trace.NewRun("session", "", nil, nil, json.RawMessage(`"x"`), s.Clock.Now())
+			require.NoError(t, err)
+			failed.ID, failed.Error = "t-failed", "timeout"
+			require.NoError(t, s.Traces.Append(ctx, failed.Record()))
+			for _, v := range tc.args.later {
+				fb, err := feedback.New(runID, v, "", "", nil, "ann", s.Clock.Now())
+				require.NoError(t, err)
+				require.NoError(t, s.Feedback.Append(ctx, fb.Record()))
+			}
+			verdicts := &testkit.FlakyFeedback{Store: s.Feedback, Reads: testkit.Reads{Allowed: tc.args.verdictReads, Err: assert.AnError}}
+			items := &testkit.FlakyKnowledge{Store: s.Knowledge, Reads: testkit.Reads{Allowed: tc.args.ledgerReads, Err: assert.AnError}}
+			e := extract.New(knowledge.NewLedger(items, nil, s.Clock.Now, nil), s.Traces, verdicts, s.Clock.Now)
 
-	_, err = e.Reaction(ctx, runID)
+			got, err := e.Reaction(ctx, cmp.Or(tc.args.run, runID))
 
-	assert.ErrorIs(t, err, extract.ErrNotCorrected)
+			assert.ErrorIs(t, err, tc.want)
+			assert.Equal(t, tc.want == nil, got.Run.ID == runID, "only a resolved reaction holds the run")
+		})
+	}
+}
+
+// A run that reaches nothing says so under each list and a retired version names who retired it and why
+func TestReactionString(t *testing.T) {
+	run := trace.Trace{ID: "r1", Producer: "session", Labels: trace.Labels{"repo": {"o/svc"}}, Output: json.RawMessage(`"x"`)}
+	withdrawn := knowledge.Knowledge{
+		ID: "k1", Version: 2, Kind: knowledge.KindJudgment, Status: knowledge.StatusRetired, Approver: knowledge.ApproverNodloop, Reason: knowledge.ReasonWords,
+		Content: "Quote paths", Run: &knowledge.RunScope{Producer: "session"},
+	}
+	head := "# Run r1 of session\n\nLabels: runs of session. repo=o/svc\n\n## Output\n\nx\n\n## Verdict\n\n"
+	tcs := []struct {
+		name string
+		args extract.Reaction
+		want string
+	}{
+		{"a run that reaches nothing says none under each list", extract.Reaction{Run: run, Verdict: feedback.Feedback{Verdict: feedback.VerdictReject}},
+			head + "reject\n\n## Approved items this run reaches\n\nnone\n\n## Waiting candidates this run reaches\n\nnone\n\n" +
+				"## Retired versions this run reaches\n\nnone\n"},
+		{
+			"a retired version names who retired it and why",
+			extract.Reaction{
+				Run: run, Verdict: feedback.Feedback{Verdict: feedback.VerdictReject, ReasonCode: feedback.ReasonFact, Reason: "wrong"},
+				Retired: knowledge.Set{withdrawn},
+			},
+			head + "reject, fact: wrong\n\n## Approved items this run reaches\n\nnone\n\n## Waiting candidates this run reaches\n\nnone\n\n" +
+				"## Retired versions this run reaches\n\n[k1 v2 judgment retired by nodloop for words] Quote paths\nScope: runs of session\n",
+		},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.want, tc.args.String())
+		})
+	}
 }
 
 // The reaction reads the reconciled verdict: a person's wins and a run the conversation and the capture dispute teaches nothing
@@ -340,9 +415,14 @@ func TestExtractorExtract(t *testing.T) {
 		conclusion extract.Conclusion
 		refusals   []extract.Refusal
 		usage      trace.Usage
-		proposed   bool
-		prompts    prompts
+		// The model the trace names and empty when no call answered
+		model    string
+		proposed bool
+		prompts  prompts
 	}
+	const haiku = "claude-haiku-4-5"
+	// A draft the critic passes whose kind the ledger refuses
+	unknownKind := `{"relation":"add","kind":"rule","content":"Run git with -C <dir> instead of changing into it","keys":["repo"]}`
 	// Every draft reaches the same items and each draft after the first sends a refusal back
 	drafted := func(n int) prompts { return prompts{drafts: n, reaching: n, refused: n - 1} }
 	promptsOf := func(reqs []llm.Request) prompts {
@@ -380,21 +460,29 @@ func TestExtractorExtract(t *testing.T) {
 		want want
 	}{
 		{"a draft the critic passes is proposed", args{replies(good, passed)},
-			want{nil, extract.ConclusionProposed, []extract.Refusal{""}, usage(2, 0.5), true, drafted(1)}},
+			want{nil, extract.ConclusionProposed, []extract.Refusal{""}, usage(2, 0.5), haiku, true, drafted(1)}},
 		{"a duplicate of a waiting candidate corroborates it", args{replies(duplicate, passed)},
-			want{nil, extract.ConclusionCorroborated, []extract.Refusal{""}, usage(2, 0.5), true, drafted(1)}},
+			want{nil, extract.ConclusionCorroborated, []extract.Refusal{""}, usage(2, 0.5), haiku, true, drafted(1)}},
 		{"a draft code refuses is sent back once", args{replies(twoSentences, good, passed)},
-			want{nil, extract.ConclusionProposed, []extract.Refusal{extract.RefusalCode, ""}, usage(3, 0.75), true, drafted(2)}},
+			want{nil, extract.ConclusionProposed, []extract.Refusal{extract.RefusalCode, ""}, usage(3, 0.75), haiku, true, drafted(2)}},
 		{"a draft the critic refuses is sent back once", args{replies(good, refused, good, passed)},
-			want{nil, extract.ConclusionProposed, []extract.Refusal{extract.RefusalCritic, ""}, usage(4, 1), true, drafted(2)}},
+			want{nil, extract.ConclusionProposed, []extract.Refusal{extract.RefusalCritic, ""}, usage(4, 1), haiku, true, drafted(2)}},
 		{"a second critic refusal is returned", args{replies(good, refused, good, refused)},
-			want{extract.ErrCriticRefused, extract.ConclusionRefused, []extract.Refusal{extract.RefusalCritic, extract.RefusalCritic}, usage(4, 1), false, drafted(2)}},
+			want{extract.ErrCriticRefused, extract.ConclusionRefused, []extract.Refusal{extract.RefusalCritic, extract.RefusalCritic}, usage(4, 1), haiku, false,
+				drafted(2)}},
 		{"a second code refusal is returned", args{replies(twoSentences, twoSentences)},
-			want{extract.ErrNotLesson, extract.ConclusionRefused, []extract.Refusal{extract.RefusalCode, extract.RefusalCode}, usage(2, 0.5), false, drafted(2)}},
+			want{extract.ErrNotLesson, extract.ConclusionRefused, []extract.Refusal{extract.RefusalCode, extract.RefusalCode}, usage(2, 0.5), haiku, false,
+				drafted(2)}},
+		{"a draft the ledger refuses is returned at once", args{replies(unknownKind, passed)},
+			want{knowledge.ErrKindUnknown, extract.ConclusionRefused, []extract.Refusal{extract.RefusalLedger}, usage(2, 0.5), haiku, false, drafted(1)}},
 		{"a draft that does not decode fails", args{replies(`not json`)},
-			want{extract.ErrDraftInvalid, extract.ConclusionFailed, []extract.Refusal{extract.RefusalModel}, usage(1, 0.25), false, drafted(1)}},
+			want{extract.ErrDraftInvalid, extract.ConclusionFailed, []extract.Refusal{extract.RefusalModel}, usage(1, 0.25), haiku, false, drafted(1)}},
+		{"a failed draft call keeps the cost it was charged and names no model", args{[]reply{{err: maxTurns}}},
+			want{maxTurns, extract.ConclusionFailed, []extract.Refusal{extract.RefusalModel}, usage(0, 0.5), "", false, drafted(1)}},
+		{"a failed resent draft call ends the extraction", args{append(replies(twoSentences), reply{err: maxTurns})},
+			want{maxTurns, extract.ConclusionFailed, []extract.Refusal{extract.RefusalCode, extract.RefusalModel}, usage(1, 0.75), haiku, false, drafted(2)}},
 		{"a failed critic call keeps the cost it was charged", args{append(replies(good), reply{err: maxTurns})},
-			want{maxTurns, extract.ConclusionFailed, []extract.Refusal{extract.RefusalModel}, usage(1, 0.75), false, drafted(1)}},
+			want{maxTurns, extract.ConclusionFailed, []extract.Refusal{extract.RefusalModel}, usage(1, 0.75), haiku, false, drafted(1)}},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
@@ -421,12 +509,49 @@ func TestExtractorExtract(t *testing.T) {
 			assert.Equal(t, tc.want.proposed, got.Candidate != nil)
 			assert.Equal(t, tc.want.prompts, promptsOf(reqs))
 			assert.Equal(t, record.Usage(tc.want.usage), tr.Usage)
-			if tc.want.usage.OutputTokens > 0 {
-				assert.Equal(t, "claude-haiku-4-5", tr.Model, "the trace names the model that answered")
-			}
+			assert.Equal(t, tc.want.model, tr.Model, "the trace names the model that answered")
 			assert.Positive(t, tr.DurationMS)
 			assert.Zero(t, tr.DurationMS%testkit.ClockStep.Milliseconds(), "the duration comes from the testkit clock")
 			assert.Equal(t, llm.Response{}, meter.Take(), "the extraction took the meter")
+		})
+	}
+}
+
+// A run whose reaction does not resolve calls no model and records no extract trace
+func TestExtractorExtractUnresolved(t *testing.T) {
+	type args struct {
+		// The trace extracted and the corrected run when empty
+		run string
+		// Verdicts of ann recorded on the corrected run after its edit
+		later []feedback.Verdict
+	}
+	tcs := []struct {
+		name string
+		args args
+		want error
+	}{
+		{"a run approved after its correction", args{later: []feedback.Verdict{feedback.VerdictApprove}}, extract.ErrNotCorrected},
+		{"an unknown run", args{run: "t-unknown"}, record.ErrTraceNotFound},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ctx := context.Background()
+			s, e, runID := corrected(t)
+			for _, v := range tc.args.later {
+				fb, err := feedback.New(runID, v, "", "", nil, "ann", s.Clock.Now())
+				require.NoError(t, err)
+				require.NoError(t, s.Feedback.Append(ctx, fb.Record()))
+			}
+			// No call is expected so any model call fails the test
+			meter := llm.NewMeter(llmmock.NewMockClient(gomock.NewController(t)))
+
+			_, err := e.Extract(ctx, extract.NewClaudeDrafter(meter, ""), extract.NewClaudeCritic(meter, ""), cmp.Or(tc.args.run, runID), "")
+
+			assert.ErrorIs(t, err, tc.want)
+			traces, err := s.Traces.List(ctx, record.TraceFilter{Name: string(trace.NameExtract)})
+			require.NoError(t, err)
+			assert.Empty(t, traces)
 		})
 	}
 }

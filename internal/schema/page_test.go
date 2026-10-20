@@ -83,6 +83,7 @@ func TestParseCursor(t *testing.T) {
 		want want
 	}{
 		{"the form of a cursor names its record", schema.Cursor{Time: ms, RecordID: "t1"}.String(), want{cursor: schema.Cursor{Time: ms, RecordID: "t1"}}},
+		{"the form a digest answers names its record", schema.CursorAt(ms, "t2"), want{cursor: schema.Cursor{Time: ms, RecordID: "t2"}}},
 		{"an empty form is the start", "", want{}},
 		{"a form that is no base64 is refused", "%%%", want{err: schema.ErrCursorInvalid}},
 		{"a form without a record id is refused", schema.Cursor{Time: ms}.String(), want{err: schema.ErrCursorInvalid}},

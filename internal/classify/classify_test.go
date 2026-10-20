@@ -9,6 +9,8 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -91,6 +93,9 @@ func TestHTTPClassify(t *testing.T) {
 		{"a question left out fails",
 			args{endpoint{yes: map[string]float64{"states": 0.9}}, ""},
 			want{err: classify.ErrAnswerMissing}},
+		{"an answer to a question not asked is left out",
+			args{endpoint{yes: map[string]float64{"holds": 0.95, "states": 0.9, "other": 0.5}}, ""},
+			want{answers: classify.Answers{"holds": {Yes: 0.95}, "states": {Yes: 0.9}}}},
 		{"a probability over 1 fails",
 			args{endpoint{yes: map[string]float64{"holds": 1.5, "states": 0.9}}, ""},
 			want{err: classify.ErrResponseInvalid}},
@@ -115,6 +120,128 @@ func TestHTTPClassify(t *testing.T) {
 				"holds":{"type":"noul","instructions":"It holds beyond this run."},
 				"states":{"type":"noul","instructions":"It states the correction."}}}`, string(*body))
 			assert.Equal(t, tc.want.answers, got)
+		})
+	}
+}
+
+func TestHTTPReply(t *testing.T) {
+	tcs := []struct {
+		name string
+		args endpoint
+		want classify.Reply
+	}{
+		{"the model the endpoint answered with is named",
+			endpoint{yes: map[string]float64{"holds": 1, "states": 1}, model: "laya-2"},
+			classify.Reply{Answers: classify.Answers{"holds": {Yes: 1}, "states": {Yes: 1}}, Model: "laya-2"}},
+		{"an endpoint that names none keeps the model it was sent",
+			endpoint{yes: map[string]float64{"holds": 1, "states": 1}},
+			classify.Reply{Answers: classify.Answers{"holds": {Yes: 1}, "states": {Yes: 1}}, Model: "laya"}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			srv, _, _ := tc.args.serve(t)
+			h := classify.NewHTTP(classify.Endpoint{URL: srv.URL, Model: "laya"}, "", time.Second)
+
+			got, err := h.Reply(context.Background(), classify.Request{State: "the draft", Questions: questions})
+
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, got)
+		})
+	}
+}
+
+// A request that fails before any answer keeps the model it was sent so the trace shows what failed
+func TestHTTPReplyFails(t *testing.T) {
+	// The body ends before the length the header promised
+	cut := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Length", "100")
+		_, _ = w.Write([]byte(`{"answers":`))
+	}))
+	t.Cleanup(cut.Close)
+	closed := httptest.NewServer(http.NotFoundHandler())
+	closed.Close()
+	tcs := []struct {
+		name string
+		// The URL the endpoint posts to
+		args string
+	}{
+		{"a URL no request can be built from fails", "http://bad host"},
+		{"a closed endpoint fails", closed.URL},
+		{"a body cut short fails", cut.URL},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			h := classify.NewHTTP(classify.Endpoint{URL: tc.args, Model: "laya"}, "", time.Second)
+
+			got, err := h.Reply(context.Background(), classify.Request{State: "the draft", Questions: questions})
+
+			assert.Error(t, err)
+			assert.Equal(t, classify.Reply{Model: "laya"}, got)
+		})
+	}
+}
+
+// An error status fails naming the status alone so a body that echoes the request never puts the state in a trace
+func TestHTTPClassifyStatus(t *testing.T) {
+	tcs := []struct {
+		name string
+		// The status the endpoint answers with the request as its body
+		args int
+		want string
+	}{
+		{"a refused request", http.StatusUnprocessableEntity, "classify: endpoint answered an error status: 422"},
+		{"a failing endpoint", http.StatusInternalServerError, "classify: endpoint answered an error status: 500"},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(tc.args)
+				_, _ = io.Copy(w, r.Body)
+			}))
+			t.Cleanup(srv.Close)
+			h := classify.NewHTTP(classify.Endpoint{URL: srv.URL}, "", time.Second)
+
+			_, err := h.Classify(context.Background(), classify.Request{State: "the words of ann", Questions: questions})
+
+			require.ErrorIs(t, err, classify.ErrStatus)
+			assert.Equal(t, tc.want, err.Error())
+		})
+	}
+}
+
+// A redirect fails with its status so the state never reaches the endpoint it names
+func TestHTTPClassifyRedirect(t *testing.T) {
+	tcs := []struct {
+		name string
+		// The redirect status the endpoint answers
+		args int
+	}{
+		{"a temporary redirect that keeps the body", http.StatusTemporaryRedirect},
+		{"a permanent redirect that keeps the body", http.StatusPermanentRedirect},
+		{"a redirect that drops the body", http.StatusFound},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var reached atomic.Bool
+			other := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+				reached.Store(true)
+			}))
+			t.Cleanup(other.Close)
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				http.Redirect(w, r, other.URL, tc.args)
+			}))
+			t.Cleanup(srv.Close)
+			h := classify.NewHTTP(classify.Endpoint{URL: srv.URL}, "secret", time.Second)
+
+			_, err := h.Classify(context.Background(), classify.Request{State: "the words of ann", Questions: questions})
+
+			require.ErrorIs(t, err, classify.ErrStatus)
+			assert.Contains(t, err.Error(), strconv.Itoa(tc.args))
+			assert.False(t, reached.Load())
 		})
 	}
 }
@@ -348,6 +475,38 @@ func TestPlanClassifyKeeps(t *testing.T) {
 	}
 }
 
+// The trace keeps the probabilities and never the reasons a member gave while the caller still reads them
+func TestPlanRuleLeavesReasons(t *testing.T) {
+	tcs := []struct {
+		name string
+		args classify.Point
+	}{
+		{"at the critic point", classify.PointCritic},
+		{"at the reaction point", classify.PointReaction},
+	}
+	explained := classify.Answers{"holds": {Yes: 1, Reason: "ann said so"}, "states": {Yes: 0, Reason: "ann said so"}}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ctx := context.Background()
+			traces, err := tracefile.New(t.TempDir())
+			require.NoError(t, err)
+			claude := classify.Member{Name: "claude", Classifier: replier(t, classify.Reply{Answers: explained})}
+			plan := classify.NewPlan(tc.args, classify.Member{}, claude, traces, seal, func() time.Time { return fixed })
+
+			got, err := plan.Rule(ctx, classify.Request{Ref: "run-1", State: "the draft", Questions: questions})
+
+			require.NoError(t, err)
+			assert.Equal(t, explained, got.Answers)
+			recorded, err := traces.List(ctx, record.TraceFilter{Name: string(trace.NameClassify)})
+			require.NoError(t, err)
+			require.Len(t, recorded, 1)
+			assert.JSONEq(t, `{"members":[{"name":"claude","answers":{"holds":{"yes":1},"states":{"yes":0}}}],"answers":{"holds":{"yes":1},"states":{"yes":0}}}`,
+				string(recorded[0].Output))
+		})
+	}
+}
+
 // A replier that may answer any number of times
 func replier(t *testing.T, reply classify.Reply) classify.Classifier {
 	t.Helper()
@@ -385,6 +544,8 @@ func TestEndpointsWith(t *testing.T) {
 		{"an unknown point fails", args{"review", local}, want{"", classify.ErrPointUnknown}},
 		{"a relative URL fails", args{classify.PointCritic, "localhost:8000"}, want{"", classify.ErrEndpointInvalid}},
 		{"another scheme fails", args{classify.PointCritic, "ftp://localhost/v1"}, want{"", classify.ErrEndpointInvalid}},
+		{"a password in the URL fails", args{classify.PointJudge, "https://ann:k1@example.com/v1"}, want{"", classify.ErrEndpointCredentials}},
+		{"a user in the URL fails", args{classify.PointJudge, "https://ann@example.com/v1"}, want{"", classify.ErrEndpointCredentials}},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
@@ -435,6 +596,7 @@ func TestEndpointsCheck(t *testing.T) {
 		{"points with URLs pass", classify.Endpoints{classify.PointCritic: {URL: "http://localhost:8000"}}, nil},
 		{"an unknown point fails", classify.Endpoints{"review": {URL: "http://localhost:8000"}}, classify.ErrPointUnknown},
 		{"a URL edited into a relative one fails", classify.Endpoints{classify.PointCritic: {URL: "localhost"}}, classify.ErrEndpointInvalid},
+		{"a password edited into a URL fails", classify.Endpoints{classify.PointCritic: {URL: "http://ann:k1@localhost"}}, classify.ErrEndpointCredentials},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
