@@ -2,7 +2,6 @@ package nodloop_test
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"time"
@@ -11,8 +10,7 @@ import (
 )
 
 // The loop of the README: a corrected run teaches a candidate
-// A call in process proves no person so its approval is a proposal until the person decides it from a terminal
-// or under a person key of nodloop-server
+// A call in process proves no person so its approval is a proposal until the person decides it at a terminal or under a person key of nodloop-server
 func Example() {
 	dir, err := os.MkdirTemp("", "nodloop")
 	if err != nil {
@@ -50,8 +48,9 @@ func Example() {
 
 // A stream producer under a holdout with retention
 // 1. each one hour block of a service is one draw so a run of the block gets every item or none
-// 2. Record takes the same key so report effect counts the run in its arm
-// 3. an outcome of a real check sits beside the verdicts in report effect
+// 2. Record takes the same key so the run records its arm
+// 3. an outcome of a real check is a record of its own beside the run
+// 4. a tool outside pages the raw records of each kind and computes the effect of the arms itself
 func Example_holdout() {
 	dir, err := os.MkdirTemp("", "nodloop")
 	if err != nil {
@@ -59,13 +58,13 @@ func Example_holdout() {
 	}
 	defer func() { _ = os.RemoveAll(dir) }()
 	ctx := context.Background()
-	c, err := nodloop.Open(dir, nodloop.WithHoldout(0.1), nodloop.WithRetention(30))
+	now := time.Date(2026, 10, 12, 9, 30, 0, 0, time.UTC)
+	c, err := nodloop.Open(dir, nodloop.WithClock(func() time.Time { return now }), nodloop.WithHoldout(0.1), nodloop.WithRetention(30))
 	if err != nil {
 		panic(err)
 	}
-	defer c.WaitPrune()
 	labels := nodloop.Labels{"service": {"checkout"}}
-	key := "checkout:" + time.Date(2026, 10, 12, 9, 0, 0, 0, time.UTC).Format("2006-01-02T15")
+	key := "checkout:" + now.Format("2006-01-02T15")
 	d := must(c.Draw(ctx, "stream-bot", labels, key))
 	id := must(c.Record(ctx, nodloop.Run{
 		Producer: "stream-bot", Labels: labels, Output: []byte("lag rose on partition 3"),
@@ -75,11 +74,17 @@ func Example_holdout() {
 	if err != nil {
 		panic(err)
 	}
+	c.WaitPrune()
 
-	report := must(c.Report(ctx, "effect"))
-	fmt.Println(json.Valid(report))
+	// A page holds a record once it is 10 s old so one another process appends late is never skipped
+	now = now.Add(time.Minute)
+	for _, kind := range []string{"run", "outcome"} {
+		page := must(c.Records(ctx, nodloop.Query{Kind: kind}))
+		fmt.Println(kind, len(page.Records))
+	}
 	// Output:
-	// true
+	// run 1
+	// outcome 1
 }
 
 // Stops the example on an error a real caller would handle

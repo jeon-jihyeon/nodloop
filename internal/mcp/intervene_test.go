@@ -30,10 +30,15 @@ func (f *forms) asked() []string {
 	return append([]string{}, f.messages...)
 }
 
-// Options of a client that shows forms and answers each with the action
-func (f *forms) client(action string) *sdk.ClientOptions {
+// Options of a client that declares form elicitation and answers each form with the action
+// A client that declares URL elicitation alone shows no form
+func (f *forms) client(action string, urlOnly bool) *sdk.ClientOptions {
+	elicitation := &sdk.ElicitationCapabilities{Form: &sdk.FormElicitationCapabilities{}}
+	if urlOnly {
+		elicitation = &sdk.ElicitationCapabilities{URL: &sdk.URLElicitationCapabilities{}}
+	}
 	return &sdk.ClientOptions{
-		Capabilities: &sdk.ClientCapabilities{Elicitation: &sdk.ElicitationCapabilities{Form: &sdk.FormElicitationCapabilities{}}},
+		Capabilities: &sdk.ClientCapabilities{Elicitation: elicitation},
 		ElicitationHandler: func(_ context.Context, req *sdk.ElicitRequest) (*sdk.ElicitResult, error) {
 			f.mu.Lock()
 			defer f.mu.Unlock()
@@ -59,7 +64,9 @@ func TestServerIntervene(t *testing.T) {
 	keep := map[string]any{"action": "judge", "target": "short:1", "choice": "keep", "session": "s-1"}
 	type args struct {
 		// The action the client answers a form with and empty for a client without forms
-		form     string
+		form string
+		// Whether the client declares URL elicitation alone
+		urlOnly  bool
 		protocol string
 		caller   mcp.Caller
 		in       map[string]any
@@ -88,6 +95,8 @@ func TestServerIntervene(t *testing.T) {
 			want{knowledge.StatusCandidate, asked, true, "", []string{}, ""}},
 		{"a client without the form records a proposal and leaves the ledger as it was", args{in: keep},
 			want{knowledge.StatusCandidate, []string{}, false, trace.AuthorityAgent, []string{"agent none "}, ""}},
+		{"a client that shows only URL elicitation records a proposal with no form", args{form: "accept", urlOnly: true, in: keep},
+			want{knowledge.StatusCandidate, []string{}, false, trace.AuthorityAgent, []string{"agent none "}, ""}},
 		{"a key that proves a person decides with no form", args{form: "decline", caller: mcp.Caller{Person: "ann", Proves: true}, in: keep},
 			want{knowledge.StatusApproved, []string{}, false, trace.AuthorityPerson, []string{"person key ann"}, ""}},
 		{"a key without --person records a proposal with no form", args{form: "accept", caller: mcp.Caller{Person: "ci"}, in: keep},
@@ -95,6 +104,8 @@ func TestServerIntervene(t *testing.T) {
 		{"a digest sends no form and is no proposal", args{form: "accept", in: map[string]any{"action": "digest"}},
 			want{knowledge.StatusCandidate, []string{}, false, trace.AuthorityAgent, []string{"agent none "}, ""}},
 		{"a knob outside its range is refused before any form", args{form: "accept", in: map[string]any{"action": "knob", "target": "audit_tier1", "value": 0.9}},
+			want{knowledge.StatusCandidate, []string{}, false, "", []string{}, curate.ErrTargetInvalid.Error()}},
+		{"a knob outside its range from a client without the form is refused", args{in: map[string]any{"action": "knob", "target": "audit_tier1", "value": 0.9}},
 			want{knowledge.StatusCandidate, []string{}, false, "", []string{}, curate.ErrTargetInvalid.Error()}},
 	}
 	for _, tc := range tcs {
@@ -104,7 +115,7 @@ func TestServerIntervene(t *testing.T) {
 			var f forms
 			options := &sdk.ClientOptions{}
 			if tc.args.form != "" {
-				options = f.client(tc.args.form)
+				options = f.client(tc.args.form, tc.args.urlOnly)
 			}
 			c := testkit.ConnectWith(t, serve(st, tc.args.caller), options, tc.args.protocol)
 			candidate(t, c)
@@ -116,16 +127,9 @@ func TestServerIntervene(t *testing.T) {
 			assert.Equal(t, tc.want.status, status(t, st))
 			assert.Equal(t, tc.want.forms, f.asked())
 			assert.Equal(t, []any{tc.want.declined, tc.want.authority}, []any{got.Declined, got.Authority})
-			assert.Equal(t, tc.want.interventions, nonEmpty(interventions(t, st)))
+			assert.Equal(t, tc.want.interventions, interventions(t, st))
 		})
 	}
-}
-
-func nonEmpty(s []string) []string {
-	if s == nil {
-		return []string{}
-	}
-	return s
 }
 
 // The answer carries the intervention as its published record and names what it wrote
@@ -154,7 +158,7 @@ func TestServerInterveneAnswer(t *testing.T) {
 func TestServerInterveneForgedForm(t *testing.T) {
 	st := testkit.Open(t)
 	var f forms
-	c := testkit.ConnectWith(t, serve(st, mcp.Caller{}), f.client("accept"), "")
+	c := testkit.ConnectWith(t, serve(st, mcp.Caller{}), f.client("accept", false), "")
 	candidate(t, c)
 
 	_, err := c.CallParams(t, &sdk.CallToolParams{

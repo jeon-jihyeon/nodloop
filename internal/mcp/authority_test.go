@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"slices"
 	"sync/atomic"
 	"testing"
@@ -54,10 +55,12 @@ func TestServerApproveProof(t *testing.T) {
 		{"a key without --person records a proposal", args{elicitingClient, key, ""}, proposal},
 		{"a key that proves a person approves under its name", args{elicitingClient, person, "sam"},
 			want{status: "approved", approver: "ann", repos: []string{"nodloop"}, interventions: []string{"person key ann"}}},
+		{"the reserved name under a key that proves a person approves under the key name", args{plainClient, person, knowledge.ApproverNodloop},
+			want{status: "approved", approver: "ann", repos: []string{"nodloop"}, interventions: []string{"person key ann"}}},
 		{"a call without a name is refused", args{plainClient, mcp.Caller{}, ""},
-			want{err: testkit.ErrTool, errText: knowledge.ErrApproverRequired.Error()}},
+			want{err: testkit.ErrTool, errText: knowledge.ErrApproverRequired.Error(), interventions: []string{}}},
 		{"the reserved name is refused", args{plainClient, mcp.Caller{}, knowledge.ApproverNodloop},
-			want{err: testkit.ErrTool, errText: knowledge.ErrApproverReserved.Error()}},
+			want{err: testkit.ErrTool, errText: knowledge.ErrApproverReserved.Error(), interventions: []string{}}},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
@@ -82,6 +85,45 @@ func TestServerApproveProof(t *testing.T) {
 			assert.Equal(t, tc.want.proposal, got.Proposal != "")
 			assert.Equal(t, tc.want.repos, reached(t, c))
 			assert.Equal(t, tc.want.interventions, interventions(t, st))
+		})
+	}
+}
+
+// A judgment of what the records do not hold is refused before anything is recorded
+// A proposal names what it asks about so the person is never asked about nothing
+func TestServerJudgmentRefuses(t *testing.T) {
+	type args struct {
+		caller mcp.Caller
+		tool   string
+		in     map[string]any
+	}
+	stdio, person := mcp.Caller{}, mcp.Caller{Person: "ann", Proves: true}
+	tcs := []struct {
+		name string
+		args args
+		want string
+	}{
+		{"a proposal to approve a version the records do not hold", args{stdio, "approve", map[string]any{"id": "short", "version": 9, "approver": "ann"}},
+			knowledge.ErrNotFound.Error()},
+		{"a proposal to approve a compaction the records do not hold", args{stdio, "approve_compaction", map[string]any{"compaction": "nope", "approver": "ann"}},
+			knowledge.ErrNotFound.Error()},
+		{"a proposal to reaffirm a version that waits for approval", args{stdio, "reaffirm", map[string]any{"id": "short", "version": 1, "approver": "ann"}},
+			knowledge.ErrVersionUnapproved.Error()},
+		{"an approval in labels of a version the records do not hold", args{person, "approve", map[string]any{
+			"id": "short", "version": 9, "approver": "ann", "scope": map[string]any{"labels": map[string]any{"repo": []any{"other"}}},
+		}}, knowledge.ErrNotFound.Error()},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			st := testkit.Open(t)
+			candidate(t, testkit.Connect(t, serve(st, person)))
+			c := testkit.Connect(t, serve(st, tc.args.caller))
+
+			err := c.Run(t, tc.args.tool, tc.args.in)
+
+			assert.ErrorContains(t, err, tc.want)
+			assert.Empty(t, interventions(t, st))
 		})
 	}
 }
@@ -120,7 +162,7 @@ func interventions(t *testing.T, st testkit.Stores) []string {
 	t.Helper()
 	found, err := st.Traces.List(t.Context(), record.TraceFilter{Name: string(trace.NameIntervention)})
 	require.NoError(t, err)
-	var out []string
+	out := []string{}
 	for _, tr := range slices.Backward(found) {
 		var in trace.Intervention
 		require.NoError(t, json.Unmarshal(tr.Input, &in))
@@ -227,15 +269,28 @@ func TestServerReviewerRequired(t *testing.T) {
 		{"a verdict under a key that proves a person is refused under the reserved name",
 			args{mcp.Caller{Person: "ann", Proves: true}, "feedback", map[string]any{"verdict": "approve", "reviewer": "nodloop"}},
 			want{errText: feedback.ErrReviewerReserved.Error()}},
+		{"an outcome under a key that proves a person is refused under the reserved name",
+			args{mcp.Caller{Person: "ann", Proves: true}, "outcome", map[string]any{"result": "confirmed", "reviewer": "nodloop"}},
+			want{errText: feedback.ErrReviewerReserved.Error()}},
+		{"a verdict under a key without --person is refused under the reserved name",
+			args{mcp.Caller{Person: "ci"}, "feedback", map[string]any{"verdict": "approve", "reviewer": "nodloop"}},
+			want{errText: feedback.ErrReviewerReserved.Error()}},
+		{"an outcome under a key without --person is refused under the reserved name",
+			args{mcp.Caller{Person: "ci"}, "outcome", map[string]any{"result": "confirmed", "reviewer": "nodloop"}},
+			want{errText: feedback.ErrReviewerReserved.Error()}},
+		{"an outcome under a key that proves a person naming another person is the key's person's",
+			args{mcp.Caller{Person: "ann", Proves: true}, "outcome", map[string]any{"result": "confirmed", "reviewer": "sam"}},
+			want{reviewer: "ann"}},
+		{"an outcome under a key without --person keeps the name it gives",
+			args{mcp.Caller{Person: "ci"}, "outcome", map[string]any{"result": "confirmed", "reviewer": "sam"}},
+			want{reviewer: "sam"}},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			c := testkit.Connect(t, serve(testkit.Open(t), tc.args.caller))
 			in := map[string]any{"trace_id": recordRun(t, c, "nodloop")}
-			for k, v := range tc.args.in {
-				in[k] = v
-			}
+			maps.Copy(in, tc.args.in)
 			var got struct {
 				Reviewer string `json:"reviewer"`
 			}
@@ -249,28 +304,38 @@ func TestServerReviewerRequired(t *testing.T) {
 }
 
 // A named verdict carries the proof of its call and an inferred one carries none
+// Under a key that proves a person every named verdict is that person's so none carries the proof under another name
 func TestServerFeedbackProof(t *testing.T) {
+	type args struct {
+		caller   mcp.Caller
+		reviewer string
+	}
 	type want struct {
 		reviewer, proof string
 	}
+	person := mcp.Caller{Person: "ann", Proves: true}
 	tcs := []struct {
 		name string
-		args mcp.Caller
+		args args
 		want want
 	}{
-		{"over stdio a named verdict proves nobody", mcp.Caller{}, want{"ann", "none"}},
-		{"under a key without --person a named verdict proves nobody", mcp.Caller{Person: "ci"}, want{"ann", "none"}},
-		{"under a key that proves a person the verdict carries the key", mcp.Caller{Person: "ann", Proves: true}, want{"ann", "key"}},
-		{"on the agent server the verdict is the session's with no proof", mcp.Caller{Agent: true}, want{feedback.ReviewerSession, ""}},
+		{"over stdio a named verdict proves nobody", args{mcp.Caller{}, "ann"}, want{"ann", "none"}},
+		{"under a key without --person a named verdict proves nobody", args{mcp.Caller{Person: "ci"}, "ann"}, want{"ann", "none"}},
+		{"under a key that proves a person the verdict carries the key", args{person, "ann"}, want{"ann", "key"}},
+		{"under a key that proves a person a verdict naming another person is the key's person's", args{person, "sam"}, want{"ann", "key"}},
+		{"under a key that proves a person a verdict without a name is the key's person's", args{person, ""}, want{"ann", "key"}},
+		{"under a key that proves a person an inferred verdict stays the session's with no proof", args{person, feedback.ReviewerSession},
+			want{feedback.ReviewerSession, ""}},
+		{"on the agent server the verdict is the session's with no proof", args{mcp.Caller{Agent: true}, "ann"}, want{feedback.ReviewerSession, ""}},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			st := testkit.Open(t)
-			c := testkit.Connect(t, serve(st, tc.args))
+			c := testkit.Connect(t, serve(st, tc.args.caller))
 			runID := recordRun(t, c, "nodloop")
 
-			err := c.Run(t, "feedback", map[string]any{"trace_id": runID, "verdict": "approve", "reviewer": "ann"})
+			err := c.Run(t, "feedback", map[string]any{"trace_id": runID, "verdict": "approve", "reviewer": tc.args.reviewer})
 
 			require.NoError(t, err)
 			found, err := st.Feedback.List(t.Context(), record.FeedbackFilter{})
@@ -307,6 +372,8 @@ func TestServerJudgmentProof(t *testing.T) {
 			want{changed: true, interventions: []string{"person key ann"}}},
 		{"the reserved name is refused", args{mcp.Caller{}, knowledge.ApproverNodloop},
 			want{errText: knowledge.ErrApproverReserved.Error(), interventions: []string{}}},
+		{"the reserved name under a key that proves a person decides under the key name", args{mcp.Caller{Person: "ann", Proves: true}, knowledge.ApproverNodloop},
+			want{changed: true, interventions: []string{"person key ann"}}},
 	}
 	tools := []struct {
 		name string

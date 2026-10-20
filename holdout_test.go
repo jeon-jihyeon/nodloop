@@ -120,38 +120,41 @@ func TestClientRecordModel(t *testing.T) {
 // The duration of a run lands in its trace and a negative one records nothing
 func TestClientRecordDuration(t *testing.T) {
 	type want struct {
-		ms  int64
 		err error
+		// The duration of every run the directory holds
+		durations []int64
 	}
 	tcs := []struct {
 		name string
 		args time.Duration
 		want want
 	}{
-		{"the duration of the run lands in the trace", 2500 * time.Millisecond, want{2500, nil}},
-		{"a run without a duration records none", 0, want{0, nil}},
-		{"a negative duration is refused", -time.Second, want{0, nodloop.ErrDurationNegative}},
+		{"the duration of the run lands in the trace", 2500 * time.Millisecond, want{nil, []int64{2500}}},
+		{"a run without a duration records none", 0, want{nil, []int64{0}}},
+		{"a negative duration is refused and records nothing", -time.Second, want{nodloop.ErrDurationNegative, nil}},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			dir := t.TempDir()
-			c, err := nodloop.Open(dir, nodloop.WithClock(func() time.Time { return at }))
+			clock := at
+			c, err := nodloop.Open(t.TempDir(), nodloop.WithClock(func() time.Time { return clock }))
 			require.NoError(t, err)
 
 			_, err = c.Record(context.Background(), nodloop.Run{Producer: "stream-bot", Output: []byte("x"), Duration: tc.args})
 
-			require.ErrorIs(t, err, tc.want.err)
-			if tc.want.err != nil {
-				return
+			clock = clock.Add(time.Minute)
+			page, perr := c.Records(context.Background(), nodloop.Query{Kind: "run"})
+			require.NoError(t, perr)
+			var got []int64
+			for _, r := range page.Records {
+				var run struct {
+					DurationMS int64 `json:"duration_ms"`
+				}
+				require.NoError(t, json.Unmarshal(r, &run))
+				got = append(got, run.DurationMS)
 			}
-			b, err := os.ReadFile(filepath.Join(dir, "traces.jsonl"))
-			require.NoError(t, err)
-			var run struct {
-				DurationMS int64 `json:"duration_ms"`
-			}
-			require.NoError(t, json.Unmarshal(b, &run))
-			assert.Equal(t, tc.want.ms, run.DurationMS)
+			assert.ErrorIs(t, err, tc.want.err)
+			assert.Equal(t, tc.want.durations, got)
 		})
 	}
 }

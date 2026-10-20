@@ -482,6 +482,31 @@ func TestSetPendingCompaction(t *testing.T) {
 	}
 }
 
+// The new versions of a compaction come before the old ones it replaced
+func TestCompactionStatuses(t *testing.T) {
+	tcs := []struct {
+		name string
+		args knowledge.Compaction
+		want []string
+	}{
+		{"a compaction of nothing names nothing", knowledge.Compaction{}, []string{}},
+		{
+			"the new items and then the old ones",
+			knowledge.Compaction{
+				Items:    knowledge.Set{{ID: "k-1", Version: 1, Status: knowledge.StatusApproved}},
+				Replaced: knowledge.Set{{ID: "a", Version: 1, Status: knowledge.StatusRetired}, {ID: "b", Version: 2, Status: knowledge.StatusApproved}},
+			},
+			[]string{"k-1 v1 approved", "a v1 retired", "b v2 approved"},
+		},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.want, tc.args.Statuses())
+		})
+	}
+}
+
 func TestSetRoom(t *testing.T) {
 	seeds := newCompactionSeeds()
 	at := seeds.at.Add(time.Hour)

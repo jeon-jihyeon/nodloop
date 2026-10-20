@@ -41,7 +41,8 @@ func decideTrace(t *testing.T, id, action string, at time.Time) trace.Trace {
 	return tr
 }
 
-// Touchpoints per cycle and per week with notices, proposals and the interventions of an agent apart but every digest, and the overturns of the person
+// Touchpoints per cycle and per week with notices, proposals and the interventions of an agent apart but every digest
+// The overturns of the person over the same records
 func TestCurationTouchpoints(t *testing.T) {
 	day := func(d int) time.Time { return cycleAt(0).AddDate(0, 0, d).Add(10 * time.Hour) }
 	push, manual := trace.SourcePush, trace.SourceManual
@@ -183,7 +184,8 @@ func round6(v *float64) float64 {
 	return math.Round(*v*1e6) / 1e6
 }
 
-// The CUSUM alarm reaches the knobs until a knob event follows it, and a knob event without a target or CUSUM it can read bounds nothing
+// The CUSUM alarm reaches the knobs until a knob event follows it
+// A knob event without a target or CUSUM it can read bounds nothing
 func TestCurationKnobs(t *testing.T) {
 	// Three differ alarm at the third, a decision left in shadow and one of an earlier shape without its draw
 	asked := slices.Concat(
@@ -270,7 +272,8 @@ func TestStoresCurationItems(t *testing.T) {
 			Run: &knowledge.RunScope{Producer: "session"}, Time: cycleDay(0),
 		}.Record()))
 	}
-	// The run includes held and a version a person approved, which no hold draws and no item effect reads
+	// The run includes held and a version a person approved
+	// No hold draws the version of the person and no item effect reads it
 	own := knowledge.Ref{ID: "own", Version: 1}
 	included := func(unit string) knowledge.RunInput {
 		return knowledge.RunInput{

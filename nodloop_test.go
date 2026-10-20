@@ -89,97 +89,97 @@ func TestClientJudgmentsProveNoPerson(t *testing.T) {
 	}
 	tcs := []struct {
 		name string
-		args func(ctx context.Context, c *nodloop.Client, id string) (nodloop.Intervention, error)
+		args func(ctx context.Context, c *nodloop.Client) (nodloop.Intervention, error)
 		want want
 	}{
-		{"approve records a proposal", func(ctx context.Context, c *nodloop.Client, id string) (nodloop.Intervention, error) {
-			return c.Approve(ctx, id, 1, "ann")
+		{"approve records a proposal", func(ctx context.Context, c *nodloop.Client) (nodloop.Intervention, error) {
+			return c.Approve(ctx, "lesson", 1, "ann")
 		}, want{choice: nodloop.ChoiceKeep}},
-		{"approve in labels records a proposal", func(ctx context.Context, c *nodloop.Client, id string) (nodloop.Intervention, error) {
-			return c.ApproveIn(ctx, id, 1, nodloop.Labels{}, "ann")
+		{"approve in labels records a proposal", func(ctx context.Context, c *nodloop.Client) (nodloop.Intervention, error) {
+			return c.ApproveIn(ctx, "lesson", 1, nodloop.Labels{}, "ann")
 		}, want{choice: nodloop.ChoiceScope}},
-		{"retire records a proposal", func(ctx context.Context, c *nodloop.Client, id string) (nodloop.Intervention, error) {
-			return c.Retire(ctx, id, 1, "ann")
+		{"retire records a proposal", func(ctx context.Context, c *nodloop.Client) (nodloop.Intervention, error) {
+			return c.Retire(ctx, "lesson", 1, "ann")
 		}, want{choice: nodloop.ChoiceUndo}},
-		{"the reserved name is refused", func(ctx context.Context, c *nodloop.Client, id string) (nodloop.Intervention, error) {
-			return c.Approve(ctx, id, 1, "nodloop")
+		{"no name is refused", func(ctx context.Context, c *nodloop.Client) (nodloop.Intervention, error) {
+			return c.Approve(ctx, "lesson", 1, "")
+		}, want{err: nodloop.ErrApproverRequired}},
+		{"the reserved name is refused", func(ctx context.Context, c *nodloop.Client) (nodloop.Intervention, error) {
+			return c.Approve(ctx, "lesson", 1, "nodloop")
 		}, want{err: nodloop.ErrApproverReserved}},
-		{"an unknown version is refused", func(ctx context.Context, c *nodloop.Client, id string) (nodloop.Intervention, error) {
-			return c.Retire(ctx, id, 9, "ann")
+		{"an unknown version is refused", func(ctx context.Context, c *nodloop.Client) (nodloop.Intervention, error) {
+			return c.Retire(ctx, "lesson", 9, "ann")
+		}, want{err: nodloop.ErrNotFound}},
+		{"labels of an unknown version are refused", func(ctx context.Context, c *nodloop.Client) (nodloop.Intervention, error) {
+			return c.ApproveIn(ctx, "lesson", 9, nodloop.Labels{}, "ann")
 		}, want{err: nodloop.ErrNotFound}},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			ctx := context.Background()
-			c := open(t)
-			run, err := c.Record(ctx, nodloop.Run{Producer: "support-bot", Labels: nodloop.Labels{"tenant": {"acme"}}, Output: []byte("x")})
-			require.NoError(t, err)
-			require.NoError(t, c.Judge(ctx, nodloop.Judgment{Run: run, Verdict: nodloop.VerdictReject, Reason: "wrong", Reviewer: "ann"}))
-			proposed, err := c.Propose(ctx, nodloop.Proposal{Kind: nodloop.KindJudgment, Content: "x", From: run})
-			require.NoError(t, err)
+			c := corrected(t)
 
-			got, err := tc.args(ctx, c, proposed.ID)
+			got, err := tc.args(ctx, c)
 
 			assert.ErrorIs(t, err, tc.want.err)
 			assert.Equal(t, tc.want.choice, got.Choice)
 			waiting, err := c.Waiting(ctx, "support-bot", nodloop.Labels{"tenant": {"acme"}})
 			require.NoError(t, err)
-			assert.Equal(t, []string{proposed.ID}, ids(waiting), "the candidate still waits")
+			assert.Equal(t, []string{"lesson"}, ids(waiting), "the candidate still waits")
 		})
 	}
 }
 
+// A client whose candidate lesson v1 waits for tenant acme of support-bot
+func corrected(t *testing.T) *nodloop.Client {
+	t.Helper()
+	ctx := context.Background()
+	c := open(t)
+	run, err := c.Record(ctx, nodloop.Run{Producer: "support-bot", Labels: nodloop.Labels{"tenant": {"acme"}}, Output: []byte("x")})
+	require.NoError(t, err)
+	require.NoError(t, c.Judge(ctx, nodloop.Judgment{Run: run, Verdict: nodloop.VerdictReject, Reason: "wrong", Reviewer: "ann"}))
+	_, err = c.Propose(ctx, nodloop.Proposal{Kind: nodloop.KindJudgment, Content: "x", From: run, ID: "lesson"})
+	require.NoError(t, err)
+	return c
+}
+
 // Intervene records every action but a digest as an agent proposal and refuses what the records cannot carry out
 func TestClientIntervene(t *testing.T) {
-	value := func(v float64) *float64 { return &v }
-	type args struct {
-		in func(id string) nodloop.Intervention
-	}
+	value := 0.9
 	type want struct {
 		authority nodloop.Authority
 		err       error
 	}
 	tcs := []struct {
 		name string
-		args args
+		args nodloop.Intervention
 		want want
 	}{
-		{"a judgment is a proposal", args{func(id string) nodloop.Intervention {
-			return nodloop.Intervention{Action: nodloop.InterventionJudge, Target: id + ":1", Choice: nodloop.ChoiceKeep}
-		}}, want{nodloop.AuthorityAgent, nil}},
-		{"a pause is a proposal", args{func(string) nodloop.Intervention {
-			return nodloop.Intervention{Action: nodloop.InterventionPause, Labels: nodloop.Labels{"tenant": {"acme"}}}
-		}}, want{nodloop.AuthorityAgent, nil}},
-		{"a digest needs no proof", args{func(string) nodloop.Intervention {
-			return nodloop.Intervention{Action: nodloop.InterventionDigest}
-		}}, want{nodloop.AuthorityAgent, nil}},
-		{"a knob outside its range is refused", args{func(string) nodloop.Intervention {
-			return nodloop.Intervention{Action: nodloop.InterventionKnob, Target: "item_hold", Value: value(0.9)}
-		}}, want{err: nodloop.ErrInterventionRefused}},
-		{"an unknown version is refused", args{func(id string) nodloop.Intervention {
-			return nodloop.Intervention{Action: nodloop.InterventionJudge, Target: id + ":9", Choice: nodloop.ChoiceKeep}
-		}}, want{err: nodloop.ErrNotFound}},
+		{"a judgment is a proposal", nodloop.Intervention{Action: nodloop.InterventionJudge, Target: "lesson:1", Choice: nodloop.ChoiceKeep},
+			want{nodloop.AuthorityAgent, nil}},
+		{"a pause is a proposal", nodloop.Intervention{Action: nodloop.InterventionPause, Labels: nodloop.Labels{"tenant": {"acme"}}},
+			want{nodloop.AuthorityAgent, nil}},
+		{"a digest needs no proof", nodloop.Intervention{Action: nodloop.InterventionDigest}, want{nodloop.AuthorityAgent, nil}},
+		{"a knob outside its range is refused", nodloop.Intervention{Action: nodloop.InterventionKnob, Target: "item_hold", Value: &value},
+			want{err: nodloop.ErrInterventionRefused}},
+		{"an unknown version is refused", nodloop.Intervention{Action: nodloop.InterventionJudge, Target: "lesson:9", Choice: nodloop.ChoiceKeep},
+			want{err: nodloop.ErrNotFound}},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			ctx := context.Background()
-			c := open(t)
-			run, err := c.Record(ctx, nodloop.Run{Producer: "support-bot", Labels: nodloop.Labels{"tenant": {"acme"}}, Output: []byte("x")})
-			require.NoError(t, err)
-			require.NoError(t, c.Judge(ctx, nodloop.Judgment{Run: run, Verdict: nodloop.VerdictReject, Reason: "wrong", Reviewer: "ann"}))
-			proposed, err := c.Propose(ctx, nodloop.Proposal{Kind: nodloop.KindJudgment, Content: "x", From: run})
-			require.NoError(t, err)
+			c := corrected(t)
 
-			got, err := c.Intervene(ctx, tc.args.in(proposed.ID))
+			got, err := c.Intervene(ctx, tc.args)
 
 			assert.ErrorIs(t, err, tc.want.err)
 			assert.Equal(t, tc.want.authority, got.Authority)
 			assert.Equal(t, tc.want.err == nil, got.ID != "")
 			waiting, err := c.Waiting(ctx, "support-bot", nodloop.Labels{"tenant": {"acme"}})
 			require.NoError(t, err)
-			assert.Equal(t, []string{proposed.ID}, ids(waiting), "the candidate still waits")
+			assert.Equal(t, []string{"lesson"}, ids(waiting), "the candidate still waits")
 		})
 	}
 }

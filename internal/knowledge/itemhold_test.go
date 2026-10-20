@@ -114,7 +114,8 @@ func TestItemHoldCheck(t *testing.T) {
 	}
 }
 
-// Only a version nodloop approved is held, even where the draw of a version a person approved falls below the share
+// Only a version nodloop approved is held
+// A version a person approved is kept even where its draw falls below the share
 func TestItemHoldHeld(t *testing.T) {
 	require.True(t, knowledge.ItemHold(0.1).Holds("session", "s34", personRef), "git-c draws 0.058 in s34")
 	type args struct {

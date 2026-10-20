@@ -822,37 +822,35 @@ func TestServerRunModel(t *testing.T) {
 // The duration a run names lands in its trace and a negative one records nothing
 func TestServerRunDuration(t *testing.T) {
 	type want struct {
-		ms   int64
-		fail bool
+		errText string
+		// The duration of every run the store holds
+		durations []int64
 	}
 	tcs := []struct {
 		name string
 		args int64
 		want want
 	}{
-		{"the duration of the run lands in the trace", 1500, want{1500, false}},
-		{"a run without a duration records none", 0, want{0, false}},
-		{"a negative duration is refused", -1, want{0, true}},
+		{"the duration of the run lands in the trace", 1500, want{"", []int64{1500}}},
+		{"a run without a duration records none", 0, want{"", []int64{0}}},
+		{"a negative duration is refused and records nothing", -1, want{trace.ErrDurationNegative.Error(), nil}},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			st := testkit.Open(t)
 			c := connect(t, st)
-			var run struct {
-				TraceID string `json:"trace_id"`
-			}
 
-			err := c.Call(t, "run", map[string]any{"producer": "bot", "output": "x", "duration_ms": tc.args}, &run)
+			err := c.Run(t, "run", map[string]any{"producer": "bot", "output": "x", "duration_ms": tc.args})
 
-			if tc.want.fail {
-				assert.ErrorContains(t, err, "negative duration")
-				return
+			runs, lerr := st.Traces.List(t.Context(), record.TraceFilter{Name: string(trace.NameRun)})
+			require.NoError(t, lerr)
+			var got []int64
+			for _, r := range runs {
+				got = append(got, r.DurationMS)
 			}
-			require.NoError(t, err)
-			got, err := st.Traces.Get(context.Background(), run.TraceID)
-			require.NoError(t, err)
-			assert.Equal(t, tc.want.ms, got.DurationMS)
+			assert.Contains(t, errText(err), tc.want.errText)
+			assert.Equal(t, tc.want.durations, got)
 		})
 	}
 }

@@ -121,6 +121,28 @@ func TestSetWithout(t *testing.T) {
 	}
 }
 
+// The records an intervention names in set order
+func TestSetWritten(t *testing.T) {
+	tcs := []struct {
+		name string
+		args knowledge.Set
+		want []trace.Written
+	}{
+		{"no records name nothing", knowledge.Set{}, []trace.Written{}},
+		{
+			"each record keeps its id, version and status",
+			knowledge.Set{{ID: "a", Version: 2, Status: knowledge.StatusApproved}, {ID: "a", Version: 1, Status: knowledge.StatusSuperseded}},
+			[]trace.Written{{ID: "a", Version: 2, Status: "approved"}, {ID: "a", Version: 1, Status: "superseded"}},
+		},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.want, tc.args.Written())
+		})
+	}
+}
+
 func TestSetMatching(t *testing.T) {
 	approvedAt := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
 	a := knowledge.Knowledge{

@@ -1,7 +1,9 @@
 package knowledge_test
 
 import (
+	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -35,7 +37,8 @@ func carried(id string, version, base int, status knowledge.Status, approver str
 // The records of the place a person and nodloop approved in with the candidates nodloop may and may not carry out
 // 1. p-person is a person's with a next version built on it and q-legacy a person's with a next version of no base
 // 2. n-nodloop is nodloop's with a next version and r-reaffirmed nodloop's that a person reaffirmed
-// 3. c-add waits in the place, c-acme in a place no person approved and c-veto carries a veto
+// 3. c-add waits in the place and c-acme in a place no person approved
+// 4. c-veto carries a veto
 func carriedSeeds(at time.Time) []knowledge.Knowledge {
 	approved, candidate := knowledge.StatusApproved, knowledge.StatusCandidate
 	acme := carried("c-acme", 1, 0, candidate, "", at)
@@ -216,13 +219,13 @@ func TestLedgerApplyCompaction(t *testing.T) {
 	type args struct {
 		// The approver of a and b
 		approver string
-		// j joins with its veto and the draft that keeps it
-		veto     bool
+		// a for the meaning draft alone and j for both drafts so the judgment draft keeps the veto of j
+		// Only a compaction anchored at j covers it since a veto acts through the guard and joins no folder
+		anchor   string
 		decision string
-		// The coverage names another compaction
-		stale bool
-		// The call names a compaction nobody proposed
-		unknown bool
+		// The compaction the coverage names and the one the call names
+		// Empty names the proposed one
+		covers, id string
 	}
 	type want struct {
 		written []string
@@ -231,44 +234,40 @@ func TestLedgerApplyCompaction(t *testing.T) {
 	merged := []string{
 		"a v1 retired nodloop compaction d4", "b v1 retired nodloop compaction d4", "k-1 v1 approved nodloop  d4",
 	}
+	nodloop := knowledge.ApproverNodloop
+	drafts := map[string]int{"a": 1, "j": 2}
 	tcs := []struct {
 		name string
 		args args
 		want want
 	}{
-		{"a compaction of lessons nodloop approved", args{approver: knowledge.ApproverNodloop, decision: "d4"}, want{merged, nil}},
-		{"a compaction that merges a lesson a person approved", args{approver: "ann", decision: "d4"}, want{[]string{}, knowledge.ErrPersonDecides}},
-		{"a compaction that drafts a veto", args{approver: knowledge.ApproverNodloop, veto: true, decision: "d4"}, want{[]string{}, knowledge.ErrPersonDecides}},
-		{"no decide behind it", args{approver: knowledge.ApproverNodloop}, want{[]string{}, knowledge.ErrDecisionRequired}},
-		{"a coverage of another compaction", args{approver: knowledge.ApproverNodloop, decision: "d4", stale: true}, want{[]string{}, knowledge.ErrCoverageNotPassed}},
-		{"a compaction nobody proposed", args{approver: knowledge.ApproverNodloop, decision: "d4", unknown: true}, want{[]string{}, knowledge.ErrNotFound}},
+		{"a compaction of lessons nodloop approved", args{approver: nodloop, anchor: "a", decision: "d4"}, want{merged, nil}},
+		{"a compaction that merges a lesson a person approved", args{approver: "ann", anchor: "a", decision: "d4"}, want{[]string{}, knowledge.ErrPersonDecides}},
+		{"a compaction that drafts a veto", args{approver: nodloop, anchor: "j", decision: "d4"}, want{[]string{}, knowledge.ErrPersonDecides}},
+		{"no decide behind it", args{approver: nodloop, anchor: "a"}, want{[]string{}, knowledge.ErrDecisionRequired}},
+		{
+			"a coverage of another compaction",
+			args{approver: nodloop, anchor: "a", decision: "d4", covers: "c-other"},
+			want{[]string{}, knowledge.ErrCoverageNotPassed},
+		},
+		{"a compaction nobody proposed", args{approver: nodloop, anchor: "a", decision: "d4", id: "c-unknown"}, want{[]string{}, knowledge.ErrNotFound}},
 	}
 	ctx := context.Background()
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			a, b, j := seeds.a, seeds.b, seeds.j
-			a.Approver, b.Approver, j.Approver = tc.args.approver, tc.args.approver, knowledge.ApproverNodloop
-			// Only a compaction anchored at j covers it since a veto acts through the guard and joins no folder
-			old, drafts, anchor := []knowledge.Knowledge{a, b, seeds.far}, seeds.drafts()[:1], "a"
-			if tc.args.veto {
-				old, drafts, anchor = append(old, j), seeds.drafts(), "j"
-			}
+			a.Approver, b.Approver, j.Approver = tc.args.approver, tc.args.approver, nodloop
 			l, _ := newTestLedger(t, t.TempDir(), seeds.at.Add(time.Hour))
-			require.NoError(t, testkit.Err(l.Import(ctx, old)))
-			proposed, err := l.ProposeCompaction(ctx, anchor, drafts)
+			require.NoError(t, testkit.Err(l.Import(ctx, []knowledge.Knowledge{a, b, j, seeds.far})))
+			proposed, err := l.ProposeCompaction(ctx, tc.args.anchor, seeds.drafts()[:drafts[tc.args.anchor]])
 			require.NoError(t, err)
 			all, err := l.All(ctx)
 			require.NoError(t, err)
-			check, id := coverage(proposed), proposed.ID
-			if tc.args.stale {
-				check.Compaction = "c-other"
-			}
-			if tc.args.unknown {
-				id = "c-unknown"
-			}
+			check := coverage(proposed)
+			check.Compaction = cmp.Or(tc.args.covers, proposed.ID)
 
-			_, err = l.ApplyCompaction(ctx, id, tc.args.decision, check)
+			_, err = l.ApplyCompaction(ctx, cmp.Or(tc.args.id, proposed.ID), tc.args.decision, check)
 
 			assert.ErrorIs(t, err, tc.want.err)
 			assert.Equal(t, tc.want.written, written(t, ctx, l, len(all)))
@@ -306,7 +305,8 @@ func TestLedgerCarriedOutExportFails(t *testing.T) {
 			t.Parallel()
 			dir := t.TempDir()
 			seeder, _ := newTestLedger(t, dir, seeds.at.Add(time.Hour))
-			// The new lesson waits in the repo of far, which a person approved apart from the folder of a and b
+			// The new lesson waits in the repo of far
+			// A person approved far apart from the folder of a and b
 			add := carried("c-add", 1, 0, knowledge.StatusCandidate, "", seeds.at)
 			add.Run = seeds.far.Run
 			require.NoError(t, testkit.Err(seeder.Import(ctx, []knowledge.Knowledge{a, b, seeds.far, add})))
@@ -326,6 +326,83 @@ func TestLedgerCarriedOutExportFails(t *testing.T) {
 
 			assert.ErrorIs(t, err, knowledge.ErrExport)
 			assert.Equal(t, tc.want, written(t, ctx, blocked, len(all)))
+		})
+	}
+}
+
+// A compaction approval that lands answers the compaction read back and says so when that read or the export fails
+func TestLedgerCompactionAfterWrite(t *testing.T) {
+	seeds := newCompactionSeeds()
+	errRead := errors.New("read")
+	open := func(t *testing.T) string { return t.TempDir() }
+	// A file where the veto directory belongs so every export fails
+	blocked := func(t *testing.T) string {
+		home := t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(home, ".claude"), nil, 0o600))
+		return home
+	}
+	approve := func(ctx context.Context, l *knowledge.Ledger, c knowledge.Compaction) error {
+		return testkit.Err(l.ApproveCompaction(ctx, c.ID, "ann", coverage(c)))
+	}
+	apply := func(ctx context.Context, l *knowledge.Ledger, c knowledge.Compaction) error {
+		return testkit.Err(l.ApplyCompaction(ctx, c.ID, "d6", coverage(c)))
+	}
+	type args struct {
+		// The approver of a and b
+		approver string
+		write    func(ctx context.Context, l *knowledge.Ledger, c knowledge.Compaction) error
+		// Reads of the store the ledger may make after the proposal
+		reads int
+		home  func(t *testing.T) string
+	}
+	type want struct {
+		written []string
+		err     error
+	}
+	tcs := []struct {
+		name string
+		args args
+		want want
+	}{
+		{
+			"an approval whose read back fails",
+			args{"ann", approve, 0, open},
+			want{[]string{"a v1 retired ann compaction ", "b v1 retired ann compaction ", "k-1 v1 approved ann  "}, errRead},
+		},
+		{
+			"an approval whose export fails",
+			args{"ann", approve, 9, blocked},
+			want{[]string{"a v1 retired ann compaction ", "b v1 retired ann compaction ", "k-1 v1 approved ann  "}, knowledge.ErrExport},
+		},
+		{
+			"an apply whose read back fails",
+			args{knowledge.ApproverNodloop, apply, 0, open},
+			want{[]string{"a v1 retired nodloop compaction d6", "b v1 retired nodloop compaction d6", "k-1 v1 approved nodloop  d6"}, errRead},
+		},
+	}
+	ctx := context.Background()
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			seeder, _ := newTestLedger(t, dir, seeds.at.Add(time.Hour))
+			a, b := seeds.a, seeds.b
+			a.Approver, b.Approver = tc.args.approver, tc.args.approver
+			require.NoError(t, testkit.Err(seeder.Import(ctx, []knowledge.Knowledge{a, b, seeds.far})))
+			proposed, err := seeder.ProposeCompaction(ctx, "a", seeds.drafts()[:1])
+			require.NoError(t, err)
+			all, err := seeder.All(ctx)
+			require.NoError(t, err)
+			store, err := file.New(dir)
+			require.NoError(t, err)
+			flaky := &testkit.FlakyKnowledge{Store: store, Reads: testkit.Reads{Allowed: tc.args.reads, Err: errRead}}
+			l := knowledge.NewLedger(flaky, vetofile.NewApprovedFile(tc.args.home(t), "records"), func() time.Time { return seeds.at.Add(time.Hour) },
+				func(prefix string) string { return prefix + "new" })
+
+			err = tc.args.write(ctx, l, proposed)
+
+			assert.ErrorIs(t, err, tc.want.err)
+			assert.Equal(t, tc.want.written, written(t, ctx, seeder, len(all)))
 		})
 	}
 }

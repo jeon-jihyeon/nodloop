@@ -3,6 +3,7 @@ package testkit_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -40,6 +41,17 @@ func TestClockNow(t *testing.T) {
 	st := testkit.Open(t)
 	first := st.Clock.Now()
 	assert.Equal(t, first.Add(testkit.ClockStep), st.Clock.Now())
+}
+
+// An advance moves the next read on by its duration and reads nothing itself
+func TestClockAdvance(t *testing.T) {
+	t.Parallel()
+	st := testkit.Open(t)
+	first := st.Clock.Now()
+
+	st.Clock.Advance(time.Hour)
+
+	assert.Equal(t, first.Add(testkit.ClockStep+time.Hour), st.Clock.Now())
 }
 
 // Two reads show which of them the allowed count lets through
@@ -202,6 +214,40 @@ func TestFlakyTracesList(t *testing.T) {
 			second, secondErr := flaky.List(ctx, record.TraceFilter{})
 
 			assert.Equal(t, tc.want, want{[]error{firstErr, secondErr}, []int{len(first), len(second)}})
+		})
+	}
+}
+
+// Two gets show which of them the allowed count lets through and no error set fails none
+func TestFlakyTracesGet(t *testing.T) {
+	type args struct {
+		allowed int
+		err     error
+	}
+	type want struct {
+		errs  []error
+		found []string
+	}
+	tcs := []struct {
+		name string
+		args args
+		want want
+	}{
+		{"one allowed get reads the first and fails the second", args{1, assert.AnError}, want{[]error{nil, assert.AnError}, []string{"t-1", ""}}},
+		{"no error set fails no get", args{0, nil}, want{[]error{nil, nil}, []string{"t-1", "t-1"}}},
+	}
+	ctx := context.Background()
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			st := testkit.Open(t)
+			require.NoError(t, st.Traces.Append(ctx, trace.Trace{ID: "t-1", Name: trace.NameRun, Time: st.Clock.Now()}.Record()))
+			flaky := &testkit.FlakyTraces{Store: st.Traces, Gets: testkit.Reads{Allowed: tc.args.allowed, Err: tc.args.err}}
+
+			first, firstErr := flaky.Get(ctx, "t-1")
+			second, secondErr := flaky.Get(ctx, "t-1")
+
+			assert.Equal(t, tc.want, want{[]error{firstErr, secondErr}, []string{first.ID, second.ID}})
 		})
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -14,13 +15,16 @@ import (
 
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge/file"
+	"github.com/jeon-jihyeon/nodloop/internal/record"
 	"github.com/jeon-jihyeon/nodloop/internal/testkit"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
 	vetofile "github.com/jeon-jihyeon/nodloop/internal/veto/file"
 )
 
 // The ledger of a person's write fixture
-// a v1 approved by ann with the update a v2 waiting, the candidate k1 v1, and c v1 approved by ann and later retired
+// 1. a v1 approved by ann with the update a v2 waiting
+// 2. the candidate k1 v1
+// 3. c v1 approved by ann and later retired
 type restoreFixture struct {
 	at                 time.Time
 	approved, update   knowledge.Knowledge
@@ -44,11 +48,33 @@ func newRestoreFixture() restoreFixture {
 	return restoreFixture{at: at, approved: approved, update: update, candidate: candidate, retired: retired}
 }
 
-func (f restoreFixture) ledger(t *testing.T) *knowledge.Ledger {
+// The ledger of the fixture with the raw records appended after it as a store holds them
+// So a record of an earlier release that Import refuses can be seeded
+func (f restoreFixture) ledger(t *testing.T, raw ...knowledge.Knowledge) *knowledge.Ledger {
 	t.Helper()
-	l, _ := newTestLedger(t, t.TempDir(), f.at.Add(time.Hour))
-	require.NoError(t, testkit.Err(l.Import(context.Background(), []knowledge.Knowledge{f.approved, f.update, f.candidate, f.retired})))
+	ctx := context.Background()
+	dir := t.TempDir()
+	l, _ := newTestLedger(t, dir, f.at.Add(time.Hour))
+	require.NoError(t, testkit.Err(l.Import(ctx, []knowledge.Knowledge{f.approved, f.update, f.candidate, f.retired})))
+	store, err := file.New(dir)
+	require.NoError(t, err)
+	require.NoError(t, store.AppendDecided(ctx, func([]record.Knowledge) ([]record.Knowledge, error) { return knowledge.Set(raw).Records(), nil }))
 	return l
+}
+
+// Versions the fixture seeds raw beside its own records
+// 1. long is a retired version whose text fills RunChars on its own and big an approved one of the same size
+// 2. legacy is a retired version and old a candidate of an earlier release without a run scope
+func (f restoreFixture) extras() (long, big, legacy, old knowledge.Knowledge) {
+	long = f.retired
+	long.ID, long.Content = "long", strings.Repeat("a", knowledge.RunChars)
+	big = f.approved
+	big.ID, big.Content = "big", strings.Repeat("b", knowledge.RunChars)
+	legacy = f.retired
+	legacy.ID, legacy.Run = "legacy", nil
+	old = f.candidate
+	old.ID, old.Run = "old", nil
+	return long, big, legacy, old
 }
 
 // What runs receive and what waits by id, content and scope with every version number left out
@@ -67,7 +93,8 @@ func ledgerView(t *testing.T, l *knowledge.Ledger) []string {
 	return out
 }
 
-// Every write of a person and its reverse return what runs receive and what waits to where it was, with both writes in the records
+// Every write of a person and its reverse return what runs receive and what waits to where it was
+// Both writes stay in the records
 func TestLedgerReverse(t *testing.T) {
 	f := newRestoreFixture()
 	type args struct {
@@ -180,37 +207,58 @@ func TestLedgerReverseCompaction(t *testing.T) {
 
 func TestLedgerReverseRefused(t *testing.T) {
 	f := newRestoreFixture()
+	_, big, _, old := f.extras()
 	type args struct {
 		decision, approver string
+		// The write of the person under the decision x1
+		write func(ctx context.Context, l *knowledge.Ledger) error
 		// A write after the one the reverse names
 		since func(ctx context.Context, l *knowledge.Ledger) error
 	}
+	approve := func(ctx context.Context, l *knowledge.Ledger) error {
+		return testkit.Err(l.Approve(ctx, "k1", 1, "ann"))
+	}
+	nothing := func(context.Context, *knowledge.Ledger) error { return nil }
 	tcs := []struct {
 		name string
 		args args
 		want error
 	}{
-		{"a decision no record names", args{decision: "x9", approver: "ann"}, knowledge.ErrNotFound},
-		{"an empty decision", args{decision: "", approver: "ann"}, knowledge.ErrNotFound},
+		{"a decision no record names", args{"x9", "ann", approve, nothing}, knowledge.ErrNotFound},
+		{"an empty decision", args{"", "ann", approve, nothing}, knowledge.ErrNotFound},
 		{
 			"an id another write changed since",
-			args{decision: "x1", approver: "ann", since: func(ctx context.Context, l *knowledge.Ledger) error {
+			args{"x1", "ann", approve, func(ctx context.Context, l *knowledge.Ledger) error {
 				return testkit.Err(l.Retire(ctx, "k1", 1, "ann"))
 			}},
 			knowledge.ErrReverseStale,
 		},
-		{"an empty name", args{decision: "x1", approver: ""}, knowledge.ErrApproverRequired},
-		{"the reserved name", args{decision: "x1", approver: knowledge.ApproverNodloop}, knowledge.ErrApproverReserved},
+		{"an empty name", args{"x1", "", approve, nothing}, knowledge.ErrApproverRequired},
+		{"the reserved name", args{"x1", knowledge.ApproverNodloop, approve, nothing}, knowledge.ErrApproverReserved},
+		{
+			"an approved version a run has no room for since",
+			args{"x1", "ann", func(ctx context.Context, l *knowledge.Ledger) error {
+				return testkit.Err(l.Retire(ctx, "a", 1, "ann"))
+			}, func(ctx context.Context, l *knowledge.Ledger) error {
+				return testkit.Err(l.Import(ctx, []knowledge.Knowledge{big}))
+			}},
+			knowledge.ErrFolderFull,
+		},
+		{
+			"a candidate of an earlier release without a run scope",
+			args{"x1", "ann", func(ctx context.Context, l *knowledge.Ledger) error {
+				return testkit.Err(l.Retire(ctx, "old", 1, "ann"))
+			}, nothing},
+			knowledge.ErrScopeRequired,
+		},
 	}
 	ctx := context.Background()
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			l := f.ledger(t)
-			require.NoError(t, testkit.Err(l.Under("x1").Approve(ctx, "k1", 1, "ann")))
-			if tc.args.since != nil {
-				require.NoError(t, tc.args.since(ctx, l))
-			}
+			l := f.ledger(t, old)
+			require.NoError(t, tc.args.write(ctx, l.Under("x1")))
+			require.NoError(t, tc.args.since(ctx, l))
 			before, err := l.All(ctx)
 			require.NoError(t, err)
 
@@ -226,6 +274,7 @@ func TestLedgerReverseRefused(t *testing.T) {
 
 func TestLedgerRestore(t *testing.T) {
 	f := newRestoreFixture()
+	long, _, legacy, _ := f.extras()
 	type args struct {
 		id       string
 		version  int
@@ -233,8 +282,8 @@ func TestLedgerRestore(t *testing.T) {
 	}
 	type want struct {
 		// The newest record of the id after the call as version, status and approver
-		got string
-		err error
+		newest string
+		err    error
 	}
 	tcs := []struct {
 		name string
@@ -242,24 +291,29 @@ func TestLedgerRestore(t *testing.T) {
 		want want
 	}{
 		{"a retired version comes back approved as its next version", args{"c", 1, "ann"}, want{"c v2 approved ann", nil}},
-		{"an approved version is refused", args{"a", 1, "ann"}, want{"", knowledge.ErrTransitionInvalid}},
-		{"an unknown version is refused", args{"c", 9, "ann"}, want{"", knowledge.ErrNotFound}},
-		{"the reserved name is refused", args{"c", 1, knowledge.ApproverNodloop}, want{"", knowledge.ErrApproverReserved}},
+		{"an approved version is refused", args{"a", 1, "ann"}, want{"a v2 candidate ", knowledge.ErrTransitionInvalid}},
+		{"an unknown version is refused", args{"c", 9, "ann"}, want{"c v1 retired ann", knowledge.ErrNotFound}},
+		{"an empty name is refused", args{"c", 1, ""}, want{"c v1 retired ann", knowledge.ErrApproverRequired}},
+		{"the reserved name is refused", args{"c", 1, knowledge.ApproverNodloop}, want{"c v1 retired ann", knowledge.ErrApproverReserved}},
+		{"a version a run has no room for is refused", args{"long", 1, "ann"}, want{"long v1 retired ann", knowledge.ErrFolderFull}},
+		{
+			"a version of an earlier release without a run scope is refused",
+			args{"legacy", 1, "ann"},
+			want{"legacy v1 retired ann", knowledge.ErrScopeRequired},
+		},
 	}
 	ctx := context.Background()
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			l := f.ledger(t)
+			l := f.ledger(t, long, legacy)
 
-			k, err := l.Under("x1").Restore(ctx, tc.args.id, tc.args.version, tc.args.approver)
+			_, err := l.Under("x1").Restore(ctx, tc.args.id, tc.args.version, tc.args.approver)
 
 			assert.ErrorIs(t, err, tc.want.err)
-			got := ""
-			if err == nil {
-				got = fmt.Sprintf("%s v%d %s %s", k.ID, k.Version, k.Status, k.Approver)
-			}
-			assert.Equal(t, tc.want.got, got)
+			history, herr := l.History(ctx, tc.args.id)
+			require.NoError(t, herr)
+			assert.Equal(t, tc.want.newest, fmt.Sprintf("%s v%d %s %s", history[0].ID, history[0].Version, history[0].Status, history[0].Approver))
 		})
 	}
 }
