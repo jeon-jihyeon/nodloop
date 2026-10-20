@@ -141,3 +141,33 @@ func TestFlakyFeedbackList(t *testing.T) {
 		})
 	}
 }
+
+// Two appends show which of them the allowed count lets through
+func TestFlakyTracesAppend(t *testing.T) {
+	type want struct {
+		errs   []error
+		stored int
+	}
+	tcs := []struct {
+		name string
+		args int
+		want want
+	}{
+		{"no allowed append fails both", 0, want{[]error{assert.AnError, assert.AnError}, 0}},
+		{"one allowed append stores the first and fails the second", 1, want{[]error{nil, assert.AnError}, 1}},
+	}
+	ctx := context.Background()
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			st := testkit.Open(t)
+			flaky := &testkit.FlakyTraces{Store: st.Traces, Appends: testkit.Reads{Allowed: tc.args, Err: assert.AnError}}
+			first := flaky.Append(ctx, trace.Trace{ID: "t-1", Name: trace.NameRun, Time: st.Clock.Now()}.Record())
+			second := flaky.Append(ctx, trace.Trace{ID: "t-2", Name: trace.NameRun, Time: st.Clock.Now()}.Record())
+			stored, err := st.Traces.List(ctx, record.TraceFilter{})
+			require.NoError(t, err)
+
+			assert.Equal(t, tc.want, want{[]error{first, second}, len(stored)})
+		})
+	}
+}

@@ -59,9 +59,19 @@ func (f *FlakyFeedback) List(ctx context.Context, filter record.FeedbackFilter) 
 }
 
 // Fails Heads and Prune after the allowed calls so a test sees a prune fail at its read or at its removal
+// Append fails after the allowed appends so a test sees a trace that is never recorded
 type FlakyTraces struct {
 	*tracefile.Store
 	Reads
+	// Counted apart from the reads
+	Appends Reads
+}
+
+func (f *FlakyTraces) Append(ctx context.Context, tr record.Trace) error {
+	if err := f.Appends.next(); err != nil {
+		return err
+	}
+	return f.Store.Append(ctx, tr)
 }
 
 func (f *FlakyTraces) Heads(ctx context.Context, names ...string) ([]record.Trace, error) {

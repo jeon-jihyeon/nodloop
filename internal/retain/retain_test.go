@@ -74,6 +74,8 @@ func fixture(t *testing.T) (testkit.Stores, map[string]string) {
 		"young":         add(t, st, trace.NameRun, 3, "", none),
 		"check":         add(t, st, trace.NameCheck, 40, "", none),
 		"replay":        add(t, st, trace.NameReplay, 40, "", none),
+		"consolidate":   add(t, st, trace.NameConsolidate, 40, "", none),
+		"compact":       add(t, st, trace.NameCompact, 40, "", none),
 	}
 	failed := trace.Trace{
 		ID: trace.NewID(now.Add(-35 * 24 * time.Hour)), Name: trace.NameRun, Producer: "bot", Time: now.Add(-35 * 24 * time.Hour),
@@ -136,6 +138,8 @@ func TestRetainerPrune(t *testing.T) {
 		{"an extract trace stays", "extract", true},
 		{"a check trace stays", "check", true},
 		{"a replay trace stays", "replay", true},
+		{"a consolidate trace stays", "consolidate", true},
+		{"a compact trace stays", "compact", true},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {

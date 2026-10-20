@@ -185,15 +185,6 @@ func TestReplayerReplayCapsApprovedRuns(t *testing.T) {
 	assert.Equal(t, append([]string{corrected}, approved[2:]...), runs, "the two oldest approved runs are left out")
 }
 
-// Fails every append so a test sees the error of recording the judgment
-type unrecorded struct {
-	replay.TraceStore
-}
-
-func (unrecorded) Append(context.Context, record.Trace) error {
-	return assert.AnError
-}
-
 // Adds the record loose without a run scope as a ledger written before 0.6.0 may hold
 type withLoose struct {
 	replay.KnowledgeStore
@@ -213,11 +204,18 @@ func TestReplayerReplayFails(t *testing.T) {
 		// The stores the replayer reads and records through
 		stores func(testkit.Stores) (replay.KnowledgeStore, replay.TraceStore)
 	}
-	type want struct {
-		err error
-		// Replay traces recorded with the failure
-		failed int
+	// A replay trace recorded with the failure
+	type failed struct {
+		// The trace names why the judgment failed
+		named bool
+		// The cost of the model call stays in the records
+		cost float64
 	}
+	type want struct {
+		err      error
+		recorded []failed
+	}
+	charged := []failed{{named: true, cost: 0.01}}
 	omit := func(context.Context, llm.Request) (llm.Response, error) {
 		return llm.Response{CostUSD: 0.01, Output: json.RawMessage(`{"cases":[]}`)}, nil
 	}
@@ -229,7 +227,7 @@ func TestReplayerReplayFails(t *testing.T) {
 	}
 	same := func(st testkit.Stores) (replay.KnowledgeStore, replay.TraceStore) { return st.Ledger, st.Traces }
 	broken := func(st testkit.Stores) (replay.KnowledgeStore, replay.TraceStore) {
-		return st.Ledger, unrecorded{st.Traces}
+		return st.Ledger, &testkit.FlakyTraces{Store: st.Traces, Appends: testkit.Reads{Err: assert.AnError}}
 	}
 	loose := func(st testkit.Stores) (replay.KnowledgeStore, replay.TraceStore) {
 		return withLoose{st.Ledger}, st.Traces
@@ -239,15 +237,15 @@ func TestReplayerReplayFails(t *testing.T) {
 		args args
 		want want
 	}{
-		{"an unknown id has no current version", args{"nope", 0, answerAll, same}, want{replay.ErrNoCurrent, 0}},
-		{"an unknown version is not found", args{"idv", 2, answerAll, same}, want{knowledge.ErrNotFound, 0}},
-		{"an item without a run scope reaches no output", args{"loose", 0, answerAll, loose}, want{replay.ErrNoScope, 0}},
-		{"a veto acts through the guard", args{"guard", 0, answerAll, same}, want{replay.ErrNoScope, 0}},
-		{"a failed model call answers its error", args{"idv", 0, refused, same}, want{assert.AnError, 0}},
-		{"an answer left out refuses the judgment", args{"idv", 0, omit, same}, want{replay.ErrJudgment, 1}},
-		{"an answer that does not decode refuses the judgment", args{"idv", 0, undecodable, same}, want{replay.ErrJudgment, 1}},
-		{"a judgment that is not recorded fails", args{"idv", 0, answerAll, broken}, want{assert.AnError, 0}},
-		{"a refused judgment that is not recorded fails with both errors", args{"idv", 0, undecodable, broken}, want{replay.ErrJudgment, 0}},
+		{"an unknown id has no current version", args{"nope", 0, answerAll, same}, want{replay.ErrNoCurrent, []failed{}}},
+		{"an unknown version is not found", args{"idv", 2, answerAll, same}, want{knowledge.ErrNotFound, []failed{}}},
+		{"an item without a run scope reaches no output", args{"loose", 0, answerAll, loose}, want{replay.ErrNoScope, []failed{}}},
+		{"a veto acts through the guard", args{"guard", 0, answerAll, same}, want{replay.ErrNoScope, []failed{}}},
+		{"a failed model call answers its error", args{"idv", 0, refused, same}, want{assert.AnError, []failed{}}},
+		{"an answer left out refuses the judgment", args{"idv", 0, omit, same}, want{replay.ErrJudgment, charged}},
+		{"an answer that does not decode refuses the judgment", args{"idv", 0, undecodable, same}, want{replay.ErrJudgment, charged}},
+		{"a judgment that is not recorded fails", args{"idv", 0, answerAll, broken}, want{assert.AnError, []failed{}}},
+		{"a refused judgment that is not recorded fails with both errors", args{"idv", 0, undecodable, broken}, want{replay.ErrJudgment, []failed{}}},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
@@ -260,15 +258,16 @@ func TestReplayerReplayFails(t *testing.T) {
 
 			got, err := r.Replay(context.Background(), tc.args.id, tc.args.version)
 
+			recorded, listErr := s.st.Traces.List(context.Background(), record.TraceFilter{Name: string(trace.NameReplay)})
+			require.NoError(t, listErr)
+			traced := make([]failed, 0, len(recorded))
+			for _, tr := range recorded {
+				traced = append(traced, failed{named: tr.Error != "", cost: tr.Usage.CostUSD})
+			}
+
 			assert.ErrorIs(t, err, tc.want.err)
 			assert.Equal(t, replay.Result{}, got)
-			recorded, err := s.st.Traces.List(context.Background(), record.TraceFilter{Name: string(trace.NameReplay)})
-			require.NoError(t, err)
-			require.Len(t, recorded, tc.want.failed)
-			for _, tr := range recorded {
-				assert.NotEmpty(t, tr.Error, "the trace names why the judgment failed")
-				assert.InDelta(t, 0.01, tr.Usage.CostUSD, 1e-9, "the cost of the model call stays in the records")
-			}
+			assert.Equal(t, tc.want.recorded, traced)
 		})
 	}
 }
