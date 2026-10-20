@@ -2,6 +2,7 @@ package classify
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -42,23 +43,36 @@ type wireRequest struct {
 }
 
 type wireResponse struct {
+	// The model that answered when the endpoint names one
+	Model   string `json:"model"`
 	Answers map[string]struct {
 		Noul *float64 `json:"noul"`
 	} `json:"answers"`
 }
 
 func (h *HTTP) Classify(ctx context.Context, req Request) (Answers, error) {
+	reply, err := h.Reply(ctx, req)
+	return reply.Answers, err
+}
+
+// The answers with the model the endpoint answered with and else the model it was sent
+func (h *HTTP) Reply(ctx context.Context, req Request) (Reply, error) {
+	answers, model, err := h.answers(ctx, req)
+	return Reply{Answers: answers, Model: cmp.Or(model, h.endpoint.Model)}, err
+}
+
+func (h *HTTP) answers(ctx context.Context, req Request) (Answers, string, error) {
 	questions := make(map[string]wireQuestion, len(req.Questions))
 	for name, instructions := range req.Questions {
 		questions[name] = wireQuestion{Type: "noul", Instructions: instructions}
 	}
 	body, err := json.Marshal(wireRequest{Model: h.endpoint.Model, State: req.State, Questions: questions})
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, h.endpoint.URL, bytes.NewReader(body))
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	if h.key != "" {
@@ -66,20 +80,20 @@ func (h *HTTP) Classify(ctx context.Context, req Request) (Answers, error) {
 	}
 	res, err := h.client.Do(httpReq)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	// A body fully read leaves nothing for Close to report
 	defer func() { _ = res.Body.Close() }()
 	b, err := io.ReadAll(io.LimitReader(res.Body, bodyLimit))
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	if res.StatusCode < 200 || res.StatusCode > 299 {
-		return nil, fmt.Errorf("%w: %d %s", ErrStatus, res.StatusCode, b[:min(len(b), bodyQuote)])
+		return nil, "", fmt.Errorf("%w: %d %s", ErrStatus, res.StatusCode, b[:min(len(b), bodyQuote)])
 	}
 	var wire wireResponse
 	if err := json.Unmarshal(b, &wire); err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrResponseInvalid, err)
+		return nil, "", fmt.Errorf("%w: %w", ErrResponseInvalid, err)
 	}
 	answers := Answers{}
 	for name, a := range wire.Answers {
@@ -88,7 +102,7 @@ func (h *HTTP) Classify(ctx context.Context, req Request) (Answers, error) {
 		}
 	}
 	if err := answers.check(req.Questions); err != nil {
-		return nil, err
+		return nil, "", err
 	}
-	return answers, nil
+	return answers, wire.Model, nil
 }

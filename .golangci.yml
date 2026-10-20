@@ -107,6 +107,7 @@ linters:
             - "**/internal/replay/**"
             - "**/internal/retain/**"
             - "**/internal/consolidate/**"
+            - "**/internal/curate/**"
             - "!**/internal/knowledge/file/**"
             - "!$test"
           deny:

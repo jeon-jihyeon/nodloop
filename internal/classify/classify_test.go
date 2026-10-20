@@ -31,6 +31,8 @@ type endpoint struct {
 	status int
 	// Bytes of blank before the answer so the body passes the read limit
 	pad int
+	// The model the answer names
+	model string
 }
 
 // Serves the Jev wire format and keeps the last request body and authorization header
@@ -50,7 +52,7 @@ func (e endpoint) serve(t *testing.T) (*httptest.Server, *[]byte, *string) {
 		for name, yes := range e.yes {
 			answers[name] = map[string]any{"type": "noul", "noul": yes, "confidence": yes, "action": map[string]any{"act_probability": 1.0}}
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"model": "laya", "answers": answers})
+		_ = json.NewEncoder(w).Encode(map[string]any{"model": e.model, "answers": answers})
 	}))
 	t.Cleanup(srv.Close)
 	return srv, &body, &auth
