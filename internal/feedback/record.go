@@ -1,6 +1,10 @@
 package feedback
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"strconv"
+
 	"github.com/jeon-jihyeon/nodloop/internal/record"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
 )
@@ -37,6 +41,14 @@ func (f Feedback) Record() record.Feedback {
 		TraceID: f.TraceID, Time: f.Time, Verdict: string(f.Verdict), ReasonCode: string(f.ReasonCode), Reason: f.Reason,
 		Edited: f.Edited, Reviewer: f.Reviewer, Proof: string(f.Proof), Audit: f.Audit, SchemaVersion: VerdictVersion,
 	}
+}
+
+// The record_id the published schemas give the verdict
+// The hex of the first 16 bytes of SHA-256 of nodloop:verdict: with the run and the time in nanoseconds
+// So a record that cites the verdict joins it as every transport and its OTLP evaluation name it
+func (f Feedback) RecordID() string {
+	sum := sha256.Sum256([]byte("nodloop:verdict:" + f.TraceID + ":" + strconv.FormatInt(f.Time.UnixNano(), 10)))
+	return hex.EncodeToString(sum[:16])
 }
 
 // The outcome a store line holds as it was recorded

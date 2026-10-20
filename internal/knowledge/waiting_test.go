@@ -103,6 +103,71 @@ func TestSetWaiting(t *testing.T) {
 	}
 }
 
+// The retired versions a run reaches of the ids it reaches no current version of
+func TestSetRetired(t *testing.T) {
+	at := time.Date(2026, 10, 9, 0, 0, 0, 0, time.UTC)
+	repo := &knowledge.RunScope{Producer: "session", Labels: trace.Labels{"repo": {"nodloop"}}}
+	other := &knowledge.RunScope{Producer: "session", Labels: trace.Labels{"repo": {"other"}}}
+	// A record of the id and version at the minute
+	record := func(id string, version int, status knowledge.Status, run *knowledge.RunScope, minute int) knowledge.Knowledge {
+		k := runItem(id, run)
+		k.Version, k.Status, k.Time = version, status, at.Add(time.Duration(minute)*time.Minute)
+		if status != knowledge.StatusCandidate {
+			k.Approver = "ann"
+		}
+		return k
+	}
+	compacted := record("merged", 1, knowledge.StatusRetired, repo, 3)
+	compacted.Compaction, compacted.Reason = "c1", knowledge.ReasonCompaction
+	tcs := []struct {
+		name string
+		// Newest first as the store lists them
+		args knowledge.Set
+		want []string
+	}{
+		{
+			"a dropped candidate and a withdrawn item are listed newest retire first",
+			knowledge.Set{
+				record("dropped", 1, knowledge.StatusRetired, repo, 4), record("withdrawn", 1, knowledge.StatusRetired, repo, 3),
+				record("dropped", 1, knowledge.StatusCandidate, repo, 2), record("withdrawn", 1, knowledge.StatusApproved, repo, 1),
+			},
+			[]string{"dropped v1", "withdrawn v1"},
+		},
+		{
+			"an id with a waiting candidate or an approved version lists none of its retired versions",
+			knowledge.Set{
+				record("next", 2, knowledge.StatusCandidate, repo, 3), record("next", 1, knowledge.StatusRetired, repo, 2),
+				record("kept", 2, knowledge.StatusApproved, repo, 2), record("kept", 1, knowledge.StatusRetired, repo, 1),
+			},
+			nil,
+		},
+		{
+			"the highest retired version stands for its id",
+			knowledge.Set{record("old", 1, knowledge.StatusRetired, repo, 3), record("old", 2, knowledge.StatusRetired, repo, 2)},
+			[]string{"old v2"},
+		},
+		{
+			"a superseded version, a version of another place, a compaction and a record without a run are left out",
+			knowledge.Set{
+				record("moved", 2, knowledge.StatusRetired, other, 5), record("moved", 1, knowledge.StatusSuperseded, repo, 4), compacted,
+				record("legacy", 1, knowledge.StatusRetired, nil, 1),
+			},
+			nil,
+		},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var got []string
+			for _, k := range tc.args.Retired("session", trace.Labels{"repo": {"nodloop"}}) {
+				got = append(got, fmt.Sprintf("%s v%d", k.ID, k.Version))
+			}
+
+			assert.Equal(t, tc.want, got)
+		})
+	}
+}
+
 // A deferral record of an earlier release reads as the candidate it copied and no write carries its session again
 func TestLedgerLegacyDeferral(t *testing.T) {
 	at := time.Date(2026, 10, 9, 0, 0, 0, 0, time.UTC)

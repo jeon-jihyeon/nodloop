@@ -69,11 +69,24 @@ type TraceOutput struct {
 	Answers Answers `json:"answers,omitempty"`
 }
 
+// The answers that stand with the classify trace that records them
+type Ruling struct {
+	// Empty when the trace failed to append
+	TraceID string
+	Answers Answers
+}
+
 // Answers the request and records every member asked in one classify trace
+func (p *Plan) Classify(ctx context.Context, req Request) (Answers, error) {
+	r, err := p.Rule(ctx, req)
+	return r.Answers, err
+}
+
+// The answers of the request with the classify trace that records every member asked
 // 1. the endpoint answers alone when every answer reaches the threshold
 // 2. the built in member answers when the endpoint fails or is unsure
-// 3. a failure of both members returns both errors
-func (p *Plan) Classify(ctx context.Context, req Request) (Answers, error) {
+// 3. a failure of both members returns both errors and the trace still names them
+func (p *Plan) Rule(ctx context.Context, req Request) (Ruling, error) {
 	start := p.now()
 	reply, first, err := p.endpoint.ask(ctx, req, p.now)
 	all := []Asked{first}
@@ -89,7 +102,10 @@ func (p *Plan) Classify(ctx context.Context, req Request) (Answers, error) {
 	}
 	tr := p.point.trace(req, p.seal, TraceOutput{Members: all, Answers: reply.Answers}, start, p.now())
 	tr.Model = model
-	return reply.Answers, errors.Join(err, p.record(ctx, tr, err))
+	if failed := p.record(ctx, tr, err); failed != nil {
+		return Ruling{Answers: reply.Answers}, errors.Join(err, failed)
+	}
+	return Ruling{TraceID: tr.ID, Answers: reply.Answers}, err
 }
 
 // The reply of the member with its answers checked against the questions and the record of what it answered

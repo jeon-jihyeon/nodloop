@@ -45,6 +45,34 @@ func TestFeedbackRecord(t *testing.T) {
 	}
 }
 
+// The record_id of a verdict is the one every transport sends it under
+func TestFeedbackRecordID(t *testing.T) {
+	at := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
+	ix, err := schema.Published.Index()
+	require.NoError(t, err)
+	kind, err := ix.Kind("verdict")
+	require.NoError(t, err)
+	tcs := []struct {
+		name string
+		args feedback.Feedback
+	}{
+		{"a verdict of a person", feedback.Feedback{TraceID: "t1", Time: at, Verdict: feedback.VerdictReject, Reviewer: "ann"}},
+		{"a verdict a nanosecond later", feedback.Feedback{TraceID: "t1", Time: at.Add(time.Nanosecond), Verdict: feedback.VerdictReject, Reviewer: "ann"}},
+		{"an inferred verdict on another run", feedback.Feedback{TraceID: "t2", Time: at, Verdict: feedback.VerdictEdit, Reviewer: "session"}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			want, err := kind.Record(tc.args.Record())
+			require.NoError(t, err)
+
+			got := tc.args.RecordID()
+
+			assert.Equal(t, want.ID, got)
+		})
+	}
+}
+
 func TestOutcomeRecord(t *testing.T) {
 	at := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
 	tcs := []struct {

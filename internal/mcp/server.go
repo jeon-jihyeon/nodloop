@@ -260,11 +260,13 @@ var tools = []tool{
 		"or from set to a run the user corrected so code fills them. Every label must be one a recorded run carries. "+
 		"Answers the candidate, the items it overlaps and the folder it joins", (*Server).propose),
 	newTool("extraction", "Read what a lesson is drafted from after the user corrected a run with edit or reject: the output, the verdict, "+
-		"the edit, the approved items and the waiting candidates the run reaches, the rules, the schema and the critic questions. "+
+		"the edit, the approved items, the waiting candidates and the retired versions the run reaches, the rules, the schema and the critic questions. "+
 		"Draft by the rules, answer the critic questions as a second reader, then call propose_extraction", (*Server).extraction),
-	newTool("propose_extraction", "Propose the lesson of a correction with its relation to the items and candidates the run reaches: add a new item, "+
-		"update one, or name a duplicate or a conflict. A duplicate of a waiting candidate adds the run to its evidence and the others propose nothing. "+
-		"Code refuses a draft that is not one sentence, copies the output, names an item or candidate the run never reached or fails a critic question",
+	newTool("propose_extraction", "Propose the lesson of a correction with its relation to the items, candidates and retired versions the run reaches: "+
+		"add a new item, update one, or name a duplicate or a conflict. A duplicate of a waiting candidate adds the run to its evidence, "+
+		"a duplicate of a retired version proposes it again, a conflict proposes the next version of what it contradicts "+
+		"and a duplicate of an approved item proposes nothing. "+
+		"Code refuses a draft that is not one sentence, copies the output, names a version the run never reached or fails a critic question",
 		(*Server).proposeExtraction),
 	newTool("approve", "Approve a knowledge candidate when the call proves a person under a server key of a person. "+
 		"Any other call records an agent proposal the person is asked about, answers proposal and changes nothing. "+

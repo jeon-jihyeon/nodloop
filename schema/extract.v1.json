@@ -46,6 +46,9 @@
         },
         "reviewer": {
           "type": "string"
+        },
+        "verdict_id": {
+          "type": "string"
         }
       },
       "required": [
@@ -72,7 +75,7 @@
                   },
                   "relates_to": {
                     "type": "string",
-                    "description": "the id of the approved item or waiting candidate an update or a duplicate or a conflict names. Empty for add"
+                    "description": "the id of the approved item or waiting candidate an update or a conflict names or of the item, candidate or retired version a duplicate names. Empty for add"
                   },
                   "kind": {
                     "type": "string",
@@ -115,7 +118,7 @@
                   },
                   "fits": {
                     "type": "boolean",
-                    "description": "the relation is right against the items and candidates shown"
+                    "description": "the relation is right against the items, candidates and retired versions shown"
                   },
                   "why": {
                     "type": "string",
@@ -128,6 +131,9 @@
                   "fits",
                   "why"
                 ]
+              },
+              "classify": {
+                "type": "string"
               },
               "refusal": {
                 "type": "string"

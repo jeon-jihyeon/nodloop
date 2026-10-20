@@ -502,6 +502,63 @@ func TestServerProposeExtraction(t *testing.T) {
 	}
 }
 
+// A lesson a person retired comes back through extraction: the read lists it with who retired it and why
+// A duplicate of it proposes it again and an update of it is refused since only a duplicate names a retired version
+func TestServerProposeExtractionRetired(t *testing.T) {
+	type retired struct {
+		ID       string           `json:"id"`
+		Approver string           `json:"approver"`
+		Reason   knowledge.Reason `json:"reason"`
+	}
+	type want struct {
+		err     error
+		errText string
+		// The version of the candidate the answer names and zero without one
+		version int
+		next    string
+	}
+	tcs := []struct {
+		name string
+		args extract.Relation
+		want want
+	}{
+		{"a duplicate proposes the retired version again", extract.RelationDuplicate, want{version: 2, next: "retired earlier and is proposed again"}},
+		{"an update of it is refused", extract.RelationUpdate, want{err: testkit.ErrTool, errText: "only a duplicate names a retired version"}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			st := testkit.Open(t)
+			c := connect(t, st)
+			runs := editedRuns(t, c)
+			id := extractedAdd(t, c, runs)
+			require.NoError(t, testkit.Err(st.Ledger.Retire(context.Background(), id, 1, "ann")))
+			var read struct {
+				Candidates []idOnly  `json:"candidates"`
+				Retired    []retired `json:"retired"`
+			}
+			require.NoError(t, c.Call(t, "extraction", map[string]any{"from": runs[1]}, &read))
+			var got struct {
+				Candidate struct {
+					Version int `json:"version"`
+				} `json:"candidate"`
+				Next string `json:"next"`
+			}
+
+			err := c.Call(t, "propose_extraction", map[string]any{
+				"from": runs[1], "relation": tc.args, "relates_to": id, "kind": "judgment", "content": lesson, "critique": passing,
+			}, &got)
+
+			assert.ErrorIs(t, err, tc.want.err)
+			assert.Contains(t, errText(err), tc.want.errText)
+			assert.Empty(t, read.Candidates)
+			assert.Equal(t, []retired{{ID: id, Approver: "ann", Reason: knowledge.ReasonPerson}}, read.Retired)
+			assert.Equal(t, tc.want.version, got.Candidate.Version)
+			assert.Contains(t, got.Next, tc.want.next)
+		})
+	}
+}
+
 // An item of an answer read by its id only
 type idOnly struct {
 	ID string `json:"id"`
