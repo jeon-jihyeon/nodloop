@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 
+	"github.com/jeon-jihyeon/nodloop/internal/extract"
 	"github.com/jeon-jihyeon/nodloop/internal/llm"
 	"github.com/jeon-jihyeon/nodloop/internal/llm/llmmock"
 	"github.com/jeon-jihyeon/nodloop/internal/record"
@@ -271,11 +272,38 @@ func TestRunKnowledgeExtractClassifier(t *testing.T) {
 			recorded, err := traces.List(context.Background(), record.TraceFilter{Name: string(trace.NameClassify)})
 			require.NoError(t, err)
 			assert.Len(t, recorded, tc.want.classified)
+			extracts, err := traces.List(context.Background(), record.TraceFilter{Name: string(trace.NameExtract)})
+			require.NoError(t, err)
+			require.Len(t, extracts, 1)
+			assert.Equal(t, listedIDs(recorded), classifiesOf(t, extracts[0]), "each attempt names the classify trace of its critic call")
 			var report bytes.Buffer
 			require.Equal(t, 0, runReport([]string{"extract"}, getenv, now, &report, &stderr), stderr.String())
 			assert.Equal(t, "extract\tunknown\tmodel\textractions 1\tproposed 1\trefused drafts -\tquestions false -\n", report.String())
 		})
 	}
+}
+
+// The ids of the traces in the order listed and an empty list for none
+func listedIDs(traces []record.Trace) []string {
+	out := []string{}
+	for _, tr := range traces {
+		out = append(out, tr.ID)
+	}
+	return out
+}
+
+// The classify traces the attempts of an extract trace name in their order and an empty list for none
+func classifiesOf(t *testing.T, tr record.Trace) []string {
+	t.Helper()
+	var rec extract.Record
+	require.NoError(t, json.Unmarshal(tr.Output, &rec))
+	out := []string{}
+	for _, a := range rec.Attempts {
+		if a.Classify != "" {
+			out = append(out, a.Classify)
+		}
+	}
+	return out
 }
 
 // A critic endpoint edited by hand into config.json is checked before any model call

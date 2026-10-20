@@ -66,6 +66,8 @@
       "description": "One extraction of a lesson from a corrected run with its drafts and conclusion",
       "links": [
         "ref",
+        "input.verdict_id",
+        "output.attempts.classify",
         "output.candidate",
         "output.related"
       ],

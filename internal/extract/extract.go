@@ -60,22 +60,36 @@ type Reaction struct {
 	Reached knowledge.Set
 	// The candidates the run reaches in the order they wait
 	Waiting knowledge.Set
+	// The retired versions the run reaches of the ids it reaches no current version of
+	// A duplicate of one proposes it again
+	Retired knowledge.Set
 }
 
 // What an extraction left for the person
 type Result struct {
 	Relation Relation
 	Content  string
-	// The item or candidate an update or a duplicate or a conflict names
+	// The item, candidate or retired version an update, a duplicate or a conflict names
 	Related *knowledge.Knowledge
-	// The candidate of an add or an update or the candidate a duplicate corroborated
+	// The candidate an add, an update, a conflict or a duplicate of a retired version proposed
+	// or the waiting candidate a duplicate corroborated
 	Candidate *knowledge.Knowledge
 	Overlaps  knowledge.Set
 }
 
 // A duplicate of a waiting candidate joined the run to its evidence
 func (res Result) Corroborated() bool {
-	return res.Relation == RelationDuplicate && res.Candidate != nil
+	return res.duplicated(knowledge.StatusCandidate)
+}
+
+// A duplicate of a retired version proposed it again as the next version of its id
+func (res Result) ProposedAgain() bool {
+	return res.duplicated(knowledge.StatusRetired)
+}
+
+// A duplicate that left a candidate of a related version in the status
+func (res Result) duplicated(status knowledge.Status) bool {
+	return res.Relation == RelationDuplicate && res.Candidate != nil && res.Related != nil && res.Related.Status == status
 }
 
 // The run with its reconciled verdict and the items and candidates it reaches
@@ -104,16 +118,22 @@ func (e *Extractor) Reaction(ctx context.Context, runID string) (Reaction, error
 	if err != nil {
 		return Reaction{}, err
 	}
-	return Reaction{Run: run, Verdict: latest[0], Reached: all.For(run.Producer, run.Labels), Waiting: all.Waiting(run.Producer, run.Labels)}, nil
+	return Reaction{
+		Run: run, Verdict: latest[0], Reached: all.For(run.Producer, run.Labels), Waiting: all.Waiting(run.Producer, run.Labels),
+		Retired: all.Retired(run.Producer, run.Labels),
+	}, nil
 }
 
-// The waiting candidate of id or else its approved item that the run reaches
-// A candidate beside an approved version is the newer text and the one a person decides next
+// The waiting candidate of id or else its approved item or else its retired version that the run reaches
+// 1. a candidate beside an approved version is the newer text and the one a person decides next
+// 2. a retired version stands for its id only where no version of the id is current
 func (r Reaction) related(id string) (knowledge.Knowledge, bool) {
-	if k, ok := r.Waiting.Find(id); ok {
-		return k, true
+	for _, set := range []knowledge.Set{r.Waiting, r.Reached, r.Retired} {
+		if k, ok := set.Find(id); ok {
+			return k, true
+		}
 	}
-	return r.Reached.Find(id)
+	return knowledge.Knowledge{}, false
 }
 
 // One model call drafts the lesson and the critic judges it
@@ -124,19 +144,19 @@ func (r Reaction) related(id string) (knowledge.Knowledge, bool) {
 // 5. every extraction of a run that exists is recorded with its drafts and how it ended
 // 6. the trace carries the usage the meter of the drafter took and the wall time from the reaction on
 func (e *Extractor) Extract(ctx context.Context, drafter ClaudeDrafter, critic Classifier, runID, author string) (Result, error) {
-	start := e.now()
+	x := e.begin(author)
 	r, err := e.Reaction(ctx, runID)
 	if err != nil {
 		return Result{}, err
 	}
 	var rec Record
-	res, err := e.extract(ctx, r, drafter, critic, author, &rec)
+	res, err := e.extract(ctx, r, drafter, critic, x, &rec)
 	taken := drafter.meter.Take()
-	spent := cost{usage: taken.Usage(), model: taken.Model, start: start}
-	return res, e.record(ctx, r, PathModel, rec.end(res, err), spent, err)
+	x.usage, x.model = taken.Usage(), taken.Model
+	return res, e.record(ctx, r, PathModel, rec.end(res, err), x, err)
 }
 
-func (e *Extractor) extract(ctx context.Context, r Reaction, drafter ClaudeDrafter, critic Classifier, author string, rec *Record) (Result, error) {
+func (e *Extractor) extract(ctx context.Context, r Reaction, drafter ClaudeDrafter, critic Classifier, x extraction, rec *Record) (Result, error) {
 	prompt := r.String()
 	d, err := drafter.Draft(ctx, prompt)
 	if err != nil {
@@ -156,7 +176,7 @@ func (e *Extractor) extract(ctx context.Context, r Reaction, drafter ClaudeDraft
 	if err != nil {
 		return Result{}, err
 	}
-	res, err := e.propose(ctx, r, d, author)
+	res, err := e.propose(ctx, r, d, x)
 	if err != nil {
 		rec.refuseLast(err)
 	}
@@ -190,16 +210,34 @@ func (r Reaction) judge(d Draft, c *Critique) (Attempt, error) {
 }
 
 // The code checks and then the critic asked about one draft
+// The attempt names the classify trace that holds the answers of a critic that records them
 func (r Reaction) review(ctx context.Context, critic Classifier, d Draft) (Attempt, error) {
 	if a, err := r.judge(d, nil); err != nil {
 		return a, err
 	}
-	answers, err := critic.Classify(ctx, classify.Request{Ref: r.Run.ID, State: r.critiquePrompt(d), Questions: criticQuestions})
+	ruling, err := rule(ctx, critic, classify.Request{Ref: r.Run.ID, State: r.critiquePrompt(d), Questions: criticQuestions})
 	if err != nil {
-		return Attempt{Draft: d}.refused(RefusalModel, err), err
+		return Attempt{Draft: d, Classify: ruling.TraceID}.refused(RefusalModel, err), err
 	}
-	c := newCritique(answers)
-	return r.judge(d, &c)
+	c := newCritique(ruling.Answers)
+	a, err := r.judge(d, &c)
+	a.Classify = ruling.TraceID
+	return a, err
+}
+
+// A critic that records its answers in a classify trace and names it, as the plan of a point does
+type Ruler interface {
+	Rule(ctx context.Context, req classify.Request) (classify.Ruling, error)
+}
+
+// The answers of the critic with the classify trace that holds them
+// A critic that records nothing such as the claude critic leaves the trace empty
+func rule(ctx context.Context, critic Classifier, req classify.Request) (classify.Ruling, error) {
+	if r, ok := critic.(Ruler); ok {
+		return r.Rule(ctx, req)
+	}
+	answers, err := critic.Classify(ctx, req)
+	return classify.Ruling{Answers: answers}, err
 }
 
 func complete[T any](ctx context.Context, client llm.Client, req llm.Request) (T, error) {
@@ -214,45 +252,48 @@ func complete[T any](ctx context.Context, client llm.Client, req llm.Request) (T
 	return out, nil
 }
 
-// Checks the draft and the critique the conversation wrote and proposes an add or an update
-// A duplicate of a candidate corroborates it and any other duplicate or conflict proposes nothing and answers what it names
+// Checks the draft and the critique the conversation wrote and proposes its candidate
+// A duplicate of a candidate corroborates it and a duplicate of an approved item proposes nothing and answers it
 // The conversation called no model here so the trace carries no usage
 func (e *Extractor) Propose(ctx context.Context, r Reaction, d Draft, c Critique, author string) (Result, error) {
-	spent := cost{start: e.now()}
+	x := e.begin(author)
 	var rec Record
 	a, err := r.judge(d, &c)
 	rec.add(a)
 	if err != nil {
-		return Result{}, e.record(ctx, r, PathConversation, rec.end(Result{}, err), spent, err)
+		return Result{}, e.record(ctx, r, PathConversation, rec.end(Result{}, err), x, err)
 	}
-	res, err := e.propose(ctx, r, d, author)
+	res, err := e.propose(ctx, r, d, x)
 	if err != nil {
 		rec.refuseLast(err)
 	}
-	return res, e.record(ctx, r, PathConversation, rec.end(res, err), spent, err)
+	return res, e.record(ctx, r, PathConversation, rec.end(res, err), x, err)
 }
 
 // The candidate of a judged draft through the ledger
 // 1. a duplicate of a waiting candidate joins the run to its evidence and keeps its text
-// 2. any other duplicate and every conflict leave the decision to a person
-func (e *Extractor) propose(ctx context.Context, r Reaction, d Draft, author string) (Result, error) {
+// 2. a duplicate of an approved item proposes nothing since the item already says it
+// 3. every other draft proposes a candidate that names the extract trace of the extraction
+func (e *Extractor) propose(ctx context.Context, r Reaction, d Draft, x extraction) (Result, error) {
 	res := Result{Relation: d.Relation, Content: d.Content}
 	related, ok := r.related(d.RelatesTo)
 	if ok {
 		res.Related = &related
 	}
 	switch {
-	case d.Relation == RelationDuplicate && ok && related.Status == knowledge.StatusCandidate:
+	case d.Relation == RelationDuplicate && related.Status == knowledge.StatusCandidate:
 		k, err := e.ledger.Corroborate(ctx, related.ID, related.Version, r.Run, feedback.Records{r.Verdict})
 		if err != nil {
 			return Result{}, err
 		}
 		res.Candidate = &k
 		return res, nil
-	case !d.Relation.proposes():
+	case d.Relation == RelationDuplicate && related.Status != knowledge.StatusRetired:
 		return res, nil
 	}
-	k, overlaps, err := e.ledger.Propose(ctx, r.candidate(d, res.Related, cmp.Or(author, defaultAuthor)))
+	draft := r.candidate(d, res.Related)
+	draft.Author, draft.Extract = x.author, x.id
+	k, overlaps, err := e.ledger.Propose(ctx, draft)
 	if err != nil {
 		return Result{}, err
 	}
@@ -260,14 +301,20 @@ func (e *Extractor) propose(ctx context.Context, r Reaction, d Draft, author str
 	return res, nil
 }
 
-// The draft of an add scoped to the run or of the next version of the item or candidate an update names
-// An update keeps the scope and the veto and the evidence of what it names so approval never widens or lifts it
-func (r Reaction) candidate(d Draft, related *knowledge.Knowledge, author string) knowledge.Knowledge {
-	if related == nil {
+// The candidate a judged draft proposes
+// 1. an add is scoped to the run with the run as its evidence
+// 2. an update keeps the kind, scope, veto, basis and evidence of what it names and joins the run so approval never widens or lifts it
+// 3. a duplicate of a retired version keeps all of it with its text and joins the run so a lesson dropped earlier comes back as it was
+// 4. a conflict keeps the kind, scope and veto of what it contradicts with the run alone as evidence since the old evidence teaches the opposite
+func (r Reaction) candidate(d Draft, related *knowledge.Knowledge) knowledge.Knowledge {
+	corrected := knowledge.Evidence{FeedbackTraceIDs: []string{r.Run.ID}}
+	switch {
+	case related == nil:
 		scope := d.scope(r.Run)
+		return knowledge.Knowledge{Kind: d.Kind, Content: d.Content, Run: &scope, Drafted: true, Evidence: corrected}
+	case d.Relation == RelationConflict:
 		return knowledge.Knowledge{
-			Kind: d.Kind, Content: d.Content, Run: &scope, Author: author, Drafted: true,
-			Evidence: knowledge.Evidence{FeedbackTraceIDs: []string{r.Run.ID}},
+			ID: related.ID, Kind: related.Kind, Content: d.Content, Run: related.Run, Veto: related.Veto, Drafted: true, Evidence: corrected,
 		}
 	}
 	evidence := related.Evidence
@@ -275,31 +322,25 @@ func (r Reaction) candidate(d Draft, related *knowledge.Knowledge, author string
 	if !slices.Contains(evidence.FeedbackTraceIDs, r.Run.ID) {
 		evidence.FeedbackTraceIDs = append(evidence.FeedbackTraceIDs, r.Run.ID)
 	}
+	content, drafted := d.Content, true
+	if d.Relation == RelationDuplicate {
+		content, drafted = related.Content, related.Drafted
+	}
 	return knowledge.Knowledge{
-		ID: related.ID, Kind: related.Kind, Content: d.Content, Run: related.Run, Veto: related.Veto, Basis: related.Basis,
-		Author: author, Drafted: true, Evidence: evidence,
+		ID: related.ID, Kind: related.Kind, Content: content, Run: related.Run, Veto: related.Veto, Basis: related.Basis,
+		Drafted: drafted, Evidence: evidence,
 	}
 }
 
 // The code checks of a draft
-// 1. the relation is valid and an add names nothing while every other relation names an item or a candidate the run reaches
+// 1. the relation is valid and names what it may name
 // 2. the content is a one sentence lesson that copies no long line of the output or the edit
 // 3. an update adds no case to the item it updates
 // 4. every key is one the run carries
 func (r Reaction) check(d Draft) error {
-	if !d.Relation.Valid() {
-		return fmt.Errorf("%w: %q", ErrRelationInvalid, d.Relation)
-	}
-	item, reached := r.related(d.RelatesTo)
-	switch {
-	case d.Relation == RelationAdd && d.RelatesTo != "":
-		return fmt.Errorf("%w: add names %s", ErrRelationInvalid, d.RelatesTo)
-	// The redraft reads this error as what to fix
-	// A small local model kept a conflict with the run itself until the error named add
-	case d.Relation != RelationAdd && len(r.Reached) == 0 && len(r.Waiting) == 0:
-		return fmt.Errorf("%w: %s names %q, but the run reaches no approved item or waiting candidate, so the relation is add with relates_to left out", ErrRelationInvalid, d.Relation, d.RelatesTo)
-	case d.Relation != RelationAdd && !reached:
-		return fmt.Errorf("%w: %s names %q, which is no approved item or waiting candidate the run reaches", ErrRelationInvalid, d.Relation, d.RelatesTo)
+	item, err := r.checkRelation(d)
+	if err != nil {
+		return err
 	}
 	if err := d.checkLesson(text(r.Run.Output), text(r.Verdict.Edited)); err != nil {
 		return err
@@ -315,6 +356,39 @@ func (r Reaction) check(d Draft) error {
 		}
 	}
 	return nil
+}
+
+// The version the relation of a draft names
+// 1. an add names nothing
+// 2. a duplicate names an approved item, a waiting candidate or a retired version the run reaches
+// 3. an update and a conflict name an approved item or a waiting candidate the run reaches
+// The redraft reads each error as what to fix
+func (r Reaction) checkRelation(d Draft) (knowledge.Knowledge, error) {
+	if !d.Relation.Valid() {
+		return knowledge.Knowledge{}, fmt.Errorf("%w: %q", ErrRelationInvalid, d.Relation)
+	}
+	item, reached := r.related(d.RelatesTo)
+	switch {
+	case d.Relation == RelationAdd && d.RelatesTo != "":
+		return item, fmt.Errorf("%w: add names %s", ErrRelationInvalid, d.RelatesTo)
+	case d.Relation == RelationAdd, d.Relation == RelationDuplicate && reached:
+		return item, nil
+	case reached && item.Status == knowledge.StatusRetired:
+		return item, fmt.Errorf("%w: %s names %q, which is retired, and only a duplicate names a retired version, so a lesson that differs from it is add", ErrRelationInvalid, d.Relation, d.RelatesTo)
+	// A small local model kept a conflict with the run itself until the error named add
+	case len(r.Reached) == 0 && len(r.Waiting) == 0:
+		return item, fmt.Errorf("%w: %s names %q, but the run reaches no approved item or waiting candidate, so the relation is add with relates_to left out", ErrRelationInvalid, d.Relation, d.RelatesTo)
+	case !reached:
+		return item, fmt.Errorf("%w: %s names %q, which is no approved item or waiting candidate the run reaches", ErrRelationInvalid, d.Relation, d.RelatesTo)
+	}
+	return item, nil
+}
+
+// An extraction starting now with the id of its extract trace
+// The id is taken at the start so the candidate the extraction proposes names its trace
+func (e *Extractor) begin(author string) extraction {
+	now := e.now()
+	return extraction{id: trace.NewID(now), author: cmp.Or(author, defaultAuthor), start: now}
 }
 
 // A JSON string as its text and any other value as written
@@ -340,17 +414,28 @@ func (r Reaction) String() string {
 	if len(r.Verdict.Edited) > 0 {
 		fmt.Fprintf(&b, "\n\n## Edited output\n\n%s", text(r.Verdict.Edited))
 	}
-	// Approved items first and then the candidates with the status on each line so the drafter and the critic tell them apart
+	// Approved items first, then the candidates and then the retired versions with their retire reason
+	// Each line names its status and who decided it so the drafter and the critic tell them apart
 	for _, part := range []struct {
 		title string
 		set   knowledge.Set
-	}{{"Approved items this run reaches", r.Reached}, {"Waiting candidates this run reaches", r.Waiting}} {
+	}{
+		{"Approved items this run reaches", r.Reached}, {"Waiting candidates this run reaches", r.Waiting},
+		{"Retired versions this run reaches", r.Retired},
+	} {
 		fmt.Fprintf(&b, "\n\n## %s\n", part.title)
 		if len(part.set) == 0 {
 			b.WriteString("\nnone")
 		}
 		for _, k := range part.set {
-			fmt.Fprintf(&b, "\n[%s v%d %s %s] %s\nScope: %s", k.ID, k.Version, k.Kind, k.Status, k.Content, k.Run)
+			status := string(k.Status)
+			if k.Approver != "" {
+				status += " by " + k.Approver
+			}
+			if k.Reason != "" {
+				status += " for " + string(k.Reason)
+			}
+			fmt.Fprintf(&b, "\n[%s v%d %s %s] %s\nScope: %s", k.ID, k.Version, k.Kind, status, k.Content, k.Run)
 		}
 	}
 	b.WriteString("\n")

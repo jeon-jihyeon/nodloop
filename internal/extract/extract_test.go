@@ -1,6 +1,7 @@
 package extract_test
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -16,6 +17,7 @@ import (
 	"go.uber.org/mock/gomock"
 
 	"github.com/jeon-jihyeon/nodloop/internal/classify"
+	"github.com/jeon-jihyeon/nodloop/internal/classify/classifymock"
 	"github.com/jeon-jihyeon/nodloop/internal/extract"
 	"github.com/jeon-jihyeon/nodloop/internal/feedback"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
@@ -34,8 +36,11 @@ var pass = extract.Critique{States: true, Holds: true, Fits: true, Why: "ok"}
 // The text of the waiting candidate quote
 const quoted = "Quote a path with spaces in a shell command"
 
+// The text of the candidate dropped a person retired
+const bullets = "Answer in short bullets"
+
 // A session run of repo nodloop and dir cmd in host claude-code that a person edited
-// It reaches the approved item git-c and the waiting candidate quote
+// It reaches the approved item git-c, the waiting candidate quote and the version dropped a person retired
 // The waiting candidate far of another repository never reaches it
 func corrected(t *testing.T) (testkit.Stores, *extract.Extractor, string) {
 	t.Helper()
@@ -64,6 +69,13 @@ func corrected(t *testing.T) (testkit.Stores, *extract.Extractor, string) {
 		})
 		require.NoError(t, err)
 	}
+	_, _, err = s.Ledger.Propose(ctx, knowledge.Knowledge{
+		ID: "dropped", Kind: knowledge.KindMeaning, Content: bullets, Author: "claude", Drafted: true,
+		Run:      &knowledge.RunScope{Producer: "session", Labels: trace.Labels{"repo": {"nodloop"}}},
+		Evidence: knowledge.Evidence{FeedbackTraceIDs: []string{"r-earlier"}},
+	})
+	require.NoError(t, err)
+	require.NoError(t, testkit.Err(s.Ledger.Retire(ctx, "dropped", 1, "ann")))
 	return s, extract.New(s.Ledger, s.Traces, s.Feedback, s.Clock.Now), run.ID
 }
 
@@ -78,15 +90,19 @@ func TestExtractorPropose(t *testing.T) {
 		related string
 		// The candidate is the waiting one with the run joined to its evidence
 		corroborated bool
-		candidate    string
-		version      int
-		labels       trace.Labels
+		// The candidate is a retired version proposed again
+		again     bool
+		candidate string
+		version   int
+		labels    trace.Labels
 		// The candidate text which a corroborate keeps as written
 		content string
 		status  knowledge.Status
 		drafted bool
 		// The candidate evidence holds the run
 		cites bool
+		// Runs the candidate evidence holds
+		runs int
 	}
 	type want struct {
 		err error
@@ -102,13 +118,14 @@ func TestExtractorPropose(t *testing.T) {
 	// The fields of a result the cases compare
 	// A result without a related item or a candidate leaves those fields zero
 	viewOf := func(got extract.Result, runID string) result {
-		view := result{corroborated: got.Corroborated()}
+		view := result{corroborated: got.Corroborated(), again: got.ProposedAgain()}
 		if got.Related != nil {
 			view.related = got.Related.ID
 		}
 		if c := got.Candidate; c != nil {
 			view.candidate, view.version, view.labels, view.content = c.ID, c.Version, c.Run.Labels, c.Content
 			view.status, view.drafted, view.cites = c.Status, c.Drafted, slices.Contains(c.Evidence.FeedbackTraceIDs, runID)
+			view.runs = len(c.Evidence.FeedbackTraceIDs)
 		}
 		return view
 	}
@@ -123,17 +140,17 @@ func TestExtractorPropose(t *testing.T) {
 		want want
 	}{
 		{"an add proposes a new item scoped to the keys it kept", args{draft: draft(extract.RelationAdd, "", lesson, "repo"), critique: pass},
-			want{result: waiting(result{candidate: "k-generated", version: 1, labels: nodloop, content: lesson})}},
+			want{result: waiting(result{candidate: "k-generated", version: 1, labels: nodloop, content: lesson, runs: 1})}},
 		{"an add that keeps the host is scoped without it", args{draft: draft(extract.RelationAdd, "", lesson, "repo", "host"), critique: pass},
-			want{result: waiting(result{candidate: "k-generated", version: 1, labels: nodloop, content: lesson})}},
+			want{result: waiting(result{candidate: "k-generated", version: 1, labels: nodloop, content: lesson, runs: 1})}},
 		{"an add without keys reaches every run of the producer", args{draft: draft(extract.RelationAdd, "", lesson), critique: pass},
-			want{result: waiting(result{candidate: "k-generated", version: 1, content: lesson})}},
+			want{result: waiting(result{candidate: "k-generated", version: 1, content: lesson, runs: 1})}},
 		{"an update proposes the next version with the scope of the item", args{draft: draft(extract.RelationUpdate, "git-c", lesson, "dir"), critique: pass},
-			want{result: waiting(result{related: "git-c", candidate: "git-c", version: 2, labels: nodloop, content: lesson})}},
+			want{result: waiting(result{related: "git-c", candidate: "git-c", version: 2, labels: nodloop, content: lesson, runs: 1})}},
 		{
 			"an update may sharpen the item with one number",
 			args{draft: draft(extract.RelationUpdate, "git-c", lesson+" and cd at most 1 level"), critique: pass},
-			want{result: waiting(result{related: "git-c", candidate: "git-c", version: 2, labels: nodloop, content: lesson + " and cd at most 1 level"})},
+			want{result: waiting(result{related: "git-c", candidate: "git-c", version: 2, labels: nodloop, content: lesson + " and cd at most 1 level", runs: 1})},
 		},
 		{
 			"an update that adds a case to the item is refused",
@@ -141,26 +158,41 @@ func TestExtractorPropose(t *testing.T) {
 			want{err: extract.ErrCaseList},
 		},
 		{
-			"an update of a candidate proposes its next version with its scope",
+			"an update of a candidate proposes its next version with its scope and its evidence",
 			args{draft: draft(extract.RelationUpdate, "quote", quoted+" or a glob"), critique: pass},
-			want{result: waiting(result{related: "quote", candidate: "quote", version: 2, labels: nodloop, content: quoted + " or a glob"})},
+			want{result: waiting(result{related: "quote", candidate: "quote", version: 2, labels: nodloop, content: quoted + " or a glob", runs: 2})},
 		},
 		{"a duplicate proposes nothing and names the item", args{draft: draft(extract.RelationDuplicate, "git-c", lesson), critique: pass},
 			want{result: result{related: "git-c"}}},
 		{
 			"a duplicate of a candidate corroborates it",
 			args{draft: draft(extract.RelationDuplicate, "quote", "Quote paths that hold spaces"), critique: pass},
-			want{result: waiting(result{related: "quote", corroborated: true, candidate: "quote", version: 1, labels: nodloop, content: quoted})},
+			want{result: waiting(result{related: "quote", corroborated: true, candidate: "quote", version: 1, labels: nodloop, content: quoted, runs: 2})},
 		},
 		{
-			"a conflict proposes nothing and names the item",
+			"a duplicate of a retired version proposes it again with its text and scope and the run joined",
+			args{draft: draft(extract.RelationDuplicate, "dropped", "Keep answers to a few bullets"), critique: pass},
+			want{result: waiting(result{related: "dropped", again: true, candidate: "dropped", version: 2, labels: nodloop, content: bullets, runs: 2})},
+		},
+		{
+			"a conflict proposes the next version of the item with the run alone as evidence",
 			args{draft: draft(extract.RelationConflict, "git-c", "Change into the directory before git"), critique: pass},
-			want{result: result{related: "git-c"}},
+			want{result: waiting(result{related: "git-c", candidate: "git-c", version: 2, labels: nodloop, content: "Change into the directory before git", runs: 1})},
 		},
 		{
-			"a conflict with a candidate proposes nothing and names it",
+			"a conflict with a candidate proposes its next version with the run alone as evidence",
 			args{draft: draft(extract.RelationConflict, "quote", "Never quote a path in a shell command"), critique: pass},
-			want{result: result{related: "quote"}},
+			want{result: waiting(result{related: "quote", candidate: "quote", version: 2, labels: nodloop, content: "Never quote a path in a shell command", runs: 1})},
+		},
+		{
+			"an update of a retired version is refused",
+			args{draft: draft(extract.RelationUpdate, "dropped", bullets+" of three lines"), critique: pass},
+			want{err: extract.ErrRelationInvalid, hint: "only a duplicate names a retired version"},
+		},
+		{
+			"a conflict with a retired version is refused",
+			args{draft: draft(extract.RelationConflict, "dropped", "Answer in long paragraphs"), critique: pass},
+			want{err: extract.ErrRelationInvalid, hint: "only a duplicate names a retired version"},
 		},
 		{"a duplicate of a candidate the run never reached is refused", args{draft: draft(extract.RelationDuplicate, "far", quoted), critique: pass},
 			want{err: extract.ErrRelationInvalid, hint: "which is no approved item or waiting candidate the run reaches"}},
@@ -297,7 +329,7 @@ func TestExtractorExtract(t *testing.T) {
 	// The drafter prompts of the calls
 	type prompts struct {
 		drafts int
-		// Prompts that hold the edit and every item and candidate the run reaches and no other
+		// Prompts that hold the edit and every item, candidate and retired version the run reaches with who decided it and no other
 		reaching int
 		// Prompts that send a refusal back
 		refused int
@@ -321,8 +353,9 @@ func TestExtractorExtract(t *testing.T) {
 			}
 			p.drafts++
 			if strings.Contains(req.Prompt, "## Edited output") &&
-				strings.Contains(req.Prompt, "## Approved items this run reaches\n\n[git-c v1 judgment approved]") &&
+				strings.Contains(req.Prompt, "## Approved items this run reaches\n\n[git-c v1 judgment approved by ann]") &&
 				strings.Contains(req.Prompt, "## Waiting candidates this run reaches\n\n[quote v1 judgment candidate]") &&
+				strings.Contains(req.Prompt, "## Retired versions this run reaches\n\n[dropped v1 meaning retired by ann for person] "+bullets) &&
 				!strings.Contains(req.Prompt, "[far ") {
 				p.reaching++
 			}
@@ -384,6 +417,7 @@ func TestExtractorExtract(t *testing.T) {
 			rec, tr := recorded(t, s, extract.PathModel, runID)
 			assert.Equal(t, tc.want.conclusion, rec.Conclusion)
 			assert.Equal(t, tc.want.refusals, refusalsOf(rec))
+			assert.Equal(t, make([]string, len(rec.Attempts)), classifiesOf(rec), "the claude critic records no classify trace")
 			assert.Equal(t, tc.want.proposed, got.Candidate != nil)
 			assert.Equal(t, tc.want.prompts, promptsOf(reqs))
 			assert.Equal(t, record.Usage(tc.want.usage), tr.Usage)
@@ -398,14 +432,28 @@ func TestExtractorExtract(t *testing.T) {
 }
 
 // The one extract trace of the run with its path checked
+// It names the verdict it read by the record_id every transport sends the verdict under
 func recorded(t *testing.T, s testkit.Stores, path extract.Path, runID string) (extract.Record, record.Trace) {
 	t.Helper()
-	traces, err := s.Traces.List(context.Background(), record.TraceFilter{Name: string(trace.NameExtract)})
+	ctx := context.Background()
+	traces, err := s.Traces.List(ctx, record.TraceFilter{Name: string(trace.NameExtract)})
 	require.NoError(t, err)
 	require.Len(t, traces, 1)
 	assert.Equal(t, string(path), traces[0].Subject)
 	assert.Equal(t, runID, traces[0].Ref)
 	require.NoError(t, schema.Validate(string(trace.NameExtract), traces[0]))
+	var in extract.TraceInput
+	require.NoError(t, json.Unmarshal(traces[0].Input, &in))
+	verdicts, err := s.Feedback.List(ctx, record.FeedbackFilter{TraceID: runID})
+	require.NoError(t, err)
+	require.Len(t, verdicts, 1)
+	ix, err := schema.Published.Index()
+	require.NoError(t, err)
+	kind, err := ix.Kind("verdict")
+	require.NoError(t, err)
+	verdict, err := kind.Record(verdicts[0])
+	require.NoError(t, err)
+	assert.Equal(t, verdict.ID, in.VerdictID, "the trace names the verdict by its record_id")
 	var rec extract.Record
 	require.NoError(t, json.Unmarshal(traces[0].Output, &rec))
 	return rec, traces[0]
@@ -415,6 +463,15 @@ func refusalsOf(rec extract.Record) []extract.Refusal {
 	out := make([]extract.Refusal, 0, len(rec.Attempts))
 	for _, a := range rec.Attempts {
 		out = append(out, a.Refusal)
+	}
+	return out
+}
+
+// The classify trace each attempt names in order and empty for one that asked no plan
+func classifiesOf(rec extract.Record) []string {
+	out := make([]string, 0, len(rec.Attempts))
+	for _, a := range rec.Attempts {
+		out = append(out, a.Classify)
 	}
 	return out
 }
@@ -434,9 +491,12 @@ func TestExtractorProposeRecord(t *testing.T) {
 		questions  []string
 		candidate  *knowledge.Ref
 		related    *extract.Related
+		// The candidate record names this extract trace as the one that proposed it
+		named bool
 	}
 	gitC := &extract.Related{ID: "git-c", Version: 1, Status: knowledge.StatusApproved}
 	quote := &extract.Related{ID: "quote", Version: 1, Status: knowledge.StatusCandidate}
+	dropped := &extract.Related{ID: "dropped", Version: 1, Status: knowledge.StatusRetired}
 	dupQuote := extract.Draft{Relation: extract.RelationDuplicate, RelatesTo: "quote", Kind: knowledge.KindJudgment, Content: quoted}
 	tcs := []struct {
 		name string
@@ -444,16 +504,20 @@ func TestExtractorProposeRecord(t *testing.T) {
 		want want
 	}{
 		{"an add is proposed", args{draft: extract.Draft{Relation: extract.RelationAdd, Kind: knowledge.KindJudgment, Content: lesson, Keys: []string{"repo"}}, critique: pass},
-			want{conclusion: extract.ConclusionProposed, candidate: &knowledge.Ref{ID: "k-generated", Version: 1}}},
+			want{conclusion: extract.ConclusionProposed, candidate: &knowledge.Ref{ID: "k-generated", Version: 1}, named: true}},
 		{"a duplicate is recorded as one", args{draft: extract.Draft{Relation: extract.RelationDuplicate, RelatesTo: "git-c", Kind: knowledge.KindJudgment, Content: lesson}, critique: pass},
 			want{conclusion: extract.ConclusionDuplicate, related: gitC}},
-		{"a duplicate of a candidate is recorded as corroborated", args{draft: dupQuote, critique: pass},
+		{"a duplicate of a candidate is recorded as corroborated and keeps the extraction that proposed it", args{draft: dupQuote, critique: pass},
 			want{conclusion: extract.ConclusionCorroborated, candidate: &knowledge.Ref{ID: "quote", Version: 1}, related: quote}},
-		{"a conflict is recorded as one", args{draft: extract.Draft{Relation: extract.RelationConflict, RelatesTo: "git-c", Kind: knowledge.KindJudgment, Content: lesson}, critique: pass},
-			want{conclusion: extract.ConclusionConflict, related: gitC}},
+		{"a duplicate of a retired version is recorded as proposed again", args{draft: extract.Draft{Relation: extract.RelationDuplicate, RelatesTo: "dropped", Kind: knowledge.KindMeaning, Content: bullets}, critique: pass},
+			want{conclusion: extract.ConclusionProposed, candidate: &knowledge.Ref{ID: "dropped", Version: 2}, related: dropped, named: true}},
+		{"a conflict is recorded as one with the next version", args{draft: extract.Draft{Relation: extract.RelationConflict, RelatesTo: "git-c", Kind: knowledge.KindJudgment, Content: lesson}, critique: pass},
+			want{conclusion: extract.ConclusionConflict, candidate: &knowledge.Ref{ID: "git-c", Version: 2}, related: gitC, named: true}},
 		{"a conflict with a candidate names it", args{draft: extract.Draft{Relation: extract.RelationConflict, RelatesTo: "quote", Kind: knowledge.KindJudgment, Content: lesson}, critique: pass},
-			want{conclusion: extract.ConclusionConflict, related: quote}},
+			want{conclusion: extract.ConclusionConflict, candidate: &knowledge.Ref{ID: "quote", Version: 2}, related: quote, named: true}},
 		{"a candidate retired since the reaction is a ledger refusal", args{draft: dupQuote, critique: pass, retired: []string{"quote"}},
+			want{conclusion: extract.ConclusionRefused, refusal: extract.RefusalLedger}},
+		{"a kind outside the set is a ledger refusal", args{draft: extract.Draft{Relation: extract.RelationAdd, Kind: "rule", Content: lesson}, critique: pass},
 			want{conclusion: extract.ConclusionRefused, refusal: extract.RefusalLedger}},
 		{"a code refusal names the code", args{draft: extract.Draft{Relation: extract.RelationAdd, Kind: knowledge.KindJudgment, Content: "Use git -C. Never cd first"}, critique: pass},
 			want{conclusion: extract.ConclusionRefused, refusal: extract.RefusalCode}},
@@ -472,7 +536,7 @@ func TestExtractorProposeRecord(t *testing.T) {
 				require.NoError(t, testkit.Err(s.Ledger.Retire(ctx, id, 1, "ann")))
 			}
 
-			_, _ = e.Propose(ctx, r, tc.args.draft, tc.args.critique, "")
+			got, _ := e.Propose(ctx, r, tc.args.draft, tc.args.critique, "")
 
 			rec, tr := recorded(t, s, extract.PathConversation, runID)
 			assert.Equal(t, record.Usage{}, tr.Usage, "the conversation called no model here")
@@ -480,10 +544,95 @@ func TestExtractorProposeRecord(t *testing.T) {
 			assert.Equal(t, tc.want.conclusion, rec.Conclusion)
 			assert.Equal(t, tc.want.refusal, rec.Attempts[0].Refusal)
 			assert.Equal(t, tc.want.questions, rec.Attempts[0].Questions)
+			assert.Empty(t, rec.Attempts[0].Classify, "the conversation answers its own critic")
 			assert.Equal(t, tc.want.candidate, rec.Candidate)
 			assert.Equal(t, tc.want.related, rec.Related)
+			assert.Equal(t, tc.want.named, got.Candidate != nil && got.Candidate.Extract == tr.ID)
 		})
 	}
+}
+
+// Each attempt the plan of the critic point judged names the classify trace that holds its answers
+// An attempt code refused before any critic call names none
+func TestExtractorExtractPlanCritic(t *testing.T) {
+	good := `{"relation":"add","kind":"judgment","content":"Run git with -C <dir> instead of changing into it","keys":["repo"]}`
+	twoSentences := `{"relation":"add","kind":"judgment","content":"Use git -C. Never cd first"}`
+	type args struct {
+		drafts []string
+		// The status the endpoint answers and a sure pass when zero
+		status int
+		// What the built in member fails with when the endpoint fails
+		builtin error
+	}
+	type want struct {
+		err        error
+		conclusion extract.Conclusion
+		// Per attempt whether it names a classify trace
+		named []bool
+	}
+	tcs := []struct {
+		name string
+		args args
+		want want
+	}{
+		{"a sure endpoint judges the draft", args{drafts: []string{good}}, want{conclusion: extract.ConclusionProposed, named: []bool{true}}},
+		{"a draft code refused names no trace and the one resent names its own", args{drafts: []string{twoSentences, good}},
+			want{conclusion: extract.ConclusionProposed, named: []bool{false, true}}},
+		{"a critic call that failed names the trace that keeps the failure", args{drafts: []string{good}, status: http.StatusBadGateway, builtin: assert.AnError},
+			want{err: assert.AnError, conclusion: extract.ConclusionFailed, named: []bool{true}}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(cmp.Or(tc.args.status, http.StatusOK))
+				_, _ = w.Write([]byte(`{"answers":{"states":{"noul":0.95},"holds":{"noul":0.9},"fits":{"noul":0.92}}}`))
+			}))
+			t.Cleanup(srv.Close)
+			ctx := context.Background()
+			s, e, runID := corrected(t)
+			drafts := tc.args.drafts
+			client := llmmock.NewMockClient(gomock.NewController(t))
+			client.EXPECT().Complete(gomock.Any(), gomock.Any()).Times(len(drafts)).DoAndReturn(func(context.Context, llm.Request) (llm.Response, error) {
+				next := drafts[0]
+				drafts = drafts[1:]
+				return llm.Response{Output: json.RawMessage(next)}, nil
+			})
+			builtin := classifymock.NewMockClassifier(gomock.NewController(t))
+			builtin.EXPECT().Classify(gomock.Any(), gomock.Any()).AnyTimes().Return(nil, tc.args.builtin)
+			critic := classify.NewPlan(classify.PointCritic, classify.Member{Name: "laya", Classifier: classify.NewHTTP(classify.Endpoint{URL: srv.URL}, "", time.Second)},
+				classify.Member{Name: "claude", Classifier: builtin}, s.Traces, func(text string) string { return text }, s.Clock.Now)
+
+			_, err := e.Extract(ctx, extract.NewClaudeDrafter(llm.NewMeter(client), ""), critic, runID, "")
+
+			assert.ErrorIs(t, err, tc.want.err)
+			rec, _ := recorded(t, s, extract.PathModel, runID)
+			assert.Equal(t, tc.want.conclusion, rec.Conclusion)
+			classified, err := s.Traces.List(ctx, record.TraceFilter{Name: string(trace.NameClassify)})
+			require.NoError(t, err)
+			named, ids := classifiesOf(rec), oldestFirst(classified)
+			assert.Equal(t, tc.want.named, namesOf(named))
+			assert.Equal(t, ids, slices.DeleteFunc(named, func(id string) bool { return id == "" }), "the attempts name the classify traces in their order")
+		})
+	}
+}
+
+// Whether each id names a trace
+func namesOf(ids []string) []bool {
+	out := make([]bool, 0, len(ids))
+	for _, id := range ids {
+		out = append(out, id != "")
+	}
+	return out
+}
+
+// The ids of traces a store listed newest first in the order they were appended
+func oldestFirst(traces []record.Trace) []string {
+	out := make([]string, 0, len(traces))
+	for _, tr := range slices.Backward(traces) {
+		out = append(out, tr.ID)
+	}
+	return out
 }
 
 // A classifier critic refuses on a yes under one half and the refusal names its probabilities

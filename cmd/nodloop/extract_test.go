@@ -56,6 +56,14 @@ func TestRunKnowledgeExtract(t *testing.T) {
 		t.Helper()
 		propose(t, getenv, now, extractRun(t, getenv, now, out, "cd again"))
 	}
+	// git-c was approved and then retired by the person
+	var retired setup = func(t *testing.T, getenv func(string) string, now func() time.Time, run, out string) {
+		t.Helper()
+		approved(t, getenv, now, run, out)
+		var stderr bytes.Buffer
+		require.Equal(t, 0, runKnowledge([]string{"retire", "git-c", "--version", "1", "--approver", "ann"}, getenv, nil, now, atTerminal, &bytes.Buffer{}, &stderr), stderr.String())
+	}
+	conflict := `{"relation":"conflict","relates_to":"git-c","kind":"judgment","content":"Change into the directory before running git"}`
 	type args struct {
 		init  setup
 		flags []string
@@ -80,6 +88,10 @@ func TestRunKnowledgeExtract(t *testing.T) {
 			want{0, []string{"relation\tduplicate\n", "related\tgit-c\tv1\t", "next\tnothing proposed"}, ""}},
 		{"a duplicate of a waiting candidate joins its evidence", args{waiting, from, []string{duplicate, passed}},
 			want{0, []string{"relation\tduplicate\n", "candidate\tgit-c\tv1\t", "next\t" + extractCorroborated + "\n"}, ""}},
+		{"a duplicate of a retired lesson proposes it again", args{retired, from, []string{duplicate, passed}},
+			want{0, []string{"relation\tduplicate\n", "related\tgit-c\tv1\t", "candidate\tgit-c\tv2\t", "next\t" + extractProposedAgain + "\n"}, ""}},
+		{"a conflict proposes the next version of the item", args{approved, from, []string{conflict, passed}},
+			want{0, []string{"relation\tconflict\n", "related\tgit-c\tv1\t", "candidate\tgit-c\tv2\t", "next\t" + extractNext[extract.RelationConflict] + "\n"}, ""}},
 		{"no run to learn from fails before any model call", args{approved, nil, nil}, want{1, nil, "--from is required"}},
 	}
 	for _, tc := range tcs {

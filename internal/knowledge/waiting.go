@@ -29,6 +29,29 @@ func (s Set) AllWaiting() Set {
 	return s.waiting(func(RunScope) bool { return true })
 }
 
+// The retired versions that would reach a run of the producer with the labels, newest record first
+// 1. only ids with no approved version and no candidate so the current version names every other id
+// 2. per id the highest such version
+// 3. a version a compaction retired or proposed is left out since the item that merged it says it now
+func (s Set) Retired(producer string, labels trace.Labels) Set {
+	current := s.Current()
+	highest := map[string]int{}
+	for _, k := range s.Versions() {
+		_, active := current.Find(k.ID)
+		if active || k.Status != StatusRetired || k.Compaction != "" || k.Run == nil || !k.Run.Admits(producer, labels) {
+			continue
+		}
+		highest[k.ID] = max(highest[k.ID], k.Version)
+	}
+	out := Set{}
+	for _, k := range s.Versions() {
+		if v, ok := highest[k.ID]; ok && v == k.Version {
+			out = append(out, k)
+		}
+	}
+	return out
+}
+
 // The waiting candidates whose run scope reaches accepts in the Waiting order
 func (s Set) waiting(reaches func(RunScope) bool) Set {
 	newest := s.newestCandidates()

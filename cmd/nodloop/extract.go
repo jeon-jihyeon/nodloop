@@ -53,8 +53,11 @@ func (f knowledgeFlags) runExtract(ctx context.Context, a app, client llm.Client
 		prepared = f.prepareCompaction(ctx, a, ledger, client, *k, stdout)
 	}
 	next := extractNext[res.Relation]
-	if res.Corroborated() {
+	switch {
+	case res.Corroborated():
 		next = extractCorroborated
+	case res.ProposedAgain():
+		next = extractProposedAgain
 	}
 	fmt.Fprintf(stdout, "next\t%s\n", next)
 	return prepared
@@ -79,6 +82,10 @@ func (f knowledgeFlags) prepareCompaction(
 // What happens after a duplicate of a waiting candidate
 const extractCorroborated = "nothing new proposed. The waiting candidate already says it and this run joined its evidence, so it waits for the person as before"
 
+// What happens after a duplicate of a retired version
+const extractProposedAgain = "the related lesson was retired earlier and is proposed again as its next version with this run joined to its evidence. " +
+	"The candidate waits for the person, who is asked about it once unless their earlier decisions settle it"
+
 // What happens after each relation
 // No line names a command that decides
 // A model that read one decided without asking in 4 headless runs
@@ -86,5 +93,6 @@ var extractNext = map[extract.Relation]string{
 	extract.RelationAdd:       "the candidate waits for the person, who is asked about it once unless their earlier decisions settle it",
 	extract.RelationUpdate:    "compare it with the related item. The candidate waits for the person, who is asked about it once unless their earlier decisions settle it",
 	extract.RelationDuplicate: "nothing proposed. The related item already says it",
-	extract.RelationConflict:  "nothing proposed. The related item or candidate says the opposite, and the person decides which stands",
+	extract.RelationConflict: "the candidate is the next version of the related item or candidate, which says the opposite. " +
+		"The person decides which stands and is asked once unless their earlier decisions settle it",
 }

@@ -7,6 +7,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -172,16 +174,17 @@ func TestPlanClassify(t *testing.T) {
 			plan := classify.NewPlan(classify.PointCritic, tc.args.endpoint.member(t, "laya"),
 				builtin(t, tc.args.answers, tc.args.err), traces, seal, func() time.Time { return fixed })
 
-			got, err := plan.Classify(ctx, classify.Request{Ref: "run-1", State: "the draft", Questions: questions})
+			got, err := plan.Rule(ctx, classify.Request{Ref: "run-1", State: "the draft", Questions: questions})
 
 			assert.Equal(t, len(tc.want.errs) > 0, err != nil, err)
 			for _, want := range tc.want.errs {
 				assert.ErrorIs(t, err, want)
 			}
-			assert.Equal(t, tc.want.answers, got)
+			assert.Equal(t, tc.want.answers, got.Answers)
 			recorded, err := traces.List(ctx, record.TraceFilter{Name: string(trace.NameClassify)})
 			require.NoError(t, err)
 			require.Len(t, recorded, 1)
+			assert.Equal(t, recorded[0].ID, got.TraceID, "the ruling names the trace that records it")
 			assert.Equal(t, "critic", recorded[0].Subject)
 			assert.Equal(t, "run-1", recorded[0].Ref)
 			assert.Equal(t, len(tc.want.errs) > 0, recorded[0].Error != "")
@@ -198,6 +201,21 @@ func TestPlanClassify(t *testing.T) {
 			assert.Equal(t, tc.want.asked, asked)
 		})
 	}
+}
+
+// A ruling no record holds keeps its answers and names no trace
+func TestPlanRuleAppendFails(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.Mkdir(filepath.Join(dir, "traces.jsonl"), 0o700))
+	traces, err := tracefile.New(dir)
+	require.NoError(t, err)
+	sure := endpoint{yes: map[string]float64{"holds": 0.95, "states": 0.9}}
+	plan := classify.NewPlan(classify.PointCritic, sure.member(t, "laya"), builtin(t, nil, nil), traces, seal, func() time.Time { return fixed })
+
+	got, err := plan.Rule(context.Background(), classify.Request{Ref: "run-1", State: "the draft", Questions: questions})
+
+	assert.ErrorIs(t, err, tracefile.ErrAppend)
+	assert.Equal(t, classify.Ruling{Answers: classify.Answers{"holds": {Yes: 0.95}, "states": {Yes: 0.9}}}, got)
 }
 
 // The trace keeps how long each member took and the whole request

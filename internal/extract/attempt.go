@@ -22,10 +22,10 @@ const (
 type Conclusion string
 
 const (
-	ConclusionProposed     Conclusion = "proposed"     // an add or an update became a candidate
+	ConclusionProposed     Conclusion = "proposed"     // an add, an update or a retired version proposed again became a candidate
 	ConclusionCorroborated Conclusion = "corroborated" // a waiting candidate already says it and the run joined its evidence
 	ConclusionDuplicate    Conclusion = "duplicate"    // an approved item already says it
-	ConclusionConflict     Conclusion = "conflict"     // an approved item or a waiting candidate says the opposite
+	ConclusionConflict     Conclusion = "conflict"     // an approved item or a waiting candidate says the opposite and the draft became its next version
 	ConclusionRefused      Conclusion = "refused"      // the code checks or the critic or the ledger refused the last draft
 	ConclusionFailed       Conclusion = "failed"       // a model call failed so no draft was judged
 )
@@ -44,7 +44,10 @@ const (
 type Attempt struct {
 	Draft    Draft     `json:"draft"`
 	Critique *Critique `json:"critique,omitempty"`
-	Refusal  Refusal   `json:"refusal,omitempty"`
+	// The classify trace of the critic point that judged the draft
+	// Empty when no endpoint was asked since only a plan records its answers
+	Classify string  `json:"classify,omitempty"`
+	Refusal  Refusal `json:"refusal,omitempty"`
 	// Critic questions answered false
 	Questions []string `json:"questions,omitempty"`
 	Error     string   `json:"error,omitempty"`
@@ -95,10 +98,10 @@ func (rec Record) end(res Result, err error) Record {
 		rec.Conclusion = ConclusionRefused
 	case res.Corroborated():
 		rec.Conclusion = ConclusionCorroborated
-	case res.Candidate != nil:
-		rec.Conclusion = ConclusionProposed
 	case res.Relation == RelationConflict:
 		rec.Conclusion = ConclusionConflict
+	case res.Candidate != nil:
+		rec.Conclusion = ConclusionProposed
 	default:
 		rec.Conclusion = ConclusionDuplicate
 	}
@@ -117,19 +120,27 @@ type TraceInput struct {
 	Verdict    string `json:"verdict"`
 	ReasonCode string `json:"reason_code,omitempty"`
 	Reviewer   string `json:"reviewer,omitempty"`
+	// The record_id of the verdict so a reader joins it as every transport names it
+	// Absent on traces of earlier releases
+	VerdictID string `json:"verdict_id,omitempty"`
 }
 
-// What the model calls of one extraction cost and when it started
-type cost struct {
-	usage trace.Usage
+// One extraction under the id of its extract trace with what its model calls cost
+type extraction struct {
+	id string
+	// Who proposes its candidate
+	author string
+	start  time.Time
+	usage  trace.Usage
 	// The model the drafter answered with and empty when no model was called
 	model string
-	start time.Time
 }
 
 // Appends the extract trace of the reaction and returns the error of the extraction joined with any failure to record it
-func (e *Extractor) record(ctx context.Context, r Reaction, path Path, rec Record, spent cost, failed error) error {
-	input, err := json.Marshal(TraceInput{Verdict: string(r.Verdict.Verdict), ReasonCode: string(r.Verdict.ReasonCode), Reviewer: r.Verdict.Reviewer})
+func (e *Extractor) record(ctx context.Context, r Reaction, path Path, rec Record, x extraction, failed error) error {
+	input, err := json.Marshal(TraceInput{
+		Verdict: string(r.Verdict.Verdict), ReasonCode: string(r.Verdict.ReasonCode), Reviewer: r.Verdict.Reviewer, VerdictID: r.Verdict.RecordID(),
+	})
 	if err != nil {
 		return errors.Join(failed, err)
 	}
@@ -139,8 +150,8 @@ func (e *Extractor) record(ctx context.Context, r Reaction, path Path, rec Recor
 	}
 	now := e.now()
 	tr := trace.Trace{
-		ID: trace.NewID(now), Name: trace.NameExtract, Subject: string(path), Ref: r.Run.ID, Time: now, Model: spent.model,
-		Input: input, Output: output, Usage: spent.usage, DurationMS: now.Sub(spent.start).Milliseconds(),
+		ID: x.id, Name: trace.NameExtract, Subject: string(path), Ref: r.Run.ID, Time: now, Model: x.model,
+		Input: input, Output: output, Usage: x.usage, DurationMS: now.Sub(x.start).Milliseconds(),
 	}
 	if failed != nil {
 		tr.Error = failed.Error()
