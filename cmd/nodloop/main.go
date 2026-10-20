@@ -197,10 +197,11 @@ commands:
   classifier set <point> --url <u> [--model <m>] [--key-env <ENV>]
                             Ask an endpoint of the Jev wire format the README shows at a decision point before claude,
                             such as http://localhost:8000/v1/classify. claude answers when the endpoint fails or is less
-                            than 0.8 sure of any answer. Points: critic, the second reader of a drafted lesson, and reaction,
+                            than 0.8 sure of any answer. Points: critic, the second reader of a drafted lesson, reaction,
                             which judges whether the user's message corrects or approves the previous answer before the
-                            conversation does. The key is read from the env at call time and never saved. Every answer
-                            is recorded as a classify trace
+                            conversation does, and judge, where the endpoint answers beside the three claude judges
+                            whether your recorded decisions settle a change curate prepared. The key is read from the
+                            env at call time and never saved. Every answer is recorded as a classify trace
   classifier unset <point>  The point asks claude alone again
   classifier list           Every point with its endpoint or claude alone
   classifier probe <point>  Ask the endpoint of the point one question and print its answer and time

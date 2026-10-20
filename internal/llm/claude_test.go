@@ -56,6 +56,21 @@ func TestClaudeCLIComplete(t *testing.T) {
 			},
 		},
 		{
+			name: "an effort reaches claude before the system prompt",
+			args: llm.Request{
+				System: "be terse", Prompt: "hello", Schema: json.RawMessage(`{"type":"object"}`), Model: "claude-opus-5-5", Effort: "high",
+			},
+			want: want{
+				res: success,
+				args: []string{
+					"-p", "--output-format", "json", "--json-schema", `{"type":"object"}`, "--max-turns", "3",
+					"--max-budget-usd", "0.5", "--no-session-persistence", "--safe-mode", "--setting-sources", "user",
+					"--model", "claude-opus-5-5", "--effort", "high", "--append-system-prompt", "be terse",
+				},
+				stdin: "hello",
+			},
+		},
+		{
 			name: "a request without model and system runs the default model without a system prompt",
 			args: llm.Request{Prompt: "x", Schema: json.RawMessage(`{}`)},
 			want: want{

@@ -23,6 +23,9 @@ type Request struct {
 	Schema json.RawMessage
 	// Empty means the default model
 	Model string
+	// Passed as `--effort` to claude and left out of a chat request
+	// Empty passes nothing so the host default applies
+	Effort string
 }
 
 type Response struct {

@@ -59,7 +59,7 @@ func (c *ClaudeCLI) Complete(ctx context.Context, req Request) (Response, error)
 	defer func() { _ = os.RemoveAll(dir) }()
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
-	stdout, stderr, runErr := c.run(ctx, dir, c.args(req.Schema, req.Model, req.System), req.Prompt)
+	stdout, stderr, runErr := c.run(ctx, dir, c.args(req), req.Prompt)
 	if ctx.Err() != nil {
 		return Response{}, fmt.Errorf("llm: claude %w", ctx.Err())
 	}
@@ -102,22 +102,26 @@ func (c *ClaudeCLI) run(ctx context.Context, dir string, args []string, prompt s
 // 2. it keeps the OAuth login that `--bare` refuses
 // 3. `--setting-sources user` drops project settings that a `.claude` folder in a parent of the cwd could plant
 // 4. such settings could send the prompt and the credential to another endpoint through their env
-func (c *ClaudeCLI) args(schema json.RawMessage, model, system string) []string {
+// 5. `--effort` goes only where a caller pins it since a default the host changes would move answers with nothing on record
+func (c *ClaudeCLI) args(req Request) []string {
 	argv := []string{
 		"-p",
 		"--output-format", "json",
-		"--json-schema", string(schema),
+		"--json-schema", string(req.Schema),
 		"--max-turns", strconv.Itoa(defaultMaxTurns),
 		"--max-budget-usd", strconv.FormatFloat(defaultBudget, 'f', -1, 64),
 		"--no-session-persistence",
 		"--safe-mode",
 		"--setting-sources", "user",
-		"--model", cmp.Or(model, c.model),
+		"--model", cmp.Or(req.Model, c.model),
 	}
-	if system == "" {
-		return argv
+	if req.Effort != "" {
+		argv = append(argv, "--effort", req.Effort)
 	}
-	return append(argv, "--append-system-prompt", system)
+	if req.System != "" {
+		argv = append(argv, "--append-system-prompt", req.System)
+	}
+	return argv
 }
 
 const (

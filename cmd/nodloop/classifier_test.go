@@ -25,6 +25,9 @@ import (
 
 const layaURL = "http://localhost:8000/v1/systemone"
 
+// The last line of a list where the judge point has no endpoint
+const judgeAlone = "point\tjudge\tclaude (default)\n"
+
 // Each row runs its commands in order on one home and checks the last
 func TestRunClassifier(t *testing.T) {
 	type args struct {
@@ -46,10 +49,13 @@ func TestRunClassifier(t *testing.T) {
 		want want
 	}{
 		{"a fresh home lists every point as claude alone", args{nil, []string{"list"}},
-			want{0, "point\tcritic\tclaude (default)\npoint\treaction\tclaude (default)\n", ""}},
+			want{0, "point\tcritic\tclaude (default)\npoint\treaction\tclaude (default)\n" + judgeAlone, ""}},
 		{"a set point is listed with its model and key env",
 			args{[][]string{{"set", "critic", "--url", layaURL, "--model", "laya", "--key-env", "LAYA_KEY"}}, []string{"list"}},
-			want{0, "point\tcritic\t" + layaURL + "\tmodel laya\tkey $LAYA_KEY\npoint\treaction\tclaude (default)\n", ""}},
+			want{0, "point\tcritic\t" + layaURL + "\tmodel laya\tkey $LAYA_KEY\npoint\treaction\tclaude (default)\n" + judgeAlone, ""}},
+		{"the judge point takes an endpoint of another model family",
+			args{[][]string{{"set", "judge", "--url", layaURL}}, []string{"list"}},
+			want{0, "point\tcritic\tclaude (default)\npoint\treaction\tclaude (default)\npoint\tjudge\t" + layaURL + "\n", ""}},
 		{"set prints the point and its URL", args{nil, set}, want{0, "point\tcritic\t" + layaURL + "\n", ""}},
 		{"set again replaces the endpoint", args{[][]string{set}, []string{"set", "critic", "--url", "https://openrouter.ai/api/alpha/decisions"}},
 			want{0, "point\tcritic\thttps://openrouter.ai/api/alpha/decisions\n", ""}},
@@ -58,9 +64,9 @@ func TestRunClassifier(t *testing.T) {
 		{"set without a URL is refused", args{nil, []string{"set", "critic"}},
 			want{1, "", "nodloop classifier: classify: invalid endpoint: \"\" is not an absolute http or https URL"}},
 		{"an unknown point is refused", args{nil, []string{"set", "review", "--url", layaURL}},
-			want{1, "", "nodloop classifier: classify: unknown decision point: \"review\". Use one of [critic reaction]"}},
+			want{1, "", "nodloop classifier: classify: unknown decision point: \"review\". Use one of [critic reaction judge]"}},
 		{"unset of an unknown point is refused", args{nil, []string{"unset", "review"}},
-			want{1, "", "nodloop classifier: classify: unknown decision point: \"review\". Use one of [critic reaction]"}},
+			want{1, "", "nodloop classifier: classify: unknown decision point: \"review\". Use one of [critic reaction judge]"}},
 		{"a point never set is not probed", args{nil, []string{"probe", "critic"}},
 			want{1, "", "nodloop classifier: classify: no endpoint set for the point: critic"}},
 		{"an unknown action is refused", args{nil, []string{"use", "critic"}},
@@ -104,26 +110,26 @@ func TestRunClassifierLegacyConfig(t *testing.T) {
 	}{
 		{"a cascade of an endpoint and claude asks that endpoint",
 			`{` + named + `"decisions":{"critic":{"mode":"cascade","members":["laya","claude"],"threshold":0.8}}}`, []string{"list"},
-			want{0, "point\tcritic\t" + layaURL + "\npoint\treaction\tclaude (default)\n", ""}},
+			want{0, "point\tcritic\t" + layaURL + "\npoint\treaction\tclaude (default)\n" + judgeAlone, ""}},
 		{"a cascade without a threshold stopped at the default and asks that endpoint",
 			`{` + named + `"decisions":{"critic":{"mode":"cascade","members":["laya","claude"]}}}`, []string{"list"},
-			want{0, "point\tcritic\t" + layaURL + "\npoint\treaction\tclaude (default)\n", ""}},
+			want{0, "point\tcritic\t" + layaURL + "\npoint\treaction\tclaude (default)\n" + judgeAlone, ""}},
 		{"a cascade of another threshold is refused and names it",
 			`{` + named + `"decisions":{"critic":{"mode":"cascade","members":["laya","claude"],"threshold":0.9}}}`, []string{"list"},
 			want{1, "", "nodloop classifier: classifier setup no longer run: decisions.critic in config.json asks [laya claude] " +
 				"with threshold 0.9 while a point now falls back below 0.8. Run nodloop classifier set critic --url <url> to ask one endpoint before claude"}},
 		{"endpoints named like a point without decisions ran claude alone and still do",
 			`{"classifiers":{"critic":{"url":"` + layaURL + `"}}}`, []string{"list"},
-			want{0, "point\tcritic\tclaude (default)\npoint\treaction\tclaude (default)\n", ""}},
+			want{0, "point\tcritic\tclaude (default)\npoint\treaction\tclaude (default)\n" + judgeAlone, ""}},
 		{"decision_points wins over the keys of a config before 0.7.0",
 			`{"decision_points":{"reaction":{"url":"` + layaURL + `"}},` + named + `"decisions":{"critic":{"mode":"single","members":["laya"]}}}`, []string{"list"},
-			want{0, "point\tcritic\tclaude (default)\npoint\treaction\t" + layaURL + "\n", ""}},
+			want{0, "point\tcritic\tclaude (default)\npoint\treaction\t" + layaURL + "\n" + judgeAlone, ""}},
 		{"a single endpoint asks that endpoint",
 			`{` + named + `"decisions":{"reaction":{"mode":"single","members":["laya"]}}}`, []string{"list"},
-			want{0, "point\tcritic\tclaude (default)\npoint\treaction\t" + layaURL + "\n", ""}},
+			want{0, "point\tcritic\tclaude (default)\npoint\treaction\t" + layaURL + "\n" + judgeAlone, ""}},
 		{"claude alone has no endpoint",
 			`{` + named + `"decisions":{"critic":{"mode":"single","members":["claude"]}}}`, []string{"list"},
-			want{0, "point\tcritic\tclaude (default)\npoint\treaction\tclaude (default)\n", ""}},
+			want{0, "point\tcritic\tclaude (default)\npoint\treaction\tclaude (default)\n" + judgeAlone, ""}},
 		{"a parallel setup is refused with how to repair it",
 			`{` + named + `"decisions":{"critic":{"mode":"parallel","members":["laya","spare"],"combine":"all"}}}`, []string{"list"},
 			want{1, "", "nodloop classifier: classifier setup no longer run: decisions.critic in config.json asks [laya spare]. " +

@@ -55,3 +55,57 @@ func (mr *MockClassifierMockRecorder) Classify(ctx, req any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Classify", reflect.TypeOf((*MockClassifier)(nil).Classify), ctx, req)
 }
+
+// MockReplier is a mock of Replier interface.
+type MockReplier struct {
+	ctrl     *gomock.Controller
+	recorder *MockReplierMockRecorder
+	isgomock struct{}
+}
+
+// MockReplierMockRecorder is the mock recorder for MockReplier.
+type MockReplierMockRecorder struct {
+	mock *MockReplier
+}
+
+// NewMockReplier creates a new mock instance.
+func NewMockReplier(ctrl *gomock.Controller) *MockReplier {
+	mock := &MockReplier{ctrl: ctrl}
+	mock.recorder = &MockReplierMockRecorder{mock}
+	return mock
+}
+
+// EXPECT returns an object that allows the caller to indicate expected use.
+func (m *MockReplier) EXPECT() *MockReplierMockRecorder {
+	return m.recorder
+}
+
+// Classify mocks base method.
+func (m *MockReplier) Classify(ctx context.Context, req classify.Request) (classify.Answers, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Classify", ctx, req)
+	ret0, _ := ret[0].(classify.Answers)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// Classify indicates an expected call of Classify.
+func (mr *MockReplierMockRecorder) Classify(ctx, req any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Classify", reflect.TypeOf((*MockReplier)(nil).Classify), ctx, req)
+}
+
+// Reply mocks base method.
+func (m *MockReplier) Reply(ctx context.Context, req classify.Request) (classify.Reply, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Reply", ctx, req)
+	ret0, _ := ret[0].(classify.Reply)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// Reply indicates an expected call of Reply.
+func (mr *MockReplierMockRecorder) Reply(ctx, req any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Reply", reflect.TypeOf((*MockReplier)(nil).Reply), ctx, req)
+}

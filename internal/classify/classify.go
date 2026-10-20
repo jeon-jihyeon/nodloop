@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"maps"
+	"math"
 	"slices"
 	"strings"
 )
@@ -51,13 +52,14 @@ func (a Answer) confidence() float64 {
 type Answers map[string]Answer
 
 // Every question has an answer and every probability lies between 0 and 1
+// NaN fails too since no record could hold it
 func (as Answers) check(qs Questions) error {
 	for _, name := range qs.names() {
 		a, ok := as[name]
 		if !ok {
 			return fmt.Errorf("%w: %s", ErrAnswerMissing, name)
 		}
-		if a.Yes < 0 || a.Yes > 1 {
+		if math.IsNaN(a.Yes) || a.Yes < 0 || a.Yes > 1 {
 			return fmt.Errorf("%w: %s is %v", ErrResponseInvalid, name, a.Yes)
 		}
 	}
@@ -84,7 +86,23 @@ func (as Answers) String() string {
 }
 
 // Something that answers the questions of a request
-// The consumer is Plan
+// The consumers are Plan and Panel
 type Classifier interface {
 	Classify(ctx context.Context, req Request) (Answers, error)
+}
+
+// Answers with the model and the effort behind them
+type Reply struct {
+	Answers Answers
+	// The model the backend answered with and else the model asked
+	Model string
+	// The effort the member asked and empty when it pinned none
+	Effort string
+}
+
+// A classifier that names the model and the effort behind its answers
+// Plan and Panel ask it for a reply so a trace tells a change of configuration from a change of answers
+type Replier interface {
+	Classifier
+	Reply(ctx context.Context, req Request) (Reply, error)
 }
