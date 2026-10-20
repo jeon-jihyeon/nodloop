@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { ToolError } from "../src/client.ts";
 import { Client } from "../src/client.ts";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { acme, approve, binary, holdout, open, runs, seed, server } from "./setup.ts";
@@ -52,6 +52,20 @@ test("a verdict without a reviewer is refused over stdio, where no key names one
   }
 });
 
+test("nodloop is reserved for the capture of a session, so a verdict or an outcome under it is refused and nothing is recorded", async () => {
+  const c = await open();
+  try {
+    const run = await c.record({ producer: "bot", output: "answer", labels: acme });
+    const reserved = (e: unknown) => e instanceof ToolError && /reserved for what the capture reads/.test(e.message);
+    await assert.rejects(c.judge(run, "reject", "nodloop", { reason: "wrong" }), reserved);
+    await assert.rejects(c.outcome(run, "confirmed", { reviewer: "nodloop" }), reserved);
+    const written = ["feedback.jsonl", "outcomes.jsonl"].filter((f) => existsSync(join(c.records, f)) && readFileSync(join(c.records, f), "utf8") !== "");
+    assert.deepEqual(written, []);
+  } finally {
+    await c.close();
+  }
+});
+
 for (const [command, action] of [["cd / && rm -rf /x", "block"], ["ls", "allow"]] as const) {
   test(`check call ${command} is ${action}`, async () => {
     const c = await open();
@@ -76,6 +90,7 @@ test("a server key a person holds approves under its own name and a key of a ser
     const proposal = await bot.approve(p.id, p.version, "mallory");
     const approved = await c.approve(p.id, p.version, "mallory");
     const mine = await c.knowledge("support-bot", acme);
+    await assert.rejects(c.judge(run, "approve", "nodloop"), (e) => e instanceof ToolError && /reserved for what the capture reads/.test(e.message));
 
     assert.deepEqual([p.id, p.status], ["window", "candidate"]);
     assert.deepEqual([proposal.status, proposal.proposal !== ""], ["candidate", true]);

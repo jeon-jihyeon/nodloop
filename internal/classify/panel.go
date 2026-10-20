@@ -40,7 +40,7 @@ type Ballot struct {
 func (p *Panel) Classify(ctx context.Context, req Request) (Ballot, error) {
 	start := p.now()
 	votes := make([]Vote, 0, len(p.members))
-	all := make([]asked, 0, len(p.members))
+	all := make([]Asked, 0, len(p.members))
 	for _, m := range p.members {
 		reply, rec, err := m.ask(ctx, req, p.now)
 		votes = append(votes, Vote{Member: m.Name, Reply: reply, Err: err})
@@ -50,20 +50,9 @@ func (p *Panel) Classify(ctx context.Context, req Request) (Ballot, error) {
 	return Ballot{TraceID: id, Votes: votes}, err
 }
 
-// The trace of one call and its id
-// 1. the state holds the anchor and the change so only its HMAC is kept
-// 2. the questions are kept by name
-// 3. no top level answers since a panel combines none
-func (p *Panel) record(ctx context.Context, req Request, all []asked, start time.Time) (string, error) {
-	tr, err := p.point.trace(req.Ref, struct {
-		State     string   `json:"state"`
-		Questions []string `json:"questions"`
-	}{p.seal(req.State), req.Questions.names()}, struct {
-		Members []asked `json:"members"`
-	}{all}, start, p.now())
-	if err != nil {
-		return "", err
-	}
+// The trace of one call and its id with no top level answers since a panel combines none
+func (p *Panel) record(ctx context.Context, req Request, all []Asked, start time.Time) (string, error) {
+	tr := p.point.trace(req, p.seal, TraceOutput{Members: all}, start, p.now())
 	if err := p.traces.Append(ctx, tr.Record()); err != nil {
 		return "", err
 	}

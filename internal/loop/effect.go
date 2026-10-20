@@ -56,6 +56,10 @@ type EffectRow struct {
 	SameReason int `json:"same_reason"`
 	// Empty on the two rows of a report without runs
 	Producer string `json:"producer,omitempty"`
+	// Judged runs whose verdict names a person with no proof and judged runs only the conversation or the capture judged
+	// Judged counts them with the verdicts of a proven person so the rate keeps every verdict and the counts say whose they are
+	Named    int `json:"named"`
+	Inferred int `json:"inferred"`
 	// The start of the runs the report read and zero for every run
 	Since time.Time `json:"since,omitzero"`
 	// The draw units of the arm
@@ -149,8 +153,14 @@ func (r Runs) Effect(items knowledge.Set, outcomes feedback.Outcomes, since time
 	return out
 }
 
-// The audit and reason counts of one judged run of the arm with the items it received or would have received
+// The audit and reviewer and reason counts of one judged run of the arm with the items it received or would have received
 func (r Runs) tally(row *EffectRow, fb feedback.Feedback, refs []knowledge.Ref, evidence map[knowledge.Ref][]string) {
+	switch {
+	case fb.Implicit():
+		row.Inferred++
+	case !fb.Proven():
+		row.Named++
+	}
 	if fb.Audit {
 		row.AuditJudged++
 	}

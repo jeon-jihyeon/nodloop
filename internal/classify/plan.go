@@ -34,15 +34,16 @@ type Plan struct {
 	endpoint Member
 	builtin  Member
 	traces   TraceStore
+	seal     Seal
 	now      func() time.Time
 }
 
-func NewPlan(point Point, endpoint, builtin Member, traces TraceStore, now func() time.Time) *Plan {
-	return &Plan{point: point, endpoint: endpoint, builtin: builtin, traces: traces, now: now}
+func NewPlan(point Point, endpoint, builtin Member, traces TraceStore, seal Seal, now func() time.Time) *Plan {
+	return &Plan{point: point, endpoint: endpoint, builtin: builtin, traces: traces, seal: seal, now: now}
 }
 
 // What one member answered
-type asked struct {
+type Asked struct {
 	Name    string  `json:"name"`
 	Model   string  `json:"model,omitempty"`
 	Effort  string  `json:"effort,omitempty"`
@@ -52,6 +53,22 @@ type asked struct {
 	MS int64 `json:"ms,omitempty"`
 }
 
+// The input of a classify trace
+type TraceInput struct {
+	// The text the members read at the critic point and its HMAC at every other point
+	State string `json:"state"`
+	// The description of the published schema says what it holds since its type is open
+	Questions any `json:"questions" jsonschema:"the instructions by name at the critic point and the names alone at every other point"`
+}
+
+// The output of a classify trace with every member asked in order and the endpoint first
+type TraceOutput struct {
+	Members []Asked `json:"members"`
+	// The answers that stand
+	// Absent when the deciding member failed and on a panel since it combines none
+	Answers Answers `json:"answers,omitempty"`
+}
+
 // Answers the request and records every member asked in one classify trace
 // 1. the endpoint answers alone when every answer reaches the threshold
 // 2. the built in member answers when the endpoint fails or is unsure
@@ -59,25 +76,28 @@ type asked struct {
 func (p *Plan) Classify(ctx context.Context, req Request) (Answers, error) {
 	start := p.now()
 	reply, first, err := p.endpoint.ask(ctx, req, p.now)
-	all := []asked{first}
+	all := []Asked{first}
+	var model string
 	if err != nil || !reply.Answers.Sure() {
 		endpointErr := err
-		var fallback asked
+		var fallback Asked
 		reply, fallback, err = p.builtin.ask(ctx, req, p.now)
-		all = append(all, fallback)
+		all, model = append(all, fallback), fallback.Model
 		if err != nil {
 			err = errors.Join(endpointErr, err)
 		}
 	}
-	return reply.Answers, errors.Join(err, p.record(ctx, req, all, reply.Answers, err, start))
+	tr := p.point.trace(req, p.seal, TraceOutput{Members: all, Answers: reply.Answers}, start, p.now())
+	tr.Model = model
+	return reply.Answers, errors.Join(err, p.record(ctx, tr, err))
 }
 
 // The reply of the member with its answers checked against the questions and the record of what it answered
 // A failed reply keeps the model and the effort the member named so the trace shows what failed
-func (m Member) ask(ctx context.Context, req Request, now func() time.Time) (Reply, asked, error) {
+func (m Member) ask(ctx context.Context, req Request, now func() time.Time) (Reply, Asked, error) {
 	start := now()
 	reply, err := m.reply(ctx, req)
-	rec := asked{Name: m.Name, Model: reply.Model, Effort: reply.Effort, MS: now().Sub(start).Milliseconds()}
+	rec := Asked{Name: m.Name, Model: reply.Model, Effort: reply.Effort, MS: now().Sub(start).Milliseconds()}
 	if err == nil {
 		err = reply.Answers.check(req.Questions)
 	}
@@ -98,37 +118,32 @@ func (m Member) reply(ctx context.Context, req Request) (Reply, error) {
 	return Reply{Answers: answers}, err
 }
 
-// The trace of one request
-// The state is kept because it holds the draft the members judged and no other record keeps a refused draft
-func (p *Plan) record(ctx context.Context, req Request, all []asked, answers Answers, failed error, start time.Time) error {
-	tr, err := p.point.trace(req.Ref, struct {
-		State     string    `json:"state"`
-		Questions Questions `json:"questions"`
-	}{req.State, req.Questions}, struct {
-		Members []asked `json:"members"`
-		Answers Answers `json:"answers,omitempty"`
-	}{all, answers}, start, p.now())
-	if err != nil {
-		return err
-	}
+// Appends the trace of one request with the error of the deciding member
+func (p *Plan) record(ctx context.Context, tr trace.Trace, failed error) error {
 	if failed != nil {
 		tr.Error = failed.Error()
 	}
 	return p.traces.Append(ctx, tr.Record())
 }
 
+// The input a classify trace of the point keeps
+// 1. the critic keeps the state as text since it holds the refused draft no other record keeps
+// 2. every other point keeps the HMAC of the state and the questions by name
+// since the state holds the person's words or the anchor and a question may name a lesson by its content
+func (pt Point) input(req Request, seal Seal) TraceInput {
+	if pt == PointCritic {
+		return TraceInput{State: req.State, Questions: req.Questions}
+	}
+	return TraceInput{State: seal(req.State), Questions: req.Questions.names()}
+}
+
 // The classify trace of one call of the point that started at start
-func (pt Point) trace(ref string, input, output any, start, now time.Time) (trace.Trace, error) {
-	in, err := json.Marshal(input)
-	if err != nil {
-		return trace.Trace{}, err
-	}
-	out, err := json.Marshal(output)
-	if err != nil {
-		return trace.Trace{}, err
-	}
+// Strings and answers that passed their check always encode since a NaN never passes
+func (pt Point) trace(req Request, seal Seal, output TraceOutput, start, now time.Time) trace.Trace {
+	in, _ := json.Marshal(pt.input(req, seal))
+	out, _ := json.Marshal(output)
 	return trace.Trace{
-		ID: trace.NewID(now), Name: trace.NameClassify, Subject: string(pt), Ref: ref, Time: now,
+		ID: trace.NewID(now), Name: trace.NameClassify, Subject: string(pt), Ref: req.Ref, Time: now,
 		Input: in, Output: out, DurationMS: now.Sub(start).Milliseconds(),
-	}, nil
+	}
 }

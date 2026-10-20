@@ -170,6 +170,8 @@ func TestServerAgent(t *testing.T) {
 		{"a verdict naming a person is the session's", "feedback",
 			map[string]any{"trace_id": runID, "verdict": "approve", "reviewer": "ann"}, feedback.ReviewerSession},
 		{"a verdict naming nobody is the session's", "feedback", map[string]any{"trace_id": runID, "verdict": "approve"}, feedback.ReviewerSession},
+		{"a verdict naming the capture is the session's", "feedback",
+			map[string]any{"trace_id": runID, "verdict": "approve", "reviewer": feedback.ReviewerNodloop}, feedback.ReviewerSession},
 		{"an outcome naming a person is the session's", "outcome",
 			map[string]any{"trace_id": runID, "result": "confirmed", "reviewer": "ann"}, feedback.ReviewerSession},
 	}
@@ -216,6 +218,15 @@ func TestServerReviewerRequired(t *testing.T) {
 			want{reviewer: "ann"}},
 		{"a verdict under a key takes the key name", args{mcp.Caller{Person: "ci"}, "feedback", map[string]any{"verdict": "approve"}},
 			want{reviewer: "ci"}},
+		{"a verdict over stdio under the reserved name of the capture is refused",
+			args{mcp.Caller{}, "feedback", map[string]any{"verdict": "reject", "reason": "wrong", "reviewer": "nodloop"}},
+			want{errText: feedback.ErrReviewerReserved.Error()}},
+		{"an outcome over stdio under the reserved name is refused",
+			args{mcp.Caller{}, "outcome", map[string]any{"result": "confirmed", "reviewer": "nodloop"}},
+			want{errText: feedback.ErrReviewerReserved.Error()}},
+		{"a verdict under a key that proves a person is refused under the reserved name",
+			args{mcp.Caller{Person: "ann", Proves: true}, "feedback", map[string]any{"verdict": "approve", "reviewer": "nodloop"}},
+			want{errText: feedback.ErrReviewerReserved.Error()}},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
@@ -233,6 +244,39 @@ func TestServerReviewerRequired(t *testing.T) {
 
 			assert.Contains(t, errText(err), tc.want.errText)
 			assert.Equal(t, tc.want.reviewer, got.Reviewer)
+		})
+	}
+}
+
+// A named verdict carries the proof of its call and an inferred one carries none
+func TestServerFeedbackProof(t *testing.T) {
+	type want struct {
+		reviewer, proof string
+	}
+	tcs := []struct {
+		name string
+		args mcp.Caller
+		want want
+	}{
+		{"over stdio a named verdict proves nobody", mcp.Caller{}, want{"ann", "none"}},
+		{"under a key without --person a named verdict proves nobody", mcp.Caller{Person: "ci"}, want{"ann", "none"}},
+		{"under a key that proves a person the verdict carries the key", mcp.Caller{Person: "ann", Proves: true}, want{"ann", "key"}},
+		{"on the agent server the verdict is the session's with no proof", mcp.Caller{Agent: true}, want{feedback.ReviewerSession, ""}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			st := testkit.Open(t)
+			c := testkit.Connect(t, serve(st, tc.args))
+			runID := recordRun(t, c, "nodloop")
+
+			err := c.Run(t, "feedback", map[string]any{"trace_id": runID, "verdict": "approve", "reviewer": "ann"})
+
+			require.NoError(t, err)
+			found, err := st.Feedback.List(t.Context(), record.FeedbackFilter{})
+			require.NoError(t, err)
+			require.Len(t, found, 1)
+			assert.Equal(t, tc.want, want{found[0].Reviewer, found[0].Proof})
 		})
 	}
 }

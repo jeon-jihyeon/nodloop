@@ -218,6 +218,57 @@ func TestExtractorReactionNotCorrected(t *testing.T) {
 	assert.ErrorIs(t, err, extract.ErrNotCorrected)
 }
 
+// The reaction reads the reconciled verdict: a person's wins and a run the conversation and the capture dispute teaches nothing
+func TestExtractorReactionVerdict(t *testing.T) {
+	type verdict struct {
+		reviewer string
+		verdict  feedback.Verdict
+	}
+	type want struct {
+		reviewer string
+		err      error
+	}
+	tcs := []struct {
+		name string
+		// Recorded oldest first a minute apart
+		args []verdict
+		want want
+	}{
+		{"a person's approve wins over a later inferred correction",
+			[]verdict{{"ann", feedback.VerdictApprove}, {feedback.ReviewerSession, feedback.VerdictReject}}, want{err: extract.ErrNotCorrected}},
+		{"a person's correction wins over a later inferred approve",
+			[]verdict{{"ann", feedback.VerdictReject}, {feedback.ReviewerNodloop, feedback.VerdictApprove}}, want{reviewer: "ann"}},
+		{"readers that agree teach with the record of the conversation",
+			[]verdict{{feedback.ReviewerNodloop, feedback.VerdictReject}, {feedback.ReviewerSession, feedback.VerdictReject}},
+			want{reviewer: feedback.ReviewerSession}},
+		{"a run the readers dispute teaches nothing",
+			[]verdict{{feedback.ReviewerSession, feedback.VerdictReject}, {feedback.ReviewerNodloop, feedback.VerdictApprove}},
+			want{err: extract.ErrNotCorrected}},
+		{"the capture alone teaches", []verdict{{feedback.ReviewerNodloop, feedback.VerdictReject}}, want{reviewer: feedback.ReviewerNodloop}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ctx := context.Background()
+			s := testkit.Open(t)
+			run, err := trace.NewRun("session", "", trace.Labels{"repo": {"nodloop"}}, nil, json.RawMessage(`"x"`), s.Clock.Now())
+			require.NoError(t, err)
+			require.NoError(t, s.Traces.Append(ctx, run.Record()))
+			for i, v := range tc.args {
+				fb := feedback.Feedback{
+					TraceID: run.ID, Time: s.Clock.Now().Add(time.Duration(i) * time.Minute), Verdict: v.verdict, Reason: "why", Reviewer: v.reviewer,
+				}
+				require.NoError(t, s.Feedback.Append(ctx, fb.Record()))
+			}
+
+			got, err := extract.New(s.Ledger, s.Traces, s.Feedback, s.Clock.Now).Reaction(ctx, run.ID)
+
+			assert.ErrorIs(t, err, tc.want.err)
+			assert.Equal(t, tc.want.reviewer, got.Verdict.Reviewer)
+		})
+	}
+}
+
 func TestExtractorExtract(t *testing.T) {
 	good := `{"relation":"add","kind":"judgment","content":"Run git with -C <dir> instead of changing into it","keys":["repo"]}`
 	twoSentences := `{"relation":"add","kind":"judgment","content":"Use git -C. Never cd first"}`

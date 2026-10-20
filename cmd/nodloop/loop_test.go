@@ -32,11 +32,11 @@ func TestRunReportRecords(t *testing.T) {
 		stdout string
 		stderr string
 	}
-	totals := `{"totals":{"runs":0,"judged":0,"inferred":0,"corrected":0,"waiting":0,"approved":0},"scopes":[],"drafts":[],"items":[]}` + "\n"
+	totals := `{"totals":{"runs":0,"judged":0,"named":0,"inferred":0,"corrected":0,"waiting":0,"approved":0},"scopes":[],"drafts":[],"items":[]}` + "\n"
 	added := `"expected_share":0,"rate":null,"rate_low":null,"rate_high":null,"judged_rate":null,"audit_judged":0,"audit_corrected":0,` +
 		`"confirmed":0,"refuted":0,"undrawn":0,"srm_p":null,"difference":null,"difference_low":null,"difference_high":null,"insufficient":false,"warnings":[]`
-	arms := `[{"arm":"applied","runs":0,"judged":0,"corrected":0,"same_reason":0,"units":0,` + added + `},` +
-		`{"arm":"withheld","runs":0,"judged":0,"corrected":0,"same_reason":0,"units":0,` + added + `}]` + "\n"
+	arms := `[{"arm":"applied","runs":0,"judged":0,"corrected":0,"same_reason":0,"named":0,"inferred":0,"units":0,` + added + `},` +
+		`{"arm":"withheld","runs":0,"judged":0,"corrected":0,"same_reason":0,"named":0,"inferred":0,"units":0,` + added + `}]` + "\n"
 	replays := `[{"id":"git-c","version":1,"passed":true,"corrected":1,"missed":0,"approved":0,"overreach":0,"time":"2026-10-07T12:00:00Z"}]` + "\n"
 	tcs := []struct {
 		name string
@@ -114,9 +114,9 @@ func TestRunReportText(t *testing.T) {
 			"each arm of a producer names it after the counts and the new columns follow",
 			args{"effect", "", []run{{"r1", applied + `}`}, {"r2", withheld + `}`}, {"r3", `{"applied":[{"id":"git-c","version":1}]}`}}, nil, `{}`, nil},
 			"window\tall\tapplied runs 1\twithheld runs 1\n" +
-				"effect\tapplied\truns 1\tjudged 0\tcorrected 0\tsame reason 0\tproducer bot\tunits 1\trate -\tjudged rate 0.000\texpected share 0.500" +
+				"effect\tapplied\truns 1\tjudged 0\tcorrected 0\tsame reason 0\tproducer bot\tnamed 0\tinferred 0\tunits 1\trate -\tjudged rate 0.000\texpected share 0.500" +
 				"\taudit judged 0 corrected 0\toutcomes confirmed 0 refuted 0\tundrawn 1\tsrm p 1.000\tdifference -\twarnings insufficient\n" +
-				"effect\twithheld\truns 1\tjudged 0\tcorrected 0\tsame reason 0\tproducer bot\tunits 1\trate -\tjudged rate 0.000\texpected share 0.500" +
+				"effect\twithheld\truns 1\tjudged 0\tcorrected 0\tsame reason 0\tproducer bot\tnamed 0\tinferred 0\tunits 1\trate -\tjudged rate 0.000\texpected share 0.500" +
 				"\taudit judged 0 corrected 0\toutcomes confirmed 0 refuted 0\tundrawn 1\tsrm p 1.000\tdifference -\twarnings insufficient\n",
 		},
 		{
@@ -126,10 +126,10 @@ func TestRunReportText(t *testing.T) {
 				{"r3", `{"applied":[],"withheld":[{"id":"git-c","version":1}],"drawn":true,"share":0.2,"scheme":1}`},
 			}, []verdict{{"r1", feedback.VerdictReject, feedback.ReasonFact}, {"r2", feedback.VerdictApprove, ""}, {"r3", feedback.VerdictApprove, ""}}, `{}`, nil},
 			"window\t2026-09-30T12:00:00Z\tapplied runs 2\twithheld runs 1\n" +
-				"effect\tapplied\truns 2\tjudged 2\tcorrected 1\tsame reason 1\tproducer bot\tunits 1\trate 0.500 [0.095, 0.905]\tjudged rate 1.000" +
+				"effect\tapplied\truns 2\tjudged 2\tcorrected 1\tsame reason 1\tproducer bot\tnamed 2\tinferred 0\tunits 1\trate 0.500 [0.095, 0.905]\tjudged rate 1.000" +
 				"\texpected share 0.650\taudit judged 0 corrected 0\toutcomes confirmed 0 refuted 0\tundrawn 0\tsrm p 0.657" +
 				"\tdifference 0.500 [-0.391, 0.905]\twarnings insufficient,mixed_shares\n" +
-				"effect\twithheld\truns 1\tjudged 1\tcorrected 0\tsame reason 0\tproducer bot\tunits 1\trate 0.000 [0.000, 0.793]\tjudged rate 1.000" +
+				"effect\twithheld\truns 1\tjudged 1\tcorrected 0\tsame reason 0\tproducer bot\tnamed 1\tinferred 0\tunits 1\trate 0.000 [0.000, 0.793]\tjudged rate 1.000" +
 				"\texpected share 0.350\taudit judged 0 corrected 0\toutcomes confirmed 0 refuted 0\tundrawn 0\tsrm p 0.657" +
 				"\tdifference 0.500 [-0.391, 0.905]\twarnings insufficient,mixed_shares\n",
 		},

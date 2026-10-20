@@ -113,7 +113,7 @@ func (rec Record) end(res Result, err error) Record {
 
 // The input of an extract trace
 // The verdict and its reviewer say whether a person or the conversation judged the run
-type recordInput struct {
+type TraceInput struct {
 	Verdict    string `json:"verdict"`
 	ReasonCode string `json:"reason_code,omitempty"`
 	Reviewer   string `json:"reviewer,omitempty"`
@@ -129,7 +129,7 @@ type cost struct {
 
 // Appends the extract trace of the reaction and returns the error of the extraction joined with any failure to record it
 func (e *Extractor) record(ctx context.Context, r Reaction, path Path, rec Record, spent cost, failed error) error {
-	input, err := json.Marshal(recordInput{Verdict: string(r.Verdict.Verdict), ReasonCode: string(r.Verdict.ReasonCode), Reviewer: r.Verdict.Reviewer})
+	input, err := json.Marshal(TraceInput{Verdict: string(r.Verdict.Verdict), ReasonCode: string(r.Verdict.ReasonCode), Reviewer: r.Verdict.Reviewer})
 	if err != nil {
 		return errors.Join(failed, err)
 	}

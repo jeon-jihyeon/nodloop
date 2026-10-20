@@ -14,4 +14,6 @@ var (
 	ErrReasonCodeUnexpected = errors.New("feedback: only an edit or reject verdict carries a reason code")
 	// A missing name read as a person's verdict before and silently stopped the extraction of an inferred correction
 	ErrReviewerRequired = errors.New("feedback: a reviewer is required")
+	// Only the capture writes it so no call of a person or a program can turn a dispute of the inferred readers
+	ErrReviewerReserved = errors.New("feedback: the reviewer name is reserved for what the capture reads from the person's words")
 )

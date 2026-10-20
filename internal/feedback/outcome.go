@@ -2,6 +2,7 @@ package feedback
 
 import (
 	"fmt"
+	"slices"
 	"time"
 )
 
@@ -13,11 +14,12 @@ const (
 	ResultInconclusive Result = "inconclusive" // checked without a clear answer
 )
 
-var validResults = map[Result]struct{}{ResultConfirmed: {}, ResultRefuted: {}, ResultInconclusive: {}}
+func Results() []Result {
+	return []Result{ResultConfirmed, ResultRefuted, ResultInconclusive}
+}
 
 func (r Result) Valid() bool {
-	_, ok := validResults[r]
-	return ok
+	return slices.Contains(Results(), r)
 }
 
 // What turned out to be true after someone checked
@@ -33,8 +35,9 @@ type Outcome struct {
 	Reviewer       string `json:"reviewer"`
 }
 
-// The reviewer is required like on a verdict
-// A session outcome has the secrets of its cause and note redacted and a person's own outcome is kept as written
+// 1. the reviewer is required like on a verdict
+// 2. the reserved name of the capture fails with ErrReviewerReserved since the capture records no outcome
+// 3. an inferred outcome has the secrets of its cause and note redacted and a person's own outcome is kept as written
 func NewOutcome(traceID string, result Result, confirmedCause, note, reviewer string, now time.Time) (Outcome, error) {
 	if traceID == "" {
 		return Outcome{}, ErrTraceIDRequired
@@ -42,13 +45,16 @@ func NewOutcome(traceID string, result Result, confirmedCause, note, reviewer st
 	if reviewer == "" {
 		return Outcome{}, ErrReviewerRequired
 	}
+	if reviewer == ReviewerNodloop {
+		return Outcome{}, fmt.Errorf("%w: %s", ErrReviewerReserved, reviewer)
+	}
 	if !result.Valid() {
 		return Outcome{}, fmt.Errorf("%w: %q", ErrResultUnknown, result)
 	}
 	if result != ResultConfirmed && confirmedCause != "" {
 		return Outcome{}, fmt.Errorf("%w: %s", ErrCauseUnexpected, result)
 	}
-	if reviewer == ReviewerSession {
+	if inferred(reviewer) {
 		confirmedCause, note = Redact(confirmedCause), Redact(note)
 	}
 	return Outcome{
@@ -63,9 +69,9 @@ func (o Outcome) RefutedSince(at time.Time) bool {
 	return o.Result == ResultRefuted && !o.Time.Before(at)
 }
 
-// Whether a session recorded the outcome instead of a person
+// Whether the conversation or the capture recorded the outcome instead of a person
 func (o Outcome) Implicit() bool {
-	return o.Reviewer == ReviewerSession
+	return inferred(o.Reviewer)
 }
 
 // An outcome is a check that happened and is never taken back

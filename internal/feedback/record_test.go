@@ -10,6 +10,7 @@ import (
 
 	"github.com/jeon-jihyeon/nodloop/internal/feedback"
 	"github.com/jeon-jihyeon/nodloop/internal/record"
+	"github.com/jeon-jihyeon/nodloop/internal/trace"
 )
 
 func TestFeedbackRecord(t *testing.T) {
@@ -22,10 +23,11 @@ func TestFeedbackRecord(t *testing.T) {
 			"every field",
 			feedback.Feedback{
 				TraceID: "t1", Time: at, Verdict: feedback.VerdictEdit, ReasonCode: feedback.ReasonScope, Reason: "reorder",
-				Edited: json.RawMessage(`{"order":["db"]}`), Reviewer: "author", Audit: true,
+				Edited: json.RawMessage(`{"order":["db"]}`), Reviewer: "author", Proof: trace.ProofTerminal, Audit: true,
 			},
 		},
 		{"only the required fields", feedback.Feedback{TraceID: "t2", Time: at, Verdict: feedback.VerdictApprove, Reviewer: "session"}},
+		{"a named verdict of an earlier release keeps no proof", feedback.Feedback{TraceID: "t3", Time: at, Verdict: feedback.VerdictReject, Reviewer: "ann"}},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {

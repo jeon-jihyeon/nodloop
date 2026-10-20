@@ -82,6 +82,11 @@ func TestNewOutcome(t *testing.T) {
 		{"unknown result fails", args{traceID: "t1", result: "maybe", reviewer: "sam"}, want{err: feedback.ErrResultUnknown}},
 		{"missing trace id fails", args{result: feedback.ResultConfirmed, reviewer: "sam"}, want{err: feedback.ErrTraceIDRequired}},
 		{"missing reviewer fails", args{traceID: "t1", result: feedback.ResultConfirmed}, want{err: feedback.ErrReviewerRequired}},
+		{
+			"the reserved name of the capture fails",
+			args{traceID: "t1", result: feedback.ResultConfirmed, reviewer: feedback.ReviewerNodloop},
+			want{err: feedback.ErrReviewerReserved},
+		},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
@@ -102,6 +107,7 @@ func TestOutcomeImplicit(t *testing.T) {
 		want bool
 	}{
 		{"session reviewer is implicit", feedback.ReviewerSession, true},
+		{"nodloop reviewer is implicit", feedback.ReviewerNodloop, true},
 		{"author reviewer is a person", feedback.ReviewerAuthor, false},
 		{"named reviewer is a person", "sam", false},
 	}

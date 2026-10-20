@@ -122,7 +122,7 @@ func extractRun(t *testing.T, getenv func(string) string, now func() time.Time, 
 	args := append([]string{"record", "--producer", "session", "--label", "repo=nodloop", "--output", out}, flags...)
 	require.Equal(t, 0, runRun(args, getenv, now, &id, &bytes.Buffer{}))
 	run := strings.TrimSpace(id.String())
-	require.Equal(t, 0, runFeedback([]string{"add", "--trace", run, "--verdict", "reject", "--reason", reason, "--reviewer", "ann"}, getenv, now, &bytes.Buffer{}, &bytes.Buffer{}))
+	require.Equal(t, 0, runFeedback([]string{"add", "--trace", run, "--verdict", "reject", "--reason", reason, "--reviewer", "ann"}, getenv, now, trace.ProofNone, &bytes.Buffer{}, &bytes.Buffer{}))
 	return run
 }
 

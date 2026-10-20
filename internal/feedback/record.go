@@ -1,12 +1,15 @@
 package feedback
 
-import "github.com/jeon-jihyeon/nodloop/internal/record"
+import (
+	"github.com/jeon-jihyeon/nodloop/internal/record"
+	"github.com/jeon-jihyeon/nodloop/internal/trace"
+)
 
 // The verdict a store line holds as it was recorded
 func Restore(r record.Feedback) Feedback {
 	return Feedback{
 		TraceID: r.TraceID, Time: r.Time, Verdict: Verdict(r.Verdict), ReasonCode: ReasonCode(r.ReasonCode), Reason: r.Reason,
-		Edited: r.Edited, Reviewer: r.Reviewer, Audit: r.Audit,
+		Edited: r.Edited, Reviewer: r.Reviewer, Proof: trace.Proof(r.Proof), Audit: r.Audit,
 	}
 }
 
@@ -26,7 +29,7 @@ func RestoreAll(rs []record.Feedback) Records {
 func (f Feedback) Record() record.Feedback {
 	return record.Feedback{
 		TraceID: f.TraceID, Time: f.Time, Verdict: string(f.Verdict), ReasonCode: string(f.ReasonCode), Reason: f.Reason,
-		Edited: f.Edited, Reviewer: f.Reviewer, Audit: f.Audit,
+		Edited: f.Edited, Reviewer: f.Reviewer, Proof: string(f.Proof), Audit: f.Audit,
 	}
 }
 

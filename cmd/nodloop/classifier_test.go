@@ -252,7 +252,7 @@ func TestRunKnowledgeExtractClassifier(t *testing.T) {
 			var id bytes.Buffer
 			require.Equal(t, 0, runRun([]string{"record", "--producer", "session", "--label", "repo=nodloop", "--output", out}, getenv, now, &id, &bytes.Buffer{}))
 			run := strings.TrimSpace(id.String())
-			require.Equal(t, 0, runFeedback([]string{"add", "--trace", run, "--verdict", "reject", "--reason", "ran cd before git", "--reviewer", "ann"}, getenv, now, &bytes.Buffer{}, &bytes.Buffer{}))
+			require.Equal(t, 0, runFeedback([]string{"add", "--trace", run, "--verdict", "reject", "--reason", "ran cd before git", "--reviewer", "ann"}, getenv, now, trace.ProofNone, &bytes.Buffer{}, &bytes.Buffer{}))
 			client := llmmock.NewMockClient(gomock.NewController(t))
 			answers := []string{draft, passed}
 			client.EXPECT().Complete(gomock.Any(), gomock.Any()).Times(tc.want.calls).DoAndReturn(func(context.Context, llm.Request) (llm.Response, error) {

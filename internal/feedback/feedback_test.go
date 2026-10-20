@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeon-jihyeon/nodloop/internal/feedback"
+	"github.com/jeon-jihyeon/nodloop/internal/trace"
 )
 
 func TestFeedbackRoundTrip(t *testing.T) {
@@ -21,6 +22,7 @@ func TestFeedbackRoundTrip(t *testing.T) {
 		Reason:     "reorder checks",
 		Edited:     json.RawMessage(`{"order":["db","cache"]}`),
 		Reviewer:   "author",
+		Proof:      trace.ProofKey,
 		Audit:      true,
 	}
 	b, err := json.Marshal(in)
@@ -75,6 +77,16 @@ func TestNew(t *testing.T) {
 			"approve without a reviewer fails",
 			args{traceID: "t1", verdict: feedback.VerdictApprove},
 			want{err: feedback.ErrReviewerRequired},
+		},
+		{
+			"the reserved name of the capture fails",
+			args{traceID: "t1", verdict: feedback.VerdictReject, reviewer: feedback.ReviewerNodloop},
+			want{err: feedback.ErrReviewerReserved},
+		},
+		{
+			"the reserved name fails before any other check",
+			args{verdict: "maybe", reviewer: feedback.ReviewerNodloop},
+			want{err: feedback.ErrReviewerReserved},
 		},
 		{
 			"approve keeps the named reviewer",
@@ -164,6 +176,54 @@ func TestNew(t *testing.T) {
 	}
 }
 
+// The capture alone writes the reserved name and its verdict follows the rules of every other verdict
+func TestNewCaptured(t *testing.T) {
+	now := time.Date(2026, 9, 23, 9, 0, 0, 0, time.UTC)
+	type args struct {
+		traceID string
+		verdict feedback.Verdict
+		code    feedback.ReasonCode
+		reason  string
+	}
+	type want struct {
+		feedback feedback.Feedback
+		err      error
+	}
+	tcs := []struct {
+		name string
+		args args
+		want want
+	}{
+		{
+			"a correction is recorded under the reserved name",
+			args{"t1", feedback.VerdictReject, feedback.ReasonOther, "no, quote the window"},
+			want{feedback: feedback.Feedback{
+				TraceID: "t1", Time: now, Verdict: feedback.VerdictReject, ReasonCode: feedback.ReasonOther, Reason: "no, quote the window",
+				Reviewer: feedback.ReviewerNodloop,
+			}},
+		},
+		{
+			"the person's words are redacted",
+			args{"t1", feedback.VerdictReject, "", "use token=" + "s3cr3t"},
+			want{feedback: feedback.Feedback{
+				TraceID: "t1", Time: now, Verdict: feedback.VerdictReject, Reason: "use token=[redacted]", Reviewer: feedback.ReviewerNodloop,
+			}},
+		},
+		{"a missing trace id fails", args{"", feedback.VerdictApprove, "", ""}, want{err: feedback.ErrTraceIDRequired}},
+		{"an unknown verdict fails", args{"t1", "maybe", "", ""}, want{err: feedback.ErrVerdictUnknown}},
+		{"an approval with a reason code fails", args{"t1", feedback.VerdictApprove, feedback.ReasonForm, ""}, want{err: feedback.ErrReasonCodeUnexpected}},
+		{"an edit fails since the capture reads no corrected output", args{"t1", feedback.VerdictEdit, "", ""}, want{err: feedback.ErrEditedRequired}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := feedback.NewCaptured(tc.args.traceID, tc.args.verdict, tc.args.code, tc.args.reason, now)
+			assert.ErrorIs(t, err, tc.want.err)
+			assert.Equal(t, tc.want.feedback, got)
+		})
+	}
+}
+
 func TestFeedbackCorrects(t *testing.T) {
 	tcs := []struct {
 		name string
@@ -190,6 +250,7 @@ func TestFeedbackImplicit(t *testing.T) {
 		want bool
 	}{
 		{"session reviewer is implicit", feedback.ReviewerSession, true},
+		{"nodloop reviewer is implicit", feedback.ReviewerNodloop, true},
 		{"author reviewer is a person", feedback.ReviewerAuthor, false},
 		{"named reviewer is a person", "sam", false},
 	}
@@ -276,22 +337,100 @@ func TestRecordsHuman(t *testing.T) {
 
 func TestRecordsInferred(t *testing.T) {
 	base := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
-	person := feedback.Feedback{TraceID: "t1", Time: base.Add(time.Hour), Verdict: feedback.VerdictApprove, Reviewer: "ann"}
-	early := feedback.Feedback{TraceID: "t1", Time: base, Verdict: feedback.VerdictReject, Reviewer: feedback.ReviewerSession}
-	late := feedback.Feedback{TraceID: "t1", Time: base.Add(time.Minute), Verdict: feedback.VerdictEdit, Reviewer: feedback.ReviewerSession}
+	at := func(reviewer, id string, v feedback.Verdict, after time.Duration) feedback.Feedback {
+		return feedback.Feedback{TraceID: id, Time: base.Add(after), Verdict: v, Reviewer: reviewer}
+	}
+	said := func(id string, v feedback.Verdict, after time.Duration) feedback.Feedback {
+		return at(feedback.ReviewerSession, id, v, after)
+	}
+	heard := func(id string, v feedback.Verdict, after time.Duration) feedback.Feedback {
+		return at(feedback.ReviewerNodloop, id, v, after)
+	}
 	tcs := []struct {
 		name string
 		args feedback.Records
 		want feedback.Records
 	}{
 		{"no records give nothing", nil, nil},
-		{"a later record of a person never hides the latest session record", feedback.Records{person, late, early}, feedback.Records{late}},
-		{"only records of a person give nothing", feedback.Records{person}, nil},
+		{
+			"readers that agree leave the record of the conversation",
+			feedback.Records{heard("t1", feedback.VerdictReject, time.Hour), said("t1", feedback.VerdictEdit, 0)},
+			feedback.Records{said("t1", feedback.VerdictEdit, 0)},
+		},
+		{
+			"readers that disagree leave the run out as disputed",
+			feedback.Records{
+				said("t1", feedback.VerdictReject, 0), heard("t1", feedback.VerdictApprove, time.Hour), said("t2", feedback.VerdictApprove, 0),
+			},
+			feedback.Records{said("t2", feedback.VerdictApprove, 0)},
+		},
+		{
+			"the conversation alone stands with its newest record",
+			feedback.Records{said("t1", feedback.VerdictReject, 0), said("t1", feedback.VerdictApprove, time.Minute)},
+			feedback.Records{said("t1", feedback.VerdictApprove, time.Minute)},
+		},
+		{
+			"the capture alone stands",
+			feedback.Records{heard("t1", feedback.VerdictReject, 0), heard("t1", feedback.VerdictApprove, time.Minute)},
+			feedback.Records{heard("t1", feedback.VerdictApprove, time.Minute)},
+		},
+		{
+			"a person's verdict is no reader so it neither stands nor disputes",
+			feedback.Records{
+				at("ann", "t1", feedback.VerdictApprove, time.Hour), said("t1", feedback.VerdictReject, 0), heard("t1", feedback.VerdictReject, 0),
+			},
+			feedback.Records{said("t1", feedback.VerdictReject, 0)},
+		},
+		{"only records of a person give nothing", feedback.Records{at("ann", "t1", feedback.VerdictApprove, 0)}, nil},
+		{
+			"a withdraw of the conversation takes back what the capture read before it",
+			feedback.Records{heard("t1", feedback.VerdictReject, 0), said("t1", feedback.VerdictWithdraw, time.Minute)},
+			nil,
+		},
+		{
+			"a withdraw of a person takes back both readers until a later verdict",
+			feedback.Records{
+				said("t1", feedback.VerdictReject, 0), heard("t1", feedback.VerdictReject, 0), at("ann", "t1", feedback.VerdictWithdraw, time.Minute),
+				heard("t1", feedback.VerdictApprove, time.Hour),
+			},
+			feedback.Records{heard("t1", feedback.VerdictApprove, time.Hour)},
+		},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			assert.Equal(t, tc.want, tc.args.Inferred().Latest())
+			assert.Equal(t, tc.want, tc.args.Inferred())
+		})
+	}
+}
+
+func TestFeedbackProof(t *testing.T) {
+	type args struct {
+		reviewer string
+		proof    trace.Proof
+	}
+	type want struct {
+		proof  trace.Proof
+		proven bool
+	}
+	tcs := []struct {
+		name string
+		args args
+		want want
+	}{
+		{"a key proves the person it names", args{"ann", trace.ProofKey}, want{trace.ProofKey, true}},
+		{"a terminal proves the person it names", args{"ann", trace.ProofTerminal}, want{trace.ProofTerminal, true}},
+		{"a call without a proof keeps none and proves nobody", args{"ann", trace.ProofNone}, want{trace.ProofNone, false}},
+		{"a named verdict of an earlier release reads as none", args{"ann", ""}, want{"", false}},
+		{"an unknown proof proves nobody", args{"ann", "badge"}, want{"badge", false}},
+		{"the conversation carries no proof", args{feedback.ReviewerSession, trace.ProofKey}, want{"", false}},
+		{"the capture carries no proof", args{feedback.ReviewerNodloop, trace.ProofTerminal}, want{"", false}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := feedback.Feedback{TraceID: "t1", Verdict: feedback.VerdictApprove, Reviewer: tc.args.reviewer}.WithProof(tc.args.proof)
+			assert.Equal(t, tc.want, want{got.Proof, got.Proven()})
 		})
 	}
 }
@@ -355,12 +494,14 @@ func TestNewRedactsSessionRecords(t *testing.T) {
 			t.Parallel()
 			session, err := feedback.New("t1", feedback.VerdictReject, "", tc.args, nil, feedback.ReviewerSession, now)
 			require.NoError(t, err)
+			captured, err := feedback.NewCaptured("t1", feedback.VerdictReject, "", tc.args, now)
+			require.NoError(t, err)
 			person, err := feedback.New("t1", feedback.VerdictReject, "", tc.args, nil, "sam", now)
 			require.NoError(t, err)
 			outcome, err := feedback.NewOutcome("t1", feedback.ResultConfirmed, tc.args, tc.args, feedback.ReviewerSession, now)
 			require.NoError(t, err)
 
-			assert.Equal(t, tc.want, session.Reason)
+			assert.Equal(t, []string{tc.want, tc.want}, []string{session.Reason, captured.Reason})
 			assert.Equal(t, tc.args, person.Reason)
 			assert.Equal(t, []string{tc.want, tc.want}, []string{outcome.ConfirmedCause, outcome.Note})
 		})
