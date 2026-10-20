@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeon-jihyeon/nodloop/internal/feedback"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge/file"
 	"github.com/jeon-jihyeon/nodloop/internal/testkit"
@@ -340,6 +341,74 @@ func TestLedgerNarrowExcept(t *testing.T) {
 			assert.Equal(t, tc.args.scope.Labels, got.Run.Labels)
 			assert.Contains(t, got.Evidence.OutcomeTraceIDs, "refuted-run")
 			assert.NoError(t, testkit.Err(l.Approve(ctx, "k1", 2, "ann")), "a narrowed version never widens")
+		})
+	}
+}
+
+// A draft without labels takes the place of the corrected run without its host so the lesson reaches every host
+func TestKnowledgeFrom(t *testing.T) {
+	run := trace.Trace{
+		ID: "r1", Name: trace.NameRun, Producer: "session",
+		Labels: trace.Labels{"repo": {"o"}, "dir": {"."}, "host": {"claude-code"}},
+	}
+	reject := feedback.Records{{TraceID: "r1", Verdict: feedback.VerdictReject, Reviewer: "ann"}}
+	type args struct {
+		draft    knowledge.Knowledge
+		run      trace.Trace
+		verdicts feedback.Records
+	}
+	type want struct {
+		scope    *knowledge.RunScope
+		evidence []string
+		err      error
+	}
+	tcs := []struct {
+		name string
+		args args
+		want want
+	}{
+		{
+			"no labels take the place of the run without the host",
+			args{knowledge.Knowledge{}, run, reject},
+			want{&knowledge.RunScope{Producer: "session", Labels: trace.Labels{"repo": {"o"}, "dir": {"."}}}, []string{"r1"}, nil},
+		},
+		{
+			"a host the draft names stays",
+			args{knowledge.Knowledge{Run: &knowledge.RunScope{Labels: trace.Labels{"host": {"codex"}}}}, run, reject},
+			want{&knowledge.RunScope{Producer: "session", Labels: trace.Labels{"host": {"codex"}}}, []string{"r1"}, nil},
+		},
+		{
+			"a run with the host alone reaches every run of the producer",
+			args{knowledge.Knowledge{}, trace.Trace{ID: "r1", Name: trace.NameRun, Producer: "session", Labels: trace.Labels{"host": {"cursor"}}}, reject},
+			want{&knowledge.RunScope{Producer: "session", Labels: trace.Labels{}}, []string{"r1"}, nil},
+		},
+		{
+			"a run cited already is cited once",
+			args{knowledge.Knowledge{Evidence: knowledge.Evidence{FeedbackTraceIDs: []string{"r1"}}}, run, reject},
+			want{&knowledge.RunScope{Producer: "session", Labels: trace.Labels{"repo": {"o"}, "dir": {"."}}}, []string{"r1"}, nil},
+		},
+		{"a run without a correction is refused", args{knowledge.Knowledge{}, run, nil}, want{err: knowledge.ErrNotCorrected}},
+		{
+			"a run whose latest verdict approves is refused",
+			args{knowledge.Knowledge{}, run, feedback.Records{{TraceID: "r1", Verdict: feedback.VerdictApprove, Reviewer: "ann"}}},
+			want{err: knowledge.ErrNotCorrected},
+		},
+		{
+			"a producer the draft names stays",
+			args{knowledge.Knowledge{Run: &knowledge.RunScope{Producer: "bot"}}, run, reject},
+			want{&knowledge.RunScope{Producer: "bot", Labels: trace.Labels{"repo": {"o"}, "dir": {"."}}}, []string{"r1"}, nil},
+		},
+		{"a trace that is no run is refused", args{knowledge.Knowledge{}, trace.Trace{ID: "c1", Name: trace.NameCheck}, reject}, want{err: trace.ErrNotRun}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := tc.args.draft.From(tc.args.run, tc.args.verdicts)
+
+			assert.ErrorIs(t, err, tc.want.err)
+			assert.Equal(t, tc.want.scope, got.Run)
+			assert.Equal(t, tc.want.evidence, got.Evidence.FeedbackTraceIDs)
+			assert.Equal(t, trace.Labels{"repo": {"o"}, "dir": {"."}, "host": {"claude-code"}}, run.Labels, "the run keeps its host")
 		})
 	}
 }

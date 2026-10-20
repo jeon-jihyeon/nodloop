@@ -1,0 +1,8 @@
+{
+  "sessionId": "s1",
+  "timestamp": 1767225600000,
+  "cwd": "{repo}",
+  "transcriptPath": "/tmp/s1.jsonl",
+  "stopReason": "end_turn",
+  "stop_hook_active": false
+}

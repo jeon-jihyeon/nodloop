@@ -631,58 +631,98 @@ func hookAppend(t *testing.T, path, line string) {
 }
 
 func TestRunHookStop(t *testing.T) {
+	type args struct {
+		// The hook input with {repo} for the repository of the item
+		stdin   string
+		session string
+		// The hook arguments after stop
+		flags []string
+	}
+	// A recorded run of session s1
+	type run struct {
+		labels        trace.Labels
+		input, output string
+	}
 	type want struct {
-		// Runs recorded after the one hookHome made
-		runs   int
-		output string
+		runs   []run
+		stderr string
+	}
+	recorded := func(host, output string) []run {
+		return []run{{trace.Labels{"repo": {"nodloop"}, "dir": {"."}, "host": {host}}, `{"applied":[{"id":"git-c","version":1}],"plugin":"0.7.0"}`, output}}
 	}
 	tcs := []struct {
-		name    string
-		args    string
-		session string
-		want    want
+		name string
+		args args
+		want want
 	}{
 		{
 			"an answer is recorded with its place and the items it got",
-			`{"session_id":"s1","cwd":"{repo}","last_assistant_message":"run git -C repo status"}`, "",
-			want{1, `"run git -C repo status"`},
+			args{stdin: `{"session_id":"s1","cwd":"{repo}","last_assistant_message":"run git -C repo status"}`},
+			want{runs: recorded("claude-code", `"run git -C repo status"`)},
 		},
 		{
 			"a secret in the answer is redacted",
-			`{"session_id":"s1","cwd":"{repo}","last_assistant_message":"token=abc123secret"}`, "",
-			want{1, `"token=[redacted]"`},
+			args{stdin: `{"session_id":"s1","cwd":"{repo}","last_assistant_message":"token=abc123secret"}`},
+			want{runs: recorded("claude-code", `"token=[redacted]"`)},
 		},
-		{"off records nothing", `{"session_id":"s1","cwd":"{repo}","last_assistant_message":"x"}`, "off", want{}},
-		{"a broken input records nothing", `not json`, "", want{}},
+		{
+			"a Codex answer is recorded with its host",
+			args{stdin: "codex_stop.json", flags: []string{"--host", "codex"}},
+			want{runs: recorded("codex", `"Ran git -C repo status."`)},
+		},
+		{"a Cursor stop carries no answer and records nothing", args{stdin: "cursor_stop.json", flags: []string{"--host", "cursor"}}, want{}},
+		{"a Copilot stop carries no answer and records nothing", args{stdin: "copilot_stop.json", flags: []string{"--host", "copilot"}}, want{}},
+		{"off records nothing", args{stdin: `{"session_id":"s1","cwd":"{repo}","last_assistant_message":"x"}`, session: "off"}, want{}},
+		{"a broken input records nothing", args{stdin: `not json`}, want{stderr: "nodloop hook: invalid character"}},
+		{
+			"an unknown host records nothing",
+			args{stdin: `{"session_id":"s1","cwd":"{repo}","last_assistant_message":"x"}`, flags: []string{"--host", "zed"}},
+			want{stderr: `unknown host "zed". Use claude-code, codex, cursor or copilot`},
+		},
+		{
+			"an unknown flag records nothing",
+			args{stdin: `{"session_id":"s1","cwd":"{repo}","last_assistant_message":"x"}`, flags: []string{"--hots", "codex"}},
+			want{stderr: "flag provided but not defined: -hots"},
+		},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			home, records, repo := hookHome(t, "use git -C")
 			getenv := func(k string) string {
-				return map[string]string{"HOME": home, envRecordDir: records, envSession: tc.session, envPluginVersion: "0.7.0"}[k]
+				return map[string]string{"HOME": home, envRecordDir: records, envSession: tc.args.session, envPluginVersion: "0.7.0"}[k]
 			}
-			stdin := strings.ReplaceAll(tc.args, "{repo}", repo)
-			var stdout bytes.Buffer
+			stdin := hookFixture(t, tc.args.stdin, repo)
+			var stdout, stderr bytes.Buffer
 
-			code := runHook([]string{"stop"}, getenv, nil, time.Now, strings.NewReader(stdin), &stdout, &bytes.Buffer{})
+			code := runHook(append([]string{"stop"}, tc.args.flags...), getenv, nil, hookClock(), strings.NewReader(stdin), &stdout, &stderr)
 
-			assert.Equal(t, 0, code)
-			assert.Empty(t, stdout.String())
 			store, err := tracefile.New(records)
 			require.NoError(t, err)
 			found, err := store.List(context.Background(), record.TraceFilter{Name: string(trace.NameRun), SessionID: "s1"})
 			require.NoError(t, err)
-			require.Len(t, found, tc.want.runs)
-			if tc.want.runs == 0 {
-				return
+			var runs []run
+			for _, r := range trace.RestoreAll(found) {
+				runs = append(runs, run{r.Labels, string(r.Input), string(r.Output)})
 			}
-			runs := trace.RestoreAll(found)
-			assert.Equal(t, trace.Labels{"repo": {"nodloop"}, "dir": {"."}}, runs[0].Labels)
-			assert.JSONEq(t, `{"applied":[{"id":"git-c","version":1}],"plugin":"0.7.0"}`, string(runs[0].Input))
-			assert.JSONEq(t, tc.want.output, string(runs[0].Output))
+			assert.Equal(t, 0, code)
+			assert.Empty(t, stdout.String())
+			assert.Contains(t, stderr.String(), tc.want.stderr)
+			assert.Equal(t, tc.want.runs, runs)
 		})
 	}
+}
+
+// The hook input as written or the fixture of that name under testdata/hooks
+// {repo} in either stands for the place
+func hookFixture(t *testing.T, stdin, repo string) string {
+	t.Helper()
+	if strings.HasSuffix(stdin, ".json") {
+		b, err := os.ReadFile(filepath.Join("testdata", "hooks", stdin))
+		require.NoError(t, err)
+		stdin = string(b)
+	}
+	return strings.ReplaceAll(stdin, "{repo}", repo)
 }
 
 // The stop hook starts the extraction of the previous run only when the conversation inferred a correction of it
@@ -736,6 +776,11 @@ func TestRunHookStopExtract(t *testing.T) {
 			"a failed start still records the answer",
 			args{verdicts: inferred, stops: 1, startErr: errors.New("no process")},
 			want{runs: 2, extracts: true, stderr: "nodloop hook: no process"},
+		},
+		{
+			"an answer that fails to record still starts the extraction",
+			args{verdicts: inferred, stops: 1, mode: 0o400},
+			want{runs: 1, extracts: true, stderr: "permission denied"},
 		},
 	}
 	for _, tc := range tcs {

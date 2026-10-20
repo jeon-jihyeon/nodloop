@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [
+      {
+        "command": "nodloop hook start --host cursor"
+      }
+    ],
+    "stop": [
+      {
+        "command": "nodloop hook stop --host cursor"
+      }
+    ]
+  }
+}

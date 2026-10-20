@@ -1,6 +1,7 @@
 package plugin_test
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -18,17 +19,25 @@ import (
 var launcherTools = []string{"awk", "cat", "chmod", "cut", "dirname", "head", "ln", "mkdir", "mktemp", "mv", "rm", "sed", "tar", "tr", "uname"}
 
 // A copy of the launcher whose plugin version no release carries
-// The directory of each tool the launcher needs is linked into one tools directory
 func launcher(t *testing.T) (script, tools string) {
+	t.Helper()
+	return launcherWith(t, map[string]string{".claude-plugin": "9.9.9"})
+}
+
+// A copy of the launcher beside a plugin.json of the version in each manifest directory
+// The directory of each tool the launcher needs is linked into one tools directory
+func launcherWith(t *testing.T, manifests map[string]string) (script, tools string) {
 	t.Helper()
 	root := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(root, "bin"), 0o755))
-	require.NoError(t, os.MkdirAll(filepath.Join(root, ".claude-plugin"), 0o755))
+	for dir, version := range manifests {
+		require.NoError(t, os.MkdirAll(filepath.Join(root, dir), 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(root, dir, "plugin.json"), []byte("{\n  \"version\": \""+version+"\"\n}\n"), 0o600))
+	}
 	b, err := os.ReadFile(filepath.Join("bin", "nodloop"))
 	require.NoError(t, err)
 	script = filepath.Join(root, "bin", "nodloop")
 	require.NoError(t, os.WriteFile(script, b, 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(root, ".claude-plugin", "plugin.json"), []byte("{\n  \"version\": \"9.9.9\"\n}\n"), 0o600))
 	tools = t.TempDir()
 	for _, name := range launcherTools {
 		path, err := exec.LookPath(name)
@@ -78,6 +87,56 @@ func TestLauncherPluginVersion(t *testing.T) {
 
 			require.NoError(t, err, stderr.String())
 			assert.Equal(t, "9.9.9\n", string(out))
+		})
+	}
+}
+
+// Claude Code and Codex start the launcher from the same directory and each finds the version of a manifest
+func TestLauncherManifest(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the launcher is a POSIX shell script")
+	}
+	type want struct {
+		// The version the cached binary learns
+		stdout  string
+		stderr  string
+		refused bool
+	}
+	tcs := []struct {
+		name string
+		// The version in plugin.json of each manifest directory
+		args map[string]string
+		want want
+	}{
+		{"the Claude Code manifest alone runs its version", map[string]string{".claude-plugin": "9.9.9"}, want{stdout: "9.9.9\n"}},
+		{"the Codex manifest alone runs its version", map[string]string{".codex-plugin": "9.9.8"}, want{stdout: "9.9.8\n"}},
+		{"the Claude Code manifest wins over the Codex one", map[string]string{".claude-plugin": "9.9.9", ".codex-plugin": "9.9.8"}, want{stdout: "9.9.9\n"}},
+		{"no manifest is refused", map[string]string{}, want{stderr: "nodloop: no version in", refused: true}},
+		{"a manifest without a version is refused", map[string]string{".codex-plugin": ""}, want{stderr: ".codex-plugin/plugin.json", refused: true}},
+		{
+			"a version that leaves the bin directory is refused", map[string]string{".claude-plugin": "x/../../../planted"},
+			want{stderr: "is not a release version", refused: true},
+		},
+		{"a version with a dot segment is refused", map[string]string{".claude-plugin": "9.9..9"}, want{stderr: "is not a release version", refused: true}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			script, tools := launcherWith(t, tc.args)
+			home := t.TempDir()
+			for _, version := range tc.args {
+				envBinary(t, filepath.Join(home, ".nodloop", "bin", "v"+version))
+			}
+			cmd := exec.Command(script, "version")
+			cmd.Env = []string{"HOME=" + home, "PATH=" + tools}
+			var stderr strings.Builder
+			cmd.Stderr = &stderr
+
+			out, err := cmd.Output()
+
+			assert.Equal(t, tc.want.refused, err != nil, stderr.String())
+			assert.Equal(t, tc.want.stdout, string(out))
+			assert.Contains(t, stderr.String(), tc.want.stderr)
 		})
 	}
 }
@@ -222,6 +281,8 @@ func TestLauncherStableLink(t *testing.T) {
 // 1. every hook runs synchronously with no async flag so a stop records its run before the next prompt reads it
 // The async flags and the timeout decode so a hook that sets one fails the comparison
 // 2. a subagent start adds the items since no prompt hook runs inside a subagent
+// 3. Codex reads the same events with its host named
+// Codex moves none of the context nodloop adds into a file since contextRunes already bounds it
 func TestHooksJSON(t *testing.T) {
 	type hook struct {
 		Type         string `json:"type"`
@@ -236,6 +297,7 @@ func TestHooksJSON(t *testing.T) {
 		Hooks []hook `json:"hooks"`
 	}
 	launcher := `"${CLAUDE_PLUGIN_ROOT}/bin/nodloop" hook `
+	spill := 0
 	tcs := []struct {
 		name string
 		// The hook file under hooks
@@ -247,6 +309,12 @@ func TestHooksJSON(t *testing.T) {
 			"UserPromptSubmit": {{[]hook{{Type: "command", Command: launcher + "prompt"}}}},
 			"Stop":             {{[]hook{{Type: "command", Command: launcher + "stop"}}}},
 			"SubagentStart":    {{[]hook{{Type: "command", Command: launcher + "subagent"}}}},
+		}},
+		{"the Codex hooks name the host", "codex.json", map[string][]group{
+			"SessionStart":     {{[]hook{{Type: "command", Command: launcher + "start --host codex", ContextLimit: &spill}}}},
+			"UserPromptSubmit": {{[]hook{{Type: "command", Command: launcher + "prompt --host codex", ContextLimit: &spill}}}},
+			"Stop":             {{[]hook{{Type: "command", Command: launcher + "stop --host codex"}}}},
+			"SubagentStart":    {{[]hook{{Type: "command", Command: launcher + "subagent --host codex", ContextLimit: &spill}}}},
 		}},
 	}
 	for _, tc := range tcs {
@@ -263,4 +331,89 @@ func TestHooksJSON(t *testing.T) {
 			assert.Equal(t, tc.want, got.Hooks)
 		})
 	}
+}
+
+// Both manifests carry one version so the launcher runs the same binary under either host
+// The Codex manifest names its own hook file so Codex runs every hook with its host named
+// Codex expands no variable in an MCP command so its server runs the launcher by a path below the plugin root
+func TestManifests(t *testing.T) {
+	type manifest struct {
+		Name       string          `json:"name"`
+		Version    string          `json:"version"`
+		Skills     string          `json:"skills"`
+		Hooks      string          `json:"hooks"`
+		MCPServers json.RawMessage `json:"mcpServers"`
+	}
+	b, err := os.ReadFile(filepath.Join(".claude-plugin", "plugin.json"))
+	require.NoError(t, err)
+	var claude manifest
+	require.NoError(t, json.Unmarshal(b, &claude))
+	require.NotEmpty(t, claude.Version)
+	type want struct {
+		skills string
+		hooks  string
+		// The mcpServers key in compact JSON and empty when the host reads its default file
+		servers string
+		// Files below the plugin root the host loads
+		files []string
+	}
+	tcs := []struct {
+		name string
+		// The manifest directory
+		args string
+		want want
+	}{
+		{
+			"the Claude Code manifest leaves the skills and the hooks and the servers to their default places",
+			".claude-plugin",
+			want{files: []string{"skills", "hooks/hooks.json", ".mcp.json", "bin/nodloop"}},
+		},
+		{
+			"the Codex manifest names its own hook file and runs the launcher below the plugin root",
+			".codex-plugin",
+			want{
+				skills: "./skills/", hooks: "./hooks/codex.json",
+				servers: `{"nodloop":{"command":"./bin/nodloop","args":["mcp"],"cwd":"."}}`,
+				files:   []string{"./skills/", "./hooks/codex.json", "bin/nodloop"},
+			},
+		},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			b, err := os.ReadFile(filepath.Join(tc.args, "plugin.json"))
+			require.NoError(t, err)
+			var got manifest
+			require.NoError(t, json.Unmarshal(b, &got))
+
+			assert.Equal(t, claude.Version, got.Version)
+			assert.Equal(t, claude.Name, got.Name)
+			assert.Equal(t, tc.want.skills, got.Skills)
+			assert.Equal(t, tc.want.hooks, got.Hooks)
+			assert.Equal(t, tc.want.servers, compactJSON(t, got.MCPServers))
+			assert.Empty(t, missingFiles(tc.want.files))
+		})
+	}
+}
+
+// The JSON in compact form and empty for none
+func compactJSON(t *testing.T, raw json.RawMessage) string {
+	t.Helper()
+	if len(raw) == 0 {
+		return ""
+	}
+	var out bytes.Buffer
+	require.NoError(t, json.Compact(&out, raw))
+	return out.String()
+}
+
+// The paths that do not exist
+func missingFiles(paths []string) []string {
+	var out []string
+	for _, path := range paths {
+		if _, err := os.Stat(path); err != nil {
+			out = append(out, path)
+		}
+	}
+	return out
 }

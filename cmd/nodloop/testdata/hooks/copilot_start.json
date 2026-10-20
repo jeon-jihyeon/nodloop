@@ -1,0 +1,7 @@
+{
+  "sessionId": "s1",
+  "timestamp": 1767225600000,
+  "cwd": "{repo}",
+  "source": "new",
+  "initialPrompt": "fix the build"
+}

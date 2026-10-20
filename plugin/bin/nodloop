@@ -6,17 +6,27 @@
 # 4. another nodloop on PATH when it answers the plugin version, or any version when NODLOOP_ALLOW_PATH is 1
 # Every source that runs is linked from the stable path so that path names the binary the plugin ran last
 # The version is read from the plugin manifest so the plugin and the binary it runs never drift
+# Claude Code and Codex install the same directory with one version in both manifests
+# The Claude Code manifest wins and the Codex manifest serves a copy that lacks it
 set -eu
 
 REPO="jeon-jihyeon/nodloop"
 ROOT=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
 MANIFEST="${ROOT}/.claude-plugin/plugin.json"
+[ -f "$MANIFEST" ] || MANIFEST="${ROOT}/.codex-plugin/plugin.json"
 
 version=$(sed -n 's/^[[:space:]]*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$MANIFEST" | head -n 1)
 if [ -z "$version" ]; then
   echo "nodloop: no version in ${MANIFEST}" >&2
   exit 1
 fi
+# The version names a directory under ~/.nodloop/bin and a release URL, so a slash or a dot segment must never reach either
+case "$version" in
+  *[!0-9A-Za-z.+-]* | .* | *..*)
+    echo "nodloop: ${MANIFEST} names version ${version}, which is not a release version" >&2
+    exit 1
+    ;;
+esac
 TAG="v${version}"
 # Every binary it runs compares itself with this and names a mismatch where the conversation reads it
 export NODLOOP_PLUGIN_VERSION="$version"
@@ -121,7 +131,7 @@ if [ -n "$found" ] && [ ! "$found" -ef "$0" ]; then
     *)
       # An older build lacks tools and flags the skills name and cannot warn about itself, so it runs only on request
       if [ "${NODLOOP_ALLOW_PATH:-}" != 1 ]; then
-        echo "nodloop: ${found} on PATH is version ${have} but the plugin needs ${version} and could not fetch or build it. Restart Claude Code with network access, run go install github.com/${REPO}/cmd/nodloop@${TAG}, or set NODLOOP_ALLOW_PATH=1 where Claude Code starts to run that build anyway" >&2
+        echo "nodloop: ${found} on PATH is version ${have} but the plugin needs ${version} and could not fetch or build it. Restart Claude Code or Codex with network access, run go install github.com/${REPO}/cmd/nodloop@${TAG}, or set NODLOOP_ALLOW_PATH=1 where it starts to run that build anyway" >&2
         exit 1
       fi
       echo "nodloop: running a PATH build of version ${have} at ${found} where the plugin expects ${version} because NODLOOP_ALLOW_PATH is 1" >&2
