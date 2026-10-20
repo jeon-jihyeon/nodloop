@@ -3,7 +3,9 @@ package main
 import (
 	"bytes"
 	"cmp"
+	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -17,7 +19,12 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeon-jihyeon/nodloop/internal/feedback"
+	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
+	"github.com/jeon-jihyeon/nodloop/internal/otel"
+	"github.com/jeon-jihyeon/nodloop/internal/record"
+	"github.com/jeon-jihyeon/nodloop/internal/testkit"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
+	tracefile "github.com/jeon-jihyeon/nodloop/internal/trace/file"
 )
 
 var exportAt = time.Date(2026, 10, 7, 9, 0, 0, 0, time.UTC)
@@ -86,6 +93,16 @@ func (c *otlpCollector) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(cmp.Or(c.status, http.StatusOK))
 }
 
+func (c *otlpCollector) names() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	var out []string
+	for _, s := range c.spans {
+		out = append(out, s.Name)
+	}
+	return out
+}
+
 // Records with one run of bot at 09:00, its reject at 09:01 and an outcome at 09:02
 func exportFixture(t *testing.T) string {
 	t.Helper()
@@ -124,7 +141,7 @@ func TestRunExportOtelTarget(t *testing.T) {
 		types  []string
 		auths  []string
 	}
-	sent := "exported 1 runs, 1 verdicts and 1 outcomes\n"
+	sent := "exported 1 runs, 1 verdicts, 1 outcomes, 0 model calls, 0 review questions and 0 decisions\n"
 	proto, jsonType := "application/x-protobuf", "application/json"
 	tcs := []struct {
 		name string
@@ -150,7 +167,9 @@ func TestRunExportOtelTarget(t *testing.T) {
 		{"a value the environment does not URL encode fails", args{[]string{"otel"}, map[string]string{envOTLPEndpoint: "{srv}", envOTLPHeaders: "Authorization=%zz"}},
 			want{1, "", "bad --header: OTEL_EXPORTER_OTLP_HEADERS: invalid URL escape", nil, nil, nil}},
 		{"since after every record sends no request", args{[]string{"otel", "--endpoint", "{srv}", "--since", "2026-10-08T00:00:00Z"}, nil},
-			want{0, "exported 0 runs, 0 verdicts and 0 outcomes\n", "", nil, nil, nil}},
+			want{0, "exported 0 runs, 0 verdicts, 0 outcomes, 0 model calls, 0 review questions and 0 decisions\n", "", nil, nil, nil}},
+		{"since and pending together fail", args{[]string{"otel", "--endpoint", "{srv}", "--since", "2026-10-08T00:00:00Z", "--pending"}, nil},
+			want{1, "", errExportFlags.Error(), nil, nil, nil}},
 		{"a since that is no RFC3339 time fails", args{[]string{"otel", "--endpoint", "{srv}", "--since", "yesterday"}, nil},
 			want{1, "", `parsing time "yesterday"`, nil, nil, nil}},
 		{"no endpoint anywhere fails", args{[]string{"otel"}, nil}, want{1, "", "--endpoint is required", nil, nil, nil}},
@@ -192,10 +211,220 @@ func TestRunExportOtelTarget(t *testing.T) {
 	}
 }
 
-// An export that fails names neither the token of the endpoint query nor a header value
+// Ids of the records of the fixture of every kind
+type exportedIDs struct {
+	run, extract, check string
+	verdictAt           time.Time
+}
+
+// One record of every kind an export sends
+// 1. a session run of 90 s from its prompt, its reject and an outcome
+// 2. an extraction of 30 s that drafted the candidate lesson, then approved
+// 3. a coverage check of compaction c1 through a model
+func exportKinds(t *testing.T) (string, exportedIDs) {
+	t.Helper()
+	ctx := t.Context()
+	records := t.TempDir()
+	at := exportAt
+	a := app{cfg: config{recordDir: records}, now: func() time.Time { return at }}
+	traces, err := a.traces()
+	require.NoError(t, err)
+	run, err := trace.NewRun(sessionProducer, "", trace.Labels{"repo": {"nodloop"}}, json.RawMessage(`{"applied":[{"id":"git-c","version":1}]}`),
+		[]byte("done"), at.Add(90*time.Second))
+	require.NoError(t, err)
+	run.SessionID, run.DurationMS = "s1", 90_000
+	require.NoError(t, traces.Append(ctx, run.Record()))
+	ids := exportedIDs{run: run.ID, verdictAt: at.Add(2 * time.Minute)}
+	verdicts, err := a.feedback()
+	require.NoError(t, err)
+	fb, err := feedback.New(run.ID, feedback.VerdictReject, feedback.ReasonFact, "wrong flag", nil, feedback.ReviewerSession, ids.verdictAt)
+	require.NoError(t, err)
+	require.NoError(t, verdicts.Append(ctx, fb.Record()))
+	outcomes, err := a.outcomes()
+	require.NoError(t, err)
+	o, err := feedback.NewOutcome(run.ID, feedback.ResultConfirmed, "", "checked", "ann", at.Add(3*time.Minute))
+	require.NoError(t, err)
+	require.NoError(t, outcomes.Append(ctx, o.Record()))
+	at = at.Add(5 * time.Minute)
+	ledger, err := a.ledger()
+	require.NoError(t, err)
+	_, _, err = ledger.Propose(ctx, knowledge.Knowledge{
+		ID: "lesson", Kind: knowledge.KindJudgment, Content: "Use git -C", Author: "claude",
+		Run: &knowledge.RunScope{Producer: sessionProducer}, Evidence: knowledge.Evidence{FeedbackTraceIDs: []string{run.ID}},
+	})
+	require.NoError(t, err)
+	extract := trace.Trace{
+		ID: trace.NewID(at), Name: trace.NameExtract, Ref: run.ID, Time: at, DurationMS: 30_000, Model: "claude-haiku-4-5",
+		Input: json.RawMessage("{}"), Output: json.RawMessage(`{"conclusion":"proposed","candidate":{"id":"lesson","version":1}}`),
+		Usage: trace.Usage{InputTokens: 10, OutputTokens: 4, CacheReadTokens: 100, CostUSD: 0.01},
+	}
+	require.NoError(t, traces.Append(ctx, extract.Record()))
+	ids.extract = extract.ID
+	at = at.Add(2 * time.Minute)
+	require.NoError(t, testkit.Err(ledger.Approve(ctx, "lesson", 1, "ann")))
+	at = at.Add(time.Minute)
+	check := trace.Trace{
+		ID: trace.NewID(at), Name: trace.NameCheck, SessionID: "c1", Time: at, DurationMS: 2000, Model: "claude-haiku-4-5",
+		Input: json.RawMessage("{}"), Usage: trace.Usage{InputTokens: 3, OutputTokens: 1},
+	}
+	require.NoError(t, traces.Append(ctx, check.Record()))
+	ids.check = check.ID
+	return records, ids
+}
+
+// Every record goes as its own span once, nested and linked to what it judged, and every evaluation as a log record of its target
+func TestRunExportOtelKinds(t *testing.T) {
+	records, ids := exportKinds(t)
+	c := &otlpCollector{}
+	srv := httptest.NewServer(c)
+	t.Cleanup(srv.Close)
+	getenv := func(k string) string { return map[string]string{envRecordDir: records}[k] }
+	var stdout, stderr bytes.Buffer
+
+	code := runExport([]string{"otel", "--protocol", "http/json", "--endpoint", srv.URL + "/v1/traces"}, getenv, time.Now, &stdout, &stderr)
+
+	require.Equal(t, 0, code, stderr.String())
+	assert.Equal(t, "exported 1 runs, 1 verdicts, 1 outcomes, 2 model calls, 0 review questions and 1 decisions\n", stdout.String())
+	runSpan := otel.RunSpan(ids.run)
+	drafted := otel.CallSpan(ids.extract)
+	verdict := otel.VerdictSpan(ids.run, ids.verdictAt)
+	byName := map[string]gotSpan{}
+	for _, s := range c.spans {
+		byName[s.Name] = s
+	}
+	assert.ElementsMatch(t, []string{
+		"invoke_agent session", "evaluate nodloop.verdict", "evaluate nodloop.outcome", "evaluate nodloop.review",
+		"invoke_agent nodloop.extract", "chat claude-haiku-4-5", "invoke_agent nodloop.check", "chat claude-haiku-4-5",
+	}, c.names())
+	turn := byName["invoke_agent session"]
+	assert.Equal(t, []string{runSpan.TraceID, runSpan.SpanID}, []string{turn.TraceID, turn.SpanID})
+	assert.Equal(t, fmt.Sprint(exportAt.UnixNano()), turn.Start, "the turn starts at its prompt")
+	assert.Equal(t, fmt.Sprint(exportAt.Add(90*time.Second).UnixNano()), turn.End)
+	linked := func(name string) []string {
+		var out []string
+		for _, l := range byName[name].Links {
+			out = append(out, l.SpanID)
+		}
+		return out
+	}
+	assert.Equal(t, []string{runSpan.SpanID}, linked("evaluate nodloop.verdict"))
+	assert.Equal(t, []string{runSpan.SpanID}, linked("evaluate nodloop.outcome"))
+	assert.Equal(t, []string{drafted.SpanID}, linked("evaluate nodloop.review"), "a decision links the extraction that drafted it")
+	assert.Equal(t, []string{runSpan.SpanID, verdict.SpanID}, linked("invoke_agent nodloop.extract"), "an extraction links its run and the correction")
+	assert.Empty(t, linked("invoke_agent nodloop.check"))
+	extract := byName["invoke_agent nodloop.extract"]
+	assert.Equal(t, fmt.Sprint(exportAt.Add(5*time.Minute-30*time.Second).UnixNano()), extract.Start)
+	assert.Equal(t, drafted.SpanID, extract.SpanID)
+	assert.Empty(t, c.logs, "the flag sends traces only")
+}
+
+// The log records of the evaluations carry the trace and span id of what they evaluate
+func TestRunExportOtelLogs(t *testing.T) {
+	records, ids := exportKinds(t)
+	c := &otlpCollector{}
+	srv := httptest.NewServer(c)
+	t.Cleanup(srv.Close)
+	getenv := func(k string) string {
+		return map[string]string{envRecordDir: records, envOTLPEndpoint: srv.URL, envOTLPProtocol: "http/json"}[k]
+	}
+	var stderr bytes.Buffer
+
+	code := runExport([]string{"otel"}, getenv, time.Now, &bytes.Buffer{}, &stderr)
+
+	require.Equal(t, 0, code, stderr.String())
+	runSpan := otel.RunSpan(ids.run)
+	drafted := otel.CallSpan(ids.extract)
+	assert.ElementsMatch(t, []gotLog{
+		{"gen_ai.evaluation.result", runSpan.TraceID, runSpan.SpanID},
+		{"gen_ai.evaluation.result", runSpan.TraceID, runSpan.SpanID},
+		{"gen_ai.evaluation.result", drafted.TraceID, drafted.SpanID},
+	}, c.logs)
+}
+
+// --pending sends each record once across exports, moves the mark to the newest record sent and leaves it on a failure
+func TestRunExportOtelPending(t *testing.T) {
+	type args struct {
+		// export.json before the export
+		mark   string
+		status int
+		// Verdicts recorded at 11:00 on the run
+		verdicts []feedback.Verdict
+	}
+	type want struct {
+		code   int
+		stdout string
+		names  []string
+		// export.json after the export
+		mark string
+	}
+	none := "exported 0 runs, 0 verdicts, 0 outcomes, 0 model calls, 0 review questions and 0 decisions\n"
+	hourOn := `{"at":"2026-10-07T10:00:00Z"}`
+	tcs := []struct {
+		name string
+		args args
+		want want
+	}{
+		{"no mark sends every record and marks the newest", args{"", http.StatusOK, nil}, want{0,
+			"exported 1 runs, 1 verdicts, 1 outcomes, 0 model calls, 0 review questions and 0 decisions\n",
+			[]string{"invoke_agent bot", "evaluate nodloop.verdict", "evaluate nodloop.outcome"}, `{"at":"2026-10-07T09:02:00Z"}` + "\n"}},
+		{"a mark that does not decode reads as none", args{"{", http.StatusOK, nil}, want{0,
+			"exported 1 runs, 1 verdicts, 1 outcomes, 0 model calls, 0 review questions and 0 decisions\n",
+			[]string{"invoke_agent bot", "evaluate nodloop.verdict", "evaluate nodloop.outcome"}, `{"at":"2026-10-07T09:02:00Z"}` + "\n"}},
+		{"a mark after every record sends nothing and stays", args{hourOn, http.StatusOK, nil}, want{0, none, nil, hourOn}},
+		{"a verdict after the mark goes alone and never its run again", args{hourOn, http.StatusOK, []feedback.Verdict{feedback.VerdictApprove}}, want{0,
+			"exported 0 runs, 1 verdicts, 0 outcomes, 0 model calls, 0 review questions and 0 decisions\n",
+			[]string{"evaluate nodloop.verdict"}, `{"at":"2026-10-07T11:00:00Z"}` + "\n"}},
+		{"a withdraw goes as an evaluation without a score", args{hourOn, http.StatusOK, []feedback.Verdict{feedback.VerdictWithdraw}}, want{0,
+			"exported 0 runs, 1 verdicts, 0 outcomes, 0 model calls, 0 review questions and 0 decisions\n",
+			[]string{"evaluate nodloop.verdict"}, `{"at":"2026-10-07T11:00:00Z"}` + "\n"}},
+		{"a refused export leaves the mark", args{hourOn, http.StatusInternalServerError, []feedback.Verdict{feedback.VerdictApprove}},
+			want{1, "", []string{"evaluate nodloop.verdict"}, hourOn}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			c := &otlpCollector{status: tc.args.status}
+			srv := httptest.NewServer(c)
+			t.Cleanup(srv.Close)
+			records := exportFixture(t)
+			if tc.args.mark != "" {
+				require.NoError(t, os.WriteFile(filepath.Join(records, otel.MarkFile), []byte(tc.args.mark), 0o600))
+			}
+			later := exportAt.Add(2 * time.Hour)
+			ids, err := tracefileRuns(records)
+			require.NoError(t, err)
+			a := app{cfg: config{recordDir: records}, now: func() time.Time { return later }}
+			store, err := a.feedback()
+			require.NoError(t, err)
+			for _, v := range tc.args.verdicts {
+				fb, err := feedback.New(ids[0], v, "", "", nil, "ann", later)
+				require.NoError(t, err)
+				require.NoError(t, store.Append(t.Context(), fb.Record()))
+			}
+			getenv := func(k string) string { return map[string]string{envRecordDir: records}[k] }
+			var stdout, stderr bytes.Buffer
+
+			code := runExport([]string{"otel", "--pending", "--protocol", "http/json", "--endpoint", srv.URL}, getenv,
+				func() time.Time { return later }, &stdout, &stderr)
+
+			assert.Equal(t, tc.want.code, code, stderr.String())
+			assert.Equal(t, tc.want.stdout, stdout.String())
+			assert.Equal(t, tc.want.names, c.names())
+			b, err := os.ReadFile(filepath.Join(records, otel.MarkFile))
+			if tc.args.mark == "" && tc.want.code != 0 {
+				assert.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tc.want.mark, string(b))
+		})
+	}
+}
+
+// An export that fails leaves the mark and its error names neither the token of the endpoint query nor a header value
 // 1. a collector that refuses the logs fails it after the traces went out
 // 2. a collector that redirects fails it so neither the records nor the headers reach the place it names
-// 3. records that do not read fail it before anything is sent
+// 3. records that do not read and a mark that does not open fail it before anything is sent
 func TestRunExportOtelRefused(t *testing.T) {
 	type args struct {
 		// {srv} stands for the URL of the collector
@@ -211,23 +440,28 @@ func TestRunExportOtelRefused(t *testing.T) {
 		stderr string
 		// The paths the collector saw
 		paths []string
+		// Whether export.json fails to read after the export
+		// The mark is claimed before the records are read so a failed export leaves it empty
+		markFailed bool
 	}
-	plain := []string{"otel", "--header", "X-Key=k1"}
+	pending := []string{"otel", "--pending", "--header", "X-Key=k1"}
 	tcs := []struct {
 		name string
 		args args
 		want want
 	}{
-		{"a collector that refuses the logs fails after the traces went out", args{plain, map[string]int{"/v1/logs": http.StatusBadRequest}, nil},
-			want{1, "/v1/logs answered 400", []string{"/v1/traces", "/v1/logs"}}},
+		{"a collector that refuses the logs fails after the traces went out", args{pending, map[string]int{"/v1/logs": http.StatusBadRequest}, nil},
+			want{1, "/v1/logs answered 400", []string{"/v1/traces", "/v1/logs"}, false}},
 		{
 			"a collector that redirects fails without following it",
-			args{[]string{"otel", "--endpoint", "{srv}/v1/traces?token=t1", "--header", "X-Key=k1"},
+			args{[]string{"otel", "--pending", "--endpoint", "{srv}/v1/traces?token=t1", "--header", "X-Key=k1"},
 				map[string]int{"/v1/traces": http.StatusTemporaryRedirect}, nil},
-			want{1, "answered 307", []string{"/v1/traces"}},
+			want{1, "answered 307", []string{"/v1/traces"}, false},
 		},
-		{"a broken run line fails before anything is sent", args{plain, nil, map[string]string{"traces.jsonl": "not json\n"}},
-			want{1, "nodloop export: ", nil}},
+		{"a broken run line fails before anything is sent", args{pending, nil, map[string]string{"traces.jsonl": "not json\n"}},
+			want{1, "nodloop export: ", nil, false}},
+		{"a mark that does not open fails before anything is sent", args{pending, nil, map[string]string{otel.MarkFile + "/": ""}},
+			want{1, "nodloop export: ", nil, true}},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
@@ -265,6 +499,8 @@ func TestRunExportOtelRefused(t *testing.T) {
 			assert.Equal(t, tc.want.code, code)
 			assert.Contains(t, stderr.String(), tc.want.stderr)
 			assert.NotRegexp(t, "t1|k1", stderr.String())
+			_, err := os.ReadFile(filepath.Join(records, otel.MarkFile))
+			assert.Equal(t, tc.want.markFailed, err != nil)
 			mu.Lock()
 			defer mu.Unlock()
 			assert.Equal(t, tc.want.paths, paths)
@@ -273,12 +509,30 @@ func TestRunExportOtelRefused(t *testing.T) {
 	}
 }
 
-// Appends the content to the file of the record dir
+// Appends the content to the file of the record dir or makes a directory when the name ends in /
 func exportRecordFile(t *testing.T, records, name, content string) {
 	t.Helper()
+	if strings.HasSuffix(name, "/") {
+		require.NoError(t, os.Mkdir(filepath.Join(records, name), 0o755))
+		return
+	}
 	f, err := os.OpenFile(filepath.Join(records, name), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	require.NoError(t, err)
 	_, err = f.WriteString(content)
 	require.NoError(t, err)
 	require.NoError(t, f.Close())
+}
+
+// The ids of the runs of the records newest first
+func tracefileRuns(records string) ([]string, error) {
+	store, err := tracefile.New(records)
+	if err != nil {
+		return nil, err
+	}
+	runs, err := store.List(context.Background(), record.TraceFilter{Name: string(trace.NameRun)})
+	ids := make([]string, 0, len(runs))
+	for _, r := range runs {
+		ids = append(ids, r.ID)
+	}
+	return ids, err
 }

@@ -3,6 +3,7 @@ package main
 import (
 	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"maps"
@@ -135,10 +136,14 @@ func runExport(args []string, getenv func(string) string, now func() time.Time, 
 	fs.StringVar(&f.protocol, "protocol", "", "http/protobuf, the default, or http/json")
 	fs.Var(&f.headers, "header", "Name=value of a header to send, repeatable, such as Authorization=Basic <token>")
 	since := fs.String("since", "", "only records from this RFC3339 time on")
+	pending := fs.Bool("pending", false, "only what was recorded after the mark of the last export, then move the mark")
 	fs.BoolVar(&f.content, "with-content", false, "also send outputs, reasons, notes and candidate text")
 	fs.BoolVar(&f.content, "with-output", false, "the earlier name of --with-content")
 	if err := fs.Parse(args[1:]); err != nil {
 		return parseFailed(err)
+	}
+	if *since != "" && *pending {
+		return fail(stderr, "export", errExportFlags)
 	}
 	var start time.Time
 	if *since != "" {
@@ -159,7 +164,12 @@ func runExport(args []string, getenv func(string) string, now func() time.Time, 
 	cfg.Client = &http.Client{Timeout: exportTimeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	cfg.Version = buildVersion()
 	c := exportCommand{app: a, out: stdout, exporter: otel.New(cfg)}
-	if err := c.since(context.Background(), start); err != nil {
+	if *pending {
+		err = c.pending(context.Background())
+	} else {
+		err = c.since(context.Background(), start)
+	}
+	if err != nil {
 		return fail(stderr, "export", err)
 	}
 	return 0
@@ -180,6 +190,32 @@ func (c exportCommand) since(ctx context.Context, since time.Time) error {
 	return c.send(ctx, recs)
 }
 
+// Sends the records recorded after the mark and then moves the mark
+// 1. another export holding the mark ends this one at once since it sends the same records
+// 2. a failure leaves the mark where it was so the next export sends them again under the same ids
+// 3. the mark moves to the newest record sent and not to the clock so a record written during the export goes next time
+func (c exportCommand) pending(ctx context.Context) (err error) {
+	dir, err := c.app.makeRecordDir()
+	if err != nil {
+		return err
+	}
+	held, err := otel.NewMarker(dir).Hold()
+	if err != nil || held == nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, held.Release()) }()
+	recs, err := c.read(ctx, held.At)
+	if err != nil {
+		return err
+	}
+	fresh := recs.after(held.At)
+	newest := fresh.newest(held.At)
+	if err := c.send(ctx, fresh); err != nil || newest.Equal(held.At) {
+		return err
+	}
+	return held.Move(newest)
+}
+
 // Sends the records and prints what went out
 func (c exportCommand) send(ctx context.Context, recs exportRecords) error {
 	b, err := c.batch(ctx, recs)
@@ -190,6 +226,7 @@ func (c exportCommand) send(ctx context.Context, recs exportRecords) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(c.out, "exported %d runs, %d verdicts and %d outcomes\n", sent.Runs, sent.Verdicts, sent.Outcomes)
+	fmt.Fprintf(c.out, "exported %d runs, %d verdicts, %d outcomes, %d model calls, %d review questions and %d decisions\n",
+		sent.Runs, sent.Verdicts, sent.Outcomes, sent.Calls, sent.Reviews, sent.Decisions)
 	return nil
 }

@@ -17,6 +17,7 @@ const (
 var scores = map[EvaluationName]map[string]float64{
 	EvaluationVerdict: {"approve": 1, "edit": 0, "reject": 0},
 	EvaluationOutcome: {"confirmed": 1, "refuted": 0},
+	EvaluationReview:  {"approved": 1, "retired": 0},
 }
 
 // The keys of the GenAI evaluation and the OpenInference annotation under prefix
@@ -35,9 +36,18 @@ func (e Evaluation) attributes(content bool, prefix string) []attribute {
 	}
 	if content {
 		attrs = appendStr(attrs, "nodloop.edited", e.Edited)
+		attrs = appendStr(attrs, "nodloop.knowledge.content", e.Content)
 	}
 	attrs = appendStr(attrs, "nodloop.reason_code", e.ReasonCode)
-	return appendStr(attrs, "nodloop.reviewer", e.Reviewer)
+	reviewer := "nodloop.reviewer"
+	if e.Name == EvaluationReview {
+		reviewer = "nodloop.approver"
+	}
+	attrs = appendStr(attrs, reviewer, e.Reviewer)
+	if e.Candidate != nil {
+		attrs = append(attrs, str("nodloop.knowledge.candidate", e.Candidate.ref()))
+	}
+	return attrs
 }
 
 func (e Evaluation) annotator() string {
