@@ -53,7 +53,7 @@ func TestStoresReportCriticWindow(t *testing.T) {
 	ctx := context.Background()
 	classify := func(at time.Time) {
 		tr := trace.Trace{
-			ID: trace.NewID(at), Name: trace.NameClassify, Subject: "reaction", Ref: "run", Time: at, Input: json.RawMessage(`{}`),
+			ID: trace.NewID(at), Name: trace.NameClassify, Subject: "critic", Ref: "run", Time: at, Input: json.RawMessage(`{}`),
 			Output: json.RawMessage(`{"members":[{"name":"laya","answers":{"holds":{"yes":0.9}}}]}`),
 		}
 		require.NoError(t, st.Traces.Append(ctx, tr.Record()))
@@ -75,7 +75,7 @@ func TestStoresReportCriticWindow(t *testing.T) {
 			stores := loop.Stores{Traces: st.Traces, Verdicts: st.Feedback, Outcomes: st.Outcomes, Items: st.Ledger, Since: tc.args}
 			snap, err := stores.Snapshot(ctx, loop.ReportCritic)
 			require.NoError(t, err)
-			rows := snap.Critics()
+			rows := snap.Critics().Critics
 			require.Len(t, rows, 1)
 			assert.Equal(t, tc.want, rows[0].Judged)
 		})
@@ -90,8 +90,15 @@ func TestStoresReport(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, st.Traces.Append(ctx, run.Record()))
 	stores := loop.Stores{Traces: st.Traces, Verdicts: st.Feedback, Outcomes: st.Outcomes, Items: st.Ledger}
+	// The JSON of a report as Report writes it
+	reportJSON := func(report any) string {
+		b, err := json.Marshal(report)
+		require.NoError(t, err)
+		return string(b)
+	}
 	type want struct {
-		report any
+		// Empty for a refused name
+		report string
 		err    error
 	}
 	tcs := []struct {
@@ -99,28 +106,27 @@ func TestStoresReport(t *testing.T) {
 		args loop.ReportName
 		want want
 	}{
-		{"loop holds the totals", loop.ReportLoop, want{report: loop.LoopReport{
+		{"loop holds the totals", loop.ReportLoop, want{report: reportJSON(loop.LoopReport{
 			Totals: loop.Totals{Runs: 1}, Scopes: []loop.ScopeRow{}, Drafts: []loop.DraftRow{}, Items: []loop.RunItem{},
-		}}},
-		{"extract has no row without an extraction", loop.ReportExtract, want{report: []loop.ExtractRow{}}},
-		{"critic has no row without a critic", loop.ReportCritic, want{report: []loop.CriticRow{}}},
-		{"effect has a row per arm without runs that received items", loop.ReportEffect, want{report: []loop.EffectRow{{Arm: "applied", Warnings: []loop.EffectWarning{}}, {Arm: "withheld", Warnings: []loop.EffectWarning{}}}}},
-		{"health has no row without knowledge", loop.ReportHealth, want{report: []loop.Health{}}},
-		{"replay has no row without a replay", loop.ReportReplay, want{report: []loop.ReplayRow{}}},
+		})}},
+		{"extract has no row without an extraction", loop.ReportExtract, want{report: reportJSON([]loop.ExtractRow{})}},
+		{"critic has no row without a critic", loop.ReportCritic, want{report: reportJSON(loop.CriticReport{Critics: []loop.CriticRow{}, Reactions: []loop.ReactionRow{}})}},
+		{
+			"effect has a row per arm without runs that received items",
+			loop.ReportEffect,
+			want{report: reportJSON([]loop.EffectRow{{Arm: "applied", Warnings: []loop.EffectWarning{}}, {Arm: "withheld", Warnings: []loop.EffectWarning{}}})},
+		},
+		{"health has no row without knowledge", loop.ReportHealth, want{report: reportJSON([]loop.Health{})}},
+		{"replay has no row without a replay", loop.ReportReplay, want{report: reportJSON([]loop.ReplayRow{})}},
 		{"an unknown name is refused", "nope", want{err: loop.ErrReportUnknown}},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			got, err := stores.Report(ctx, tc.args, st.Clock.Now())
-			if tc.want.err != nil {
-				assert.ErrorIs(t, err, tc.want.err)
-				return
-			}
-			require.NoError(t, err)
-			want, err := json.Marshal(tc.want.report)
-			require.NoError(t, err)
-			assert.JSONEq(t, string(want), string(got))
+
+			assert.ErrorIs(t, err, tc.want.err)
+			assert.Equal(t, tc.want.report, string(got))
 		})
 	}
 }

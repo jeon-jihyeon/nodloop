@@ -59,6 +59,11 @@ commands:
                             cites, and those it should leave alone, the newest ten approved runs its scope reaches. A lesson
                             that would change an approved output reaches too far. Recorded as a replay trace and shown by
                             knowledge waiting. It never blocks an approval
+  knowledge consolidate [--daily] [--model <m>]
+                            Ask the model in one call per cluster of waiting candidates one run may carry together which
+                            ones say the same lesson, and print one line per group. Recorded as a consolidate trace per
+                            producer and nothing else changes. --daily runs only when consolidate.json says a day passed
+                            and prints nothing, as hook stop starts it in a process of its own once two candidates wait
   knowledge for --producer <p> [--label <key=value>] [--holdout-key <k>]
                             The approved items a run of the producer with these labels applies, and their size. With a
                             holdout key a share of runs gets a withheld line per item and no item. Pass the same key and
@@ -84,7 +89,7 @@ commands:
                             Propose the next version with basis verified and the runs whose outcome confirmed it
   knowledge overlaps <id>   Current items of the same kind that one run may carry together
   knowledge approve <id> --version <n> --approver <name> [--label <key=value> | --everywhere]
-                            Refused when one run would carry more than the caps, when it would lift the veto of the
+                            Refused when one run would carry more than 9000 chars, when it would lift the veto of the
                             approved version or reach runs it never reached, or when it was not built from that version.
                             --label approves a candidate for the runs that carry these labels instead of the proposed
                             ones and --everywhere for every run of its producer. Each label must be one a recorded run
@@ -125,7 +130,9 @@ commands:
   report extract            Per plugin version of the corrected run and per drafting path: extractions by how they
                             ended, refused drafts by what refused them, and the critic questions answered false
   report critic             A window line, then per critic: drafts judged and how often a pass or a refusal matched what a person later
-                            decided on candidates of the same run, with the runs nobody decided yet
+                            decided on candidates of the same run, with the runs nobody decided yet. Then per member of the
+                            reaction point: answers asked and sure, and how they matched the verdict the conversation recorded
+                            on the same run as agree, disagree, missed correction, missed approval and deferred
   report replay             Per knowledge version its newest replay: passed or failed, corrected outputs it missed and
                             approved outputs it would have changed
                             --json on loop, effect, extract, critic and replay prints the report as one JSON value

@@ -47,7 +47,7 @@ type VetoSink interface {
 // 3. the clock is read here in UTC and every record of one call carries that time
 // 4. approve and retire and import and reaffirm end by exporting the approved vetoes and rules
 // A refused approve or retire exports them too so its retry repairs an export a killed call left behind
-// 5. approve refuses an approval that pushes a run past RunChars or RunItems or grows one already past them
+// 5. approve refuses an approval that pushes a run past RunChars or grows one already past it
 // and import never checks it
 // 6. every write decides under the store lock on the records as they are then
 // So two writers at once never both pass a check that only one of them may pass and neither refuses the other

@@ -118,16 +118,8 @@ type Knowledge struct {
 // Runes of approved knowledge one run carries
 // Claude Code moves hook context past 10000 characters into a file and shows a preview only
 // so the items one run may carry stay under that with room for the line that introduces them
+// No cap counts items because an item costs its runes and a conversation receives it once
 const RunChars = 9_000
-
-// Approved items one run receives
-// One list Claude Code can show on one screen
-// Approval never grows a folder past it unless the ledger held more before the cap
-const RunItems = 10
-
-// Approved items a folder holds before it is crowded
-// Half of RunItems so a compaction is offered while approval still has room
-const FolderItems = 5
 
 // Folders are measured with the text a run receives so the budget and the run cap count the same characters
 func (k Knowledge) Text() string {

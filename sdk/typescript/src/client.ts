@@ -66,8 +66,6 @@ export interface Approval {
   approver: string;
   /** Whether the approved version carries a veto the guard now applies */
   veto: boolean;
-  /** Whether one run would carry more than five items so a compaction is due */
-  compactionDue: boolean;
   /** Why approved.md or the veto file could not be written, while the approval itself stands */
   exportError: string;
   /** Why the items one run carries with it could not be read, while the approval itself stands */
@@ -266,7 +264,6 @@ export class Client {
       status: answer.status,
       approver: answer.approver,
       veto: Boolean(answer.veto),
-      compactionDue: Boolean(answer.folder?.compaction_due),
       exportError: answer.export_error ?? "",
       folderError: answer.folder_error ?? "",
     };

@@ -20,6 +20,8 @@ var (
 	errVetoExample      = errors.New("veto example is not a JSON object")
 	// A replay trace holds a result the replay package wrote so one that does not decode was edited or cut
 	errReplayUndecodable = errors.New("replay trace does not decode")
+	// The mark of the last consolidate is held by another run
+	errConsolidateRunning = errors.New("another consolidate is running")
 	// go deletes a go run build on exit so a hook on it would fail open
 	// The marker lock of the record directory is held by another prune
 	errPruneRunning        = errors.New("another prune is running")

@@ -9,24 +9,6 @@ import (
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
 )
 
-func TestFolderSize(t *testing.T) {
-	t.Parallel()
-	tcs := []struct {
-		name string
-		args knowledge.Set
-		want int
-	}{
-		{"a folder of the item alone holds one item", knowledge.Set{}, 1},
-		{"a folder counts the item beside its other items", knowledge.Set{{ID: "k-a"}, {ID: "k-b"}}, 3},
-	}
-	for _, tc := range tcs {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			assert.Equal(t, tc.want, knowledge.Folder{Carried: tc.args}.Size())
-		})
-	}
-}
-
 func TestFolderFull(t *testing.T) {
 	t.Parallel()
 	tcs := []struct {
@@ -37,11 +19,7 @@ func TestFolderFull(t *testing.T) {
 		{"a folder under the review chars is not full", knowledge.Folder{Chars: knowledge.RunChars - 1}, false},
 		{"a folder at the review chars is not full", knowledge.Folder{Chars: knowledge.RunChars}, false},
 		{"a folder over the review chars is full", knowledge.Folder{Chars: knowledge.RunChars + 1}, true},
-		{"a folder at the review items is not full", knowledge.Folder{Carried: make(knowledge.Set, knowledge.RunItems-1)}, false},
-		{
-			"a folder over the review items is full though its text fits",
-			knowledge.Folder{Chars: 1, Carried: make(knowledge.Set, knowledge.RunItems)}, true,
-		},
+		{"a folder of fifty items under the review chars is not full", knowledge.Folder{Chars: 1, Carried: make(knowledge.Set, 49)}, false},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
@@ -51,21 +29,23 @@ func TestFolderFull(t *testing.T) {
 	}
 }
 
-func TestFolderCrowded(t *testing.T) {
+func TestFolderAnchor(t *testing.T) {
 	t.Parallel()
+	broad := &knowledge.RunScope{Producer: "session"}
+	narrow := &knowledge.RunScope{Producer: "session", Labels: trace.Labels{"repo": {"nodloop"}}}
 	tcs := []struct {
 		name string
-		args int
-		want bool
+		args knowledge.Set
+		want string
 	}{
-		{"a folder no compaction can anchor is not crowded", 0, false},
-		{"five items a compaction would cover are not crowded", 5, false},
-		{"six items a compaction would cover are crowded", 6, true},
+		{"a folder of the item alone has no anchor", knowledge.Set{}, ""},
+		{"the more specific item comes first as in For", knowledge.Set{{ID: "k-a", Run: broad}, {ID: "k-b", Run: narrow}}, "k-b"},
+		{"the id breaks a tie", knowledge.Set{{ID: "k-d", Run: narrow}, {ID: "k-c", Run: narrow}}, "k-c"},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			assert.Equal(t, tc.want, knowledge.Folder{Compactable: tc.args}.Crowded())
+			assert.Equal(t, tc.want, knowledge.Folder{Carried: tc.args}.Anchor())
 		})
 	}
 }

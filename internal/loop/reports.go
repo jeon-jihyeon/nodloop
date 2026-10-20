@@ -64,8 +64,8 @@ func (s Snapshot) Extractions() []ExtractRow {
 	return s.runs.Extractions(s.traces)
 }
 
-func (s Snapshot) Critics() []CriticRow {
-	return s.runs.Critics(s.items, s.traces)
+func (s Snapshot) Critics() CriticReport {
+	return CriticReport{Critics: s.runs.Critics(s.items, s.traces), Reactions: s.runs.Reactions(s.traces)}
 }
 
 func (s Snapshot) Effect() []EffectRow {

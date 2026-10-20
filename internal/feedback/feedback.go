@@ -198,6 +198,17 @@ func (l listing[T]) Human() listing[T] {
 	return out
 }
 
+// The records a session inferred in the order the input has them
+func (l listing[T]) Inferred() listing[T] {
+	out := make(listing[T], 0, len(l))
+	for _, r := range l {
+		if r.Implicit() {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
 // Newest record per trace id in the order the input has them
 // 1. a trace later approved stops counting as a correction
 // 2. a later check replaces an earlier outcome

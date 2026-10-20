@@ -6,6 +6,7 @@ import (
 	"io"
 
 	"github.com/jeon-jihyeon/nodloop/internal/extract"
+	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	"github.com/jeon-jihyeon/nodloop/internal/llm"
 )
 
@@ -41,18 +42,37 @@ func (f knowledgeFlags) runExtract(ctx context.Context, a app, client llm.Client
 	if res.Related != nil {
 		fmt.Fprintf(stdout, "related\t%s\tv%d\t%s\n", res.Related.ID, res.Related.Version, res.Related.Content)
 	}
+	// A failed compaction leaves the candidate as it is and its error follows the next line into the log
+	var prepared error
 	if res.Candidate != nil {
 		k := res.Candidate
 		fmt.Fprintf(stdout, "candidate\t%s\tv%d\t%s\nscope\t%s\n", k.ID, k.Version, k.Kind, k.Run)
 		for _, o := range res.Overlaps {
 			fmt.Fprintf(stdout, "overlap\t%s\tv%d\t%s\n", o.ID, o.Version, o.Content)
 		}
+		prepared = f.prepareCompaction(ctx, a, ledger, client, *k, stdout)
 	}
 	next := extractNext[res.Relation]
 	if res.Corroborated() {
 		next = extractCorroborated
 	}
 	fmt.Fprintf(stdout, "next\t%s\n", next)
+	return prepared
+}
+
+// Drafts the compaction an approval of the candidate needs through the same client
+// The calls are not metered since the extract trace counts only the drafter and the critic
+func (f knowledgeFlags) prepareCompaction(
+	ctx context.Context, a app, ledger *knowledge.Ledger, client llm.Client, candidate knowledge.Knowledge, stdout io.Writer,
+) error {
+	compactor, err := a.compactor(ledger)
+	if err != nil {
+		return err
+	}
+	cmd := compactionCommand{ledger: ledger, compactor: compactor, client: client, out: stdout}
+	if err := cmd.prepare(ctx, candidate, f.model, f.author); err != nil {
+		return fmt.Errorf("prepared compaction: %w", err)
+	}
 	return nil
 }
 

@@ -2,6 +2,7 @@ package knowledge_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -227,6 +228,8 @@ func TestLedgerPropose(t *testing.T) {
 	filled.Version, filled.Status, filled.Base = 7, knowledge.StatusApproved, 6
 	signed := draft
 	signed.Approver, signed.ApprovedAt, signed.Supersedes = "sam", at, 2
+	deferred := draft
+	deferred.DeferredIn = "s1"
 	verified := draft
 	verified.Basis = knowledge.BasisVerified
 	proposedVerified := proposed
@@ -280,6 +283,7 @@ func TestLedgerPropose(t *testing.T) {
 		},
 		{"version and status of the draft are replaced", args{draft: filled}, want{proposed, none, just, nil}},
 		{"approval fields of the draft are dropped", args{draft: signed}, want{proposed, none, just, nil}},
+		{"a session the draft names is dropped so a propose is never a deferral", args{draft: deferred}, want{proposed, none, just, nil}},
 		{
 			"verified basis is kept",
 			args{draft: verified},
@@ -469,7 +473,7 @@ func TestLedgerApprove(t *testing.T) {
 					"      source: nodloop knowledge k1 v1 approved by sam\n", nil},
 		},
 		{
-			"an item whose folder would pass the run caps is refused and nothing is appended",
+			"an item whose folder would pass the run cap is refused and nothing is appended",
 			args{[]knowledge.Knowledge{large, candidate}, 1, "sam"},
 			want{history: knowledge.Set{candidate}, err: knowledge.ErrFolderFull},
 		},
@@ -827,13 +831,17 @@ func TestLedgerApproveIn(t *testing.T) {
 	}
 }
 
-// The item cap bounds the folder of a run whatever the size of its texts
-// A run carries every item whose scope overlaps so the cap counts the items of one label value and never those of a value apart
-func TestLedgerApproveItemCap(t *testing.T) {
+// RunChars bounds the folder of a run whatever the number of its items
+// A run carries every item whose scope overlaps so the cap counts the runes of one label value and never those of a value apart
+func TestLedgerApproveRunChars(t *testing.T) {
 	now := time.Date(2026, 9, 23, 0, 0, 0, 0, time.UTC)
-	item := func(id string, status knowledge.Status, labels trace.Labels, vetoed bool) knowledge.Knowledge {
+	item := func(id string, status knowledge.Status, labels trace.Labels, vetoed bool, runes int) knowledge.Knowledge {
+		content := "one"
+		if runes > 0 {
+			content = strings.Repeat("a", runes)
+		}
 		k := knowledge.Knowledge{
-			ID: id, Version: 1, Kind: knowledge.KindMeaning, Content: "one",
+			ID: id, Version: 1, Kind: knowledge.KindMeaning, Content: content,
 			Run:      &knowledge.RunScope{Producer: "session", Labels: labels},
 			Evidence: knowledge.Evidence{FeedbackTraceIDs: []string{"t1"}}, Basis: knowledge.BasisStated,
 			Status: status, Author: "author", Time: now,
@@ -855,59 +863,53 @@ func TestLedgerApproveItemCap(t *testing.T) {
 		count  int
 		labels trace.Labels
 		vetoed bool
+		// Runes of each content and the word one when 0
+		runes int
 	}
 	type args struct {
 		approved []group
 		// The labels of the candidate
 		labels trace.Labels
 		vetoed bool
+		runes  int
 	}
 	type want struct {
 		status knowledge.Status
-		// The error text naming both caps and every carried item and empty on success
+		// The error text naming the chars and every carried item and empty on success
 		err string
 	}
 	commit := trace.Labels{"task": {"commit"}}
 	push := trace.Labels{"task": {"push"}}
-	vetoes := []group{{"k-v", 10, nil, true}}
+	vetoes := []group{{"k-v", 3, nil, true, 3000}}
+	full := []group{{"k-c", 3, commit, false, 2900}, {"k-p", 2, push, false, 2900}}
 	tcs := []struct {
 		name string
 		args args
 		want want
 	}{
-		{"the item that fills the review list is approved", args{approved: []group{{"k-", 9, nil, false}}}, want{status: knowledge.StatusApproved}},
+		{"an eleventh item under RunChars is approved", args{approved: []group{{"k-", 10, nil, false, 0}}}, want{status: knowledge.StatusApproved}},
+		{"a fifty first item under RunChars is approved", args{approved: []group{{"k-", 50, nil, false, 0}}}, want{status: knowledge.StatusApproved}},
 		{
-			"the item one past the run list is refused naming the items",
-			args{approved: []group{{"k-", 10, nil, false}}},
+			"the item that pushes a run past RunChars is refused naming the items",
+			args{approved: []group{{"k-", 3, nil, false, 2900}}, runes: 200},
 			want{
 				status: knowledge.StatusCandidate,
-				err: "knowledge: folder would pass the run caps: 497 of 9000 chars 11 of 10 items in runs of session with " +
-					"k-0 v1 45 chars, k-1 v1 45 chars, k-2 v1 45 chars, k-3 v1 45 chars, k-4 v1 45 chars, " +
-					"k-5 v1 45 chars, k-6 v1 45 chars, k-7 v1 45 chars, k-8 v1 45 chars, k-9 v1 45 chars",
+				err: "knowledge: folder would pass the run cap: 9070 of 9000 chars in runs of session with " +
+					"k-0 v1 2942 chars, k-1 v1 2942 chars, k-2 v1 2942 chars",
 			},
 		},
 		{
-			"an item of a label value that already carries ten items is refused naming only those",
-			args{approved: []group{{"k-c", 10, commit, false}, {"k-p", 5, push, false}}, labels: commit},
+			"an item of a full label value is refused naming only its items",
+			args{approved: full, labels: commit, runes: 200},
 			want{
 				status: knowledge.StatusCandidate,
-				err: "knowledge: folder would pass the run caps: 650 of 9000 chars 11 of 10 items in runs of session with " +
-					"k-c0 v1 59 chars, k-c1 v1 59 chars, k-c2 v1 59 chars, k-c3 v1 59 chars, k-c4 v1 59 chars, " +
-					"k-c5 v1 59 chars, k-c6 v1 59 chars, k-c7 v1 59 chars, k-c8 v1 59 chars, k-c9 v1 59 chars",
+				err: "knowledge: folder would pass the run cap: 9125 of 9000 chars in runs of session with " +
+					"k-c0 v1 2956 chars, k-c1 v1 2956 chars, k-c2 v1 2956 chars",
 			},
 		},
-		{
-			"an item of another label value beside ten items is approved",
-			args{approved: []group{{"k-c", 10, commit, false}, {"k-p", 5, push, false}}, labels: push},
-			want{status: knowledge.StatusApproved},
-		},
-		{"an item beside ten vetoes is approved", args{approved: vetoes, labels: commit}, want{status: knowledge.StatusApproved}},
-		{"an eleventh veto is approved", args{approved: vetoes, vetoed: true}, want{status: knowledge.StatusApproved}},
-		{
-			"a veto beside a label value that already carries ten items is approved",
-			args{approved: []group{{"k-c", 10, commit, false}}, vetoed: true},
-			want{status: knowledge.StatusApproved},
-		},
+		{"an item of another label value beside a full one is approved", args{approved: full, labels: push, runes: 200}, want{status: knowledge.StatusApproved}},
+		{"an item beside long vetoes is approved", args{approved: vetoes, labels: commit, runes: 200}, want{status: knowledge.StatusApproved}},
+		{"a long veto beside a full label value is approved", args{approved: full, vetoed: true, runes: 3000}, want{status: knowledge.StatusApproved}},
 	}
 	ctx := context.Background()
 	for _, tc := range tcs {
@@ -922,27 +924,35 @@ func TestLedgerApproveItemCap(t *testing.T) {
 			var records []knowledge.Knowledge
 			for _, g := range tc.args.approved {
 				for i := range g.count {
-					records = append(records, item(fmt.Sprintf("%s%d", g.prefix, i), knowledge.StatusApproved, g.labels, g.vetoed))
+					records = append(records, item(fmt.Sprintf("%s%d", g.prefix, i), knowledge.StatusApproved, g.labels, g.vetoed, g.runes))
 				}
 			}
-			candidate := item("k-new", knowledge.StatusCandidate, tc.args.labels, tc.args.vetoed)
+			candidate := item("k-new", knowledge.StatusCandidate, tc.args.labels, tc.args.vetoed, tc.args.runes)
 			require.NoError(t, testkit.Err(l.Import(ctx, append(records, candidate))))
+			before, err := l.All(ctx)
+			require.NoError(t, err)
+			_, fits, fitsErr := before.Fits("k-new", 1)
+			require.NoError(t, fitsErr)
 
 			_, err = l.Approve(ctx, "k-new", 1, "sam")
-			got := want{}
-			if err != nil {
-				got.err = err.Error()
-			}
 			history, herr := l.History(ctx, "k-new")
 			require.NoError(t, herr)
-			got.status = history[0].Status
 
-			assert.Equal(t, tc.want, got)
+			assert.Equal(t, tc.want, want{status: history[0].Status, err: approveText(err)})
+			assert.Equal(t, err == nil, fits, "Fits answers what approve decides")
 		})
 	}
 }
 
-// A review already past a cap takes a new version that replaces an item while the review does not grow
+// The text of an approval error and empty on success
+func approveText(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
+}
+
+// A run already past RunChars takes a new version that replaces an item while the run does not grow
 func TestLedgerApproveInOverfullFolder(t *testing.T) {
 	now := time.Date(2026, 9, 23, 0, 0, 0, 0, time.UTC)
 	commit := trace.Labels{"task": {"commit"}}
@@ -959,23 +969,23 @@ func TestLedgerApproveInOverfullFolder(t *testing.T) {
 		}
 		return k
 	}
+	text := strings.Repeat("a", 2300)
 	group := func(prefix string, count int, labels trace.Labels) []knowledge.Knowledge {
 		out := make([]knowledge.Knowledge, 0, count)
 		for i := range count {
-			out = append(out, item(fmt.Sprintf("%s%d", prefix, i), 1, knowledge.StatusApproved, "one", labels))
+			out = append(out, item(fmt.Sprintf("%s%d", prefix, i), 1, knowledge.StatusApproved, text, labels))
 		}
 		return out
 	}
-	// Eleven items of one label value as a ledger approved before the item cap leaves them
-	overfull := group("k-", 11, commit)
+	// Five items of one label value past RunChars as a ledger an import or an older cap left them
+	overfull := group("k-", 5, commit)
 	version := func(content string, labels trace.Labels) knowledge.Knowledge {
 		k := item("k-0", 2, knowledge.StatusCandidate, content, labels)
 		k.Base = 1
 		return k
 	}
-	large := item("large", 1, knowledge.StatusApproved, strings.Repeat("가", knowledge.RunChars), commit)
-	retired := item("k-0", 1, knowledge.StatusRetired, "one", commit)
-	reapproved := version("one", commit)
+	retired := item("k-0", 1, knowledge.StatusRetired, text, commit)
+	reapproved := version(text, commit)
 	reapproved.Base = 0
 	type args struct {
 		seeds []knowledge.Knowledge
@@ -983,7 +993,9 @@ func TestLedgerApproveInOverfullFolder(t *testing.T) {
 	}
 	type want struct {
 		status knowledge.Status
-		err    error
+		// What Fits answers before the approval
+		fits bool
+		err  error
 	}
 	tcs := []struct {
 		name string
@@ -991,34 +1003,34 @@ func TestLedgerApproveInOverfullFolder(t *testing.T) {
 		want want
 	}{
 		{
-			"a shorter new version in a review past the item cap is approved",
-			args{append(slices.Clone(overfull), version("o", commit)), "k-0"},
-			want{knowledge.StatusApproved, nil},
+			"a shorter new version in a run past RunChars is approved",
+			args{append(slices.Clone(overfull), version(text[1:], commit)), "k-0"},
+			want{knowledge.StatusApproved, true, nil},
 		},
 		{
-			"a longer new version in a review past the item cap and under the char cap is approved",
-			args{append(slices.Clone(overfull), version("one and more", commit)), "k-0"},
-			want{knowledge.StatusApproved, nil},
+			"a new version of the same length in a run past RunChars is approved",
+			args{append(slices.Clone(overfull), version(text, commit)), "k-0"},
+			want{knowledge.StatusApproved, true, nil},
 		},
 		{
-			"a longer new version in a review past the char cap is refused",
-			args{[]knowledge.Knowledge{large, overfull[0], version("one and more", commit)}, "k-0"},
-			want{knowledge.StatusCandidate, knowledge.ErrFolderFull},
+			"a longer new version in a run past RunChars is refused",
+			args{append(slices.Clone(overfull), version(text+"a", commit)), "k-0"},
+			want{knowledge.StatusCandidate, false, knowledge.ErrFolderFull},
 		},
 		{
-			"a new id in a review past the item cap is refused",
+			"a new id in a run past RunChars is refused",
 			args{append(slices.Clone(overfull), item("k-new", 1, knowledge.StatusCandidate, "o", commit)), "k-new"},
-			want{knowledge.StatusCandidate, knowledge.ErrFolderFull},
+			want{knowledge.StatusCandidate, false, knowledge.ErrFolderFull},
 		},
 		{
-			"a new version that widens into another label value is refused before any cap is counted",
-			args{slices.Concat(overfull, group("k-p", 10, push), []knowledge.Knowledge{version("o", trace.Labels{"task": {"commit", "push"}})}), "k-0"},
-			want{knowledge.StatusCandidate, knowledge.ErrScopeWidened},
+			"a new version that widens into another label value is refused before the cap is counted",
+			args{slices.Concat(overfull, group("k-p", 5, push), []knowledge.Knowledge{version("o", trace.Labels{"task": {"commit", "push"}})}), "k-0"},
+			want{knowledge.StatusCandidate, false, knowledge.ErrScopeWidened},
 		},
 		{
 			"a new version after its approved version was retired counts as an added item",
 			args{append(slices.Clone(overfull), retired, reapproved), "k-0"},
-			want{knowledge.StatusCandidate, knowledge.ErrFolderFull},
+			want{knowledge.StatusCandidate, false, knowledge.ErrFolderFull},
 		},
 	}
 	ctx := context.Background()
@@ -1034,8 +1046,12 @@ func TestLedgerApproveInOverfullFolder(t *testing.T) {
 			require.NoError(t, testkit.Err(l.Import(ctx, tc.args.seeds)))
 			latest, err := l.History(ctx, tc.args.id)
 			require.NoError(t, err)
+			before, err := l.All(ctx)
+			require.NoError(t, err)
 
 			v := latest[0].Version
+			_, fits, fitsErr := before.Fits(tc.args.id, v)
+			require.NoError(t, fitsErr)
 			_, err = l.Approve(ctx, tc.args.id, v, "sam")
 			history, herr := l.History(ctx, tc.args.id)
 			require.NoError(t, herr)
@@ -1043,6 +1059,7 @@ func TestLedgerApproveInOverfullFolder(t *testing.T) {
 
 			assert.ErrorIs(t, err, tc.want.err)
 			assert.Equal(t, tc.want.status, got.Status)
+			assert.Equal(t, tc.want.fits, fits, "Fits answers what approve decides on the cap")
 		})
 	}
 }
@@ -1539,6 +1556,7 @@ func TestLedgerRefusedRetryExportsVetoes(t *testing.T) {
 
 // The folder of an approval counts the items the fullest run it reaches carries, never items no one run carries together
 func TestLedgerFolderFullestRun(t *testing.T) {
+	at := time.Date(2026, 9, 27, 0, 0, 0, 0, time.UTC)
 	session := func(labels trace.Labels) *knowledge.RunScope {
 		return &knowledge.RunScope{Producer: "session", Labels: labels}
 	}
@@ -1569,7 +1587,10 @@ func TestLedgerFolderFullestRun(t *testing.T) {
 			t.Parallel()
 			store, err := file.New(t.TempDir())
 			require.NoError(t, err)
-			l := knowledge.NewLedger(store, vetofile.NewApprovedFile(t.TempDir(), "records"), time.Now, func(prefix string) string { return prefix + "new" })
+			l := knowledge.NewLedger(
+				store, vetofile.NewApprovedFile(t.TempDir(), "records"),
+				func() time.Time { return at }, func(prefix string) string { return prefix + "new" },
+			)
 			approve := func(id string, labels trace.Labels) {
 				_, _, err := l.Propose(ctx, knowledge.Knowledge{
 					ID: id, Kind: knowledge.KindJudgment, Content: "lesson " + id, Run: session(labels),
@@ -1586,7 +1607,8 @@ func TestLedgerFolderFullestRun(t *testing.T) {
 			f, err := l.Folder(ctx, "new", 1)
 
 			require.NoError(t, err)
-			assert.Equal(t, tc.want, f.Size(), f.String())
+			// The item itself counts beside the items it carries
+			assert.Equal(t, tc.want, len(f.Carried)+1, f.String())
 		})
 	}
 }
@@ -1619,6 +1641,18 @@ func TestLedgerUnknownID(t *testing.T) {
 		{
 			"folder of an unknown id is not found",
 			func(ctx context.Context, l *knowledge.Ledger) (any, error) { return l.Folder(ctx, "nope", 1) },
+			want{knowledge.Folder{}, knowledge.ErrNotFound},
+		},
+		{
+			"fits of an unknown id is not found",
+			func(ctx context.Context, l *knowledge.Ledger) (any, error) {
+				all, err := l.All(ctx)
+				if err != nil {
+					return nil, err
+				}
+				f, _, err := all.Fits("nope", 1)
+				return f, err
+			},
 			want{knowledge.Folder{}, knowledge.ErrNotFound},
 		},
 		{
@@ -1693,9 +1727,8 @@ func TestLedgerFolder(t *testing.T) {
 		version int
 	}
 	type want struct {
-		folder  knowledge.Folder
-		crowded bool
-		err     error
+		folder knowledge.Folder
+		err    error
 	}
 	tcs := []struct {
 		name string
@@ -1705,72 +1738,62 @@ func TestLedgerFolder(t *testing.T) {
 		{
 			"an item of the same labels shares the folder",
 			args{[]knowledge.Knowledge{neighbour, candidate}, 1},
-			want{knowledge.Folder{Chars: 115 + 120, Carried: knowledge.Set{neighbour}, Producer: "session"}, false, nil},
+			want{knowledge.Folder{Chars: 115 + 120, Carried: knowledge.Set{neighbour}, Producer: "session"}, nil},
 		},
 		{
 			"an item scoped by another label key shares the folder because one run may carry both",
 			args{[]knowledge.Knowledge{commit, candidate}, 1},
-			want{knowledge.Folder{Chars: 115 + 120, Carried: knowledge.Set{commit}, Producer: "session"}, false, nil},
+			want{knowledge.Folder{Chars: 115 + 120, Carried: knowledge.Set{commit}, Producer: "session"}, nil},
 		},
 		{
 			"an item of another label value sits in another folder",
 			args{[]knowledge.Knowledge{apart, candidate}, 1},
-			want{knowledge.Folder{Chars: 115, Carried: knowledge.Set{}, Producer: "session"}, false, nil},
+			want{knowledge.Folder{Chars: 115, Carried: knowledge.Set{}, Producer: "session"}, nil},
 		},
 		{
 			"an item of another producer sits in another folder",
 			args{[]knowledge.Knowledge{ci, candidate}, 1},
-			want{knowledge.Folder{Chars: 115, Carried: knowledge.Set{}, Producer: "session"}, false, nil},
+			want{knowledge.Folder{Chars: 115, Carried: knowledge.Set{}, Producer: "session"}, nil},
 		},
 		{
 			"an item that excepts the labels of the item still shares the folder because exceptions are left open",
 			args{[]knowledge.Knowledge{excepting, candidate}, 1},
-			want{knowledge.Folder{Chars: 115 + 128, Carried: knowledge.Set{excepting}, Producer: "session"}, false, nil},
+			want{knowledge.Folder{Chars: 115 + 128, Carried: knowledge.Set{excepting}, Producer: "session"}, nil},
 		},
 		{
 			"an item without labels sits in every folder of its producer",
 			args{[]knowledge.Knowledge{everywhere, candidate}, 1},
-			want{knowledge.Folder{Chars: 115 + 104, Carried: knowledge.Set{everywhere}, Producer: "session"}, false, nil},
+			want{knowledge.Folder{Chars: 115 + 104, Carried: knowledge.Set{everywhere}, Producer: "session"}, nil},
 		},
 		{
 			"a judgment with a veto acts through the guard and joins no folder",
 			args{[]knowledge.Knowledge{vetoed, candidate}, 1},
-			want{knowledge.Folder{Chars: 115, Carried: knowledge.Set{}, Producer: "session"}, false, nil},
+			want{knowledge.Folder{Chars: 115, Carried: knowledge.Set{}, Producer: "session"}, nil},
 		},
 		{
 			"a new version is measured by its own text and replaces the approved one",
 			args{[]knowledge.Knowledge{oldVersion, longer}, 2},
-			want{knowledge.Folder{Chars: 145, Carried: knowledge.Set{}, Producer: "session"}, false, nil},
+			want{knowledge.Folder{Chars: 145, Carried: knowledge.Set{}, Producer: "session"}, nil},
 		},
 		{
 			"korean content counts one char per rune",
 			args{[]knowledge.Knowledge{korean}, 1},
-			want{knowledge.Folder{Chars: 115, Carried: knowledge.Set{}, Producer: "session"}, false, nil},
+			want{knowledge.Folder{Chars: 115, Carried: knowledge.Set{}, Producer: "session"}, nil},
 		},
 		{
 			"emoji content counts one char per rune",
 			args{[]knowledge.Knowledge{emoji}, 1},
-			want{knowledge.Folder{Chars: 115, Carried: knowledge.Set{}, Producer: "session"}, false, nil},
+			want{knowledge.Folder{Chars: 115, Carried: knowledge.Set{}, Producer: "session"}, nil},
 		},
 		{
-			"five items with an approved item are not crowded",
-			args{append(slices.Clone(crowd[:4]), oldVersion), 1},
-			want{knowledge.Folder{Chars: 115 + 4*116, Carried: knowledge.Set(crowd[:4]), Producer: "session", Compactable: 5}, false, nil},
-		},
-		{
-			"six items with an approved item are crowded",
+			"an approved item is measured like a candidate with the items one run carries with it",
 			args{append(slices.Clone(crowd), oldVersion), 1},
-			want{knowledge.Folder{Chars: 115 + 5*116, Carried: knowledge.Set(crowd), Producer: "session", Compactable: 6}, true, nil},
-		},
-		{
-			"a candidate is never crowded because only an approved item anchors a compaction",
-			args{append(slices.Clone(crowd), candidate), 1},
-			want{knowledge.Folder{Chars: 115 + 5*116, Carried: knowledge.Set(crowd), Producer: "session"}, false, nil},
+			want{knowledge.Folder{Chars: 115 + 5*116, Carried: knowledge.Set(crowd), Producer: "session"}, nil},
 		},
 		{
 			"an unknown version is not found",
 			args{[]knowledge.Knowledge{candidate}, 9},
-			want{knowledge.Folder{}, false, knowledge.ErrNotFound},
+			want{knowledge.Folder{}, knowledge.ErrNotFound},
 		},
 	}
 	ctx := context.Background()
@@ -1789,7 +1812,6 @@ func TestLedgerFolder(t *testing.T) {
 
 			assert.ErrorIs(t, err, tc.want.err)
 			assert.Equal(t, tc.want.folder, got)
-			assert.Equal(t, tc.want.crowded, got.Crowded())
 		})
 	}
 }
@@ -1806,13 +1828,10 @@ func TestLedgerConcurrentWrite(t *testing.T) {
 	}
 	approved := candidate
 	approved.Status, approved.Approver = knowledge.StatusApproved, "ann"
-	// Nine approved items fill a review but one
-	full := make([]knowledge.Knowledge, 0, 11)
-	for i := range 9 {
-		k := approved
-		k.ID = fmt.Sprintf("full-%d", i)
-		full = append(full, k)
-	}
+	// One long approved item leaves RunChars room for one more item
+	long := approved
+	long.ID, long.Content = "full-0", strings.Repeat("a", 8850)
+	full := []knowledge.Knowledge{long}
 	candidates := make([]knowledge.Knowledge, 0, 3)
 	for i := range 3 {
 		k := candidate
@@ -1828,7 +1847,9 @@ func TestLedgerConcurrentWrite(t *testing.T) {
 		calls []func(ctx context.Context, l *knowledge.Ledger) error
 	}
 	type want struct {
-		// Records newest first as id version status after the calls in any order
+		// Ids of every current version after the calls in any order
+		ids []string
+		// Version and status of every current version after the calls in any order
 		versions []string
 		failed   int
 		err      error
@@ -1857,35 +1878,35 @@ func TestLedgerConcurrentWrite(t *testing.T) {
 		{
 			"two proposals of one id become two versions and never a second v1",
 			args{nil, []func(context.Context, *knowledge.Ledger) error{propose(proposal), propose(proposal)}},
-			want{[]string{"item 1 candidate", "item 2 candidate"}, 0, nil},
+			want{[]string{"item", "item"}, []string{"1 candidate", "2 candidate"}, 0, nil},
 		},
 		{
 			"two approvals of one version approve it once",
 			args{[]knowledge.Knowledge{candidate}, []func(context.Context, *knowledge.Ledger) error{approve("item"), approve("item")}},
-			want{[]string{"item 1 approved"}, 1, knowledge.ErrTransitionInvalid},
+			want{[]string{"item"}, []string{"1 approved"}, 1, knowledge.ErrTransitionInvalid},
 		},
 		{
 			"two retires of one version retire it once",
 			args{[]knowledge.Knowledge{candidate}, []func(context.Context, *knowledge.Ledger) error{retire, retire}},
-			want{[]string{"item 1 retired"}, 1, knowledge.ErrTransitionInvalid},
+			want{[]string{"item"}, []string{"1 retired"}, 1, knowledge.ErrTransitionInvalid},
 		},
 		{
-			"two approvals into the last seat of a review approve one",
+			"two approvals into the last room of a run approve one",
 			args{
 				append(slices.Clone(full), candidates[:2]...),
 				[]func(context.Context, *knowledge.Ledger) error{approve("par-0"), approve("par-1")},
 			},
-			want{nil, 1, knowledge.ErrFolderFull},
+			want{[]string{"full-0", "par-0", "par-1"}, []string{"1 approved", "1 approved", "1 candidate"}, 1, knowledge.ErrFolderFull},
 		},
 		{
 			"approvals of three ids at once all land",
 			args{candidates, []func(context.Context, *knowledge.Ledger) error{approve("par-0"), approve("par-1"), approve("par-2")}},
-			want{[]string{"par-0 1 approved", "par-1 1 approved", "par-2 1 approved"}, 0, nil},
+			want{[]string{"par-0", "par-1", "par-2"}, []string{"1 approved", "1 approved", "1 approved"}, 0, nil},
 		},
 		{
 			"proposals with generated ids at once all land",
 			args{nil, []func(context.Context, *knowledge.Ledger) error{propose(anonymous), propose(anonymous), propose(anonymous)}},
-			want{[]string{"k-0 1 candidate", "k-1 1 candidate", "k-2 1 candidate"}, 0, nil},
+			want{[]string{"k-0", "k-1", "k-2"}, []string{"1 candidate", "1 candidate", "1 candidate"}, 0, nil},
 		},
 	}
 	ctx := context.Background()
@@ -1909,28 +1930,24 @@ func TestLedgerConcurrentWrite(t *testing.T) {
 				}()
 			}
 			close(start)
-			failed := 0
+			errs := make([]error, 0, len(tc.args.calls))
 			for range tc.args.calls {
-				if err := <-results; err != nil {
-					failed++
-					assert.ErrorIs(t, err, tc.want.err)
-				}
+				errs = append(errs, <-results)
 			}
 
 			all, err := open(0).All(ctx)
 			require.NoError(t, err)
-			var versions []string
+			var ids, versions []string
 			for _, k := range all.Versions() {
-				if !strings.HasPrefix(k.ID, "full-") && (tc.want.versions != nil || k.Status == knowledge.StatusApproved) {
-					versions = append(versions, fmt.Sprintf("%s %d %s", k.ID, k.Version, k.Status))
-				}
+				ids = append(ids, k.ID)
+				versions = append(versions, fmt.Sprintf("%d %s", k.Version, k.Status))
 			}
-			assert.Equal(t, tc.want.failed, failed)
-			if tc.want.versions != nil {
-				assert.ElementsMatch(t, tc.want.versions, versions)
-			} else {
-				assert.Len(t, versions, 1, "one of the two approvals lands")
-			}
+			failed := slices.DeleteFunc(errs, func(err error) bool { return err == nil })
+			expected := slices.DeleteFunc(slices.Clone(failed), func(err error) bool { return !errors.Is(err, tc.want.err) })
+			assert.Len(t, failed, tc.want.failed)
+			assert.Equal(t, failed, expected, "every failure is the refusal of the check only one call may pass")
+			assert.ElementsMatch(t, tc.want.ids, ids)
+			assert.ElementsMatch(t, tc.want.versions, versions)
 		})
 	}
 }

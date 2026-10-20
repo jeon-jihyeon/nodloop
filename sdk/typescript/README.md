@@ -35,10 +35,10 @@ From then on every `knowledge("support-bot", acme)` carries the item, and a run 
 | `record({ producer, output, labels, applied, subject, withheld, holdoutKey })` | the run id a verdict cites. Pass `knowledge.withheld` as `withheld` and the `holdoutKey` the run passed to `knowledge`. `report effect` counts only runs recorded with the key and counts a run without it as `undrawn`. Both lists take items or `{ id, version }` refs |
 | `judge(run, verdict, { reason, reasonCode, edited, reviewer })` | nothing |
 | `propose({ kind, content, from, producer, labels, newLabels, id, veto })` | `Candidate` with `id`, `version`, `status` and `overlaps`, the current items of the same kind one run may carry with it |
-| `approve(id, version, approver, { labels })` | Approves as proposed, or for the runs carrying `labels` when given, and `{}` for every run of the producer. `Approval` with `id`, `version`, `status`, `approver`, `veto`, `compactionDue` when one run would carry more than five items, and `exportError` and `folderError` when a step after the approval failed |
+| `approve(id, version, approver, { labels })` | Approves as proposed, or for the runs carrying `labels` when given, and `{}` for every run of the producer. `Approval` with `id`, `version`, `status`, `approver`, `veto`, and `exportError` and `folderError` when a step after the approval failed |
 | `checkCall(tool, input, producer)` | `Decision` with `action` of allow, block or ask, `veto` and `reason` |
 | `outcome(run, result, { confirmedCause, note, reviewer })` | nothing. `result` is confirmed, refuted or inconclusive: what a real check found, apart from the verdict on the output |
-| `report(name)` | `Report` with `report`, the report as JSON, and `since`, the RFC3339 start of the runs it read, absent for every run. `name` is a `ReportName`: `loop`, `extract`, `critic`, `effect`, `health` or `replay` |
+| `report(name)` | `Report` with `report`, the report as JSON, and `since`, the RFC3339 start of the runs it read, absent for every run. `name` is a `ReportName`: `loop`, `extract`, `critic`, `effect`, `health` or `replay`. `critic` is `{ critics, reactions }`: the rows of the draft critics and of the reaction classifiers |
 
 A tool that refuses, such as a proposal from a run nobody corrected, throws `ToolError` with the reason.
 

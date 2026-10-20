@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -44,7 +45,7 @@ func TestRunReportRecords(t *testing.T) {
 	}{
 		{"loop as JSON", args{[]string{"loop", "--json"}, false}, want{0, totals, ""}},
 		{"extract as JSON", args{[]string{"extract", "--json"}, false}, want{0, "[]\n", ""}},
-		{"critic as JSON", args{[]string{"critic", "--json"}, false}, want{0, "[]\n", ""}},
+		{"critic as JSON", args{[]string{"critic", "--json"}, false}, want{0, `{"critics":[],"reactions":[]}` + "\n", ""}},
 		{"effect as JSON", args{[]string{"effect", "--json"}, false}, want{0, arms, ""}},
 		{"replay as JSON", args{[]string{"replay", "--json"}, false}, want{0, replays, ""}},
 		{"replay as text", args{[]string{"replay"}, false}, want{0, "replay\tgit-c\tv1\tpassed\tmissed 0 of 1\toverreach 0 of 0\t2026-10-07T12:00:00Z\n", ""}},
@@ -97,8 +98,10 @@ func TestRunReportText(t *testing.T) {
 		marker   string
 		runs     []run
 		verdicts []verdict
-		// The output of a classify trace on r1
+		// The output of a classify trace of the critic point on r1
 		classify string
+		// The outputs of classify traces of the reaction point on r1
+		reactions []string
 	}
 	zero := "window\tall\tapplied runs 0\twithheld runs 0\n" +
 		"effect\tapplied\truns 0\tjudged 0\tcorrected 0\tsame reason 0\neffect\twithheld\truns 0\tjudged 0\tcorrected 0\tsame reason 0\n"
@@ -112,10 +115,10 @@ func TestRunReportText(t *testing.T) {
 		args args
 		want string
 	}{
-		{"no run with items prints both arms at zero without a producer", args{"effect", "", []run{{"r1", `{"applied":[]}`}}, nil, `{}`}, zero},
+		{"no run with items prints both arms at zero without a producer", args{"effect", "", []run{{"r1", `{"applied":[]}`}}, nil, `{}`, nil}, zero},
 		{
 			"each arm of a producer names it after the counts and the new columns follow",
-			args{"effect", "", []run{{"r1", applied + `}`}, {"r2", withheld + `}`}, {"r3", `{"applied":[{"id":"git-c","version":1}]}`}}, nil, `{}`},
+			args{"effect", "", []run{{"r1", applied + `}`}, {"r2", withheld + `}`}, {"r3", `{"applied":[{"id":"git-c","version":1}]}`}}, nil, `{}`, nil},
 			"window\tall\tapplied runs 1\twithheld runs 1\n" +
 				"effect\tapplied\truns 1\tjudged 0\tcorrected 0\tsame reason 0\tproducer bot\tunits 1\trate -\tjudged rate 0.000\texpected share 0.500" +
 				"\taudit judged 0 corrected 0\toutcomes confirmed 0 refuted 0\tundrawn 1\tsrm p 1.000\tdifference -\twarnings insufficient\n" +
@@ -127,7 +130,7 @@ func TestRunReportText(t *testing.T) {
 			args{"effect", marker, []run{
 				{"r1", applied + `,"unit":"u1"}`}, {"r2", applied + `,"unit":"u1"}`},
 				{"r3", `{"applied":[],"withheld":[{"id":"git-c","version":1}],"drawn":true,"share":0.2,"scheme":1}`},
-			}, []verdict{{"r1", feedback.VerdictReject, feedback.ReasonFact}, {"r2", feedback.VerdictApprove, ""}, {"r3", feedback.VerdictApprove, ""}}, `{}`},
+			}, []verdict{{"r1", feedback.VerdictReject, feedback.ReasonFact}, {"r2", feedback.VerdictApprove, ""}, {"r3", feedback.VerdictApprove, ""}}, `{}`, nil},
 			"window\t2026-09-30T12:00:00Z\tapplied runs 2\twithheld runs 1\n" +
 				"effect\tapplied\truns 2\tjudged 2\tcorrected 1\tsame reason 1\tproducer bot\tunits 1\trate 0.500 [0.095, 0.905]\tjudged rate 1.000" +
 				"\texpected share 0.650\taudit judged 0 corrected 0\toutcomes confirmed 0 refuted 0\tundrawn 0\tsrm p 0.657" +
@@ -136,11 +139,18 @@ func TestRunReportText(t *testing.T) {
 				"\texpected share 0.350\taudit judged 0 corrected 0\toutcomes confirmed 0 refuted 0\tundrawn 0\tsrm p 0.657" +
 				"\tdifference 0.500 [-0.391, 0.905]\twarnings insufficient,mixed_shares\n",
 		},
-		{"critic prints the window of every run first", args{"critic", "", []run{{"r1", `{"applied":[]}`}}, nil, member},
+		{"critic prints the window of every run first", args{"critic", "", []run{{"r1", `{"applied":[]}`}}, nil, member, nil},
 			"window\tall\ncritic\tclassifier laya\tjudged 1\tagree 0\tfalse pass 0\tfalse refuse 0\topen 1\n"},
-		{"critic prints the window of the last prune first", args{"critic", marker, []run{{"r1", `{"applied":[]}`}}, nil, member},
+		{"critic prints the window of the last prune first", args{"critic", marker, []run{{"r1", `{"applied":[]}`}}, nil, member, nil},
 			"window\t2026-09-30T12:00:00Z\ncritic\tclassifier laya\tjudged 1\tagree 0\tfalse pass 0\tfalse refuse 0\topen 1\n"},
-		{"critic without a critic prints the window alone", args{"critic", "", nil, nil, `{}`}, "window\tall\n"},
+		{"critic without a critic prints the window alone", args{"critic", "", nil, nil, `{}`, nil}, "window\tall\n"},
+		{
+			"a reaction member follows the critics with its answers against the session verdict",
+			args{"critic", "", []run{{"r1", `{"applied":[]}`}}, nil, member,
+				[]string{`{"members":[{"name":"laya","answers":{"corrects":{"yes":0.1},"approves":{"yes":0.1}}}]}`}},
+			"window\tall\ncritic\tclassifier laya\tjudged 1\tagree 0\tfalse pass 0\tfalse refuse 0\topen 1\n" +
+				"critic\treaction laya\tasked 1\tsure 0\tagree 0\tdisagree 0\tmissed correction 0\tmissed approval 0\tdeferred 0\n",
+		},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
@@ -163,8 +173,14 @@ func TestRunReportText(t *testing.T) {
 				require.NoError(t, verdicts.Append(context.Background(), fb.Record()))
 			}
 			require.NoError(t, store.Append(context.Background(), trace.Trace{
-				ID: "c1", Name: trace.NameClassify, Ref: "r1", Time: at, Input: json.RawMessage(`{}`), Output: json.RawMessage(tc.args.classify),
+				ID: "c1", Name: trace.NameClassify, Subject: "critic", Ref: "r1", Time: at, Input: json.RawMessage(`{}`), Output: json.RawMessage(tc.args.classify),
 			}.Record()))
+			for i, reaction := range tc.args.reactions {
+				require.NoError(t, store.Append(context.Background(), trace.Trace{
+					ID: fmt.Sprintf("c%d", i+2), Name: trace.NameClassify, Subject: "reaction", Ref: "r1", Time: at, Input: json.RawMessage(`{}`),
+					Output: json.RawMessage(reaction),
+				}.Record()))
+			}
 			getenv := func(k string) string { return map[string]string{envRecordDir: records}[k] }
 			var stdout, stderr bytes.Buffer
 
