@@ -81,6 +81,7 @@ func runHook(args []string, getenv func(string) string, start starter, now func(
 	cmd := hookCommand{
 		app: a, detach: start, out: stdout, mode: mode, host: h,
 		plugin: cmp.Or(getenv(envPluginVersion), buildVersion()), holdout: a.cfg.holdout, hold: hold,
+		unconfirmed: newUnconfirmed(a.cfg.recordDir, a.cfg.home, getenv(envClaudeConfigDir)),
 	}
 	if a.cfg.otel != nil {
 		cmd.export = start
@@ -108,6 +109,8 @@ func (c hookCommand) run(ctx context.Context, action string, in hookInput, label
 	case "subagent":
 		_, err := c.addItems(ctx, "SubagentStart", in.SessionID, labels)
 		return err
+	case "instructions":
+		return c.instructions(ctx, in)
 	}
 	return fmt.Errorf("%w %q", errUnknownAction, action)
 }
@@ -124,6 +127,10 @@ type hookInput struct {
 	LastAssistantMessage string `json:"last_assistant_message"`
 	// True when the stop ends a turn a stop hook continued
 	StopHookActive bool `json:"stop_hook_active"`
+	// The rules file the instructions hook hashes with what the host reported of it
+	FilePath   string `json:"file_path"`
+	MemoryType string `json:"memory_type"`
+	LoadReason string `json:"load_reason"`
 }
 
 type hookCommand struct {
@@ -142,6 +149,8 @@ type hookCommand struct {
 	reaction *classify.Plan
 	// Starts the OTLP export after every recorded run and nil when config.json holds no otel target
 	export starter
+	// The rules files whose lines no person confirmed
+	unconfirmed unconfirmed
 }
 
 // The approved items of this place the context lacks and the session note as context of the prompt

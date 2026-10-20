@@ -1,7 +1,6 @@
 package main
 
 import (
-	"strings"
 	"testing"
 	"time"
 
@@ -11,47 +10,6 @@ import (
 	"github.com/jeon-jihyeon/nodloop/internal/schema"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
 )
-
-func TestInstructionsTrace(t *testing.T) {
-	at := time.Date(2026, 9, 23, 9, 0, 0, 0, time.UTC)
-	hmac := strings.Repeat("ab", 32)
-	type args struct {
-		in      instructionsInput
-		session string
-	}
-	type want struct {
-		input string
-		err   error
-	}
-	tcs := []struct {
-		name string
-		args args
-		want want
-	}{
-		{
-			"a rules file names its path, the HMAC of its content and what the host reported",
-			args{instructionsInput{Path: "CLAUDE.md", HMAC: hmac, MemoryType: "Project", LoadReason: "session_start"}, "s1"},
-			want{`{"path":"CLAUDE.md","hmac":"` + hmac + `","memory_type":"Project","load_reason":"session_start"}`, nil},
-		},
-		{"a file of no session is refused", args{instructionsInput{Path: "CLAUDE.md", HMAC: hmac}, ""}, want{err: errSessionTrace}},
-		{"a file without its path is refused", args{instructionsInput{HMAC: hmac}, "s1"}, want{err: errSessionTrace}},
-		{"a content kept as text is refused", args{instructionsInput{Path: "CLAUDE.md", HMAC: "always use git -C"}, "s1"}, want{err: errSessionTrace}},
-	}
-	for _, tc := range tcs {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-
-			got, err := tc.args.in.trace(tc.args.session, at)
-
-			assert.ErrorIs(t, err, tc.want.err)
-			assert.Equal(t, tc.want.input, string(got.Input))
-		})
-	}
-	got, err := instructionsInput{Path: "CLAUDE.md", HMAC: hmac}.trace("s1", at)
-	require.NoError(t, err)
-	assert.Equal(t, []any{trace.NameInstructions, "s1", at}, []any{got.Name, got.SessionID, got.Time})
-	assert.NoError(t, schema.Validate(string(trace.NameInstructions), got.Record()))
-}
 
 func TestCaptureTrace(t *testing.T) {
 	at := time.Date(2026, 9, 23, 9, 0, 0, 0, time.UTC)

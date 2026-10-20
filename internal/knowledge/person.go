@@ -3,6 +3,9 @@ package knowledge
 import (
 	"fmt"
 	"slices"
+	"time"
+
+	"github.com/jeon-jihyeon/nodloop/internal/trace"
 )
 
 // Why a version was retired
@@ -60,4 +63,35 @@ func refuseReserved(name string) error {
 		return fmt.Errorf("%w: %s", ErrApproverReserved, name)
 	}
 	return nil
+}
+
+// The current approved versions whose latest approve or reaffirm names a person in id order
+// curate reads them as the anchor so a version nodloop approved never becomes direction on its own
+func (s Set) PersonApproved() Set {
+	out := Set{}
+	for _, k := range s.Approved() {
+		if !k.carriedOut() {
+			out = append(out, k)
+		}
+	}
+	return out
+}
+
+// The current approved versions whose latest approve or reaffirm names the approver
+// approved at since or later and reaching a run of the producer with the labels
+func (s Set) ApprovedBy(approver string, since time.Time, producer string, labels trace.Labels) Set {
+	out := Set{}
+	for _, k := range s.Approved() {
+		if k.Approver == approver && !k.ApprovedAt.Before(since) && k.Run != nil && k.Run.Admits(producer, labels) {
+			out = append(out, k)
+		}
+	}
+	return out
+}
+
+// Whether one current version a person approved reaches every run the scope reaches
+// 1. one version and never a union since a run with a label value no recorded run carries yet would fall between the versions of a union
+// 2. it reaches them when the scope widens it by none of the rules of ErrScopeWidened
+func (s Set) PersonReaches(scope RunScope) bool {
+	return slices.ContainsFunc(s.PersonApproved(), func(k Knowledge) bool { return k.Run != nil && !scope.widens(*k.Run) })
 }

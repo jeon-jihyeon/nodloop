@@ -26,7 +26,15 @@ type userConfig struct {
 	LLM llm.Config `json:"llm"`
 	// Where every export sends and nil when nothing is exported on its own
 	OTel *otelConfig `json:"otel,omitempty"`
+	// The documents the person designates as direction
+	Anchor anchorConfig `json:"anchor"`
 	classifierConfig
+}
+
+// The anchor key of config.json
+type anchorConfig struct {
+	// Absolute paths read at check time where the person keeps them
+	Files []string `json:"files"`
 }
 
 // nodloop keeps the config and the default records under `.nodloop` there
