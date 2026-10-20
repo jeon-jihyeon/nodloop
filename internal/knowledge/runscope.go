@@ -217,13 +217,13 @@ func (s Set) runCarried(id string, run RunScope) Set {
 // The approved run items other than id that the fullest run of run carries together, which the run caps hold
 // 1. items of two repositories never meet in one run so an item that reaches both counts the items of one of them
 // 2. each item starts one pass that adds every later item the labels gathered so far still admit
-// 3. the pass with the most items wins and the larger text breaks a tie
+// 3. the pass with the most runes wins and more items break a tie
 func (s Set) fullestRun(id string, run RunScope) Set {
 	met := s.runCarried(id, run)
 	best := Set{}
 	for i := range met {
 		carried := slices.Concat(met[i:], met[:i]).meeting(run)
-		if len(carried) > len(best) || (len(carried) == len(best) && carried.runes() > best.runes()) {
+		if r, b := carried.runes(), best.runes(); r > b || (r == b && len(carried) > len(best)) {
 			best = carried
 		}
 	}
@@ -244,7 +244,8 @@ func (s Set) meeting(run RunScope) Set {
 
 // The draft with the producer and labels of a run a person corrected and the run as evidence
 // 1. the producer and labels the draft already names win over those of the run
-// 2. the latest of the verdicts on the run must correct it
+// 2. the labels of the run come without the host so a lesson corrected in one host reaches every host of the place
+// 3. the latest of the verdicts on the run must correct it
 func (k Knowledge) From(run trace.Trace, verdicts feedback.Records) (Knowledge, error) {
 	if err := run.CheckRun(); err != nil {
 		return Knowledge{}, err

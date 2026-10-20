@@ -482,6 +482,66 @@ func TestSetPendingCompaction(t *testing.T) {
 	}
 }
 
+func TestSetRoom(t *testing.T) {
+	seeds := newCompactionSeeds()
+	at := seeds.at.Add(time.Hour)
+	waiting := func(id, content string, run *knowledge.RunScope) knowledge.Knowledge {
+		return knowledge.Knowledge{
+			ID: id, Version: 1, Kind: knowledge.KindMeaning, Content: content, Run: run, Basis: knowledge.BasisStated,
+			Evidence: knowledge.Evidence{FeedbackTraceIDs: []string{"t9"}}, Status: knowledge.StatusCandidate, Author: "claude", Time: at,
+		}
+	}
+	long := strings.Repeat("a", knowledge.RunChars)
+	big := waiting("big", long, seeds.a.Run)
+	// far is the only other item its folder carries
+	lone := waiting("lone", long, seeds.far.Run)
+	small := waiting("small", "short", seeds.a.Run)
+	merged := knowledge.Knowledge{
+		ID: "k-1", Version: 1, Kind: knowledge.KindMeaning, Content: "lag and basis", Status: knowledge.StatusCandidate, Time: at,
+		Author: "claude", Compaction: "c-1", CompactionSize: 1,
+		Evidence: knowledge.Evidence{Knowledge: []knowledge.Ref{{ID: "a", Version: 1}, {ID: "b", Version: 1}}},
+	}
+	records := knowledge.Set{big, lone, small, seeds.a, seeds.b, seeds.j, seeds.far}
+	type args struct {
+		// Newest first as the store lists them
+		records knowledge.Set
+		id      string
+	}
+	type want struct {
+		// Whether the folder the approval would leave passes RunChars
+		full    bool
+		anchor  string
+		pending string
+		err     error
+	}
+	tcs := []struct {
+		name string
+		args args
+		want want
+	}{
+		{"an approval within RunChars needs nothing", args{records, "small"}, want{}},
+		{"an approval past RunChars names the anchor of its folder", args{records, "big"}, want{full: true, anchor: "a"}},
+		{
+			"a pending compaction of the folder is named",
+			args{append(knowledge.Set{merged}, records...), "big"},
+			want{full: true, anchor: "a", pending: "c-1"},
+		},
+		{"a folder of one item has nothing to merge", args{records, "lone"}, want{}},
+		{"an unknown id fails", args{records, "nope"}, want{err: knowledge.ErrNotFound}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			room, err := tc.args.records.Room(tc.args.id, 1)
+
+			assert.ErrorIs(t, err, tc.want.err)
+			assert.Equal(t, tc.want.full, room.Chars > knowledge.RunChars)
+			assert.Equal(t, tc.want.anchor, room.Anchor)
+			assert.Equal(t, tc.want.pending, room.Pending)
+		})
+	}
+}
+
 // A second proposal over items of the first waits until the first is abandoned or can never be approved
 // The first is anchored at j and the second at a with the meaning draft alone
 func TestLedgerProposeCompactionAgain(t *testing.T) {
@@ -868,8 +928,7 @@ func TestLedgerApproveCompaction(t *testing.T) {
 		coverage func(knowledge.Compaction) knowledge.Coverage
 		approver string
 		// Approved items of the folder that the meaning draft names beside a and b
-		extra []knowledge.Knowledge
-		// The drafts of seeds when nil
+		extra  []knowledge.Knowledge
 		drafts []knowledge.Knowledge
 	}
 	type want struct {
@@ -897,7 +956,7 @@ func TestLedgerApproveCompaction(t *testing.T) {
 	large.Evidence = knowledge.Evidence{FeedbackTraceIDs: []string{"t-large"}}
 	longer := seeds.drafts()
 	longer[0].Content = strings.Repeat("가", knowledge.RunChars)
-	// Nine items push the review of the folder past the item cap before the compaction
+	// Nine more items of the folder that no cap counts by number
 	var crowd []knowledge.Knowledge
 	for i := range 9 {
 		k := seeds.a
@@ -917,6 +976,7 @@ func TestLedgerApproveCompaction(t *testing.T) {
 	}
 	items := []string{"k-1 v1 approved", "j v2 approved"}
 	candidate := []knowledge.Ref{{ID: "k-1", Version: 1}}
+	drafts := seeds.drafts
 	tcs := []struct {
 		name string
 		args args
@@ -924,26 +984,34 @@ func TestLedgerApproveCompaction(t *testing.T) {
 	}{
 		{
 			"approves the new items and retires the old ones",
-			args{coverage: passed, approver: "sam"},
+			args{coverage: passed, approver: "sam", drafts: drafts()},
 			want{appended: success, items: items, vetoes: true},
 		},
 		{
 			"a second call after a partial append appends only what is missing",
-			args{approved: candidate, coverage: passed, approver: "sam"},
+			args{approved: candidate, coverage: passed, approver: "sam", drafts: drafts()},
 			want{appended: success[1:], items: items, vetoes: true},
 		},
-		{"refused without a coverage", args{coverage: none, approver: "sam"}, want{err: knowledge.ErrCoverageNotPassed}},
-		{"refused when a fact is lost", args{coverage: lost, approver: "sam"}, want{err: knowledge.ErrCoverageNotPassed}},
-		{"refused when an old item is not covered", args{coverage: uncovered, approver: "sam"}, want{err: knowledge.ErrCoverageNotPassed}},
-		{"refused with the coverage of another compaction", args{coverage: other, approver: "sam"}, want{err: knowledge.ErrCoverageNotPassed}},
+		{"refused without a coverage", args{coverage: none, approver: "sam", drafts: drafts()}, want{err: knowledge.ErrCoverageNotPassed}},
+		{"refused when a fact is lost", args{coverage: lost, approver: "sam", drafts: drafts()}, want{err: knowledge.ErrCoverageNotPassed}},
+		{
+			"refused when an old item is not covered",
+			args{coverage: uncovered, approver: "sam", drafts: drafts()},
+			want{err: knowledge.ErrCoverageNotPassed},
+		},
+		{
+			"refused with the coverage of another compaction",
+			args{coverage: other, approver: "sam", drafts: drafts()},
+			want{err: knowledge.ErrCoverageNotPassed},
+		},
 		{
 			"refused when an old item changed since the proposal",
-			args{retired: []knowledge.Ref{{ID: "b", Version: 1}}, coverage: passed, approver: "sam"},
+			args{retired: []knowledge.Ref{{ID: "b", Version: 1}}, coverage: passed, approver: "sam", drafts: drafts()},
 			want{err: knowledge.ErrCompactionOutdated},
 		},
 		{
 			"refused when a candidate of the compaction was retired",
-			args{retired: candidate, coverage: passed, approver: "sam"},
+			args{retired: candidate, coverage: passed, approver: "sam", drafts: drafts()},
 			want{err: knowledge.ErrTransitionInvalid},
 		},
 		{
@@ -953,15 +1021,15 @@ func TestLedgerApproveCompaction(t *testing.T) {
 		},
 		{
 			"a compaction that shrinks a review already past the char cap passes",
-			args{coverage: passed, approver: "sam", extra: []knowledge.Knowledge{large}},
+			args{coverage: passed, approver: "sam", extra: []knowledge.Knowledge{large}, drafts: drafts()},
 			want{appended: retired([]knowledge.Knowledge{large}), items: items, vetoes: true},
 		},
 		{
-			"a compaction that shrinks a review already past the item cap passes",
-			args{coverage: passed, approver: "sam", extra: crowd},
+			"a compaction beside nine more items of the folder passes",
+			args{coverage: passed, approver: "sam", extra: crowd, drafts: drafts()},
 			want{appended: retired(crowd), items: items, vetoes: true},
 		},
-		{"refused without an approver", args{coverage: passed}, want{err: knowledge.ErrApproverRequired}},
+		{"refused without an approver", args{coverage: passed, drafts: drafts()}, want{err: knowledge.ErrApproverRequired}},
 	}
 	ctx := context.Background()
 	for _, tc := range tcs {
@@ -970,9 +1038,6 @@ func TestLedgerApproveCompaction(t *testing.T) {
 			l, vetoPath := newTestLedger(t, t.TempDir(), now)
 			require.NoError(t, testkit.Err(l.Import(ctx, append(seeds.all(), tc.args.extra...))))
 			drafts := slices.Clone(tc.args.drafts)
-			if drafts == nil {
-				drafts = seeds.drafts()
-			}
 			for _, k := range tc.args.extra {
 				drafts[0].Evidence.Knowledge = append(slices.Clone(drafts[0].Evidence.Knowledge), knowledge.Ref{ID: k.ID, Version: k.Version})
 			}
@@ -1192,16 +1257,16 @@ func TestLedgerCandidateOfCompactedVersion(t *testing.T) {
 	}
 }
 
-// A folder past the item cap compacts into drafts that one run never carries two of a kind
+// A folder past RunChars compacts into drafts that one run never carries two of a kind
 // and the folder then takes approvals again
 func TestLedgerProposeCompactionFreesFolder(t *testing.T) {
 	at := time.Date(2026, 9, 28, 0, 0, 0, 0, time.UTC)
 	repo := trace.Labels{"repo": {"nodloop"}}
-	// Twelve approved meanings of the repo that a ledger approved before the item cap left
+	// Twelve approved meanings of the repo past RunChars as an import or an older cap left them
 	var seeds []knowledge.Knowledge
 	for i := range 12 {
 		seeds = append(seeds, knowledge.Knowledge{
-			ID: fmt.Sprintf("k%02d", i), Version: 1, Kind: knowledge.KindMeaning, Content: fmt.Sprintf("fact %d", i),
+			ID: fmt.Sprintf("k%02d", i), Version: 1, Kind: knowledge.KindMeaning, Content: fmt.Sprintf("fact %d %s", i, strings.Repeat("a", 800)),
 			Run:      &knowledge.RunScope{Producer: "session", Labels: repo},
 			Evidence: knowledge.Evidence{FeedbackTraceIDs: []string{fmt.Sprintf("t%d", i)}}, Basis: knowledge.BasisStated,
 			Status: knowledge.StatusApproved, Approver: "ann", ApprovedAt: at, Author: "author", Time: at,
@@ -1223,6 +1288,8 @@ func TestLedgerProposeCompactionFreesFolder(t *testing.T) {
 		err error
 		// Items the compaction proposes
 		items int
+		// The error of approving the proposal and not found when none was proposed
+		approve error
 		// The error of approving one more item of the folder after the compaction was approved
 		next error
 	}
@@ -1231,21 +1298,21 @@ func TestLedgerProposeCompactionFreesFolder(t *testing.T) {
 		args []knowledge.Knowledge
 		want want
 	}{
-		{"one merged draft passes and the folder takes the next approval", []knowledge.Knowledge{draft(0, 12, repo)}, want{nil, 1, nil}},
+		{"one merged draft passes and the folder takes the next approval", []knowledge.Knowledge{draft(0, 12, repo)}, want{nil, 1, nil, nil}},
 		{
 			"drafts split by a label value with none in common pass and the folder takes the next approval",
 			[]knowledge.Knowledge{draft(0, 6, byTask("commit")), draft(6, 12, byTask("push"))},
-			want{nil, 2, nil},
+			want{nil, 2, nil, nil},
 		},
 		{
 			"a merged draft without labels reaches runs each old item never reached and is refused",
 			[]knowledge.Knowledge{draft(0, 12, nil)},
-			want{knowledge.ErrCompactionInvalid, 0, knowledge.ErrFolderFull},
+			want{knowledge.ErrCompactionInvalid, 0, knowledge.ErrNotFound, knowledge.ErrFolderFull},
 		},
 		{
 			"two drafts of the same labels overlap and are refused",
 			[]knowledge.Knowledge{draft(0, 6, repo), draft(6, 12, repo)},
-			want{knowledge.ErrCompactionOverlap, 0, knowledge.ErrFolderFull},
+			want{knowledge.ErrCompactionOverlap, 0, knowledge.ErrNotFound, knowledge.ErrFolderFull},
 		},
 	}
 	ctx := context.Background()
@@ -1256,9 +1323,7 @@ func TestLedgerProposeCompactionFreesFolder(t *testing.T) {
 			require.NoError(t, testkit.Err(l.Import(ctx, seeds)))
 
 			got, err := l.ProposeCompaction(ctx, "k00", tc.args)
-			if err == nil {
-				require.NoError(t, testkit.Err(l.ApproveCompaction(ctx, got.ID, "sam", coverage(got))))
-			}
+			_, approveErr := l.ApproveCompaction(ctx, got.ID, "sam", coverage(got))
 			next := knowledge.Knowledge{
 				ID: "k-next", Kind: knowledge.KindMeaning, Content: "next fact", Author: "author",
 				Run:      &knowledge.RunScope{Producer: "session", Labels: repo},
@@ -1270,6 +1335,7 @@ func TestLedgerProposeCompactionFreesFolder(t *testing.T) {
 
 			assert.ErrorIs(t, err, tc.want.err)
 			assert.Len(t, got.Items, tc.want.items)
+			assert.ErrorIs(t, approveErr, tc.want.approve)
 			assert.ErrorIs(t, nextErr, tc.want.next)
 		})
 	}

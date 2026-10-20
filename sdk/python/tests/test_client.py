@@ -25,7 +25,7 @@ async def test_loop(binary: str, records: str) -> None:
         globex = await c.knowledge("support-bot", {"tenant": ["globex"], "task": ["refund"]})
         nxt = await c.record("support-bot", "The window is 30 days. Steps follow", labels=ACME, applied=acme.items)
 
-    assert (approved.veto, approved.compaction_due, approved.export_error, approved.folder_error) == (False, False, "", "")
+    assert (approved.veto, approved.export_error, approved.folder_error) == (False, "", "")
     assert [i.id for i in acme.items] == ["refund-window"]
     assert acme.text.startswith("nodloop: corrections a person approved")
     assert "- [refund-window v1 judgment] Quote the refund window before the steps" in acme.text
@@ -86,19 +86,6 @@ async def test_server_refuses_a_wrong_key(server: tuple[str, str]) -> None:
 async def test_record_takes_keywords_after_output() -> None:
     with pytest.raises(TypeError):
         await Client().record("support-bot", "answer", ACME)  # type: ignore[misc]
-
-
-async def test_approval_says_a_compaction_is_due(binary: str, records: str) -> None:
-    async with Client(records, binary) as c:
-        run = await c.record("support-bot", "Here are the refund steps", labels=ACME)
-        await c.judge(run, "reject", reason="the refund window was missing")
-        approvals = []
-        for n in range(6):
-            proposed = await c.propose("judgment", f"Refund rule number {n}", from_run=run, item_id=f"rule-{n}")
-            approvals.append(await c.approve(proposed.id, proposed.version, "ann"))
-
-    assert [a.compaction_due for a in approvals] == [False] * 5 + [True]
-    assert all(a.folder_error == "" for a in approvals)
 
 
 async def test_approve_in_picked_labels(binary: str, records: str) -> None:

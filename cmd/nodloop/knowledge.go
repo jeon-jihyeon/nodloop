@@ -33,13 +33,15 @@ type knowledgeFlags struct {
 	feedbackIDs, outcomeIDs                                           listFlag
 	labels, except                                                    labelFlag
 	vetoTool, vetoField, vetoMatch, vetoUnless, vetoExample           string
-	stale, newLabels, replay, everywhere                              bool
+	stale, newLabels, replay, everywhere, daily                       bool
 }
 
 func (f *knowledgeFlags) bind(fs *flag.FlagSet) {
 	fs.BoolVar(&f.stale, "stale", false, "list: only the approved versions past their review deadline")
 	fs.BoolVar(&f.replay, "replay", false, "check: also replay every new item of the compaction against its outputs")
 	fs.BoolVar(&f.everywhere, "everywhere", false, "approve: approve a candidate for every run of its producer")
+	fs.BoolVar(&f.daily, "daily", false,
+		"consolidate: run only when consolidate.json is a day old and print nothing, as the stop hook starts it")
 	fs.BoolVar(&f.newLabels, "new-labels", false, "propose: allow label values no recorded run carries yet such as a new tenant")
 	fs.StringVar(&f.id, "id", "", "knowledge id. propose generates one when empty")
 	fs.IntVar(&f.version, "version", 0, "the version to act on. 0 means the approved one for reaffirm and the current one for replay")
@@ -68,7 +70,7 @@ func (f *knowledgeFlags) bind(fs *flag.FlagSet) {
 		`propose: a tool_input JSON object the veto must block such as {"command":"sed -i s/a/b/ f"}`)
 	fs.StringVar(&f.from, "from", "",
 		"propose and extract: a run a person corrected by edit or reject. propose fills producer, labels and evidence from it unless given")
-	fs.StringVar(&f.model, "model", "", "compact, check, extract and replay: model alias or name. Empty means the llm default")
+	fs.StringVar(&f.model, "model", "", "compact, check, extract, replay and consolidate: model alias or name. Empty means the llm default")
 }
 
 // The candidate the propose flags describe
@@ -159,6 +161,8 @@ func runKnowledge(
 		err = flags.runExtract(ctx, a, client, getenv, stdout)
 	case args[0] == "replay":
 		err = flags.runReplay(ctx, id, a, client, stdout)
+	case args[0] == "consolidate":
+		err = flags.runConsolidate(ctx, a, client, stdout)
 	default:
 		err = flags.runRecords(ctx, args[0], id, a, stdout)
 	}
@@ -194,10 +198,7 @@ func (f knowledgeFlags) runRecords(ctx context.Context, action, id string, a app
 		if err := cmd.transition(ctx, "approve", approve, id, f.version, f.approver); err != nil {
 			return err
 		}
-		if err := cmd.folder(ctx, id, f.version); err != nil {
-			return err
-		}
-		return cmd.compaction(ctx, id, f.version)
+		return cmd.folder(ctx, id, f.version)
 	case "retire":
 		return cmd.transition(ctx, "retire", ledger.Retire, id, f.version, f.approver)
 	case "import":
@@ -439,19 +440,7 @@ func (c knowledgeCommand) folder(ctx context.Context, id string, version int) er
 		fmt.Fprintln(c.out, "folder\tnone because a judgment with a veto acts through the guard and joins no run")
 		return nil
 	}
-	fmt.Fprintf(c.out, "folder\t%d of %d chars\t%d of %d items in runs of %s\t%s\n",
-		f.Chars, knowledge.RunChars, f.Size(), knowledge.RunItems, f.Producer, f)
-	return nil
-}
-
-// A line when one run would carry more than FolderItems approved items with the version
-func (c knowledgeCommand) compaction(ctx context.Context, id string, version int) error {
-	f, err := c.ledger.Folder(ctx, id, version)
-	if err != nil || !f.Crowded() {
-		return err
-	}
-	fmt.Fprintf(c.out, "compaction due\tone run carries more than %d approved items with it. Run nodloop knowledge compact %s\n",
-		knowledge.FolderItems, id)
+	fmt.Fprintf(c.out, "folder\t%d of %d chars in runs of %s\t%s\n", f.Chars, knowledge.RunChars, f.Producer, f)
 	return nil
 }
 

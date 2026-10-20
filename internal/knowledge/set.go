@@ -144,23 +144,31 @@ func (s Set) folder(item Knowledge) Folder {
 	if item.Run == nil || item.Veto != nil {
 		return Folder{Carried: Set{}}
 	}
-	f := s.runFolder(item)
-	if item.Status == StatusApproved {
-		f.Compactable = len(s.runCarried(item.ID, *item.Run)) + 1
-	}
-	return f
+	return s.runFolder(item)
 }
 
-// The run folder of the item when the set holds it past a cap and bigger than before
-// 1. a folder past RunChars grows when its chars grow and one past RunItems when its items grow
-// 2. a folder already past a cap that does not grow passes so a replacement never needs a retire first
-func (s Set) outgrows(before Set, item Knowledge) (Folder, bool) {
+// The folder an approval of the version would leave and whether it stays within RunChars
+// The same rule as approve without a write so a caller knows ahead that an approval needs room
+func (s Set) Fits(id string, version int) (Folder, bool, error) {
+	k, err := s.Version(id, version)
+	if err != nil {
+		return Folder{}, false, err
+	}
+	f, ok := s.fits(s, k)
+	return f, ok, nil
+}
+
+// The run folder of the item once the set holds it and whether the cap allows it
+// 1. a folder past RunChars is refused when its chars grow beyond the fullest run before held
+// 2. a folder already past RunChars that does not grow passes so a replacement never needs a retire first
+// 3. the folder leaves out the other versions of the id because a run carries one version of an id
+// So the set may be before itself when the write changes only records of the id of the item
+func (s Set) fits(before Set, item Knowledge) (Folder, bool) {
 	if item.Run == nil || item.Veto != nil {
-		return Folder{}, false
+		return Folder{Carried: Set{}}, true
 	}
 	f := s.runFolder(item)
-	was := before.fullestRun("", *item.Run)
-	return f, (f.Chars > RunChars && f.Chars > was.runes()) || (f.Size() > RunItems && f.Size() > len(was))
+	return f, f.Chars <= RunChars || f.Chars <= before.fullestRun("", *item.Run).runes()
 }
 
 // Runes of the texts a run receives
@@ -333,7 +341,7 @@ func (s Set) approval(id string, version int, approver string, now time.Time) ([
 		}
 		records = append(records, *superseded)
 	}
-	if f, grew := slices.Concat(records, s).outgrows(s, to); grew {
+	if f, ok := s.fits(s, to); !ok {
 		return nil, fmt.Errorf("%w: %s with %s", ErrFolderFull, f.load(), f)
 	}
 	return records, nil

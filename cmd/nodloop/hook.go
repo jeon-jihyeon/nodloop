@@ -259,7 +259,7 @@ func (c hookCommand) stop(ctx context.Context, sessionID string, labels trace.La
 	if err := store.Append(ctx, tr.Record()); err != nil {
 		return err
 	}
-	pruneErr := c.prune(ctx)
+	pruneErr := errors.Join(c.prune(ctx), c.consolidate(all))
 	if all.Cites(previous.ID) {
 		return errors.Join(corrupt, pruneErr)
 	}

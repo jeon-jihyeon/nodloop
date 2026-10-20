@@ -120,7 +120,7 @@ func (s *Server) knowledgeFor(ctx context.Context, _ *sdk.CallToolRequest, in kn
 		chars += utf8.RuneCountInString(k.Text())
 	}
 	answer := map[string]any{
-		"items": out, "chars": chars, "over_budget": chars > knowledge.RunChars || len(items) > knowledge.RunItems,
+		"items": out, "chars": chars, "over_budget": chars > knowledge.RunChars,
 		"context": items.Prompt(),
 	}
 	if withheld != nil {
@@ -163,7 +163,7 @@ func (s *Server) proposeRun(ctx context.Context, in proposeInput, draft knowledg
 		return nil, nil, err
 	}
 	return nil, map[string]any{
-		"id": k.ID, "version": k.Version, "status": k.Status, "overlaps": overlaps, "folder": newFolderAnswer(folder, false),
+		"id": k.ID, "version": k.Version, "status": k.Status, "overlaps": overlaps, "folder": newFolderAnswer(folder),
 		"veto": k.Veto, "scope": k.Run, "drafted": k.Drafted,
 	}, nil
 }

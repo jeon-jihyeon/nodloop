@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -19,9 +20,15 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 
+	"github.com/jeon-jihyeon/nodloop/internal/compact"
 	"github.com/jeon-jihyeon/nodloop/internal/extract"
+	"github.com/jeon-jihyeon/nodloop/internal/feedback"
+	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	"github.com/jeon-jihyeon/nodloop/internal/llm"
 	"github.com/jeon-jihyeon/nodloop/internal/llm/llmmock"
+	"github.com/jeon-jihyeon/nodloop/internal/record"
+	"github.com/jeon-jihyeon/nodloop/internal/testkit"
+	"github.com/jeon-jihyeon/nodloop/internal/trace"
 )
 
 // extract proposes only for add and update and names the item of a duplicate
@@ -126,6 +133,107 @@ func extractInOrder(parts []string) string {
 		quoted = append(quoted, regexp.QuoteMeta(p))
 	}
 	return "(?s)^.*" + strings.Join(quoted, ".*")
+}
+
+// A candidate whose approval would pass RunChars gets a compaction drafted and checked once beside it
+func TestRunKnowledgeExtractPreparedCompaction(t *testing.T) {
+	type args struct {
+		// Runes of the content of each approved item
+		items []int
+		// A compaction of the items already waits
+		pending bool
+		// What the compaction drafter answers
+		draft string
+		// What the coverage check answers and every old item covered when empty
+		coverage string
+	}
+	type want struct {
+		code int
+		// Model calls per system prompt beyond the drafter and the critic
+		drafts, checks int
+		stdout         string
+		stderr         string
+	}
+	merged := `{"items":[{"id":"a","kind":"judgment","content":"merged","producer":"session","labels":{"repo":["nodloop"]},"from":["a","b"]}]}`
+	tcs := []struct {
+		name string
+		args args
+		want want
+	}{
+		{"a candidate that fits drafts nothing", args{items: []int{100, 100}, draft: merged}, want{}},
+		{"a candidate past RunChars drafts and checks once", args{items: []int{4400, 4400}, draft: merged},
+			want{drafts: 1, checks: 1, stdout: "\tcoverage passed\nnext\t"}},
+		{"a pending compaction is reused and checked once", args{items: []int{4400, 4400}, pending: true, draft: merged},
+			want{checks: 1, stdout: "\tcoverage passed\nnext\t"}},
+		{"a folder of one item drafts nothing", args{items: []int{8900}, draft: merged}, want{}},
+		{"a failed draft leaves the candidate", args{items: []int{4400, 4400}, draft: `not json`},
+			want{code: 1, drafts: 1, stdout: "next\t", stderr: "prepared compaction"}},
+		{"a failed check leaves the compaction unchecked beside the candidate", args{items: []int{4400, 4400}, draft: merged, coverage: `not json`},
+			want{code: 1, drafts: 1, checks: 1, stdout: "next\t", stderr: "prepared compaction"}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			getenv, stores, run := preparedSetup(t, tc.args.items, tc.args.pending)
+			calls := map[string]int{}
+			client := llmmock.NewMockClient(gomock.NewController(t))
+			client.EXPECT().Complete(gomock.Any(), gomock.Any()).AnyTimes().DoAndReturn(func(_ context.Context, req llm.Request) (llm.Response, error) {
+				calls[req.System]++
+				answers := map[string]string{
+					extract.Rules:         `{"relation":"add","kind":"judgment","content":"Run git with -C <dir> instead of changing into it","keys":["repo"]}`,
+					extract.CriticRules:   `{"states":true,"holds":true,"fits":true,"why":"ok"}`,
+					compact.Rules:         tc.args.draft,
+					compact.CoverageRules: cmp.Or(tc.args.coverage, `{"items":[{"old":"a","covered_by":["a"]},{"old":"b","covered_by":["a"]}]}`),
+				}
+				return llm.Response{Output: json.RawMessage(answers[req.System])}, nil
+			})
+			var stdout, stderr bytes.Buffer
+
+			code := runKnowledge([]string{"extract", "--from", run}, getenv, client, stores.Clock.Now, &stdout, &stderr)
+
+			assert.Equal(t, tc.want.code, code, stderr.String())
+			assert.Contains(t, stderr.String(), tc.want.stderr)
+			assert.Contains(t, stdout.String(), "candidate\tk-")
+			assert.Contains(t, stdout.String(), tc.want.stdout)
+			assert.Equal(t, tc.want.drafts, calls[compact.Rules])
+			assert.Equal(t, tc.want.checks, calls[compact.CoverageRules])
+		})
+	}
+}
+
+// A rejected run of repo nodloop and the approved items a and b with contents of the given runes taught by another run
+// With pending a compaction of a and b waits unchecked
+func preparedSetup(t *testing.T, items []int, pending bool) (getenv func(string) string, stores testkit.Stores, run string) {
+	t.Helper()
+	ctx := context.Background()
+	stores = testkit.Open(t)
+	home := t.TempDir()
+	getenv = envOf(map[string]string{"HOME": home, envRecordDir: stores.Dir})
+	run = "r-1"
+	require.NoError(t, stores.Traces.Append(ctx, record.Trace{
+		ID: run, Name: string(trace.NameRun), Time: stores.Clock.Now(), Input: json.RawMessage(`{}`),
+		Output: json.RawMessage(`"cd repo && git status"`), Producer: "session", Labels: map[string][]string{"repo": {"nodloop"}},
+	}))
+	require.NoError(t, stores.Feedback.Append(ctx, record.Feedback{
+		TraceID: run, Time: stores.Clock.Now(), Verdict: string(feedback.VerdictReject), Reason: "ran cd before git", Reviewer: "ann",
+	}))
+	scope := &knowledge.RunScope{Producer: "session", Labels: trace.Labels{"repo": {"nodloop"}}}
+	for i, runes := range items {
+		id := string(rune('a' + i))
+		_, _, err := stores.Ledger.Propose(ctx, knowledge.Knowledge{
+			ID: id, Kind: knowledge.KindJudgment, Content: strings.Repeat("x", runes), Author: "ann", Run: scope,
+			Evidence: knowledge.Evidence{FeedbackTraceIDs: []string{"r-0"}},
+		})
+		require.NoError(t, err)
+		require.NoError(t, testkit.Err(stores.Ledger.Approve(ctx, id, 1, "ann")))
+	}
+	if pending {
+		require.NoError(t, testkit.Err(stores.Ledger.ProposeCompaction(ctx, "a", []knowledge.Knowledge{{
+			ID: "a", Kind: knowledge.KindJudgment, Content: "merged", Author: "ann", Run: scope,
+			Evidence: knowledge.Evidence{Knowledge: []knowledge.Ref{{ID: "a", Version: 1}, {ID: "b", Version: 1}}},
+		}})))
+	}
+	return getenv, stores, run
 }
 
 // With llm set to a chat endpoint knowledge extract drafts and criticizes there and never runs claude

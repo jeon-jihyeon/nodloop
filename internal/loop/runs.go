@@ -57,6 +57,8 @@ type Runs struct {
 	applied   map[knowledge.Ref][]string
 	// Latest verdict of a person per trace, or the latest one a session inferred when no person gave one
 	verdicts map[string]feedback.Feedback
+	// Every record a session inferred per trace in the order of the store
+	inferred map[string]feedback.Records
 	// First correction per trace by anyone
 	firstCorrection map[string]time.Time
 }
@@ -66,7 +68,7 @@ func NewRuns(traces trace.Traces, verdicts feedback.Records) Runs {
 	r := Runs{
 		ids: map[string]bool{}, inputs: map[string]knowledge.RunInput{}, producers: map[string]string{},
 		applied:  map[knowledge.Ref][]string{},
-		verdicts: map[string]feedback.Feedback{}, firstCorrection: map[string]time.Time{},
+		verdicts: map[string]feedback.Feedback{}, inferred: map[string]feedback.Records{}, firstCorrection: map[string]time.Time{},
 	}
 	for _, tr := range traces {
 		if tr.Name != trace.NameRun || tr.Error != "" {
@@ -89,6 +91,9 @@ func NewRuns(traces trace.Traces, verdicts feedback.Records) Runs {
 	// A person's verdict wins over one a session inferred whatever their order
 	for _, fb := range verdicts.Human().Latest() {
 		r.verdicts[fb.TraceID] = fb
+	}
+	for _, fb := range verdicts.Inferred() {
+		r.inferred[fb.TraceID] = append(r.inferred[fb.TraceID], fb)
 	}
 	for _, fb := range verdicts {
 		if first, ok := r.firstCorrection[fb.TraceID]; fb.Corrects() && (!ok || fb.Time.Before(first)) {

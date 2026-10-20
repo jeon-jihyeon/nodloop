@@ -89,8 +89,6 @@ class Approval:
     approver: str
     # Whether the approved version carries a veto the guard now applies
     veto: bool = False
-    # Whether one run would carry more than five items so a compaction is due
-    compaction_due: bool = False
     # Why approved.md or the veto file could not be written, while the approval itself stands
     export_error: str = ""
     # Why the items one run carries with it could not be read, while the approval itself stands
@@ -314,7 +312,6 @@ class Client:
             answer["status"],
             answer["approver"],
             veto=bool(answer.get("veto")),
-            compaction_due=bool((answer.get("folder") or {}).get("compaction_due")),
             export_error=answer.get("export_error", ""),
             folder_error=answer.get("folder_error", ""),
         )

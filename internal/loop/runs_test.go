@@ -192,14 +192,10 @@ func TestRunsCritics(t *testing.T) {
 		return trace.Trace{ID: id, Name: trace.NameExtract, Subject: path, Ref: ref, Output: json.RawMessage(output)}
 	}
 	critique := `"critique":{"states":true,"holds":true,"fits":true}`
-	traces := trace.Traces{
-		extracted("x1", "approved", "model", `{"attempts":[{`+critique+`,"refusal":"critic"},{`+critique+`}]}`),
-		extracted("x2", "dropped", "model", `{"attempts":[{`+critique+`}]}`),
-		extracted("x3", "open", "conversation", `{"attempts":[{`+critique+`}]}`),
-		extracted("x4", "approved", "conversation", `{"attempts":[{"refusal":"code"}]}`),
-		{ID: "c1", Name: trace.NameClassify, Subject: "critic", Ref: "dropped", Output: json.RawMessage(
-			`{"members":[{"name":"laya","answers":{"holds":{"yes":0.2},"states":{"yes":0.9}}},{"name":"claude","error":"timeout"}]}`)},
-	}
+	critic := trace.Trace{ID: "c1", Name: trace.NameClassify, Subject: "critic", Ref: "dropped", Output: json.RawMessage(
+		`{"members":[{"name":"laya","answers":{"holds":{"yes":0.2},"states":{"yes":0.9}}},{"name":"claude","error":"timeout"}]}`)}
+	reaction := trace.Trace{ID: "c2", Name: trace.NameClassify, Subject: "reaction", Ref: "approved", Output: json.RawMessage(
+		`{"members":[{"name":"laya","answers":{"corrects":{"yes":0.1},"approves":{"yes":0.1}}}]}`)}
 	cites := func(id string, status knowledge.Status, run string) knowledge.Knowledge {
 		return knowledge.Knowledge{ID: id, Version: 1, Status: status, Evidence: knowledge.Evidence{FeedbackTraceIDs: []string{run}}}
 	}
@@ -210,13 +206,135 @@ func TestRunsCritics(t *testing.T) {
 		cites("a", knowledge.StatusCandidate, "approved"), cites("b", knowledge.StatusCandidate, "dropped"),
 	}
 
-	got := loop.NewRuns(nil, nil).Critics(items, traces)
+	tcs := []struct {
+		name string
+		args trace.Traces
+		want []loop.CriticRow
+	}{
+		{
+			"every critique counts against how a person decided the candidate of its run",
+			trace.Traces{
+				extracted("x1", "approved", "model", `{"attempts":[{`+critique+`,"refusal":"critic"},{`+critique+`}]}`),
+				extracted("x2", "dropped", "model", `{"attempts":[{`+critique+`}]}`),
+				extracted("x3", "open", "conversation", `{"attempts":[{`+critique+`}]}`),
+				extracted("x4", "approved", "conversation", `{"attempts":[{"refusal":"code"}]}`),
+				critic, reaction,
+			},
+			[]loop.CriticRow{
+				{Critic: "classifier laya", Judged: 1, Agree: 1},
+				{Critic: "extract conversation", Judged: 1, Open: 1},
+				{Critic: "extract model", Judged: 3, Agree: 1, FalsePass: 1, FalseRefuse: 1},
+			},
+		},
+		{"a classify trace of the reaction point is no critic judgment", trace.Traces{reaction}, []loop.CriticRow{}},
+		{"an extract output that does not decode is skipped", trace.Traces{extracted("x5", "approved", "model", `not json`)}, []loop.CriticRow{}},
+		{"no trace has no row", nil, []loop.CriticRow{}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.want, loop.NewRuns(nil, nil).Critics(items, tc.args))
+		})
+	}
+}
 
-	assert.Equal(t, []loop.CriticRow{
-		{Critic: "classifier laya", Judged: 1, Agree: 1},
-		{Critic: "extract conversation", Judged: 1, Open: 1},
-		{Critic: "extract model", Judged: 3, Agree: 1, FalsePass: 1, FalseRefuse: 1},
-	}, got)
+func TestRunsReactions(t *testing.T) {
+	at := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	sureReject := `{"corrects":{"yes":0.95},"approves":{"yes":0.05}}`
+	sureApprove := `{"corrects":{"yes":0.05},"approves":{"yes":0.9}}`
+	sureNeither := `{"corrects":{"yes":0.1},"approves":{"yes":0.1}}`
+	sureBoth := `{"corrects":{"yes":0.9},"approves":{"yes":0.9}}`
+	unsure := `{"corrects":{"yes":0.6},"approves":{"yes":0.2}}`
+	// A sure endpoint decides alone so the point acts on its answers
+	// Otherwise the conversation member defers and the trace keeps no answers
+	asked := func(subject, answers string, sure bool) trace.Trace {
+		out := `{"members":[{"name":"laya","answers":` + answers + `}],"answers":` + answers + `}`
+		if !sure {
+			out = `{"members":[{"name":"laya","answers":` + answers + `},{"name":"claude","error":"deferred to the conversation"}]}`
+		}
+		return trace.Trace{ID: "c1", Name: trace.NameClassify, Subject: subject, Ref: "run", Time: at, Output: json.RawMessage(out)}
+	}
+	session := func(v feedback.Verdict, after time.Duration) feedback.Feedback {
+		return feedback.Feedback{TraceID: "run", Time: at.Add(after), Verdict: v, Reviewer: feedback.ReviewerSession}
+	}
+	row := func(r loop.ReactionRow) []loop.ReactionRow {
+		r.Critic, r.Asked = "reaction laya", 1
+		return []loop.ReactionRow{r}
+	}
+	type args struct {
+		trace trace.Trace
+		// Newest first as the store lists them
+		verdicts feedback.Records
+	}
+	tcs := []struct {
+		name string
+		args args
+		want []loop.ReactionRow
+	}{
+		{
+			"a sure call the conversation confirms with an edit agrees",
+			args{asked("reaction", sureReject, true), feedback.Records{session(feedback.VerdictEdit, time.Minute), session(feedback.VerdictReject, time.Second)}},
+			row(loop.ReactionRow{Sure: 1, Agree: 1}),
+		},
+		{
+			"a sure call the conversation overrides disagrees",
+			args{asked("reaction", sureReject, true), feedback.Records{session(feedback.VerdictApprove, time.Minute), session(feedback.VerdictReject, time.Second)}},
+			row(loop.ReactionRow{Sure: 1, Disagree: 1}),
+		},
+		{
+			"a sure answer of neither on a run the conversation corrected missed the correction",
+			args{asked("reaction", sureNeither, true), feedback.Records{session(feedback.VerdictReject, time.Minute)}},
+			row(loop.ReactionRow{Sure: 1, MissedCorrection: 1}),
+		},
+		{
+			"a sure answer of neither on a run the conversation approved missed the approval",
+			args{asked("reaction", sureNeither, true), feedback.Records{session(feedback.VerdictApprove, time.Minute)}},
+			row(loop.ReactionRow{Sure: 1, MissedApproval: 1}),
+		},
+		{
+			"a sure answer of both calls nothing and missed the correction",
+			args{asked("reaction", sureBoth, true), feedback.Records{session(feedback.VerdictReject, time.Minute)}},
+			row(loop.ReactionRow{Sure: 1, MissedCorrection: 1}),
+		},
+		{
+			"an unsure answer the conversation decided is deferred",
+			args{asked("reaction", unsure, false), feedback.Records{session(feedback.VerdictReject, time.Minute)}},
+			row(loop.ReactionRow{Deferred: 1}),
+		},
+		{
+			"a verdict the point recorded itself counts only in asked",
+			args{asked("reaction", sureApprove, true), feedback.Records{session(feedback.VerdictApprove, time.Second)}},
+			row(loop.ReactionRow{}),
+		},
+		{
+			"a session verdict before the point asked is the conversation's",
+			args{asked("reaction", sureApprove, true), feedback.Records{session(feedback.VerdictApprove, -time.Minute)}},
+			row(loop.ReactionRow{Sure: 1, Agree: 1}),
+		},
+		{
+			"a run without a session verdict counts only in asked",
+			args{asked("reaction", sureReject, true), feedback.Records{{TraceID: "run", Time: at, Verdict: feedback.VerdictApprove, Reviewer: "ann"}}},
+			row(loop.ReactionRow{}),
+		},
+		{
+			"a classify trace of the critic point is no reaction",
+			args{asked("critic", sureReject, true), feedback.Records{session(feedback.VerdictReject, time.Minute)}},
+			[]loop.ReactionRow{},
+		},
+		{
+			"an output that does not decode is skipped",
+			args{trace.Trace{ID: "c1", Name: trace.NameClassify, Subject: "reaction", Ref: "run", Output: json.RawMessage(`[`)}, nil},
+			[]loop.ReactionRow{},
+		},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := loop.NewRuns(nil, tc.args.verdicts).Reactions(trace.Traces{tc.args.trace})
+
+			assert.Equal(t, tc.want, got)
+		})
+	}
 }
 
 func TestRunsScopes(t *testing.T) {

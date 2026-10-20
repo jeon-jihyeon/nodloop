@@ -1,4 +1,4 @@
-// Package compact replaces the approved items of one crowded knowledge folder with fewer items that lose nothing the old ones fixed
+// Package compact replaces the approved items of one knowledge folder with fewer items that lose nothing the old ones fixed
 package compact
 
 import (
@@ -83,11 +83,6 @@ func (c *Compactor) Folder(ctx context.Context, anchor string) (Folder, error) {
 		return Folder{}, err
 	}
 	return Folder{Anchor: anchor, Compactable: compactable, Corrections: corrections, Pending: all.PendingCompaction(compactable.Items)}, nil
-}
-
-// Whether a compaction is due: one run carries more than FolderItems of the items
-func (f Folder) Due() bool {
-	return f.Crowded()
 }
 
 // Proposes the draft as a compaction of the anchor's folder

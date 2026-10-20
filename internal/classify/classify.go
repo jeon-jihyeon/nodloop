@@ -64,8 +64,8 @@ func (as Answers) check(qs Questions) error {
 	return nil
 }
 
-// Every answer reaches the threshold
-func (as Answers) confident(threshold float64) bool {
+// Every answer reaches the threshold at which an endpoint decides alone
+func (as Answers) Sure() bool {
 	for _, a := range as {
 		if a.confidence() < threshold {
 			return false

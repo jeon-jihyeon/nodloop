@@ -150,7 +150,7 @@ func TestRunKnowledgeForRuns(t *testing.T) {
 	code, stdout, stderr := knowledgeRun(append(propose, "--label", "repo=nodloop")...)
 	require.Equal(t, 0, code, stderr)
 	assert.Contains(t, stdout, "scope\truns of session. repo=nodloop\n")
-	assert.Contains(t, stdout, "items in runs of session")
+	assert.Contains(t, stdout, "of 9000 chars in runs of session")
 	code, _, stderr = knowledgeRun("approve", "git-c", "--version", "1", "--approver", "ann")
 	require.Equal(t, 0, code, stderr)
 

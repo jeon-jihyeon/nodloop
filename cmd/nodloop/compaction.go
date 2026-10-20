@@ -76,6 +76,64 @@ func (c compactionCommand) compact(ctx context.Context, anchor, model, author st
 	return nil
 }
 
+// Drafts and checks the compaction an approval of the candidate needs when it would pass RunChars
+// 1. the anchor is the first item of the fullest run the candidate reaches and its folder holds two items or more
+// 2. a pending compaction of that folder is reused so no second one is drafted
+// 3. the coverage check runs at once so its result waits beside the candidate
+// A reused compaction with no coverage yet is checked then so the candidate never waits on an unchecked merge
+func (c compactionCommand) prepare(ctx context.Context, candidate knowledge.Knowledge, model, author string) error {
+	all, err := c.ledger.All(ctx)
+	if err != nil {
+		return err
+	}
+	room, err := all.Room(candidate.ID, candidate.Version)
+	if err != nil || room.Anchor == "" {
+		return err
+	}
+	id := room.Pending
+	if id == "" {
+		f, err := c.compactor.Folder(ctx, room.Anchor)
+		if err != nil {
+			return err
+		}
+		proposed, err := c.compactor.Draft(ctx, c.client, f, model, author)
+		if err != nil {
+			return err
+		}
+		id = proposed.ID
+	}
+	if _, err := c.compactor.Coverage(ctx, id); errors.Is(err, compact.ErrNoCoverage) {
+		if _, err := c.compactor.Check(ctx, c.client, id, model); err != nil {
+			return err
+		}
+	}
+	result, err := c.coverageResult(ctx, id)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(c.out, "compaction\t%s\t%s\n", id, result)
+	return nil
+}
+
+// The newest coverage of the compaction as a person reads it beside the candidate
+func (c compactionCommand) coverageResult(ctx context.Context, id string) (string, error) {
+	compaction, err := c.ledger.Compaction(ctx, id)
+	if err != nil {
+		return "", err
+	}
+	cov, err := c.compactor.Coverage(ctx, id)
+	switch {
+	case errors.Is(err, compact.ErrNoCoverage):
+		return "coverage not checked yet", nil
+	case err != nil:
+		return "", err
+	}
+	if err := cov.Passes(compaction); err != nil {
+		return "coverage failed: " + err.Error(), nil
+	}
+	return "coverage passed", nil
+}
+
 // One model call checks that the new items state every old item and the answer is recorded for the approval
 func (c compactionCommand) check(ctx context.Context, id, model string) error {
 	cov, err := c.compactor.Check(ctx, c.client, id, model)

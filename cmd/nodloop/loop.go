@@ -300,12 +300,18 @@ func seconds(d time.Duration) string {
 }
 
 // The window line first and one line per critic after it
-// Each line holds the drafts it judged and how its judgments matched what a person later decided on the run
+// 1. a critic line holds the drafts it judged and how its judgments matched what a person later decided on the run
+// 2. a reaction line follows per member of the reaction point with how its answers matched the verdict the conversation recorded
 func (c loopCommand) critics(e loop.Snapshot) {
 	fmt.Fprintf(c.out, "window\t%s\n", windowText(e.Since()))
-	for _, row := range e.Critics() {
+	report := e.Critics()
+	for _, row := range report.Critics {
 		fmt.Fprintf(c.out, "critic\t%s\tjudged %d\tagree %d\tfalse pass %d\tfalse refuse %d\topen %d\n",
 			row.Critic, row.Judged, row.Agree, row.FalsePass, row.FalseRefuse, row.Open)
+	}
+	for _, row := range report.Reactions {
+		fmt.Fprintf(c.out, "critic\t%s\tasked %d\tsure %d\tagree %d\tdisagree %d\tmissed correction %d\tmissed approval %d\tdeferred %d\n",
+			row.Critic, row.Asked, row.Sure, row.Agree, row.Disagree, row.MissedCorrection, row.MissedApproval, row.Deferred)
 	}
 }
 

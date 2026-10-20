@@ -53,7 +53,7 @@ type asked struct {
 func (p *Plan) Classify(ctx context.Context, req Request) (Answers, error) {
 	start := p.now()
 	answers, all, err := p.ask(ctx, req, p.endpoint)
-	if err != nil || !answers.confident(threshold) {
+	if err != nil || !answers.Sure() {
 		endpointErr := err
 		var more []asked
 		answers, more, err = p.ask(ctx, req, p.builtin)

@@ -89,10 +89,33 @@ func (s Set) Compactable(anchor string) (Compactable, error) {
 	return Compactable{Items: append(Set{*k}, s.runCarried(k.ID, *k.Run)...)}, nil
 }
 
-// Whether one run carries more than FolderItems of the items
-// Every item of a run folder may reach one run with the anchor so all of them count
-func (c Compactable) Crowded() bool {
-	return len(c.Items) > FolderItems
+// The compaction an approval of one candidate needs to stay within RunChars
+// Zero when the approval fits or no folder of two items or more can be merged for it
+type Room struct {
+	// Runes of the folder the approval would leave
+	Chars int
+	// The first item of the fullest run the candidate reaches
+	Anchor string
+	// The pending compaction of the folder of the anchor
+	// Empty until one is proposed
+	Pending string
+}
+
+// The compaction an approval of the version needs
+// 1. none when Fits says the approval stays within RunChars or the folder carries no other item
+// 2. none when the folder of the anchor holds fewer than two items since a compaction merges two or more
+// 3. a pending compaction of that folder is named so no second one is drafted
+func (s Set) Room(id string, version int) (Room, error) {
+	f, fits, err := s.Fits(id, version)
+	anchor := f.Anchor()
+	if err != nil || fits || anchor == "" {
+		return Room{}, err
+	}
+	c, err := s.Compactable(anchor)
+	if err != nil || len(c.Items) < 2 {
+		return Room{}, err
+	}
+	return Room{Chars: f.Chars, Anchor: anchor, Pending: s.PendingCompaction(c.Items)}, nil
 }
 
 // The candidates of a compaction of old built from the drafts
@@ -471,7 +494,7 @@ func (s Set) approveCompaction(c Compaction, approver string, now time.Time) ([]
 
 // The records that approve the compaction of id
 // 1. an approver is required once the compaction is found
-// 2. an approval that pushes a run past a cap or grows one already past it is refused like one of Approve
+// 2. an approval that pushes a run past RunChars or grows one already past it is refused like one of Approve
 func (s Set) compactionApproval(id, approver string, check Coverage, now time.Time) ([]Knowledge, error) {
 	c, err := s.compaction(id)
 	if err != nil {
@@ -488,7 +511,7 @@ func (s Set) compactionApproval(id, approver string, check Coverage, now time.Ti
 		return nil, err
 	}
 	for _, k := range c.Items {
-		if f, grew := after.outgrows(s, k); grew {
+		if f, ok := after.fits(s, k); !ok {
 			return nil, fmt.Errorf("%w: %s %s with %s", ErrFolderFull, k.ID, f.load(), f)
 		}
 	}
