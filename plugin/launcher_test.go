@@ -219,28 +219,48 @@ func TestLauncherStableLink(t *testing.T) {
 }
 
 // The plugin registers the conversation hooks through the launcher so they run the binary of the plugin version
+// 1. every hook runs synchronously with no async flag so a stop records its run before the next prompt reads it
+// The async flags and the timeout decode so a hook that sets one fails the comparison
+// 2. a subagent start adds the items since no prompt hook runs inside a subagent
 func TestHooksJSON(t *testing.T) {
-	b, err := os.ReadFile(filepath.Join("hooks", "hooks.json"))
-	require.NoError(t, err)
-	var got struct {
-		Hooks map[string][]struct {
-			Hooks []struct {
-				Type    string `json:"type"`
-				Command string `json:"command"`
-			} `json:"hooks"`
-		} `json:"hooks"`
+	type hook struct {
+		Type         string `json:"type"`
+		Command      string `json:"command"`
+		Async        bool   `json:"async"`
+		AsyncRewake  bool   `json:"asyncRewake"`
+		Timeout      int    `json:"timeout"`
+		ContextLimit *int   `json:"additionalContextLimit"`
 	}
-	require.NoError(t, json.Unmarshal(b, &got))
-	want := map[string]string{
-		"SessionStart":     `"${CLAUDE_PLUGIN_ROOT}/bin/nodloop" hook start`,
-		"UserPromptSubmit": `"${CLAUDE_PLUGIN_ROOT}/bin/nodloop" hook prompt`,
-		"Stop":             `"${CLAUDE_PLUGIN_ROOT}/bin/nodloop" hook stop`,
+	// The hooks of one matcher group of an event
+	type group struct {
+		Hooks []hook `json:"hooks"`
 	}
-	require.Len(t, got.Hooks, len(want))
-	for event, command := range want {
-		require.Len(t, got.Hooks[event], 1, event)
-		require.Len(t, got.Hooks[event][0].Hooks, 1, event)
-		assert.Equal(t, "command", got.Hooks[event][0].Hooks[0].Type)
-		assert.Equal(t, command, got.Hooks[event][0].Hooks[0].Command)
+	launcher := `"${CLAUDE_PLUGIN_ROOT}/bin/nodloop" hook `
+	tcs := []struct {
+		name string
+		// The hook file under hooks
+		args string
+		want map[string][]group
+	}{
+		{"the Claude Code hooks run start, prompt, stop and subagent", "hooks.json", map[string][]group{
+			"SessionStart":     {{[]hook{{Type: "command", Command: launcher + "start"}}}},
+			"UserPromptSubmit": {{[]hook{{Type: "command", Command: launcher + "prompt"}}}},
+			"Stop":             {{[]hook{{Type: "command", Command: launcher + "stop"}}}},
+			"SubagentStart":    {{[]hook{{Type: "command", Command: launcher + "subagent"}}}},
+		}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			b, err := os.ReadFile(filepath.Join("hooks", tc.args))
+			require.NoError(t, err)
+			var got struct {
+				Hooks map[string][]group `json:"hooks"`
+			}
+
+			require.NoError(t, json.Unmarshal(b, &got))
+
+			assert.Equal(t, tc.want, got.Hooks)
+		})
 	}
 }

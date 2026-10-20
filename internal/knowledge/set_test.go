@@ -95,6 +95,32 @@ func TestSetApproved(t *testing.T) {
 	}
 }
 
+func TestSetWithout(t *testing.T) {
+	a1 := knowledge.Knowledge{ID: "a", Version: 1, Status: knowledge.StatusApproved}
+	a2 := knowledge.Knowledge{ID: "a", Version: 2, Status: knowledge.StatusApproved}
+	b1 := knowledge.Knowledge{ID: "b", Version: 1, Status: knowledge.StatusApproved}
+	type args struct {
+		set  knowledge.Set
+		refs []knowledge.Ref
+	}
+	tcs := []struct {
+		name string
+		args args
+		want knowledge.Set
+	}{
+		{"no refs keep every record", args{knowledge.Set{a1, b1}, nil}, knowledge.Set{a1, b1}},
+		{"a named version is left out", args{knowledge.Set{a1, b1}, []knowledge.Ref{{ID: "a", Version: 1}}}, knowledge.Set{b1}},
+		{"a new version of a named id stays", args{knowledge.Set{a2, b1}, []knowledge.Ref{{ID: "a", Version: 1}, {ID: "b", Version: 1}}}, knowledge.Set{a2}},
+		{"every version named gives an empty set", args{knowledge.Set{a1}, []knowledge.Ref{{ID: "a", Version: 1}}}, knowledge.Set{}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.want, tc.args.set.Without(tc.args.refs))
+		})
+	}
+}
+
 func TestSetMatching(t *testing.T) {
 	approvedAt := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
 	a := knowledge.Knowledge{

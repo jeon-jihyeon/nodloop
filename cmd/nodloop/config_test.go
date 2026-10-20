@@ -140,8 +140,12 @@ func TestRunConfig(t *testing.T) {
 		{"a retention under a week is refused", args{"", []string{"retention", "6"}, false}, want{1, "", "invalid retention", ""}},
 		{"a retention of part of a day is refused", args{"", []string{"retention", "7.5"}, false}, want{1, "", "invalid retention", ""}},
 		{"no session mode prints deferred", args{"", []string{"session_mode"}, false}, want{0, "deferred\n", "", ""}},
-		{"a session mode is saved", args{"", []string{"session_mode", "immediate"}, false}, want{0, "immediate\n", "", "{\n  \"session_mode\": \"immediate\"\n}\n"}},
+		{"a session mode is saved", args{"", []string{"session_mode", "manual"}, false}, want{0, "manual\n", "", "{\n  \"session_mode\": \"manual\"\n}\n"}},
 		{"a saved session mode is printed", args{`{"session_mode":"manual"}`, []string{"session_mode"}, false}, want{0, "manual\n", "", `{"session_mode":"manual"}`}},
+		{"immediate of an earlier release is never saved", args{"", []string{"session_mode", "immediate"}, false},
+			want{1, "", "unknown session mode: \"immediate\". Use deferred, manual or off", ""}},
+		{"a saved immediate of an earlier release prints deferred", args{`{"session_mode":"immediate"}`, []string{"session_mode"}, false},
+			want{0, "deferred\n", "", `{"session_mode":"immediate"}`}},
 		{"an unknown session mode is refused", args{"", []string{"session_mode", "later"}, false}, want{1, "", "unknown session mode", ""}},
 		{"a saved unknown session mode names config.json", args{`{"session_mode":"later"}`, []string{"session_mode"}, false},
 			want{1, "", `session_mode in config.json is "later"`, `{"session_mode":"later"}`}},
@@ -222,7 +226,7 @@ func TestRunConfigList(t *testing.T) {
 			"an invalid NODLOOP_SESSION shows its error in its row",
 			args{"", map[string]string{envSession: "later"}},
 			"record_dir\t<home>/.nodloop/records\tdefault\n" +
-				"session_mode\tunknown session mode: NODLOOP_SESSION is \"later\". Use deferred, immediate, manual or off\tNODLOOP_SESSION\n" +
+				"session_mode\tunknown session mode: NODLOOP_SESSION is \"later\". Use deferred, manual or off\tNODLOOP_SESSION\n" +
 				"approver\t-\tdefault\nholdout\t0\tdefault\nretention\t0\tdefault\ndecision_points\t-\tdefault\nllm\tclaude\tdefault\nclaude binary\tclaude\tdefault\nmodel\tsonnet\tdefault\n",
 		},
 	}

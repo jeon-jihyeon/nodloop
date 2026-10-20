@@ -4,6 +4,9 @@ Every release tag publishes the plugin, the darwin and linux binaries of `nodloo
 
 ## Unreleased
 
+### Breaking
+- Session: no hook names or asks the waiting drafts any more, so a draft waits until you ask `/nodloop:nod` or run `knowledge waiting`
+
 ### Added
 - `nodloop llm set chat --base-url <u> --model <m> [--key-env <ENV>]` points every command that calls a model, such as `knowledge extract`, `knowledge compact` and `llm probe`, at an OpenAI compatible Chat Completions endpoint like Ollama, vLLM, OpenAI, Gemini or a LiteLLM proxy, so background drafts need no claude login. `llm set claude` and `llm unset` go back to `claude -p`. The key is read from the env named and never saved. Every answer is checked against the schema and sent back once when it fails. A config.json that names chat without a model fails like one without a base URL. `nodloop config` lists the backend. The refusal a draft is resent with says the relation is add when the run reaches no item or candidate and lists the label keys the run carries, since a small local model kept the same mistake on the resend until it did
 - Every extract trace of `knowledge extract` carries the usage of the drafter and critic calls summed, cost included, and the wall time of the extraction in `duration_ms`
@@ -11,13 +14,17 @@ Every release tag publishes the plugin, the darwin and linux binaries of `nodloo
 - When approving the candidate of `knowledge extract` would pass the 9000 chars of a run, the same process drafts a compaction of the fullest folder it reaches, checks its coverage and prints a `compaction` line. A pending compaction of that folder is reused and checked when it has no coverage yet
 - `nodloop knowledge consolidate [--daily] [--model <m>]` asks the model which waiting candidates say the same lesson in other words, one call per cluster of candidates one run may carry together, and prints one line per group. It only records: a `consolidate` trace per producer with the groups, the candidates read, usage and duration, which `trace list --name consolidate` shows and retention keeps. No candidate is hidden, merged or approved. The stop hook starts `--daily` in a process of its own at most once a day, kept in `consolidate.json`, once two candidates wait
 - `report critic` adds a row per member of the reaction point: answers asked and sure, and how they matched the verdict the conversation recorded on the same run as agree, disagree, missed correction, missed approval and deferred. A run whose verdict the reaction point recorded itself counts only as asked
+- A session start after `/compact` or `/clear` adds every fitting item of the place again, since the context lost them, and records them as a `refill` trace so the next prompt adds none of them a second time, though `/clear` starts a new session id
+- The new `hook subagent` SubagentStart hook adds every fitting item of the place to a subagent, since no prompt hook runs inside one. A session the holdout withholds gives its subagents no item either
 - Model call traces name the model the backend answered with, such as `claude-haiku-4-5-20251001` for `haiku`: extract, replay, consolidate and a coverage check through a model. A coverage check records its usage and duration, a replay its duration, and every compaction draft through a model records a `compact` trace with its usage, duration and error, which retention keeps
 
 ### Changed
+- The stop hook runs synchronously, so the run of an answer is recorded before the next prompt reads it
 - Only the 9000 chars of a run are capped. The cap of ten items per run and the compaction offered at six items are gone, so an eleventh short item approves. The MCP folder answer drops `item_budget` and `compaction_due`, `over_budget` counts chars only, `knowledge approve` prints no compaction line, and `Approval` drops `compaction_due` in Python and `compactionDue` in TypeScript
 - `llm probe` asks the configured backend, with haiku as the default model on claude and the configured model on a chat endpoint
 - `knowledge waiting` lists one candidate per id, the newest version, with those taught by more corrections first and then the most recently proposed or corroborated
 - `report critic --json`, the MCP `report` answer and `GET /v1/reports/critic` hold `{critics, reactions}` instead of an array of critic rows
+- A prompt adds only the items the conversation does not hold yet: the first prompt of a session adds every fitting item, and a later one adds only new items and new versions under a lead that says a line replaces an earlier line of the same id. An item approved during a turn is added at the next prompt. The run of each answer still records every fitting item as applied, so the holdout and `report effect` read as before. On the local runs this cut the item text a session received from about 54 times its distinct item text to 1.3 times, counting withheld runs
 - The `next` line of `knowledge extract` and the `next` of the MCP `propose_extraction` name no command or tool that decides: a candidate waits for you and is asked once unless your earlier decisions settle it, since a model that read the approve command approved without asking
 
 ### Fixed
