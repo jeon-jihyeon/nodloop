@@ -3,6 +3,7 @@ package classify_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"net/http"
@@ -134,17 +135,16 @@ func TestPanelClassify(t *testing.T) {
 			got, err := panel.Classify(ctx, classify.Request{Ref: "run-1", State: judgeState, Questions: judgeQuestions})
 
 			require.NoError(t, err)
-			votes := make([]classify.Reply, 0, len(got.Votes))
-			failed := make([]bool, 0, len(got.Votes))
-			for _, v := range got.Votes {
-				votes = append(votes, v.Reply)
-				failed = append(failed, v.Err != nil)
-			}
+			votes, failed := ballotOf(got)
 			assert.Equal(t, tc.want.votes, votes)
 			assert.Equal(t, tc.want.failed, failed)
 			recorded, err := traces.List(ctx, record.TraceFilter{Name: string(trace.NameClassify)})
 			require.NoError(t, err)
 			require.Len(t, recorded, 1)
+			back, ok := classify.RestoreBallot(trace.Restore(recorded[0]))
+			require.True(t, ok)
+			backVotes, backFailed := ballotOf(back)
+			assert.Equal(t, []any{got.TraceID, votes, failed}, []any{back.TraceID, backVotes, backFailed}, "the ballot reads back from its trace")
 			assert.Equal(t, got.TraceID, recorded[0].ID)
 			assert.Equal(t, "judge", recorded[0].Subject)
 			assert.Equal(t, "run-1", recorded[0].Ref)
@@ -162,6 +162,50 @@ func TestPanelClassify(t *testing.T) {
 			assert.NotContains(t, string(raw), "go vet", "no text of the change")
 			assert.NotContains(t, string(raw), "lint before tests", "no text of the anchor")
 			assert.NoError(t, schema.Validate(string(trace.NameClassify), recorded[0]))
+		})
+	}
+}
+
+// The reply of each vote and whether it failed as ErrMemberFailed or any error
+func ballotOf(b classify.Ballot) ([]classify.Reply, []bool) {
+	votes := make([]classify.Reply, 0, len(b.Votes))
+	failed := make([]bool, 0, len(b.Votes))
+	for _, v := range b.Votes {
+		votes = append(votes, v.Reply)
+		failed = append(failed, v.Err != nil)
+	}
+	return votes, failed
+}
+
+// A trace that is no classify or whose members do not decode holds no ballot and a failed member reads as ErrMemberFailed
+func TestRestoreBallot(t *testing.T) {
+	type want struct {
+		ok bool
+		// Whether each vote failed as ErrMemberFailed
+		failed []bool
+	}
+	tcs := []struct {
+		name string
+		args trace.Trace
+		want want
+	}{
+		{"a failed member reads as ErrMemberFailed", trace.Trace{
+			Name: trace.NameClassify, Output: json.RawMessage(`{"members":[{"name":"a","answers":{"decided":{"yes":1}}},{"name":"b","error":"timeout"}]}`),
+		}, want{true, []bool{false, true}}},
+		{"a trace of another name holds none", trace.Trace{Name: trace.NameRun, Output: json.RawMessage(`{"members":[]}`)}, want{false, nil}},
+		{"an output that does not decode holds none", trace.Trace{Name: trace.NameClassify, Output: json.RawMessage(`"members"`)}, want{false, nil}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, ok := classify.RestoreBallot(tc.args)
+
+			var failed []bool
+			for _, v := range got.Votes {
+				failed = append(failed, errors.Is(v.Err, classify.ErrMemberFailed))
+			}
+			assert.Equal(t, tc.want, want{ok, failed})
 		})
 	}
 }

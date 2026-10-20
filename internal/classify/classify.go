@@ -48,8 +48,25 @@ func (a Answer) confidence() float64 {
 	return max(a.Yes, 1-a.Yes)
 }
 
+// A yes or a no at the threshold at which an endpoint decides alone
+func (a Answer) Sure() bool {
+	return a.confidence() >= threshold
+}
+
 // Answers by question name
 type Answers map[string]Answer
+
+// The answers to the questions alone
+// The capture asks the stops questions beside the reaction questions so each reader takes the answers it reads
+func (as Answers) Of(qs Questions) Answers {
+	out := Answers{}
+	for name := range qs {
+		if a, ok := as[name]; ok {
+			out[name] = a
+		}
+	}
+	return out
+}
 
 // Every question has an answer and every probability lies between 0 and 1
 // NaN fails too since no record could hold it
@@ -69,7 +86,7 @@ func (as Answers) check(qs Questions) error {
 // Every answer reaches the threshold at which an endpoint decides alone
 func (as Answers) Sure() bool {
 	for _, a := range as {
-		if a.confidence() < threshold {
+		if !a.Sure() {
 			return false
 		}
 	}

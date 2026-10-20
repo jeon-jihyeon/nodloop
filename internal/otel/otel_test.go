@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -130,29 +131,63 @@ func attrs(m map[string]any) map[string]any {
 	return out
 }
 
-// One record of every kind
+var (
+	lesson   = otel.Ref{ID: "lesson", Version: 1}
+	cycle    = "2026-10-05"
+	pushed   = 1.0
+	audited  = 0.05
+	judgedP  = 0.15
+	kept     = false
+	reversed = true
+	tier0    = 0
+	tier1    = 1
+	tier2    = 2
+	everyone = 1.0
+	twoThird = 2.0 / 3
+)
+
+// The question the stop pushed after run r1 about the lesson
+var asked = otel.Question{
+	ID: "x1", Time: at.Add(2 * time.Minute), SessionID: "s1", Run: "r1", Kind: "direction", Source: "push", Round: 1, Candidate: &lesson,
+	Cycle: cycle, P: &pushed, Content: "Use git -C",
+}
+
+// The enums of the answer of keep to the question about a tier 2 add the judge found in b2
+func answered() *otel.Decision {
+	return &otel.Decision{
+		Source: "push", QuestionKind: "direction", Tier: &tier2, ChangeKind: "add", RuleCode: "kind_closed", Bin: "b2", Choice: "keep",
+		Overturn: &kept, Cycle: cycle, P: &pushed, Authority: "person",
+	}
+}
+
+// One record of every kind but a judge
 func batch() otel.Batch {
-	lesson := otel.Ref{ID: "lesson", Version: 1}
-	review := otel.ReviewSpan("r1", "s1", lesson, at.Add(2*time.Minute))
+	question := otel.QuestionSpan("r1", "x1")
 	return otel.Batch{
 		Runs: []otel.Run{{
 			ID: "r1", Time: at.Add(90 * time.Second), Duration: 90 * time.Second, Producer: "session", SessionID: "s1",
 			Labels: map[string][]string{"repo": {"nodloop"}}, Withheld: []otel.Ref{{ID: "git-c", Version: 2}}, Drawn: true, Unit: "u1", Share: 0.1,
 			Plugin: "0.9.0", Output: json.RawMessage(`"run git -C repo status"`),
 		}},
-		Reviews: []otel.Review{{Time: at.Add(2 * time.Minute), SessionID: "s1", Run: "r1", Candidate: lesson, Content: "Use git -C"}},
+		Questions: []otel.Question{asked},
 		Evaluations: []otel.Evaluation{
 			{
 				Name: otel.EvaluationVerdict, Time: at.Add(time.Minute), SessionID: "s1", Label: "reject", Explanation: "wrong flag",
-				ReasonCode: "fact", Reviewer: "session", Span: otel.VerdictSpan("r1", at.Add(time.Minute)), Target: otel.RunSpan("r1"),
+				ReasonCode: "fact", Reviewer: "session", Annotator: otel.AnnotatorLLM, Span: otel.VerdictSpan("r1", at.Add(time.Minute)),
+				Target: otel.RunSpan("r1"),
 			},
 			{
-				Name: otel.EvaluationOutcome, Time: at.Add(time.Hour), SessionID: "s1", Label: "inconclusive", Reviewer: "ann", Human: true,
-				Span: otel.OutcomeSpan("r1", at.Add(time.Hour)), Target: otel.RunSpan("r1"),
+				Name: otel.EvaluationOutcome, Time: at.Add(time.Hour), SessionID: "s1", Label: "inconclusive", Reviewer: "ann",
+				Annotator: otel.AnnotatorHuman, Span: otel.OutcomeSpan("r1", at.Add(time.Hour)), Target: otel.RunSpan("r1"),
 			},
 			{
-				Name: otel.EvaluationReview, Time: at.Add(3 * time.Minute), SessionID: "s1", Label: "approved", Reviewer: "ann", Human: true,
-				Span: otel.DecisionSpan(lesson, "approved", at.Add(3*time.Minute)), Target: review, Candidate: &lesson, Content: "Use git -C",
+				Name: otel.EvaluationDecision, Time: at.Add(3 * time.Minute), SessionID: "s1", Label: "approved", Reviewer: "ann",
+				Annotator: otel.AnnotatorHuman, Span: otel.DecisionSpan(lesson, "approved", at.Add(3*time.Minute)), Target: question,
+				Candidate: &lesson, Content: "Use git -C", Decision: answered(),
+			},
+			{
+				Name: otel.EvaluationJudgment, Time: at.Add(3 * time.Minute), SessionID: "s1", Label: "keep", Reviewer: "ann",
+				Annotator: otel.AnnotatorHuman, Proof: "reply", Span: otel.TraceSpan("a1"), Target: question, Candidate: &lesson, Decision: answered(),
 			},
 		},
 		Calls: []otel.Call{
@@ -186,9 +221,9 @@ func TestExporterExportSpans(t *testing.T) {
 	sent, err := exporter(srv, false, false).Export(context.Background(), batch())
 
 	require.NoError(t, err)
-	assert.Equal(t, otel.Sent{Runs: 1, Reviews: 1, Verdicts: 1, Outcomes: 1, Decisions: 1, Calls: 2}, sent)
+	assert.Equal(t, otel.Sent{Runs: 1, Questions: 1, Verdicts: 1, Outcomes: 1, Decisions: 1, Judgments: 1, Calls: 2}, sent)
 	spans := c.spans()
-	run, review := otel.RunSpan("r1"), otel.ReviewSpan("r1", "s1", otel.Ref{ID: "lesson", Version: 1}, at.Add(2*time.Minute))
+	run, question := otel.RunSpan("r1"), otel.QuestionSpan("r1", "x1")
 	turn := spans["invoke_agent session"]
 	assert.Equal(t, gotSpan{
 		traceID: run.TraceID, spanID: run.SpanID, name: "invoke_agent session", kind: 1, start: nanos(at), end: nanos(at.Add(90 * time.Second)),
@@ -198,24 +233,23 @@ func TestExporterExportSpans(t *testing.T) {
 			"nodloop.knowledge.withheld": []any{"git-c:2"}, "nodloop.holdout.unit": "u1", "nodloop.holdout.share": 0.1, "nodloop.holdout.arm": "withheld",
 		},
 	}, turn, "the output stays home without content")
-	asked := spans["nodloop.review lesson"]
-	assert.Equal(t, []string{run.TraceID, run.SpanID, review.SpanID}, []string{asked.traceID, asked.parent, asked.spanID})
-	assert.Equal(t, asked.start, asked.end)
-	assert.NotContains(t, asked.attrs, "nodloop.knowledge.content")
+	assert.Equal(t, gotSpan{
+		traceID: run.TraceID, spanID: question.SpanID, parent: run.SpanID, name: "nodloop.question direction", kind: 1,
+		start: nanos(at.Add(2 * time.Minute)), end: nanos(at.Add(2 * time.Minute)),
+		attrs: map[string]any{
+			"openinference.span.kind": "CHAIN", "nodloop.question.kind": "direction", "session.id": "s1", "gen_ai.conversation.id": "s1",
+			"nodloop.question.source": "push", "nodloop.question.round": "1", "nodloop.knowledge.candidate": "lesson:1",
+			"nodloop.cycle": cycle, "nodloop.draw.p": 1.0,
+		},
+	}, spans["nodloop.question direction"], "the candidate text stays home without content")
 	verdict := spans["evaluate nodloop.verdict"]
 	assert.Equal(t, []string{run.SpanID}, verdict.links)
-	assert.Equal(t, map[string]any{
-		"openinference.span.kind": "EVALUATOR", "session.id": "s1", "gen_ai.conversation.id": "s1",
-		"gen_ai.evaluation.name": "nodloop.verdict", "gen_ai.evaluation.score.label": "reject", "gen_ai.evaluation.score.value": 0.0,
-		"annotation.name": "nodloop.verdict", "annotation.label": "reject", "annotation.score": 0.0, "annotation.annotator_kind": "LLM",
-		"nodloop.reason_code": "fact", "nodloop.reviewer": "session",
-	}, verdict.attrs, "the reason stays home without content")
+	assert.Equal(t, evaluated("nodloop.verdict", "reject", "LLM", 0.0, map[string]any{"nodloop.reason_code": "fact", "nodloop.reviewer": "session"}),
+		verdict.attrs, "the reason stays home without content")
 	assert.NotContains(t, spans["evaluate nodloop.outcome"].attrs, "gen_ai.evaluation.score.value", "an inconclusive check has no score")
 	assert.Equal(t, "HUMAN", spans["evaluate nodloop.outcome"].attrs["annotation.annotator_kind"])
-	decision := spans["evaluate nodloop.review"]
-	assert.Equal(t, []string{review.SpanID}, decision.links)
-	assert.Equal(t, 1.0, decision.attrs["gen_ai.evaluation.score.value"])
-	assert.Equal(t, "ann", decision.attrs["nodloop.approver"])
+	assert.Equal(t, []string{question.SpanID}, spans["evaluate nodloop.decision"].links)
+	assert.Equal(t, []string{question.SpanID}, spans["evaluate nodloop.judgment"].links)
 	extract, chat := spans["invoke_agent nodloop.extract"], spans["chat claude-haiku-4-5"]
 	assert.Equal(t, []string{nanos(at.Add(4*time.Minute + 30*time.Second)), nanos(at.Add(5 * time.Minute))}, []string{extract.start, extract.end})
 	assert.Equal(t, []string{run.SpanID, otel.VerdictSpan("r1", at.Add(time.Minute)).SpanID}, extract.links)
@@ -231,9 +265,212 @@ func TestExporterExportSpans(t *testing.T) {
 	assert.Equal(t, "critic", classify.attrs["nodloop.classify.point"])
 	assert.Equal(t, "nodloop.classify_failed", classify.attrs["error.type"])
 	assert.Equal(t, 2.0, classify.status)
+	assert.NotContains(t, classify.attrs, "nodloop.judge.outcome", "a classify of another point carries nothing of the judge")
 	assert.NotContains(t, spans, "chat", "a step that called no model has no inference span")
-	assert.Len(t, spans, 8)
+	assert.Len(t, spans, 9)
 	assert.Equal(t, []string{"/v1/traces"}, c.paths)
+}
+
+// The attributes of an evaluation span in session s1 with the keys of its kind
+// A nil score leaves the score keys out
+func evaluated(name, label, annotator string, score any, keys map[string]any) map[string]any {
+	out := map[string]any{
+		"openinference.span.kind": "EVALUATOR", "session.id": "s1", "gen_ai.conversation.id": "s1",
+		"gen_ai.evaluation.name": name, "gen_ai.evaluation.score.label": label,
+		"annotation.name": name, "annotation.label": label, "annotation.annotator_kind": annotator,
+	}
+	if score != nil {
+		out["gen_ai.evaluation.score.value"], out["annotation.score"] = score, score
+	}
+	maps.Copy(out, keys)
+	return out
+}
+
+// Each decision, judgment, intervention and decide is an evaluation span with one link and a log record of who judged
+// 1. a person is HUMAN, a rule of nodloop CODE and a model LLM
+// 2. the enums go along and no text without content
+// 3. the log record names the span the evaluation links and the uid of its key
+func TestExporterExportEvaluations(t *testing.T) {
+	question, judge, run, extract := otel.QuestionSpan("r1", "x1"), otel.TraceSpan("j1"), otel.RunSpan("r1"), otel.TraceSpan("e1")
+	keep := map[string]any{
+		"nodloop.source": "push", "nodloop.question.kind": "direction", "nodloop.tier": "2", "nodloop.change.kind": "add",
+		"nodloop.rule.code": "kind_closed", "nodloop.judge.bin": "b2", "nodloop.choice": "keep", "nodloop.overturn": false,
+		"nodloop.cycle": cycle, "nodloop.draw.p": 1.0, "nodloop.authority": "person", "nodloop.knowledge.candidate": "lesson:1",
+	}
+	with := func(base map[string]any, keys map[string]any) map[string]any {
+		out := maps.Clone(base)
+		maps.Copy(out, keys)
+		return out
+	}
+	dropped := &otel.Decision{
+		Source: "push", Tier: &tier0, ChangeKind: "drop", RuleCode: "temp_scope", RetireReason: "temp_scope", Cycle: cycle, P: &audited,
+	}
+	drop := map[string]any{
+		"nodloop.source": "push", "nodloop.tier": "0", "nodloop.change.kind": "drop", "nodloop.rule.code": "temp_scope",
+		"nodloop.retire.reason": "temp_scope", "nodloop.cycle": cycle, "nodloop.draw.p": 0.05, "nodloop.knowledge.candidate": "lesson:1",
+	}
+	overturned, unanswered := answered(), answered()
+	overturned.QuestionKind, overturned.Choice, overturned.Overturn = "audit", "undo", &reversed
+	unanswered.Choice = "no_answer"
+	type want struct {
+		attrs map[string]any
+		links []string
+		// The trace and span id the log record names and its uid
+		log []any
+	}
+	tcs := []struct {
+		name string
+		args otel.Evaluation
+		want want
+	}{
+		{"a person's decision taken from an answer is HUMAN and links the question", otel.Evaluation{
+			Name: otel.EvaluationDecision, Label: "approved", Reviewer: "ann", Annotator: otel.AnnotatorHuman, Target: question,
+			Span: otel.DecisionSpan(lesson, "approved", at), Candidate: &lesson, Content: "Use git -C", Decision: answered(),
+		}, want{evaluated("nodloop.decision", "approved", "HUMAN", 1.0, with(keep, map[string]any{"nodloop.approver": "ann"})),
+			[]string{question.SpanID}, []any{question.TraceID, question.SpanID, otel.DecisionSpan(lesson, "approved", at).TraceID}}},
+		{"a decision of a tier 0 rule is CODE with its retire reason and links its run", otel.Evaluation{
+			Name: otel.EvaluationDecision, Label: "retired", Reviewer: "nodloop", Annotator: otel.AnnotatorCode, Target: run,
+			Span: otel.DecisionSpan(lesson, "retired", at), Candidate: &lesson, Decision: dropped,
+		}, want{evaluated("nodloop.decision", "retired", "CODE", 0.0, with(drop, map[string]any{"nodloop.approver": "nodloop"})),
+			[]string{run.SpanID}, []any{run.TraceID, run.SpanID, otel.DecisionSpan(lesson, "retired", at).TraceID}}},
+		{"a decision of nodloop after a judge is LLM and links the judge", otel.Evaluation{
+			Name: otel.EvaluationDecision, Label: "approved", Reviewer: "nodloop", Annotator: otel.AnnotatorLLM, Target: judge,
+			Span: otel.DecisionSpan(lesson, "approved", at), Candidate: &lesson,
+			Decision: &otel.Decision{Source: "push", Tier: &tier1, ChangeKind: "add", Bin: "b1", Cycle: cycle, P: &judgedP, Vote: &everyone},
+		}, want{evaluated("nodloop.decision", "approved", "LLM", 1.0, map[string]any{
+			"nodloop.approver": "nodloop", "nodloop.source": "push", "nodloop.tier": "1", "nodloop.change.kind": "add", "nodloop.judge.bin": "b1",
+			"nodloop.cycle": cycle, "nodloop.draw.p": 0.15, "nodloop.knowledge.candidate": "lesson:1",
+		}), []string{judge.SpanID}, []any{judge.TraceID, judge.SpanID, otel.DecisionSpan(lesson, "approved", at).TraceID}}},
+		{"an answer that kept what was prepared scores 1 with its proof", otel.Evaluation{
+			Name: otel.EvaluationJudgment, Label: "keep", Reviewer: "ann", Annotator: otel.AnnotatorHuman, Proof: "reply", Target: question,
+			Span: otel.TraceSpan("a1"), Candidate: &lesson, Decision: answered(),
+		}, want{evaluated("nodloop.judgment", "keep", "HUMAN", 1.0, with(keep, map[string]any{"nodloop.reviewer": "ann", "nodloop.proof": "reply"})),
+			[]string{question.SpanID}, []any{question.TraceID, question.SpanID, otel.TraceSpan("a1").TraceID}}},
+		{"an answer that overturned an audit scores 0", otel.Evaluation{
+			Name: otel.EvaluationJudgment, Label: "undo", Reviewer: "ann", Annotator: otel.AnnotatorHuman, Proof: "reply", Target: question,
+			Span: otel.TraceSpan("a1"), Candidate: &lesson, Decision: overturned,
+		}, want{evaluated("nodloop.judgment", "undo", "HUMAN", 0.0, with(keep, map[string]any{
+			"nodloop.reviewer": "ann", "nodloop.proof": "reply", "nodloop.question.kind": "audit", "nodloop.choice": "undo", "nodloop.overturn": true,
+		})), []string{question.SpanID}, []any{question.TraceID, question.SpanID, otel.TraceSpan("a1").TraceID}}},
+		{"no answer is CODE with no score", otel.Evaluation{
+			Name: otel.EvaluationJudgment, Label: "no_answer", Annotator: otel.AnnotatorCode, Proof: "none", Target: question,
+			Span: otel.TraceSpan("a1"), Candidate: &lesson, Decision: unanswered,
+		}, want{evaluated("nodloop.judgment", "no_answer", "CODE", nil, with(keep, map[string]any{"nodloop.proof": "none", "nodloop.choice": "no_answer"})),
+			[]string{question.SpanID}, []any{question.TraceID, question.SpanID, otel.TraceSpan("a1").TraceID}}},
+		{"a manual intervention of a person names its action, authority, proof and source with no score", otel.Evaluation{
+			Name: otel.EvaluationIntervention, Label: "keep", Reviewer: "ann", Annotator: otel.AnnotatorHuman, Proof: "elicitation",
+			Target: extract, Span: otel.TraceSpan("i1"), Candidate: &lesson,
+			Decision: &otel.Decision{Source: "manual", Choice: "keep", Action: "judge", Authority: "person"},
+		}, want{evaluated("nodloop.intervention", "keep", "HUMAN", nil, map[string]any{
+			"nodloop.reviewer": "ann", "nodloop.proof": "elicitation", "nodloop.knowledge.candidate": "lesson:1", "nodloop.source": "manual",
+			"nodloop.choice": "keep", "nodloop.action": "judge", "nodloop.authority": "person",
+		}), []string{extract.SpanID}, []any{extract.TraceID, extract.SpanID, otel.TraceSpan("i1").TraceID}}},
+		{"a knob intervention names the knob with the value it takes and the one it had", otel.Evaluation{
+			Name: otel.EvaluationIntervention, Label: "knob", Reviewer: "ann", Annotator: otel.AnnotatorHuman, Proof: "terminal",
+			Span: otel.TraceSpan("i2"), Decision: &otel.Decision{Source: "command", Action: "knob", Authority: "person", Knob: "audit_tier1", Value: &twoThird, Before: &judgedP},
+		}, want{evaluated("nodloop.intervention", "knob", "HUMAN", nil, map[string]any{
+			"nodloop.reviewer": "ann", "nodloop.proof": "terminal", "nodloop.source": "command", "nodloop.action": "knob", "nodloop.authority": "person",
+			"nodloop.knob": "audit_tier1", "nodloop.knob.value": twoThird, "nodloop.knob.before": 0.15,
+		}), nil, []any{nil, nil, otel.TraceSpan("i2").TraceID}}},
+		{"a decide of a tier 0 rule is CODE with no score and links its run", otel.Evaluation{
+			Name: otel.EvaluationCurate, Label: "drop", Annotator: otel.AnnotatorCode, Target: run, Span: otel.TraceSpan("d1"),
+			Candidate: &lesson, Decision: dropped,
+		}, want{evaluated("nodloop.curate", "drop", "CODE", nil, drop), []string{run.SpanID}, []any{run.TraceID, run.SpanID, otel.TraceSpan("d1").TraceID}}},
+		{"a judged decide scores the share of the conforming members and links the judge", otel.Evaluation{
+			Name: otel.EvaluationCurate, Label: "split", Annotator: otel.AnnotatorLLM, Target: judge, Span: otel.TraceSpan("d1"), Candidate: &lesson,
+			Decision: &otel.Decision{Source: "push", Tier: &tier2, ChangeKind: "add", RuleCode: "judge_split", Bin: "b2", Cycle: cycle, P: &pushed, Vote: &twoThird},
+		}, want{evaluated("nodloop.curate", "split", "LLM", twoThird, map[string]any{
+			"nodloop.source": "push", "nodloop.tier": "2", "nodloop.change.kind": "add", "nodloop.rule.code": "judge_split", "nodloop.judge.bin": "b2",
+			"nodloop.cycle": cycle, "nodloop.draw.p": 1.0, "nodloop.knowledge.candidate": "lesson:1",
+		}), []string{judge.SpanID}, []any{judge.TraceID, judge.SpanID, otel.TraceSpan("d1").TraceID}}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			c := &collector{}
+			srv := httptest.NewServer(c)
+			t.Cleanup(srv.Close)
+			ev := tc.args
+			ev.Time, ev.SessionID = at, "s1"
+
+			_, err := exporter(srv, true, false).Export(context.Background(), otel.Batch{Evaluations: []otel.Evaluation{ev}})
+
+			require.NoError(t, err)
+			spans, logs := c.spans(), c.logs()
+			require.Len(t, spans, 1)
+			require.Len(t, logs, 1)
+			got := spans["evaluate "+string(ev.Name)]
+			assert.Equal(t, []string{ev.Span.TraceID, ev.Span.SpanID, ""}, []string{got.traceID, got.spanID, got.parent})
+			assert.Equal(t, tc.want.attrs, got.attrs)
+			assert.Equal(t, tc.want.links, got.links)
+			logged := attrs(logs[0])
+			assert.Equal(t, tc.want.log, []any{logs[0]["traceId"], logs[0]["spanId"], logged["log.record.uid"]})
+			assert.Equal(t, tc.want.attrs["annotation.annotator_kind"], logged["annotations.0.annotation.annotator_kind"])
+			assert.Equal(t, tc.want.attrs["gen_ai.evaluation.score.value"], logged["gen_ai.evaluation.score.value"])
+		})
+	}
+}
+
+// A judge classify carries the model and effort of every member and what they found, and its log record what the judge predicted
+func TestExporterExportJudge(t *testing.T) {
+	type want struct {
+		attrs map[string]any
+		// The trace and span id, the label, the score and the uid of the log record
+		log []any
+	}
+	tcs := []struct {
+		name string
+		args otel.Judge
+		want want
+	}{
+		{"a split of two conforming members of three", otel.Judge{
+			Models: []string{"claude-sonnet-5-5", "claude-sonnet-5-5", "acme"}, Efforts: []string{"high", "high", ""}, Outcome: "split",
+			Votes: twoThird, Bin: "b2",
+		}, want{map[string]any{
+			"gen_ai.request.model": []any{"claude-sonnet-5-5", "claude-sonnet-5-5", "acme"}, "nodloop.judge.effort": []any{"high", "high", ""},
+			"nodloop.judge.outcome": "split", "nodloop.judge.votes": twoThird, "nodloop.judge.bin": "b2",
+		}, []any{"split", twoThird}}},
+		{"members that all failed have no bin", otel.Judge{
+			Models: []string{"claude-sonnet-5-5"}, Efforts: []string{"high"}, Outcome: "split",
+		}, want{map[string]any{
+			"gen_ai.request.model": []any{"claude-sonnet-5-5"}, "nodloop.judge.effort": []any{"high"}, "nodloop.judge.outcome": "split",
+			"nodloop.judge.votes": 0.0,
+		}, []any{"split", 0.0}}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			c := &collector{}
+			srv := httptest.NewServer(c)
+			t.Cleanup(srv.Close)
+			judge := tc.args
+			call := otel.Call{ID: "j1", Name: "classify", Time: at, Duration: 20 * time.Second, SessionID: "s1", Point: "judge", Judge: &judge}
+
+			sent, err := exporter(srv, true, false).Export(context.Background(), otel.Batch{Calls: []otel.Call{call}})
+
+			require.NoError(t, err)
+			assert.Equal(t, otel.Sent{Calls: 1, LogRecords: 1}, sent)
+			spans, logs := c.spans(), c.logs()
+			require.Len(t, spans, 1, "a panel names no model of its own so it has no inference span")
+			require.Len(t, logs, 1)
+			span := otel.TraceSpan("j1")
+			got := spans["invoke_agent nodloop.classify"]
+			assert.Equal(t, []string{span.TraceID, span.SpanID}, []string{got.traceID, got.spanID})
+			want := map[string]any{
+				"gen_ai.operation.name": "invoke_agent", "gen_ai.agent.name": "nodloop.classify", "openinference.span.kind": "AGENT",
+				"nodloop.trace.id": "j1", "session.id": "s1", "gen_ai.conversation.id": "s1", "nodloop.classify.point": "judge",
+			}
+			maps.Copy(want, tc.want.attrs)
+			assert.Equal(t, want, got.attrs)
+			logged := attrs(logs[0])
+			assert.Equal(t, []any{span.TraceID, span.SpanID, "gen_ai.evaluation.result", nanos(at)},
+				[]any{logs[0]["traceId"], logs[0]["spanId"], logs[0]["eventName"], logs[0]["timeUnixNano"]})
+			assert.Equal(t, []any{"nodloop.judge", "LLM", span.TraceID, "s1"}, []any{
+				logged["gen_ai.evaluation.name"], logged["annotations.0.annotation.annotator_kind"], logged["log.record.uid"], logged["session.id"],
+			})
+			assert.Equal(t, tc.want.log, []any{logged["gen_ai.evaluation.score.label"], logged["gen_ai.evaluation.score.value"]})
+		})
+	}
 }
 
 // Text goes along only with content
@@ -250,23 +487,65 @@ func TestExporterExportContent(t *testing.T) {
 	assert.Equal(t, "text/plain", spans["invoke_agent session"].attrs["output.mime_type"])
 	assert.Equal(t, "wrong flag", spans["evaluate nodloop.verdict"].attrs["gen_ai.evaluation.explanation"])
 	assert.Equal(t, "wrong flag", spans["evaluate nodloop.verdict"].attrs["annotation.explanation"])
-	assert.Equal(t, "Use git -C", spans["nodloop.review lesson"].attrs["nodloop.knowledge.content"])
-	assert.Equal(t, "Use git -C", spans["evaluate nodloop.review"].attrs["nodloop.knowledge.content"])
+	assert.Equal(t, "Use git -C", spans["nodloop.question direction"].attrs["nodloop.knowledge.content"])
+	assert.Equal(t, "Use git -C", spans["evaluate nodloop.decision"].attrs["nodloop.knowledge.content"])
 }
 
-// A review question whose turn the records lack is the root of a trace of its own
-func TestExporterExportReviewWithoutRun(t *testing.T) {
-	c := &collector{}
-	srv := httptest.NewServer(c)
-	t.Cleanup(srv.Close)
-	lesson := otel.Ref{ID: "lesson", Version: 1}
+// A question lies in the trace of the run it followed and else is the root of a trace of its own
+// A notice asks about no version and a question the person asked for carries no probability
+func TestExporterExportQuestion(t *testing.T) {
+	type want struct {
+		// The trace id, the span id and the parent
+		ids   []string
+		name  string
+		attrs map[string]any
+	}
+	run := otel.RunSpan("r1")
+	tcs := []struct {
+		name string
+		args otel.Question
+		want want
+	}{
+		{"a pushed question under the turn of its run", asked, want{
+			[]string{run.TraceID, otel.QuestionSpan("r1", "x1").SpanID, run.SpanID}, "nodloop.question direction", map[string]any{
+				"openinference.span.kind": "CHAIN", "nodloop.question.kind": "direction", "session.id": "s1", "gen_ai.conversation.id": "s1",
+				"nodloop.question.source": "push", "nodloop.question.round": "1", "nodloop.knowledge.candidate": "lesson:1",
+				"nodloop.cycle": cycle, "nodloop.draw.p": 1.0,
+			},
+		}},
+		{"a manual question without a run is a trace of its own with no probability", otel.Question{
+			ID: "x2", Time: at, SessionID: "s1", Kind: "audit", Source: "manual", Round: 1, Candidate: &lesson, Cycle: cycle,
+		}, want{
+			[]string{otel.QuestionSpan("", "x2").TraceID, otel.QuestionSpan("", "x2").SpanID, ""}, "nodloop.question audit", map[string]any{
+				"openinference.span.kind": "CHAIN", "nodloop.question.kind": "audit", "session.id": "s1", "gen_ai.conversation.id": "s1",
+				"nodloop.question.source": "manual", "nodloop.question.round": "1", "nodloop.knowledge.candidate": "lesson:1", "nodloop.cycle": cycle,
+			},
+		}},
+		{"a notice names no version", otel.Question{
+			ID: "x3", Time: at, SessionID: "s1", Run: "r1", Kind: "notice", Source: "push", Round: 1, Cycle: cycle, P: &pushed,
+		}, want{
+			[]string{run.TraceID, otel.QuestionSpan("r1", "x3").SpanID, run.SpanID}, "nodloop.question notice", map[string]any{
+				"openinference.span.kind": "CHAIN", "nodloop.question.kind": "notice", "session.id": "s1", "gen_ai.conversation.id": "s1",
+				"nodloop.question.source": "push", "nodloop.question.round": "1", "nodloop.cycle": cycle, "nodloop.draw.p": 1.0,
+			},
+		}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			c := &collector{}
+			srv := httptest.NewServer(c)
+			t.Cleanup(srv.Close)
 
-	_, err := exporter(srv, false, false).Export(context.Background(), otel.Batch{Reviews: []otel.Review{{Time: at, SessionID: "s1", Candidate: lesson}}})
+			sent, err := exporter(srv, false, false).Export(context.Background(), otel.Batch{Questions: []otel.Question{tc.args}})
 
-	require.NoError(t, err)
-	got := c.spans()["nodloop.review lesson"]
-	want := otel.ReviewSpan("", "s1", lesson, at)
-	assert.Equal(t, []string{want.TraceID, want.SpanID, ""}, []string{got.traceID, got.spanID, got.parent})
+			require.NoError(t, err)
+			assert.Equal(t, otel.Sent{Questions: 1}, sent)
+			got := c.spans()[tc.want.name]
+			assert.Equal(t, tc.want.ids, []string{got.traceID, got.spanID, got.parent})
+			assert.Equal(t, tc.want.attrs, got.attrs)
+		})
+	}
 }
 
 // Every evaluation goes as a log record of the GenAI conventions parented to what it evaluates after every span
@@ -278,10 +557,10 @@ func TestExporterExportLogs(t *testing.T) {
 	sent, err := exporter(srv, true, false).Export(context.Background(), batch())
 
 	require.NoError(t, err)
-	assert.Equal(t, 3, sent.LogRecords)
+	assert.Equal(t, 4, sent.LogRecords)
 	assert.Equal(t, []string{"/v1/traces", "/v1/logs"}, c.paths)
 	logs := c.logs()
-	require.Len(t, logs, 3)
+	require.Len(t, logs, 4)
 	run := otel.RunSpan("r1")
 	verdict := logs[0]
 	assert.Equal(t, []any{"gen_ai.evaluation.result", 9.0, run.TraceID, run.SpanID, nanos(at.Add(time.Minute))},
@@ -292,8 +571,10 @@ func TestExporterExportLogs(t *testing.T) {
 	assert.Equal(t, "reject", a["annotations.0.annotation.label"])
 	assert.Equal(t, "s1", a["session.id"])
 	assert.Equal(t, "HUMAN", attrs(logs[1])["annotations.0.annotation.annotator_kind"])
-	review := otel.ReviewSpan("r1", "s1", otel.Ref{ID: "lesson", Version: 1}, at.Add(2*time.Minute))
-	assert.Equal(t, []any{review.TraceID, review.SpanID}, []any{logs[2]["traceId"], logs[2]["spanId"]})
+	question := otel.QuestionSpan("r1", "x1")
+	assert.Equal(t, []any{question.TraceID, question.SpanID}, []any{logs[2]["traceId"], logs[2]["spanId"]})
+	assert.Equal(t, []any{question.TraceID, question.SpanID}, []any{logs[3]["traceId"], logs[3]["spanId"]})
+	assert.Equal(t, false, attrs(logs[3])["nodloop.overturn"])
 }
 
 // Two exports of one batch send the same bytes so a collector keyed on ids never counts a record twice
@@ -377,14 +658,30 @@ func first(t *testing.T, fs []field, num int) field {
 	return field{}
 }
 
+// The AnyValue fields of the attribute of the key among the fields of a span or a log record
+func valueOf(t *testing.T, fs []field, num int, key string) []field {
+	t.Helper()
+	for _, f := range fs {
+		if f.num != num {
+			continue
+		}
+		if kv := fields(t, f.value); string(first(t, kv, 1).value) == key {
+			return fields(t, first(t, kv, 2).value)
+		}
+	}
+	t.Fatalf("no attribute %s", key)
+	return nil
+}
+
 // The protobuf body holds the ids as bytes, the times as fixed64 and the attributes of the OTLP proto files
+// A false is written as its bool field so the oneof never reads as no value
 func TestExporterExportProtobuf(t *testing.T) {
 	c := &collector{}
 	srv := httptest.NewServer(c)
 	t.Cleanup(srv.Close)
 	cfg := otel.Config{Traces: srv.URL + "/v1/traces", Logs: srv.URL + "/v1/logs", Protocol: otel.ProtocolProtobuf, Version: "0.9.0", Client: srv.Client()}
 	b := batch()
-	b.Reviews, b.Calls, b.Evaluations = nil, nil, b.Evaluations[:1]
+	b.Questions, b.Calls, b.Evaluations = nil, nil, []otel.Evaluation{b.Evaluations[0], b.Evaluations[3]}
 
 	_, err := otel.New(cfg).Export(context.Background(), b)
 
@@ -397,24 +694,26 @@ func TestExporterExportProtobuf(t *testing.T) {
 	assert.Equal(t, "nodloop", string(first(t, fields(t, first(t, service, 2).value), 1).value))
 	scopeSpans := fields(t, first(t, resourceSpans, 2).value)
 	assert.Equal(t, "nodloop", string(first(t, fields(t, first(t, scopeSpans, 1).value), 1).value))
+	byName := map[string][]field{}
 	var names []string
-	var turn []field
 	for _, f := range scopeSpans {
 		if f.num == 2 {
 			s := fields(t, f.value)
 			names = append(names, string(first(t, s, 5).value))
-			if string(first(t, s, 5).value) == "invoke_agent session" {
-				turn = s
-			}
+			byName[string(first(t, s, 5).value)] = s
 		}
 	}
-	assert.Equal(t, []string{"invoke_agent session", "evaluate nodloop.verdict"}, names)
+	assert.Equal(t, []string{"invoke_agent session", "evaluate nodloop.verdict", "evaluate nodloop.judgment"}, names)
+	turn := byName["invoke_agent session"]
 	run := otel.RunSpan("r1")
 	assert.Equal(t, run.TraceID, hexOf(first(t, turn, 1).value))
 	assert.Equal(t, run.SpanID, hexOf(first(t, turn, 2).value))
 	assert.Equal(t, uint64(1), first(t, turn, 6).n)
 	assert.Equal(t, uint64(at.UnixNano()), first(t, turn, 7).n)
 	assert.Equal(t, uint64(at.Add(90*time.Second).UnixNano()), first(t, turn, 8).n)
+	overturn := valueOf(t, byName["evaluate nodloop.judgment"], 9, "nodloop.overturn")
+	assert.Equal(t, []field{{num: 2, n: 0}}, overturn)
+	assert.Equal(t, uint64(2), first(t, valueOf(t, byName["evaluate nodloop.judgment"], 9, "nodloop.tier"), 3).n)
 	resourceLogs := fields(t, first(t, fields(t, c.raw[1]), 1).value)
 	record := fields(t, first(t, fields(t, first(t, resourceLogs, 2).value), 2).value)
 	assert.Equal(t, uint64(9), first(t, record, 2).n)
@@ -445,7 +744,7 @@ func TestExporterExportRefused(t *testing.T) {
 		want want
 	}{
 		{"a refused logs request fails after the spans went out", "/v1/logs",
-			want{otel.Sent{Runs: 1, Reviews: 1, Verdicts: 1, Outcomes: 1, Decisions: 1, Calls: 2}, []string{"/v1/traces", "/v1/logs"}}},
+			want{otel.Sent{Runs: 1, Questions: 1, Verdicts: 1, Outcomes: 1, Decisions: 1, Judgments: 1, Calls: 2}, []string{"/v1/traces", "/v1/logs"}}},
 		{"refused spans fail before any log record", "/v1/traces", want{otel.Sent{}, []string{"/v1/traces"}}},
 	}
 	for _, tc := range tcs {

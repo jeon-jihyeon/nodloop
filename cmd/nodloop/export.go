@@ -227,7 +227,7 @@ func (c exportCommand) send(ctx context.Context, recs exportRecords) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(c.out, "exported %d runs, %d verdicts, %d outcomes, %d model calls, %d review questions and %d decisions\n",
-		sent.Runs, sent.Verdicts, sent.Outcomes, sent.Calls, sent.Reviews, sent.Decisions)
+	fmt.Fprintf(c.out, "exported %d runs, %d verdicts, %d outcomes, %d model calls, %d questions, %d decisions and %d judgments\n",
+		sent.Runs, sent.Verdicts, sent.Outcomes, sent.Calls, sent.Questions, sent.Decisions, sent.Judgments)
 	return nil
 }

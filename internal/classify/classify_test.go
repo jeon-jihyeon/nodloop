@@ -203,6 +203,55 @@ func TestPlanClassify(t *testing.T) {
 	}
 }
 
+// A plan without an endpoint asks the built in member alone and still records its trace
+func TestPlanClassifyAlone(t *testing.T) {
+	claude := classify.Answers{"holds": {Yes: 0.6}, "states": {Yes: 0}}
+	type args struct {
+		answers classify.Answers
+		err     error
+	}
+	type want struct {
+		answers classify.Answers
+		err     error
+	}
+	tcs := []struct {
+		name string
+		args args
+		want want
+	}{
+		{"an unsure answer stands since no member comes after it", args{claude, nil}, want{claude, nil}},
+		{"a failing member fails the plan", args{nil, assert.AnError}, want{nil, assert.AnError}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ctx := context.Background()
+			traces, err := tracefile.New(t.TempDir())
+			require.NoError(t, err)
+			plan := classify.NewPlan(classify.PointReaction, classify.Member{}, builtin(t, tc.args.answers, tc.args.err), traces, seal,
+				func() time.Time { return fixed })
+
+			got, err := plan.Rule(ctx, classify.Request{Ref: "run-1", State: "no, keep it short", Questions: questions})
+
+			assert.ErrorIs(t, err, tc.want.err)
+			assert.Equal(t, tc.want.answers, got.Answers)
+			recorded, err := traces.List(ctx, record.TraceFilter{Name: string(trace.NameClassify)})
+			require.NoError(t, err)
+			require.Len(t, recorded, 1)
+			assert.Equal(t, recorded[0].ID, got.TraceID)
+			var out struct {
+				Members []struct {
+					Name string `json:"name"`
+				} `json:"members"`
+			}
+			require.NoError(t, json.Unmarshal(recorded[0].Output, &out))
+			require.Len(t, out.Members, 1)
+			assert.Equal(t, "claude", out.Members[0].Name)
+			assert.NoError(t, schema.Validate(string(trace.NameClassify), recorded[0]))
+		})
+	}
+}
+
 // A ruling no record holds keeps its answers and names no trace
 func TestPlanRuleAppendFails(t *testing.T) {
 	dir := t.TempDir()

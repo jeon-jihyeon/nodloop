@@ -9,7 +9,7 @@ import (
 // Each record goes as its own span once
 type Batch struct {
 	Runs        []Run
-	Reviews     []Review
+	Questions   []Question
 	Evaluations []Evaluation
 	Calls       []Call
 }
@@ -48,50 +48,26 @@ type Ref struct {
 	Version int
 }
 
-// One review question a stop asked about a waiting candidate
-type Review struct {
+// One question or notice an expose trace records as it was shown
+type Question struct {
+	// The expose trace
+	ID        string
 	Time      time.Time
 	SessionID string
-	// The run of the turn that asked and empty when the records hold none
-	Run       string
-	Candidate Ref
-	// The candidate text sent only with content
-	Content string
-}
-
-// What an evaluation judged
-type EvaluationName string
-
-const (
-	EvaluationVerdict EvaluationName = "nodloop.verdict" // a verdict on a run
-	EvaluationOutcome EvaluationName = "nodloop.outcome" // what a real check found for a run
-	EvaluationReview  EvaluationName = "nodloop.review"  // a person approved or retired a candidate
-)
-
-// One verdict or outcome or decision as an evaluation carrier span and a log record
-type Evaluation struct {
-	Name      EvaluationName
-	Time      time.Time
-	SessionID string
-	// The verdict, the result or the decision status
-	Label string
-	// A reason, a note or a confirmed cause sent only with content
-	Explanation string
-	// The edited output of a verdict sent only with content
-	Edited     string
-	ReasonCode string
-	// The reviewer of a verdict or an outcome or the approver of a decision
-	Reviewer string
-	// A person judged and not the conversation that inferred it
-	Human bool
-	// The span of the evaluation itself from its key
-	Span SpanRef
-	// The span it evaluates
-	// The carrier links it and the log record names it as its parent
-	// Zero when the records name none
-	Target SpanRef
-	// The candidate a decision is about
+	// The run of the answer the question followed and empty when the expose names none
+	Run string
+	// direction, shadow, audit or notice
+	Kind string
+	// push or manual
+	Source string
+	// 1 when first asked and 2 when a later session asked it again
+	Round int
+	// The version it asks about and nil on a notice
 	Candidate *Ref
+	// The cycle of its draw and the probability it was drawn with
+	// P is nil for a question the person asked for
+	Cycle string
+	P     *float64
 	// The candidate text sent only with content
 	Content string
 }
@@ -118,8 +94,23 @@ type Call struct {
 	Point string
 	// The compaction of a check or a compact trace
 	Compaction string
+	// What the members of a judge classify answered and nil on any other trace
+	Judge *Judge
 	// The run it judged and the correction that caused it
 	Links []SpanRef
+}
+
+// What the members of the judge found on one change as its classify trace records them
+type Judge struct {
+	// The model and the effort of each member in the order of the members
+	Models  []string
+	Efforts []string
+	// conform, against, undecided or split
+	Outcome string
+	// The share of the members that conform
+	Votes float64
+	// The bin of the mean confidence of the conforming members and empty when none conforms
+	Bin string
 }
 
 // The usage of a model step

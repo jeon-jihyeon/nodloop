@@ -64,11 +64,13 @@ func New(cfg Config) *Exporter {
 
 // How many records of each kind reached the collector
 type Sent struct {
-	Runs       int
-	Reviews    int
-	Verdicts   int
-	Outcomes   int
-	Decisions  int
+	Runs      int
+	Questions int
+	Verdicts  int
+	Outcomes  int
+	Decisions int
+	// The answers, the interventions and the decides
+	Judgments  int
 	Calls      int
 	LogRecords int
 }
@@ -81,7 +83,7 @@ type item struct {
 	last bool
 }
 
-// Sends every record of the batch as its spans and then every evaluation as a log record
+// Sends every record of the batch as its spans and then every evaluation and judge classify as a log record
 // 1. the ids derive from the records so sending a batch again sends the same spans
 // 2. the log records go after every span so a refused logs request fails the export with the traces sent
 // Returns what was sent until the first failure
@@ -109,6 +111,11 @@ func (e *Exporter) Export(ctx context.Context, b Batch) (Sent, error) {
 	for _, ev := range b.Evaluations {
 		records = append(records, ev.record(e.cfg.Content))
 	}
+	for _, c := range b.Calls {
+		if c.Judge != nil {
+			records = append(records, c.judged().record(e.cfg.Content))
+		}
+	}
 	for chunk := range slices.Chunk(records, batch) {
 		if err := e.send(ctx, e.cfg.Logs, e.logs(chunk)); err != nil {
 			return sent, err
@@ -118,14 +125,14 @@ func (e *Exporter) Export(ctx context.Context, b Batch) (Sent, error) {
 	return sent, nil
 }
 
-// Every span of the batch in the order runs, reviews, evaluations, model steps
+// Every span of the batch in the order runs, questions, evaluations, model steps
 func (b Batch) items(content bool) []item {
 	var out []item
 	for _, r := range b.Runs {
 		out = append(out, item{kind: "run", span: r.span(content), last: true})
 	}
-	for _, r := range b.Reviews {
-		out = append(out, item{kind: "review", span: r.span(content), last: true})
+	for _, q := range b.Questions {
+		out = append(out, item{kind: "question", span: q.span(content), last: true})
 	}
 	for _, ev := range b.Evaluations {
 		out = append(out, item{kind: string(ev.Name), span: ev.span(content), last: true})
@@ -143,14 +150,16 @@ func (s *Sent) count(kind string) {
 	switch kind {
 	case "run":
 		s.Runs++
-	case "review":
-		s.Reviews++
+	case "question":
+		s.Questions++
 	case string(EvaluationVerdict):
 		s.Verdicts++
 	case string(EvaluationOutcome):
 		s.Outcomes++
-	case string(EvaluationReview):
+	case string(EvaluationDecision):
 		s.Decisions++
+	case string(EvaluationJudgment), string(EvaluationIntervention), string(EvaluationCurate):
+		s.Judgments++
 	case "call":
 		s.Calls++
 	}

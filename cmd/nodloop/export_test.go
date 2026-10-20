@@ -155,7 +155,7 @@ func TestRunExportOtelTarget(t *testing.T) {
 		types  []string
 		auths  []string
 	}
-	sent := "exported 1 runs, 1 verdicts, 1 outcomes, 0 model calls, 0 review questions and 0 decisions\n"
+	sent := "exported 1 runs, 1 verdicts, 1 outcomes, 0 model calls, 0 questions, 0 decisions and 0 judgments\n"
 	proto, jsonType := "application/x-protobuf", "application/json"
 	both := []string{"/c/v1/traces", "/c/v1/logs"}
 	tcs := []struct {
@@ -188,7 +188,7 @@ func TestRunExportOtelTarget(t *testing.T) {
 		{"a value the environment does not URL encode fails", args{[]string{"otel"}, "", map[string]string{envOTLPEndpoint: "{srv}", envOTLPHeaders: "Authorization=%zz"}},
 			want{1, "", "bad --header: OTEL_EXPORTER_OTLP_HEADERS: invalid URL escape", nil, nil, nil}},
 		{"since after every record sends no request", args{[]string{"otel", "--endpoint", "{srv}", "--since", "2026-10-08T00:00:00Z"}, "", nil},
-			want{0, "exported 0 runs, 0 verdicts, 0 outcomes, 0 model calls, 0 review questions and 0 decisions\n", "", nil, nil, nil}},
+			want{0, "exported 0 runs, 0 verdicts, 0 outcomes, 0 model calls, 0 questions, 0 decisions and 0 judgments\n", "", nil, nil, nil}},
 		{"since and pending together fail", args{[]string{"otel", "--endpoint", "{srv}", "--since", "2026-10-08T00:00:00Z", "--pending"}, "", nil},
 			want{1, "", errExportFlags.Error(), nil, nil, nil}},
 		{"a since that is no RFC3339 time fails", args{[]string{"otel", "--endpoint", "{srv}", "--since", "yesterday"}, "", nil},
@@ -308,16 +308,16 @@ func TestRunExportOtelKinds(t *testing.T) {
 	code := runExport([]string{"otel", "--protocol", "http/json", "--endpoint", srv.URL + "/v1/traces"}, getenv, time.Now, &stdout, &stderr)
 
 	require.Equal(t, 0, code, stderr.String())
-	assert.Equal(t, "exported 1 runs, 1 verdicts, 1 outcomes, 2 model calls, 0 review questions and 1 decisions\n", stdout.String())
+	assert.Equal(t, "exported 1 runs, 1 verdicts, 1 outcomes, 2 model calls, 0 questions, 1 decisions and 0 judgments\n", stdout.String())
 	runSpan := otel.RunSpan(ids.run)
-	drafted := otel.CallSpan(ids.extract)
+	drafted := otel.TraceSpan(ids.extract)
 	verdict := otel.VerdictSpan(ids.run, ids.verdictAt)
 	byName := map[string]gotSpan{}
 	for _, s := range c.spans {
 		byName[s.Name] = s
 	}
 	assert.ElementsMatch(t, []string{
-		"invoke_agent session", "evaluate nodloop.verdict", "evaluate nodloop.outcome", "evaluate nodloop.review",
+		"invoke_agent session", "evaluate nodloop.verdict", "evaluate nodloop.outcome", "evaluate nodloop.decision",
 		"invoke_agent nodloop.extract", "chat claude-haiku-4-5", "invoke_agent nodloop.check", "chat claude-haiku-4-5",
 	}, c.names())
 	turn := byName["invoke_agent session"]
@@ -333,7 +333,7 @@ func TestRunExportOtelKinds(t *testing.T) {
 	}
 	assert.Equal(t, []string{runSpan.SpanID}, linked("evaluate nodloop.verdict"))
 	assert.Equal(t, []string{runSpan.SpanID}, linked("evaluate nodloop.outcome"))
-	assert.Equal(t, []string{drafted.SpanID}, linked("evaluate nodloop.review"), "a decision links the extraction that drafted it")
+	assert.Equal(t, []string{drafted.SpanID}, linked("evaluate nodloop.decision"), "a decision links the extraction that drafted it")
 	assert.Equal(t, []string{runSpan.SpanID, verdict.SpanID}, linked("invoke_agent nodloop.extract"), "an extraction links its run and the correction")
 	assert.Empty(t, linked("invoke_agent nodloop.check"))
 	extract := byName["invoke_agent nodloop.extract"]
@@ -357,7 +357,7 @@ func TestRunExportOtelLogs(t *testing.T) {
 
 	require.Equal(t, 0, code, stderr.String())
 	runSpan := otel.RunSpan(ids.run)
-	drafted := otel.CallSpan(ids.extract)
+	drafted := otel.TraceSpan(ids.extract)
 	assert.ElementsMatch(t, []gotLog{
 		{"gen_ai.evaluation.result", runSpan.TraceID, runSpan.SpanID},
 		{"gen_ai.evaluation.result", runSpan.TraceID, runSpan.SpanID},
@@ -381,7 +381,7 @@ func TestRunExportOtelPending(t *testing.T) {
 		// export.json after the export
 		mark string
 	}
-	none := "exported 0 runs, 0 verdicts, 0 outcomes, 0 model calls, 0 review questions and 0 decisions\n"
+	none := "exported 0 runs, 0 verdicts, 0 outcomes, 0 model calls, 0 questions, 0 decisions and 0 judgments\n"
 	hourOn := `{"at":"2026-10-07T10:00:00Z"}`
 	tcs := []struct {
 		name string
@@ -389,17 +389,17 @@ func TestRunExportOtelPending(t *testing.T) {
 		want want
 	}{
 		{"no mark sends every record and marks the newest", args{"", http.StatusOK, nil}, want{0,
-			"exported 1 runs, 1 verdicts, 1 outcomes, 0 model calls, 0 review questions and 0 decisions\n",
+			"exported 1 runs, 1 verdicts, 1 outcomes, 0 model calls, 0 questions, 0 decisions and 0 judgments\n",
 			[]string{"invoke_agent bot", "evaluate nodloop.verdict", "evaluate nodloop.outcome"}, `{"at":"2026-10-07T09:02:00Z"}` + "\n"}},
 		{"a mark that does not decode reads as none", args{"{", http.StatusOK, nil}, want{0,
-			"exported 1 runs, 1 verdicts, 1 outcomes, 0 model calls, 0 review questions and 0 decisions\n",
+			"exported 1 runs, 1 verdicts, 1 outcomes, 0 model calls, 0 questions, 0 decisions and 0 judgments\n",
 			[]string{"invoke_agent bot", "evaluate nodloop.verdict", "evaluate nodloop.outcome"}, `{"at":"2026-10-07T09:02:00Z"}` + "\n"}},
 		{"a mark after every record sends nothing and stays", args{hourOn, http.StatusOK, nil}, want{0, none, nil, hourOn}},
 		{"a verdict after the mark goes alone and never its run again", args{hourOn, http.StatusOK, []feedback.Verdict{feedback.VerdictApprove}}, want{0,
-			"exported 0 runs, 1 verdicts, 0 outcomes, 0 model calls, 0 review questions and 0 decisions\n",
+			"exported 0 runs, 1 verdicts, 0 outcomes, 0 model calls, 0 questions, 0 decisions and 0 judgments\n",
 			[]string{"evaluate nodloop.verdict"}, `{"at":"2026-10-07T11:00:00Z"}` + "\n"}},
 		{"a withdraw goes as an evaluation without a score", args{hourOn, http.StatusOK, []feedback.Verdict{feedback.VerdictWithdraw}}, want{0,
-			"exported 0 runs, 1 verdicts, 0 outcomes, 0 model calls, 0 review questions and 0 decisions\n",
+			"exported 0 runs, 1 verdicts, 0 outcomes, 0 model calls, 0 questions, 0 decisions and 0 judgments\n",
 			[]string{"evaluate nodloop.verdict"}, `{"at":"2026-10-07T11:00:00Z"}` + "\n"}},
 		{"a refused export leaves the mark", args{hourOn, http.StatusInternalServerError, []feedback.Verdict{feedback.VerdictApprove}},
 			want{1, "", []string{"evaluate nodloop.verdict"}, hourOn}},
