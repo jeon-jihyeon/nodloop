@@ -1,3 +1,6 @@
+import asyncio
+import json
+from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -15,14 +18,17 @@ from nodloop.openai_agents import veto_guardrail
 ACME = {"tenant": ["acme"]}
 NO_RM = {"tool": "Bash", "when": [{"field": "commands", "match": "(?m)^rm "}], "example": {"command": "rm -rf /data"}}
 
+# Approves a version as the person at a terminal of their own, the approve fixture of conftest
+Approve = Callable[..., None]
 
-async def seed(c: Client) -> None:
-    """An approved item for acme and an approved veto on rm"""
+
+async def seed(c: Client, approve: Approve) -> None:
+    """An item for acme and a veto on rm, both approved by the person at a terminal"""
     run = await c.record("bot", "answer", labels=ACME)
-    await c.judge(run, "reject", reason="missing the window")
+    await c.judge(run, "reject", "ann", reason="missing the window")
     for item_id, content, veto in (("window", "Quote the refund window", None), ("no-rm", "Never run rm", NO_RM)):
         p = await c.propose("judgment", content, from_run=run, item_id=item_id, veto=veto)
-        await c.approve(p.id, p.version, "ann")
+        approve(p.id, p.version)
 
 
 async def runs(c: Client) -> list[str]:
@@ -41,9 +47,9 @@ class ModelRequest:
         return replace(self, **changes)
 
 
-async def test_langchain_middleware(binary: str, records: str) -> None:
+async def test_langchain_middleware(binary: str, records: str, approve: Approve) -> None:
     async with Client(records, binary) as c:
-        await seed(c)
+        await seed(c, approve)
         mw = NodloopMiddleware(c, "bot", ACME)
         seen: list[ModelRequest] = []
 
@@ -74,9 +80,9 @@ async def test_langchain_middleware(binary: str, records: str) -> None:
     assert mw.run in recorded
 
 
-async def test_openai_agents_hooks(binary: str, records: str) -> None:
+async def test_openai_agents_hooks(binary: str, records: str, approve: Approve) -> None:
     async with Client(records, binary) as c:
-        await seed(c)
+        await seed(c, approve)
         hooks = OpenAIHooks(c, "bot", ACME)
         guard = veto_guardrail(c, "bot")
 
@@ -97,15 +103,19 @@ async def test_openai_agents_hooks(binary: str, records: str) -> None:
 
 
 @pytest.mark.parametrize(("command", "decision"), [("rm -rf /x", "deny"), ("ls", None)])
-async def test_claude_agent_hooks(binary: str, records: str, command: str, decision: str | None) -> None:
+async def test_claude_agent_hooks(binary: str, records: str, approve: Approve, command: str, decision: str | None) -> None:
     async with Client(records, binary) as c:
-        await seed(c)
+        await seed(c, approve)
         hooks = ClaudeHooks(c, "bot", ACME)
 
         prompt = await hooks.prompt({"prompt": "refund?"}, None, None)
         pre = await hooks.pre_tool_use({"tool_name": "Bash", "tool_input": {"command": command}}, "t1", None)
+        await asyncio.sleep(0.01)
         await hooks.stop({"last_assistant_message": "The window is 30 days"}, None, None)
         recorded = await runs(c)
+
+    traced = [json.loads(line) for line in (Path(records) / "traces.jsonl").read_text().splitlines() if line.strip()]
+    assert [t["duration_ms"] > 0 for t in traced if t["id"] == hooks.run] == [True], "the turn lasts from its prompt to its stop"
 
     assert "[window v1 judgment]" in prompt["hookSpecificOutput"]["additionalContext"]
     assert pre.get("hookSpecificOutput", {}).get("permissionDecision") == decision
@@ -113,7 +123,7 @@ async def test_claude_agent_hooks(binary: str, records: str, command: str, decis
     assert set(hooks.hooks()) == {"UserPromptSubmit", "Stop", "PreToolUse"}
 
 
-async def test_langchain_create_agent(binary: str, records: str) -> None:
+async def test_langchain_create_agent(binary: str, records: str, approve: Approve) -> None:
     """The middleware runs inside a real langchain agent with a scripted model that calls rm and then answers"""
     from langchain.agents import create_agent
     from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
@@ -141,13 +151,13 @@ async def test_langchain_create_agent(binary: str, records: str) -> None:
         [AIMessage("", tool_calls=[{"id": "c1", "name": "bash", "args": {"command": "rm -rf /x"}}]), AIMessage("I could not delete it")]
     )
     async with Client(records, binary) as c:
-        await seed(c)
+        await seed(c, approve)
         # A veto names the tool as this agent calls it
         run = await c.record("bot", "ran rm", labels=ACME)
-        await c.judge(run, "reject", reason="never rm")
+        await c.judge(run, "reject", "ann", reason="never rm")
         veto = {"tool": "bash", "when": [{"field": "commands", "match": "(?m)^rm "}], "example": {"command": "rm -rf /data"}}
         p = await c.propose("judgment", "Never run rm through bash", from_run=run, item_id="no-rm-bash", veto=veto)
-        await c.approve(p.id, p.version, "ann")
+        approve(p.id, p.version)
         mw = NodloopMiddleware(c, "bot", ACME)
         agent = create_agent(Scripted(messages=script), tools=[bash], system_prompt="You help", middleware=[mw])
 
@@ -162,12 +172,12 @@ async def test_langchain_create_agent(binary: str, records: str) -> None:
     assert [i.id for i in mw.applied] == ["window"]
 
 
-async def test_adapter_records_withheld(binary: str, records: str, home: Path) -> None:
+async def test_adapter_records_withheld(binary: str, records: str, home: Path, approve: Approve) -> None:
     """An adapter with a holdout key the holdout draws gets no item and records the run as withheld"""
     (home / ".nodloop").mkdir(exist_ok=True)
     (home / ".nodloop" / "config.json").write_text('{"holdout": 0.999}')
     async with Client(records, binary) as c:
-        await seed(c)
+        await seed(c, approve)
         hooks = ClaudeHooks(c, "bot", ACME, holdout_key="conversation-1")
 
         prompt = await hooks.prompt({"prompt": "refund?"}, None, None)

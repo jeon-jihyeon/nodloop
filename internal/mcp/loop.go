@@ -7,7 +7,9 @@ import (
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	"github.com/jeon-jihyeon/nodloop/internal/loop"
+	"github.com/jeon-jihyeon/nodloop/internal/trace"
 )
 
 type queueInput struct {
@@ -109,13 +111,39 @@ type reaffirmAnswer struct {
 	Version    int       `json:"version"`
 	Approver   string    `json:"approver"`
 	ReviewedAt time.Time `json:"reviewed_at"`
+	// The intervention a call without a proof of a person recorded as an agent proposal while the version stayed as it was
+	Proposal string `json:"proposal,omitempty"`
 }
 
+// Reaffirms under a key that proves a person and records an agent proposal of any other call
+// A proposal names an approved version and answers it as it stands
 func (s *Server) reaffirm(ctx context.Context, _ *sdk.CallToolRequest, in reaffirmInput) (*sdk.CallToolResult, reaffirmAnswer, error) {
-	k, err := s.ledger.Reaffirm(ctx, in.ID, in.Version, s.approver(in.Approver))
+	approver := s.approver(in.Approver)
+	if err := knowledge.CheckApprover(approver); err != nil {
+		return nil, reaffirmAnswer{}, err
+	}
+	judgment := trace.Intervention{Action: trace.ActionJudge, ID: in.ID, Version: in.Version, Choice: trace.ChoiceKeep, Proof: s.proof()}
+	var k knowledge.Knowledge
+	var err error
+	var wrote knowledge.Set
+	if judgment.Proof == trace.ProofNone {
+		k, err = s.ledger.Approved(ctx, in.ID, in.Version)
+	} else {
+		judgment.Person = approver
+		k, err = s.ledger.Reaffirm(ctx, in.ID, in.Version, approver)
+		wrote = knowledge.Set{k}
+	}
+	if err != nil {
+		return nil, reaffirmAnswer{}, err
+	}
+	id, err := s.intervened(ctx, judgment, wrote)
 	if err != nil {
 		return nil, reaffirmAnswer{}, err
 	}
 	s.afterVerdict(ctx)
-	return nil, reaffirmAnswer{ID: k.ID, Version: k.Version, Approver: k.Approver, ReviewedAt: k.ReviewedAt}, nil
+	answer := reaffirmAnswer{ID: k.ID, Version: k.Version, Approver: k.Approver, ReviewedAt: k.ReviewedAt}
+	if wrote == nil {
+		answer.Proposal = id
+	}
+	return nil, answer, nil
 }

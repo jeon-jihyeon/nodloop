@@ -8,7 +8,7 @@ type Role string
 const (
 	RoleProducer Role = "producer" // record runs and verdicts and read the items a run receives
 	RoleReviewer Role = "reviewer" // also draft and propose knowledge and read the queue, the health and the reports
-	RoleApprover Role = "approver" // also approve and reaffirm
+	RoleApprover Role = "approver" // also approve and reaffirm that decide only under a key proving a person
 )
 
 func Roles() []Role {
@@ -40,6 +40,12 @@ func (r Role) Tools() []string {
 	return nil
 }
 
+// Whether a key of the role added with --person proves a person
+// Only an approver key does so a reviewer key never decides what its role leaves out
+func (r Role) Proves(person bool) bool {
+	return person && r == RoleApprover
+}
+
 // The tools of the agent server the plugin starts
 // The reviewer role so the model of a session finds no tool that decides for a person
 func AgentTools() []string {
@@ -51,6 +57,8 @@ type Caller struct {
 	// The name of the server key and empty over stdio
 	// A judgment under the key is recorded under it whatever the call says and a verdict without a reviewer takes it
 	Person string
+	// Whether the key proves a person so a judgment under it decides at once
+	Proves bool
 	// Whether the model of a session calls the agent server so every verdict and outcome is recorded with reviewer session
 	Agent bool
 }

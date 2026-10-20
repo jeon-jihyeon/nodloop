@@ -51,7 +51,7 @@ func (t turn) state() string {
 	return "## User message\n\n" + t.message + "\n\n## Previous answer\n\n" + answer
 }
 
-// The verdict the reaction point recorded on the previous run of the session and empty when it recorded none
+// The verdict the reaction point recorded on the newest answer of the session and empty when it recorded none
 // 1. nothing is asked without a reaction setup, in a mode that infers nothing, on the first prompt or for an empty message
 // 2. a deferral to the conversation is no failure since the conversation then judges as it would without the point
 // 3. a reject keeps the user's message redacted and cut as its reason because no reason code can be told from it

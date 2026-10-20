@@ -26,10 +26,12 @@ commands:
                             The conversation hooks the plugin registers. prompt adds the approved items of
                             producer session for the repo and dir of the place that the context lacks, so each version is
                             added once per conversation. The place is cwd while it lies inside CLAUDE_PROJECT_DIR and that
-                            directory otherwise. It then names the previous run of the session so the conversation records
-                            the user's verdict on it. start adds every item again after a compact or a clear and subagent
-                            adds them to a subagent. stop records the answer as a run and drafts the lesson of the previous
-                            run in the background when the conversation recorded a correction no record cites. All exit 0.
+                            directory otherwise. It then names the newest answer of the session that no stop hook
+                            continued so the conversation records the user's verdict on it. start adds every item again
+                            after a compact or a clear and subagent adds them to a subagent. stop records the answer as a
+                            run, marked continued when a stop hook continued the turn, and drafts the lesson of the newest
+                            answer before it in the background when the conversation recorded a correction no record
+                            cites. All exit 0.
                             --host reads the input and writes the answer of that agent and labels the run host,
                             claude-code by default. codex runs every hook. cursor and copilot run start and stop alone:
                             start adds every item and stop records no run since their input holds no answer. Their hook
@@ -39,11 +41,11 @@ commands:
                             deferred
   feedback list [--trace <id>] [--verdict <v>] [--reviewer <r>] [--limit <n>]
                             List feedback newest first with the reason code or a dash after the verdict
-  feedback add --trace <id> --verdict <v> [--reason-code <c>] [--reason <r>] [--edited <file>] [--reviewer <r>] [--audit]
-                            Append one verdict on a run. An edit carries the corrected output in full.
+  feedback add --trace <id> --verdict <v> --reviewer <r> [--reason-code <c>] [--reason <r>] [--edited <file>] [--audit]
+                            Append one verdict on a run under the name of who judged. An edit carries the corrected output in full.
                             An edit or reject may name what the output got wrong: fact, approach, scope, form or other.
                             withdraw takes back the verdict before it so the run has none, as when a session inferred one wrongly
-  feedback outcome --trace <id> --result <r> [--cause <text>] [--note <n>] [--reviewer <r>]
+  feedback outcome --trace <id> --result <r> --reviewer <r> [--cause <text>] [--note <n>]
                             Record what a real check found: confirmed, refuted or inconclusive
   knowledge propose --kind <k> --content <text> (--producer <p> [--label <key=value>] | --from <run id>)
                     [--except <key=value>] [--id <id>] [--basis stated or verified] [--author <a>] [--trace <run id>]

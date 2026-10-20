@@ -48,11 +48,11 @@ func TestNewOutcome(t *testing.T) {
 		want want
 	}{
 		{
-			"confirmed without a reviewer falls back to author",
-			args{traceID: "t1", result: feedback.ResultConfirmed, confirmedCause: "cause"},
+			"confirmed keeps its cause and the named reviewer",
+			args{traceID: "t1", result: feedback.ResultConfirmed, confirmedCause: "cause", reviewer: "sam"},
 			want{outcome: feedback.Outcome{
 				TraceID: "t1", Time: utc, Result: feedback.ResultConfirmed, ConfirmedCause: "cause", Note: "note",
-				Reviewer: "author",
+				Reviewer: "sam",
 			}},
 		},
 		{
@@ -64,23 +64,24 @@ func TestNewOutcome(t *testing.T) {
 		},
 		{
 			"inconclusive is a known result",
-			args{traceID: "t1", result: feedback.ResultInconclusive},
+			args{traceID: "t1", result: feedback.ResultInconclusive, reviewer: "sam"},
 			want{outcome: feedback.Outcome{
-				TraceID: "t1", Time: utc, Result: feedback.ResultInconclusive, Note: "note", Reviewer: "author",
+				TraceID: "t1", Time: utc, Result: feedback.ResultInconclusive, Note: "note", Reviewer: "sam",
 			}},
 		},
 		{
 			"refuted with a confirmed cause fails",
-			args{traceID: "t1", result: feedback.ResultRefuted, confirmedCause: "cause"},
+			args{traceID: "t1", result: feedback.ResultRefuted, confirmedCause: "cause", reviewer: "sam"},
 			want{err: feedback.ErrCauseUnexpected},
 		},
 		{
 			"inconclusive with a confirmed cause fails",
-			args{traceID: "t1", result: feedback.ResultInconclusive, confirmedCause: "cause"},
+			args{traceID: "t1", result: feedback.ResultInconclusive, confirmedCause: "cause", reviewer: "sam"},
 			want{err: feedback.ErrCauseUnexpected},
 		},
-		{"unknown result fails", args{traceID: "t1", result: "maybe"}, want{err: feedback.ErrResultUnknown}},
-		{"missing trace id fails", args{result: feedback.ResultConfirmed}, want{err: feedback.ErrTraceIDRequired}},
+		{"unknown result fails", args{traceID: "t1", result: "maybe", reviewer: "sam"}, want{err: feedback.ErrResultUnknown}},
+		{"missing trace id fails", args{result: feedback.ResultConfirmed, reviewer: "sam"}, want{err: feedback.ErrTraceIDRequired}},
+		{"missing reviewer fails", args{traceID: "t1", result: feedback.ResultConfirmed}, want{err: feedback.ErrReviewerRequired}},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {

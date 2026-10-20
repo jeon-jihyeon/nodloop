@@ -45,6 +45,12 @@ func hashed(name, tenant string, role mcp.Role) serverKey {
 	return serverKey{Name: name, Tenant: tenant, Role: role, SHA256: hex.EncodeToString(sum[:])}
 }
 
+// The key as one a person holds, added with --person
+func held(k serverKey) serverKey {
+	k.Person = true
+	return k
+}
+
 // A session of the key named name against the server
 func dial(t *testing.T, url, name string) *sdk.ClientSession {
 	t.Helper()
@@ -122,7 +128,7 @@ func (p prefixed) marks(tenant string) (retain.Marks, error) {
 	return p.tenantStores.marks(p.prefix + tenant)
 }
 
-// Each key sees the tools of its role, writes the records of its tenant and approves under its own name
+// Each key sees the tools of its role, writes the records of its tenant and decides only when a person holds an approver key
 func TestServeHandler(t *testing.T) {
 	for name, stores := range backends(t) {
 		t.Run(name, func(t *testing.T) {
@@ -133,23 +139,32 @@ func TestServeHandler(t *testing.T) {
 
 func serveScenario(t *testing.T, stores tenantStores) {
 	config := serverConfig{Keys: []serverKey{
-		hashed("bot", "acme", mcp.RoleProducer), hashed("ann", "acme", mcp.RoleApprover), hashed("globex-bot", "globex", mcp.RoleProducer),
+		hashed("bot", "acme", mcp.RoleProducer), held(hashed("ann", "acme", mcp.RoleApprover)), hashed("ci", "acme", mcp.RoleApprover),
+		held(hashed("rev", "acme", mcp.RoleReviewer)), hashed("globex-bot", "globex", mcp.RoleProducer),
 	}}
 	srv := httptest.NewServer(newServeHandler(stores, config, time.Now, io.Discard))
 	t.Cleanup(srv.Close)
-	bot, ann, globex := dial(t, srv.URL, "bot"), dial(t, srv.URL, "ann"), dial(t, srv.URL, "globex-bot")
+	bot, ann, ci, rev, globex := dial(t, srv.URL, "bot"), dial(t, srv.URL, "ann"), dial(t, srv.URL, "ci"), dial(t, srv.URL, "rev"), dial(t, srv.URL, "globex-bot")
 	labels := map[string]any{"task": []any{"refund"}}
+	knowledgeFor := map[string]any{"producer": "support-bot", "labels": labels}
 
 	run := call(t, bot, "run", map[string]any{"producer": "support-bot", "labels": labels, "output": "steps"})["trace_id"]
-	call(t, bot, "feedback", map[string]any{"trace_id": run, "verdict": "reject", "reason": "the window was missing"})
+	judged := call(t, bot, "feedback", map[string]any{"trace_id": run, "verdict": "reject", "reason": "the window was missing"})
 	proposed := call(t, ann, "propose", map[string]any{"kind": "judgment", "content": "Quote the refund window", "from": run, "id": "window"})
+	proposal := call(t, ci, "approve", map[string]any{"id": "window", "version": proposed["version"], "approver": "mallory"})
+	beforeItems := call(t, bot, "knowledge_for", knowledgeFor)["items"]
 	approved := call(t, ann, "approve", map[string]any{"id": "window", "version": proposed["version"], "approver": "mallory"})
-	acmeItems := call(t, bot, "knowledge_for", map[string]any{"producer": "support-bot", "labels": labels})["items"]
-	globexItems := call(t, globex, "knowledge_for", map[string]any{"producer": "support-bot", "labels": labels})["items"]
+	acmeItems := call(t, bot, "knowledge_for", knowledgeFor)["items"]
+	globexItems := call(t, globex, "knowledge_for", knowledgeFor)["items"]
 
 	assert.ElementsMatch(t, mcp.RoleProducer.Tools(), tools(t, bot))
 	assert.Contains(t, tools(t, ann), "approve")
+	assert.NotContains(t, tools(t, rev), "approve", "a reviewer key held by a person still lists no approve")
+	assert.Equal(t, "bot", judged["reviewer"], "a verdict without a reviewer takes the name of the key")
+	assert.Equal(t, []any{"candidate", true}, []any{proposal["status"], proposal["proposal"] != nil}, "an approver key without --person records a proposal")
+	assert.Empty(t, beforeItems, "a proposal changes nothing a run receives")
 	assert.Equal(t, "ann", approved["approver"], "an approval is recorded under the name of the key")
+	assert.Nil(t, approved["proposal"])
 	assert.Len(t, acmeItems, 1)
 	assert.Empty(t, globexItems, "another tenant reads its own records")
 }
@@ -323,6 +338,8 @@ func TestRunServeRefuses(t *testing.T) {
 		{"a retention under a week", args{`{"retention":3,` + keys + `}`, "127.0.0.1:0"}, retain.ErrDaysTooShort.Error()},
 		{"a holdout of 1", args{`{"holdout":1,` + keys + `}`, "127.0.0.1:0"}, knowledge.ErrHoldoutInvalid.Error()},
 		{"an address it cannot listen on", args{`{"retention":30,` + keys + `}`, "127.0.0.1:-1"}, "listen tcp"},
+		{"a key named nodloop", args{`{"server":{"keys":[{"name":"nodloop","tenant":"acme","role":"approver","sha256":"00"}]}}`, "127.0.0.1:0"},
+			knowledge.ErrApproverReserved.Error()},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
@@ -356,7 +373,7 @@ func TestPrunerSkipsATenantWithoutRecords(t *testing.T) {
 // The holdout share the stores carry reaches knowledge_for of every key
 func TestServeHandlerHoldout(t *testing.T) {
 	stores := fileTenants{base: t.TempDir(), policy: mcp.Policy{Holdout: 0.999}}
-	config := serverConfig{Keys: []serverKey{hashed("ann", "acme", mcp.RoleApprover)}}
+	config := serverConfig{Keys: []serverKey{held(hashed("ann", "acme", mcp.RoleApprover))}}
 	srv := httptest.NewServer(newServeHandler(stores, config, time.Now, io.Discard))
 	t.Cleanup(srv.Close)
 	ann := dial(t, srv.URL, "ann")

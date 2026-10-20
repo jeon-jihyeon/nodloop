@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 	"time"
 
@@ -137,6 +138,27 @@ func (s *Server) reviewer(given string) string {
 	return cmp.Or(given, s.caller.Person)
 }
 
+// A key that proves a person and nothing else
+func (s *Server) proof() trace.Proof {
+	if s.caller.Proves {
+		return trace.ProofKey
+	}
+	return trace.ProofNone
+}
+
+// Records the intervention of a judgment with the records it wrote and returns its trace id
+// A judgment without a proof wrote nothing so its intervention is an agent proposal the person is asked about
+func (s *Server) intervened(ctx context.Context, in trace.Intervention, wrote knowledge.Set) (string, error) {
+	tr, err := in.Trace(wrote.Written(), s.session, s.now())
+	if err != nil {
+		return "", err
+	}
+	if err := s.traces.Append(ctx, tr.Record()); err != nil {
+		return "", err
+	}
+	return tr.ID, nil
+}
+
 // The session of one server process
 func NewSession(now time.Time) string {
 	return sessionPrefix + trace.NewID(now)
@@ -244,8 +266,9 @@ var tools = []tool{
 		"update one, or name a duplicate or a conflict. A duplicate of a waiting candidate adds the run to its evidence and the others propose nothing. "+
 		"Code refuses a draft that is not one sentence, copies the output, names an item or candidate the run never reached or fails a critic question",
 		(*Server).proposeExtraction),
-	newTool("approve", "Approve a knowledge candidate on behalf of a named person. "+
-		"Only call it when the user says so and gives their name. Pass scope when the user picked where it applies. A judgment with a veto becomes a guard veto. "+
+	newTool("approve", "Approve a knowledge candidate when the call proves a person under a server key of a person. "+
+		"Any other call records an agent proposal the person is asked about, answers proposal and changes nothing. "+
+		"Pass scope when the person picked where it applies. A judgment with a veto becomes a guard veto once approved. "+
 		"A failure after the approval rides on the answer since the approval is recorded and approving again would fail", (*Server).approve),
 	newTool("compaction", "Read what a compaction of one knowledge folder is drafted from: the approved items one run carries with the anchor, "+
 		"the corrections behind them, a pending compaction of the same items, the rules and the schema. "+
@@ -255,20 +278,22 @@ var tools = []tool{
 	newTool("check_compaction", "Record the coverage check of a compaction before approve_compaction: for every old item "+
 		"the new items that state its facts and rules, and every fact of it no new item states. Judge it as a reader who sees only the new items. "+
 		"Answers whether it passed and why not", (*Server).checkCompaction),
-	newTool("approve_compaction", "Approve a compaction on behalf of a named person after its newest coverage check passed", (*Server).approveCompaction),
+	newTool("approve_compaction", "Approve a compaction after its newest coverage check passed when the call proves a person under a server key of a person. "+
+		"Any other call records an agent proposal the person is asked about, answers proposal and changes nothing", (*Server).approveCompaction),
 	newTool("queue", "List the recorded runs that wait for the user's verdict in the order to check them, with the reasons and a random audit share. "+
 		"Pass audit true to feedback when the user judges a run marked audit", (*Server).queue),
 	newTool("knowledge_health", "Read how the runs that applied each knowledge version held up: verdicts, outcomes, retire and promotion candidates, "+
 		"versions past their review deadline and references that no longer resolve. "+
-		"Reads only. Retire, narrow and reaffirm stay with a named person", (*Server).knowledgeHealth),
+		"Reads only. Retire, narrow and reaffirm stay with the person", (*Server).knowledgeHealth),
 	newTool("report", "Read one report of the records as JSON: loop for the totals and how each approved item fared, extract for how drafting ended, "+
 		"critic for how critics agreed with people and the reaction point with the conversation, effect for runs with items against the holdout, health for each knowledge version, "+
 		"replay for the newest replay of each version against recorded outputs. "+
 		"Reads only", (*Server).report),
 	newTool("check_call", "Check a tool call against the vetoes of approved knowledge before an agent runs it. "+
 		"Answers allow, block or ask with the veto and its reason. Pass the arguments of the call as input and a shell command under command", (*Server).checkCall),
-	newTool("reaffirm", "Record that a named person rechecked an approved knowledge version, which restarts its review deadline. "+
-		"Only call it when the user explicitly reaffirms and names themselves", (*Server).reaffirm),
+	newTool("reaffirm", "Record that the person rechecked an approved knowledge version, which restarts its review deadline, "+
+		"when the call proves a person under a server key of a person. "+
+		"Any other call records an agent proposal the person is asked about, answers proposal and changes nothing", (*Server).reaffirm),
 }
 
 // feedback and outcome and propose take a recorded run as the trace they concern
@@ -289,7 +314,7 @@ type feedbackInput struct {
 	Reason     string              `json:"reason,omitempty" jsonschema:"why, in the user's words. For a reject what the output got wrong or missed"`
 	// Any JSON value or text so the schema leaves it open
 	EditedOutput any    `json:"edited_output,omitempty" jsonschema:"the corrected output in full when the verdict is edit, a JSON value or text"`
-	Reviewer     string `json:"reviewer,omitempty" jsonschema:"Defaults to author. The name of the person when someone other than the author reviews, or session for a verdict the conversation inferred from the user's words. The agent server of the plugin records session whatever it says"`
+	Reviewer     string `json:"reviewer,omitempty" jsonschema:"who judged: the person's name, or session for a verdict the conversation inferred from the user's words. Required over stdio and the key name by default under a server key. The agent server of the plugin records session whatever it says"`
 }
 
 type feedbackAnswer struct {
@@ -327,7 +352,7 @@ type outcomeInput struct {
 	Result         feedback.Result `json:"result" jsonschema:"confirmed or refuted or inconclusive"`
 	ConfirmedCause string          `json:"confirmed_cause,omitempty" jsonschema:"the cause that held, in the reviewer's words"`
 	Note           string          `json:"note,omitempty" jsonschema:"what the check showed beyond the result, such as why it was inconclusive"`
-	Reviewer       string          `json:"reviewer,omitempty" jsonschema:"Defaults to author. The name of the person when someone other than the author reviews. The agent server of the plugin records session whatever it says"`
+	Reviewer       string          `json:"reviewer,omitempty" jsonschema:"who checked: the person's name. Required over stdio and the key name by default under a server key. The agent server of the plugin records session whatever it says"`
 }
 
 type outcomeAnswer struct {
@@ -460,27 +485,87 @@ type approveAnswer struct {
 	Folder      *folderAnswer    `json:"folder,omitempty"`
 	ExportError string           `json:"export_error,omitempty"`
 	FolderError string           `json:"folder_error,omitempty"`
+	// The intervention a call without a proof of a person recorded as an agent proposal while the status stayed
+	Proposal string `json:"proposal,omitempty"`
 }
 
+// Approves under a key that proves a person and records an agent proposal of any other call
 func (s *Server) approve(ctx context.Context, _ *sdk.CallToolRequest, in approveInput) (*sdk.CallToolResult, approveAnswer, error) {
-	k, err := s.approval(ctx, in, s.approver(in.Approver))
-	if err != nil && !errors.Is(err, knowledge.ErrExport) {
+	proof := s.proof()
+	approver := s.approver(in.Approver)
+	if err := knowledge.CheckApprover(approver); err != nil {
 		return nil, approveAnswer{}, err
+	}
+	judgment := in.judgment(proof, approver)
+	if proof == trace.ProofNone {
+		answer, err := s.proposeApproval(ctx, in, judgment)
+		return nil, answer, err
+	}
+	answer, err := s.approved(ctx, in, judgment)
+	return nil, answer, err
+}
+
+// The intervention of the approval: keep as proposed or scope in the labels the person picked
+// A proposal names no person
+func (in approveInput) judgment(proof trace.Proof, approver string) trace.Intervention {
+	j := trace.Intervention{Action: trace.ActionJudge, ID: in.ID, Version: in.Version, Choice: trace.ChoiceKeep, Proof: proof}
+	if in.Scope != nil {
+		j.Choice, j.Labels = trace.ChoiceScope, in.Scope.Labels
+	}
+	if proof.Authority() == trace.AuthorityPerson {
+		j.Person = approver
+	}
+	return j
+}
+
+// The approval recorded with every failure after it on the answer
+// The approval is recorded and a second approve would fail so a later failure never fails the call
+// The intervention follows the approval since it names the record the approval wrote
+func (s *Server) approved(ctx context.Context, in approveInput, judgment trace.Intervention) (approveAnswer, error) {
+	k, err := s.approval(ctx, in, judgment.Person)
+	if err != nil && !errors.Is(err, knowledge.ErrExport) {
+		return approveAnswer{}, err
+	}
+	if _, ierr := s.intervened(ctx, judgment, knowledge.Set{k}); ierr != nil {
+		return approveAnswer{}, fmt.Errorf("%s v%d is %s and its intervention was not recorded: %w", k.ID, k.Version, k.Status, ierr)
 	}
 	s.afterVerdict(ctx)
 	answer := approveAnswer{ID: k.ID, Version: k.Version, Status: k.Status, Approver: k.Approver, Veto: k.Veto != nil}
-	// The approval is recorded and a second approve would fail so every later failure rides on the answer
 	if err != nil {
 		answer.ExportError = err.Error()
 	}
 	folder, err := s.ledger.Folder(ctx, k.ID, k.Version)
 	if err != nil {
 		answer.FolderError = err.Error()
-		return nil, answer, nil
+		return answer, nil
 	}
 	f := newFolderAnswer(folder)
 	answer.Folder = &f
-	return nil, answer, nil
+	return answer, nil
+}
+
+// The agent proposal of an approval once the version and the labels it names are found
+// The status stays as it is until the person answers the question made of it
+func (s *Server) proposeApproval(ctx context.Context, in approveInput, judgment trace.Intervention) (approveAnswer, error) {
+	all, err := s.ledger.All(ctx)
+	if err != nil {
+		return approveAnswer{}, err
+	}
+	k, err := all.Version(in.ID, in.Version)
+	if err != nil {
+		return approveAnswer{}, err
+	}
+	if in.Scope != nil {
+		if err := s.checkScope(ctx, in); err != nil {
+			return approveAnswer{}, err
+		}
+	}
+	id, err := s.intervened(ctx, judgment, nil)
+	if err != nil {
+		return approveAnswer{}, err
+	}
+	s.afterVerdict(ctx)
+	return approveAnswer{ID: k.ID, Version: k.Version, Status: k.Status, Approver: k.Approver, Veto: k.Veto != nil, Proposal: id}, nil
 }
 
 // The approval as proposed or in the scope the user picked
@@ -594,15 +679,38 @@ type approveCompactionAnswer struct {
 	Approver    string   `json:"approver"`
 	Records     []string `json:"records"`
 	ExportError string   `json:"export_error,omitempty"`
+	// The intervention a call without a proof of a person recorded as an agent proposal while the records stayed
+	Proposal string `json:"proposal,omitempty"`
 }
 
+// Approves under a key that proves a person and records an agent proposal of any other call
 func (s *Server) approveCompaction(
 	ctx context.Context, _ *sdk.CallToolRequest, in approveCompactionInput,
 ) (*sdk.CallToolResult, approveCompactionAnswer, error) {
 	approver := s.approver(in.Approver)
+	if err := knowledge.CheckApprover(approver); err != nil {
+		return nil, approveCompactionAnswer{}, err
+	}
+	judgment := trace.Intervention{Action: trace.ActionJudge, Compaction: in.Compaction, Choice: trace.ChoiceKeep, Proof: s.proof()}
+	if judgment.Proof == trace.ProofNone {
+		c, err := s.ledger.Compaction(ctx, in.Compaction)
+		if err != nil {
+			return nil, approveCompactionAnswer{}, err
+		}
+		id, err := s.intervened(ctx, judgment, nil)
+		if err != nil {
+			return nil, approveCompactionAnswer{}, err
+		}
+		s.afterVerdict(ctx)
+		return nil, approveCompactionAnswer{Compaction: c.ID, Records: c.Statuses(), Proposal: id}, nil
+	}
+	judgment.Person = approver
 	c, err := s.compactor.Approve(ctx, in.Compaction, approver)
 	if err != nil && !errors.Is(err, knowledge.ErrExport) {
 		return nil, approveCompactionAnswer{}, err
+	}
+	if _, ierr := s.intervened(ctx, judgment, slices.Concat(c.Items, c.Replaced)); ierr != nil {
+		return nil, approveCompactionAnswer{}, fmt.Errorf("compaction %s is approved and its intervention was not recorded: %w", c.ID, ierr)
 	}
 	s.afterVerdict(ctx)
 	answer := approveCompactionAnswer{Compaction: c.ID, Approver: approver, Records: c.Statuses()}

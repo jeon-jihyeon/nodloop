@@ -16,11 +16,13 @@ import (
 
 const usage = `usage: nodloop-server <command> [flags]
 
-  key add <name> --tenant <t> --role producer|reviewer|approver
+  key add <name> --tenant <t> --role producer|reviewer|approver [--person]
                             Print a new key once and save only its SHA-256 under server in ~/.nodloop/config.json.
                             A producer records runs and verdicts, a reviewer also drafts and proposes knowledge and
-                            reads reports, and an approver also approves. Approvals through a key are recorded under its name
-  key list                  Keys with their tenant and role
+                            reads reports, and an approver also approves. Only an approver key added with --person, which
+                            a person holds, decides: its approvals are recorded under its name. Any other key records
+                            an approval as a proposal the person is asked about and changes nothing. The name nodloop is refused
+  key list                  Keys with their tenant, role and whether a person or a service holds them
   key remove <name>         Remove a key
   serve [--addr <host:port>] [--postgres <url>] [--record-dir <dir>]
                             Serve the MCP tools over streamable HTTP at /mcp for the keys, each tenant on its own records

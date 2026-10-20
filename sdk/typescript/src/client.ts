@@ -57,19 +57,21 @@ export interface Candidate {
   overlaps?: { id: string; version: number; [field: string]: unknown }[];
 }
 
-/** An approved knowledge version */
+/** An approved knowledge version or the agent proposal of a call that proves no person while the version stays as it was */
 export interface Approval {
   id: string;
   version: number;
   status: string;
   /** The approver the records keep, which a server sets to the key's name */
   approver: string;
-  /** Whether the approved version carries a veto the guard now applies */
+  /** Whether the version carries a veto the guard applies once approved */
   veto: boolean;
   /** Why approved.md or the veto file could not be written, while the approval itself stands */
   exportError: string;
   /** Why the items one run carries with it could not be read, while the approval itself stands */
   folderError: string;
+  /** The intervention recorded as an agent proposal when the call proved no person and empty when it approved */
+  proposal: string;
 }
 
 /** One output to record */
@@ -211,16 +213,20 @@ export class Client {
     return (await this.call("run", args)).trace_id;
   }
 
-  /** Records a verdict on a run: approve, edit with the corrected output, reject with what was wrong, or withdraw an earlier one */
+  /**
+   * Records a verdict on a run: approve, edit with the corrected output, reject with what was wrong, or withdraw an earlier one
+   * reviewer names who judged so a verdict without a name never reads as a person's
+   */
   async judge(
     run: string,
     verdict: "approve" | "edit" | "reject" | "withdraw",
-    options: { reason?: string; reasonCode?: string; edited?: unknown; reviewer?: string } = {},
+    reviewer: string,
+    options: { reason?: string; reasonCode?: string; edited?: unknown } = {},
   ): Promise<void> {
     const args: Record<string, unknown> = { trace_id: run, verdict };
+    if (reviewer) args.reviewer = reviewer;
     if (options.reason) args.reason = options.reason;
     if (options.reasonCode) args.reason_code = options.reasonCode;
-    if (options.reviewer) args.reviewer = options.reviewer;
     if (options.edited !== undefined) args.edited_output = options.edited;
     await this.call("feedback", args);
   }
@@ -228,6 +234,7 @@ export class Client {
   /**
    * Records what a real check found for a run
    * A different fact from the verdict on the output and confirmedCause only goes with confirmed
+   * reviewer names who checked and is required over stdio while a server key names itself
    */
   async outcome(
     run: string,
@@ -262,7 +269,10 @@ export class Client {
     return this.call("propose", newLabels ? { ...rest, new_labels: true } : rest);
   }
 
-  /** Approves a candidate on behalf of the named person */
+  /**
+   * Approves a candidate under a key of nodloop-server that a person holds
+   * Any other call such as one over stdio records an agent proposal the person is asked about: the status stays and proposal names it
+   */
   async approve(id: string, version: number, approver: string, options: { labels?: Labels } = {}): Promise<Approval> {
     const args: Record<string, unknown> = { id, version, approver };
     if (options.labels !== undefined) args.scope = { labels: options.labels };
@@ -275,6 +285,7 @@ export class Client {
       veto: Boolean(answer.veto),
       exportError: answer.export_error ?? "",
       folderError: answer.folder_error ?? "",
+      proposal: answer.proposal ?? "",
     };
   }
 

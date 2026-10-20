@@ -109,6 +109,8 @@ func TestRunFeedbackOnRun(t *testing.T) {
 		{"an edit of a run is any JSON", []string{"add", "--trace", run, "--verdict", "edit", "--reason-code", "other", "--edited", edited, "--reviewer", "ann"},
 			run + "\tedit\tann\n"},
 		{"an outcome of a run", []string{"outcome", "--trace", run, "--result", "confirmed", "--reviewer", "ann"}, run + "\tconfirmed\tann\n"},
+		{"a verdict without a reviewer is refused", []string{"add", "--trace", run, "--verdict", "approve"}, ""},
+		{"an outcome without a reviewer is refused", []string{"outcome", "--trace", run, "--result", "confirmed"}, ""},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {

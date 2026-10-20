@@ -72,10 +72,15 @@ func TestNew(t *testing.T) {
 		want want
 	}{
 		{
-			"approve without a reviewer falls back to author",
+			"approve without a reviewer fails",
 			args{traceID: "t1", verdict: feedback.VerdictApprove},
+			want{err: feedback.ErrReviewerRequired},
+		},
+		{
+			"approve keeps the named reviewer",
+			args{traceID: "t1", verdict: feedback.VerdictApprove, reviewer: "sam"},
 			want{feedback: feedback.Feedback{
-				TraceID: "t1", Time: utc, Verdict: feedback.VerdictApprove, Reason: "why", Reviewer: "author",
+				TraceID: "t1", Time: utc, Verdict: feedback.VerdictApprove, Reason: "why", Reviewer: "sam",
 			}},
 		},
 		{
@@ -89,38 +94,38 @@ func TestNew(t *testing.T) {
 		{"unknown verdict fails", args{traceID: "t1", verdict: "maybe"}, want{err: feedback.ErrVerdictUnknown}},
 		{
 			"edited review that is not JSON fails",
-			args{traceID: "t1", verdict: feedback.VerdictEdit, edited: json.RawMessage("{")},
+			args{traceID: "t1", verdict: feedback.VerdictEdit, edited: json.RawMessage("{"), reviewer: "sam"},
 			want{err: feedback.ErrEditedInvalid},
 		},
 		{
 			"edit without an edited review fails",
-			args{traceID: "t1", verdict: feedback.VerdictEdit},
+			args{traceID: "t1", verdict: feedback.VerdictEdit, reviewer: "sam"},
 			want{err: feedback.ErrEditedRequired},
 		},
 		{
 			"approve with an edited review fails",
-			args{traceID: "t1", verdict: feedback.VerdictApprove, edited: json.RawMessage(`{}`)},
+			args{traceID: "t1", verdict: feedback.VerdictApprove, edited: json.RawMessage(`{}`), reviewer: "sam"},
 			want{err: feedback.ErrEditedUnexpected},
 		},
 		{
 			"reject with an edited review fails",
-			args{traceID: "t1", verdict: feedback.VerdictReject, edited: json.RawMessage(`{}`)},
+			args{traceID: "t1", verdict: feedback.VerdictReject, edited: json.RawMessage(`{}`), reviewer: "sam"},
 			want{err: feedback.ErrEditedUnexpected},
 		},
 		{
 			"an edit keeps its reason code",
-			args{traceID: "t1", verdict: feedback.VerdictEdit, code: feedback.ReasonScope, edited: hold},
+			args{traceID: "t1", verdict: feedback.VerdictEdit, code: feedback.ReasonScope, edited: hold, reviewer: "sam"},
 			want{feedback: feedback.Feedback{
 				TraceID: "t1", Time: utc, Verdict: feedback.VerdictEdit, ReasonCode: feedback.ReasonScope, Reason: "why",
-				Edited: hold, Reviewer: "author",
+				Edited: hold, Reviewer: "sam",
 			}},
 		},
 		{
 			"a reject keeps its reason code",
-			args{traceID: "t1", verdict: feedback.VerdictReject, code: feedback.ReasonFact},
+			args{traceID: "t1", verdict: feedback.VerdictReject, code: feedback.ReasonFact, reviewer: "sam"},
 			want{feedback: feedback.Feedback{
 				TraceID: "t1", Time: utc, Verdict: feedback.VerdictReject, ReasonCode: feedback.ReasonFact, Reason: "why",
-				Reviewer: "author",
+				Reviewer: "sam",
 			}},
 		},
 		{
@@ -145,7 +150,7 @@ func TestNew(t *testing.T) {
 		},
 		{
 			"a withdraw with an edited output fails",
-			args{traceID: "t1", verdict: feedback.VerdictWithdraw, edited: hold},
+			args{traceID: "t1", verdict: feedback.VerdictWithdraw, edited: hold, reviewer: "sam"},
 			want{err: feedback.ErrEditedUnexpected},
 		},
 	}
@@ -265,6 +270,28 @@ func TestRecordsHuman(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			assert.Equal(t, tc.want, tc.args.Human().Latest())
+		})
+	}
+}
+
+func TestRecordsInferred(t *testing.T) {
+	base := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
+	person := feedback.Feedback{TraceID: "t1", Time: base.Add(time.Hour), Verdict: feedback.VerdictApprove, Reviewer: "ann"}
+	early := feedback.Feedback{TraceID: "t1", Time: base, Verdict: feedback.VerdictReject, Reviewer: feedback.ReviewerSession}
+	late := feedback.Feedback{TraceID: "t1", Time: base.Add(time.Minute), Verdict: feedback.VerdictEdit, Reviewer: feedback.ReviewerSession}
+	tcs := []struct {
+		name string
+		args feedback.Records
+		want feedback.Records
+	}{
+		{"no records give nothing", nil, nil},
+		{"a later record of a person never hides the latest session record", feedback.Records{person, late, early}, feedback.Records{late}},
+		{"only records of a person give nothing", feedback.Records{person}, nil},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.want, tc.args.Inferred().Latest())
 		})
 	}
 }

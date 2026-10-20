@@ -22,6 +22,10 @@ type RunInput struct {
 	// The draw the run belongs to
 	// Every run of one holdout key draws the same arm so a report counts them as one unit and never as independent runs
 	Unit string `json:"unit,omitempty"`
+	// Whether a stop hook continued the turn the run ends
+	// Such a run answers what the stop asked and never the person's prompt
+	// No reader takes it for the answer the person judged
+	Continued bool `json:"continued,omitempty"`
 }
 
 // The rule Withholds follows

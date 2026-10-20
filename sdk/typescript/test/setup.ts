@@ -39,20 +39,35 @@ export function holdout(share: number): void {
   writeFileSync(join(process.env.HOME!, ".nodloop", "config.json"), JSON.stringify({ holdout: share }));
 }
 
-export async function open(): Promise<Client> {
-  return Client.open({ recordDir: join(mkdtempSync(join(tmpdir(), "nodloop-rec-")), "records"), binary: binary() });
+// A client over new records and the directory of those records
+export async function open(): Promise<Client & { records: string }> {
+  const records = join(mkdtempSync(join(tmpdir(), "nodloop-rec-")), "records");
+  return Object.assign(await Client.open({ recordDir: records, binary: binary() }), { records });
+}
+
+// Approves a version of the records as the person ann at a terminal of their own
+// An SDK call proves no person so it records a proposal
+// The CLI decides only when stdin and stdout are a terminal outside an agent session
+// script gives the command the pseudo terminal that stands for the person here
+export function approve(records: string, id: string, version: number, ...flags: string[]): void {
+  const args = [binary(), "knowledge", "approve", id, "--version", String(version), "--approver", "ann", "--record-dir", records, ...flags];
+  const env: NodeJS.ProcessEnv = { ...process.env };
+  delete env.CLAUDECODE;
+  const quoted = args.map((a) => `'${a.replaceAll("'", `'\\''`)}'`).join(" ");
+  const argv = process.platform === "darwin" ? ["-q", "/dev/null", ...args] : ["-q", "-e", "-c", quoted, "/dev/null"];
+  execFileSync("script", argv, { env, stdio: ["ignore", "pipe", "pipe"] });
 }
 
 export const acme = { tenant: ["acme"] };
 const noRm = { tool: "Bash", when: [{ field: "commands", match: "(?m)^rm " }], example: { command: "rm -rf /data" } };
 
-// An approved item for acme and an approved veto on rm
-export async function seed(c: Client): Promise<void> {
+// An item for acme and a veto on rm, both approved by the person at a terminal
+export async function seed(c: Client & { records: string }): Promise<void> {
   const run = await c.record({ producer: "bot", output: "answer", labels: acme });
-  await c.judge(run, "reject", { reason: "missing the window" });
+  await c.judge(run, "reject", "ann", { reason: "missing the window" });
   for (const [id, content, veto] of [["window", "Quote the refund window", undefined], ["no-rm", "Never run rm", noRm]] as const) {
     const p = await c.propose({ kind: "judgment", content, from: run, id, veto });
-    await c.approve(p.id, p.version, "ann");
+    approve(c.records, p.id, p.version);
   }
 }
 
@@ -71,11 +86,12 @@ async function freePort(): Promise<number> {
   });
 }
 
-// A nodloop server with an approver key of tenant acme
-export async function server(): Promise<{ url: string; key: string; proc: ChildProcess }> {
+// A nodloop server with an approver key of tenant acme a person holds and an approver key of a service that proves no person
+export async function server(): Promise<{ url: string; key: string; service: string; proc: ChildProcess }> {
   // A home of its own so its keys never meet those of another server
   const env = { ...process.env, HOME: mkdtempSync(join(tmpdir(), "nodloop-home-")) };
-  const key = execFileSync(serverBinary(), ["key", "add", "ann", "--tenant", "acme", "--role", "approver"], { env }).toString().trim();
+  const key = execFileSync(serverBinary(), ["key", "add", "ann", "--tenant", "acme", "--role", "approver", "--person"], { env }).toString().trim();
+  const service = execFileSync(serverBinary(), ["key", "add", "ci", "--tenant", "acme", "--role", "approver"], { env }).toString().trim();
   const port = await freePort();
   const records = join(mkdtempSync(join(tmpdir(), "nodloop-rec-")), "records");
   const proc = spawn(serverBinary(), ["serve", "--addr", `127.0.0.1:${port}`, "--record-dir", records], { env, stdio: "ignore" });
@@ -87,5 +103,5 @@ export async function server(): Promise<{ url: string; key: string; proc: ChildP
       await new Promise((r) => setTimeout(r, 50));
     }
   }
-  return { url: `http://127.0.0.1:${port}/mcp`, key, proc };
+  return { url: `http://127.0.0.1:${port}/mcp`, key, service, proc };
 }

@@ -51,6 +51,10 @@ func runServe(args []string, getenv func(string) string, now func() time.Time, s
 	if len(uc.Server.Keys) == 0 {
 		return fail(stderr, "serve", fmt.Errorf("%w. Add one with nodloop-server key add", errNoKeys))
 	}
+	// A key name becomes the approver of every judgment under it
+	if uc.Server.has(knowledge.ApproverNodloop) {
+		return fail(stderr, "serve", fmt.Errorf("%w: remove the key %s and add it again under another name", knowledge.ErrApproverReserved, knowledge.ApproverNodloop))
+	}
 	policy := mcp.Policy{Holdout: knowledge.Holdout(uc.Holdout), Retention: retain.Days(uc.Retention)}
 	if err := errors.Join(policy.Holdout.Check(), policy.Retention.Check()); err != nil {
 		return fail(stderr, "serve", err)
@@ -311,7 +315,7 @@ func (f fileTenants) open(key serverKey, now func() time.Time, session string) m
 		}
 		compactor := compact.New(t.ledger, t.traces, t.verdicts, t.traces, now)
 		extractor := extract.New(t.ledger, t.traces, t.verdicts, now)
-		return mcp.New(t.traces, t.verdicts, t.outcomes, t.ledger, compactor, extractor, now, session, cliName, "", mcp.Caller{Person: key.Name}, f.policyOf(key.Tenant)), nil
+		return mcp.New(t.traces, t.verdicts, t.outcomes, t.ledger, compactor, extractor, now, session, cliName, "", key.caller(), f.policyOf(key.Tenant)), nil
 	}
 }
 
@@ -374,7 +378,7 @@ func (p pgTenants) open(key serverKey, now func() time.Time, session string) mcp
 		ledger := p.ledger(key.Tenant, now)
 		compactor := compact.New(ledger, traces, verdicts, traces, now)
 		extractor := extract.New(ledger, traces, verdicts, now)
-		return mcp.New(traces, verdicts, p.db.Outcomes(key.Tenant), ledger, compactor, extractor, now, session, cliName, "", mcp.Caller{Person: key.Name}, p.policyOf(key.Tenant)), nil
+		return mcp.New(traces, verdicts, p.db.Outcomes(key.Tenant), ledger, compactor, extractor, now, session, cliName, "", key.caller(), p.policyOf(key.Tenant)), nil
 	}
 }
 
