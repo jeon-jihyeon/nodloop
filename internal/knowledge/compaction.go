@@ -493,7 +493,9 @@ func (s Set) approveCompaction(c Compaction, approver string, now time.Time) ([]
 		}
 		switch {
 		case latest.Status == StatusApproved && latest.Compaction != c.ID:
-			add(latest.changed(StatusRetired, approver, now))
+			retired := latest.changed(StatusRetired, approver, now)
+			retired.Reason = ReasonCompaction
+			add(retired)
 		case latest.Compaction != c.ID || latest.Status == StatusCandidate:
 			return nil, nil, fmt.Errorf("%w: %s v%d is %s", ErrCompactionOutdated, old.ID, old.Version, latest.Status)
 		}

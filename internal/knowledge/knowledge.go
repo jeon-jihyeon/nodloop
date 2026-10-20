@@ -88,6 +88,15 @@ type Knowledge struct {
 	ApprovedAt time.Time `json:"approved_at,omitzero"`
 	// Set by a reaffirm on an approved record
 	ReviewedAt time.Time `json:"reviewed_at,omitzero"`
+	// Why the version was retired so the cause of every retire counts without its text
+	// Only on a retired record
+	Reason Reason `json:"reason,omitempty"`
+	// The trace behind the record: the decide event of curate for nodloop and the answer or intervention of a person
+	// Empty on records of earlier releases
+	Decision string `json:"decision,omitempty"`
+	// The extract trace that proposed the candidate
+	// Empty for a candidate a person or a program proposed
+	Extract string `json:"extract,omitempty"`
 	// Previous version of the same id
 	Supersedes int `json:"supersedes,omitempty"`
 	// The current version of the id when this version was proposed
@@ -188,6 +197,9 @@ func (k Knowledge) validate() error {
 	case k.Author == "":
 		return ErrAuthorRequired
 	}
+	if err := k.checkReason(); err != nil {
+		return err
+	}
 	if err := k.checkScope(); err != nil {
 		return err
 	}
@@ -245,10 +257,11 @@ func (k Knowledge) transition(status Status, approver string, now time.Time) (Kn
 }
 
 // The record of a status change without the transition checks
-// Only for a change the caller already knows is allowed
-// The newest record of a candidate may be a deferral record of an earlier release so the change clears the session it names
+// 1. only for a change the caller already knows is allowed
+// 2. the newest record of a candidate may be a deferral record of an earlier release so the change clears the session it names
+// 3. the reason and the decision belong to the record that set them so the caller names its own
 func (k Knowledge) changed(status Status, approver string, now time.Time) Knowledge {
-	k.Status, k.Approver, k.Time, k.DeferredIn = status, approver, now, ""
+	k.Status, k.Approver, k.Time, k.DeferredIn, k.Reason, k.Decision = status, approver, now, "", "", ""
 	if status == StatusApproved {
 		k.ApprovedAt = now
 	}

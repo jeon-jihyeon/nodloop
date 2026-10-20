@@ -28,7 +28,7 @@ func (h Holdout) Withholds(key string) bool {
 	if h <= 0 || key == "" {
 		return false
 	}
-	return float64(binary.BigEndian.Uint64(drawBytes(key)))/math.MaxUint64 < float64(h)
+	return drawFraction(key) < float64(h)
 }
 
 // The first 8 bytes of SHA-256 of the key
@@ -36,6 +36,11 @@ func (h Holdout) Withholds(key string) bool {
 func drawBytes(key string) []byte {
 	sum := sha256.Sum256([]byte(key))
 	return sum[:8]
+}
+
+// The draw bytes of the key read as a fraction of the uint64 range
+func drawFraction(key string) float64 {
+	return float64(binary.BigEndian.Uint64(drawBytes(key))) / math.MaxUint64
 }
 
 // Whether the run of the producer withholds every item

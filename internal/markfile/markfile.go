@@ -60,19 +60,20 @@ func (h *Held) Release() error {
 	return h.file.Close()
 }
 
-// The mark at path read without the lock
-// A missing file and one that does not decode read as the zero Mark
-func Read(path string) (record.Mark, error) {
+// The mark at path read without the lock in the shape its owner keeps
+// A missing file and one that does not decode read as the zero mark
+func Read[M any](path string) (M, error) {
+	var zero M
 	b, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return record.Mark{}, nil
+		return zero, nil
 	}
 	if err != nil {
-		return record.Mark{}, err
+		return zero, err
 	}
-	var last record.Mark
+	var last M
 	if json.Unmarshal(b, &last) != nil {
-		return record.Mark{}, nil
+		return zero, nil
 	}
 	return last, nil
 }

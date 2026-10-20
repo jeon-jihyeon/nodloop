@@ -16,6 +16,9 @@ type Knowledge struct {
 	Approver       string    `json:"approver,omitempty"`
 	ApprovedAt     time.Time `json:"approved_at,omitzero"`
 	ReviewedAt     time.Time `json:"reviewed_at,omitzero"`
+	Reason         string    `json:"reason,omitempty"`
+	Decision       string    `json:"decision,omitempty"`
+	Extract        string    `json:"extract,omitempty"`
 	Supersedes     int       `json:"supersedes,omitempty"`
 	Base           int       `json:"base,omitempty"`
 	Time           time.Time `json:"time"`

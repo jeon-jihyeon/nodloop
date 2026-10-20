@@ -7,7 +7,7 @@ func Restore(r record.Trace) Trace {
 	return Trace{
 		ID: r.ID, Name: Name(r.Name), SessionID: r.SessionID, Subject: r.Subject, Ref: r.Ref, Time: r.Time, Model: r.Model,
 		Input: r.Input, Output: r.Output, Error: r.Error, Usage: Usage(r.Usage), DurationMS: r.DurationMS, Tags: r.Tags,
-		Producer: r.Producer, Labels: Labels(r.Labels),
+		Producer: r.Producer, Labels: Labels(r.Labels), Draw: (*Draw)(r.Draw), Source: Source(r.Source),
 	}
 }
 
@@ -32,6 +32,6 @@ func (t Trace) Record() record.Trace {
 	return record.Trace{
 		ID: t.ID, Name: string(t.Name), SessionID: t.SessionID, Subject: t.Subject, Ref: t.Ref, Time: t.Time, Model: t.Model,
 		Input: t.Input, Output: t.Output, Error: t.Error, Usage: record.Usage(t.Usage), DurationMS: t.DurationMS, Tags: t.Tags,
-		Producer: t.Producer, Labels: t.Labels, SchemaVersion: SchemaVersion,
+		Producer: t.Producer, Labels: t.Labels, Draw: (*record.Draw)(t.Draw), Source: string(t.Source), SchemaVersion: SchemaVersion,
 	}
 }

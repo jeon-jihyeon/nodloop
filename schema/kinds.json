@@ -168,6 +168,7 @@
       "description": "One action of a person or an agent with the proof of its caller and the records it wrote",
       "links": [
         "session_id",
+        "source",
         "input.id",
         "input.version",
         "input.compaction",
@@ -229,7 +230,10 @@
         "evidence.feedback_trace_ids",
         "evidence.outcome_trace_ids",
         "evidence.knowledge",
+        "extract",
         "compaction",
+        "decision",
+        "reason",
         "approver"
       ],
       "text": [

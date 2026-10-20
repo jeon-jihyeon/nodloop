@@ -44,6 +44,12 @@ type Trace struct {
 	// The situation of a run trace that knowledge scopes match
 	// Empty on every other name
 	Labels Labels `json:"labels,omitempty"`
+	// The probability a decide, an expose or an answer was drawn with as it was when the draw happened
+	// Nil on every other name
+	Draw *Draw `json:"draw,omitempty"`
+	// Where a decide, an expose, an answer or an intervention came from
+	// Empty on every other name
+	Source Source `json:"source,omitempty"`
 }
 
 type Name string
@@ -64,7 +70,10 @@ const (
 
 // Every name in a fixed order for messages
 func Names() []Name {
-	return []Name{NameRun, NameCheck, NameClassify, NameExtract, NameReplay, NameConsolidate, NameRefill, NameTurn, NameCompact, NameIntervention}
+	return []Name{
+		NameRun, NameCheck, NameClassify, NameExtract, NameReplay, NameConsolidate, NameRefill, NameTurn, NameCompact,
+		NameIntervention,
+	}
 }
 
 func (n Name) Valid() bool {

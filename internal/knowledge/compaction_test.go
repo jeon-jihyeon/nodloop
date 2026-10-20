@@ -965,12 +965,12 @@ func TestLedgerApproveCompaction(t *testing.T) {
 		crowd = append(crowd, k)
 	}
 	success := []string{
-		"k-1 v1 approved c-1", "j v2 approved c-1", "j v1 superseded c-1", "a v1 retired c-1", "b v1 retired c-1",
+		"k-1 v1 approved c-1", "j v2 approved c-1", "j v1 superseded c-1", "a v1 retired c-1 compaction", "b v1 retired c-1 compaction",
 	}
 	retired := func(extra []knowledge.Knowledge) []string {
 		out := slices.Clone(success)
 		for _, k := range extra {
-			out = append(out, k.ID+" v1 retired c-1")
+			out = append(out, k.ID+" v1 retired c-1 compaction")
 		}
 		return out
 	}
@@ -1063,7 +1063,8 @@ func TestLedgerApproveCompaction(t *testing.T) {
 			require.NoError(t, listErr)
 			var appended, approved []string
 			for _, k := range all[:len(all)-len(before)] {
-				appended = append([]string{fmt.Sprintf("%s v%d %s %s", k.ID, k.Version, k.Status, k.Compaction)}, appended...)
+				line := strings.TrimSpace(fmt.Sprintf("%s v%d %s %s %s", k.ID, k.Version, k.Status, k.Compaction, k.Reason))
+				appended = append([]string{line}, appended...)
 			}
 			for _, k := range got.Items {
 				approved = append(approved, fmt.Sprintf("%s v%d %s", k.ID, k.Version, k.Status))

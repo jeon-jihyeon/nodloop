@@ -23,9 +23,22 @@ type Trace struct {
 	Tags       []string            `json:"tags,omitempty"`
 	Producer   string              `json:"producer,omitempty"`
 	Labels     map[string][]string `json:"labels,omitempty"`
+	Draw       *Draw               `json:"draw,omitempty"`
+	Source     string              `json:"source,omitempty"`
 	// The version of the published schema of the name
 	// A line of an earlier release lacks it and reads as version 1
 	SchemaVersion int `json:"schema_version,omitempty"`
+}
+
+// The draw envelope of a line
+type Draw struct {
+	CycleID       string   `json:"cycle_id"`
+	PolicyVersion string   `json:"policy_version"`
+	Unit          string   `json:"unit,omitempty"`
+	Seed          string   `json:"seed,omitempty"`
+	DrawID        string   `json:"draw_id,omitempty"`
+	P             *float64 `json:"p,omitempty"`
+	Drawn         bool     `json:"drawn"`
 }
 
 type Usage struct {

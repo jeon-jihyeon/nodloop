@@ -22,6 +22,11 @@ type RunInput struct {
 	// The draw the run belongs to
 	// Every run of one holdout key draws the same arm so a report counts them as one unit and never as independent runs
 	Unit string `json:"unit,omitempty"`
+	// Every version that fit the run with the chance that a run of its session includes it
+	// Recorded only while the item hold draws so loop weighs each version by that chance
+	Eligible []Eligible `json:"eligible,omitempty"`
+	// The versions the item hold kept from the run
+	Held []Ref `json:"held,omitempty"`
 	// Whether a stop hook continued the turn the run ends
 	// Such a run answers what the stop asked and never the person's prompt
 	// No reader takes it for the answer the person judged

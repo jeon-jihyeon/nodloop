@@ -40,7 +40,7 @@ func TestHoldAndRead(t *testing.T) {
 			}
 			path := filepath.Join(dir, "mark.json")
 
-			read, readErr := markfile.Read(path)
+			read, readErr := markfile.Read[record.Mark](path)
 			held, holdErr := markfile.Hold(path)
 			require.NoError(t, holdErr)
 			t.Cleanup(func() { _ = held.Release() })
@@ -112,7 +112,7 @@ func TestMarkfileFails(t *testing.T) {
 			path := filepath.Join(dir, tc.args)
 
 			held, holdErr := markfile.Hold(path)
-			read, readErr := markfile.Read(path)
+			read, readErr := markfile.Read[record.Mark](path)
 
 			assert.Nil(t, held)
 			assert.Equal(t, tc.want.holdErr, holdErr != nil, holdErr)
