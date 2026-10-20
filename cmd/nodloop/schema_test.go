@@ -112,7 +112,7 @@ func TestRunSchemaWrite(t *testing.T) {
 	want, err := fs.ReadFile(published.Files, "guard.v1.json")
 	require.NoError(t, err)
 	assert.Equal(t, string(want), string(written))
-	assert.Equal(t, "wrote 22 files to "+dir+"\n", stdout.String())
+	assert.Equal(t, "wrote 23 files to "+dir+"\n", stdout.String())
 	assert.Equal(t, 1, runSchema([]string{"--write", filepath.Join(dir, "missing")}, &bytes.Buffer{}, &bytes.Buffer{}))
 }
 

@@ -1,0 +1,313 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/jeon-jihyeon/nodloop/schema/rollup.v1.json",
+  "title": "rollup",
+  "description": "The counts of a closed cycle the reports read once a prune may remove its runs",
+  "type": "object",
+  "properties": {
+    "record_kind": {
+      "type": "string",
+      "const": "rollup"
+    },
+    "record_id": {
+      "type": "string"
+    },
+    "id": {
+      "type": "string"
+    },
+    "name": {
+      "type": "string",
+      "const": "rollup"
+    },
+    "session_id": {
+      "type": "string"
+    },
+    "subject": {
+      "type": "string"
+    },
+    "ref": {
+      "type": "string"
+    },
+    "time": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "model": {
+      "type": "string"
+    },
+    "input": {
+      "type": "object",
+      "properties": {
+        "cycle_id": {
+          "type": "string"
+        },
+        "start": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "end": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "producers": {
+          "type": [
+            "null",
+            "array"
+          ],
+          "items": {
+            "type": "object",
+            "properties": {
+              "producer": {
+                "type": "string"
+              },
+              "undrawn": {
+                "type": "integer"
+              },
+              "draws": {
+                "type": [
+                  "null",
+                  "array"
+                ],
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "share": {
+                      "type": "number"
+                    },
+                    "scheme": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "share",
+                    "scheme"
+                  ]
+                }
+              },
+              "units": {
+                "type": [
+                  "null",
+                  "array"
+                ],
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "unit": {
+                      "type": "string"
+                    },
+                    "arm": {
+                      "type": "string",
+                      "enum": [
+                        "applied",
+                        "withheld"
+                      ]
+                    },
+                    "share": {
+                      "type": "number"
+                    },
+                    "runs": {
+                      "type": "integer"
+                    },
+                    "judged": {
+                      "type": "integer"
+                    },
+                    "corrected": {
+                      "type": "integer"
+                    },
+                    "same_reason": {
+                      "type": "integer"
+                    },
+                    "named": {
+                      "type": "integer"
+                    },
+                    "inferred": {
+                      "type": "integer"
+                    },
+                    "audit_judged": {
+                      "type": "integer"
+                    },
+                    "audit_corrected": {
+                      "type": "integer"
+                    },
+                    "confirmed": {
+                      "type": "integer"
+                    },
+                    "refuted": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "unit",
+                    "arm",
+                    "share",
+                    "runs",
+                    "judged",
+                    "corrected",
+                    "same_reason",
+                    "named",
+                    "inferred",
+                    "audit_judged",
+                    "audit_corrected",
+                    "confirmed",
+                    "refuted"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "producer",
+              "undrawn",
+              "draws",
+              "units"
+            ]
+          }
+        },
+        "items": {
+          "type": [
+            "null",
+            "array"
+          ],
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "version": {
+                "type": "integer"
+              },
+              "units": {
+                "type": [
+                  "null",
+                  "array"
+                ],
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "unit": {
+                      "type": "string"
+                    },
+                    "included": {
+                      "type": "integer"
+                    },
+                    "included_judged": {
+                      "type": "integer"
+                    },
+                    "included_corrected": {
+                      "type": "integer"
+                    },
+                    "held": {
+                      "type": "integer"
+                    },
+                    "held_judged": {
+                      "type": "integer"
+                    },
+                    "held_corrected": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "unit",
+                    "included",
+                    "included_judged",
+                    "included_corrected",
+                    "held",
+                    "held_judged",
+                    "held_corrected"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "id",
+              "version",
+              "units"
+            ]
+          }
+        }
+      },
+      "required": [
+        "cycle_id",
+        "start",
+        "end",
+        "producers",
+        "items"
+      ]
+    },
+    "error": {
+      "type": "string"
+    },
+    "usage": {
+      "type": "object",
+      "properties": {
+        "input_tokens": {
+          "type": "integer"
+        },
+        "output_tokens": {
+          "type": "integer"
+        },
+        "thinking_tokens": {
+          "type": "integer"
+        },
+        "cache_read": {
+          "type": "integer"
+        },
+        "cache_create": {
+          "type": "integer"
+        },
+        "cost_usd": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "input_tokens",
+        "output_tokens",
+        "cache_read",
+        "cache_create",
+        "cost_usd"
+      ]
+    },
+    "duration_ms": {
+      "type": "integer"
+    },
+    "tags": {
+      "type": [
+        "null",
+        "array"
+      ],
+      "items": {
+        "type": "string"
+      }
+    },
+    "producer": {
+      "type": "string"
+    },
+    "labels": {
+      "type": "object",
+      "additionalProperties": {
+        "type": [
+          "null",
+          "array"
+        ],
+        "items": {
+          "type": "string"
+        }
+      }
+    },
+    "schema_version": {
+      "type": "integer",
+      "const": 1
+    }
+  },
+  "required": [
+    "record_kind",
+    "record_id",
+    "id",
+    "name",
+    "time",
+    "input",
+    "usage",
+    "duration_ms",
+    "schema_version"
+  ]
+}

@@ -1,13 +1,16 @@
 package curate_test
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/jeon-jihyeon/nodloop/internal/curate"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
+	"github.com/jeon-jihyeon/nodloop/internal/schema"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
 )
 
@@ -52,6 +55,25 @@ func TestKnobEventTrace(t *testing.T) {
 			assert.Equal(t, tc.want == nil, got.Name == trace.NameKnob)
 		})
 	}
+}
+
+// The knob trace marks its cycle for retain and its policy version moves with any knob value
+func TestKnobEventCycle(t *testing.T) {
+	got, err := startKnobs().Trace("0.10.0", at)
+	require.NoError(t, err)
+	var event curate.KnobEvent
+	require.NoError(t, json.Unmarshal(got.Input, &event))
+	narrowed := startKnobs()
+	narrowed.Knobs.ItemHold = 0.2
+
+	cycles := trace.Traces{got}.Cycles(at)
+
+	assert.Equal(t, trace.Cycles{{ID: "2026-09-21", Start: startKnobs().Start, End: startKnobs().Start.Add(14 * 24 * time.Hour)}}, cycles)
+	assert.Equal(t, startKnobs().Policy("0.10.0"), event.PolicyVersion)
+	assert.Regexp(t, `^0\.10\.0\+[0-9a-f]{8}$`, event.PolicyVersion)
+	assert.NotEqual(t, event.PolicyVersion, narrowed.Policy("0.10.0"))
+	assert.Equal(t, "2026-09-21", got.Subject)
+	assert.NoError(t, schema.Validate(string(trace.NameKnob), got.Record()))
 }
 
 // The item hold draws only once tier 1 carries out what it decides

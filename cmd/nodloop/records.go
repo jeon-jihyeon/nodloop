@@ -76,13 +76,15 @@ func (c recordsCommand) plan(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(c.out, "would prune %d runs, %d classify traces and %d turn traces older than %s, kept %d judged, cited or first or last to use an item\n",
-		len(plan.Runs), len(plan.Classify), len(plan.Turns), cutoff.Format(time.RFC3339), plan.Kept)
+	fmt.Fprintf(c.out, "would roll up %d closed cycles and prune %d runs, %d classify traces and %d turn, instructions and capture traces older than %s, "+
+		"kept %d judged, cited or first or last to use an item\n",
+		len(plan.Rollups), len(plan.Runs), len(plan.Classify), len(plan.Session), plan.Cutoff.Format(time.RFC3339), plan.Kept)
 	return nil
 }
 
 // Removes the runs past retention whatever the daily marker says and prints how many traces the store removed
-// 1. the marker keeps the cutoff so the reports over the directory read from it on
+// 1. the marker keeps the cutoff of the retention so the reports over the directory read from it on
+// The prune keeps to the start of the open cycle when that is earlier so it never removes a run after the mark
 // 2. it is claimed only once the plan read every store so a plan that fails leaves the window as it was
 // 3. a marker another process holds means a prune runs there and this one removes nothing
 func (c recordsCommand) prune(ctx context.Context) error {
@@ -109,6 +111,6 @@ func (c recordsCommand) prune(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(c.out, "pruned %d traces older than %s\n", removed, cutoff.Format(time.RFC3339))
+	fmt.Fprintf(c.out, "pruned %d traces older than %s\n", removed, plan.Cutoff.Format(time.RFC3339))
 	return nil
 }

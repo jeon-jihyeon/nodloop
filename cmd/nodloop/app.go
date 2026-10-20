@@ -17,6 +17,7 @@ import (
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	knowledgefile "github.com/jeon-jihyeon/nodloop/internal/knowledge/file"
 	"github.com/jeon-jihyeon/nodloop/internal/llm"
+	"github.com/jeon-jihyeon/nodloop/internal/loop"
 	"github.com/jeon-jihyeon/nodloop/internal/replay"
 	"github.com/jeon-jihyeon/nodloop/internal/retain"
 	"github.com/jeon-jihyeon/nodloop/internal/textkey"
@@ -218,7 +219,8 @@ func (a app) retainer() (*retain.Retainer, error) {
 	if err != nil {
 		return nil, err
 	}
-	return retain.New(traces, verdicts, outcomes, ledger), nil
+	counter := loop.Stores{Traces: traces, Verdicts: verdicts, Outcomes: outcomes, Items: ledger}
+	return retain.New(traces, verdicts, outcomes, ledger, counter.Rollup, a.now), nil
 }
 
 // The daily prune of the record directory under the retention of config.json

@@ -59,8 +59,9 @@ type Runs struct {
 	ids map[string]bool
 	// The input per run with its items and its draw and its plugin version
 	inputs map[string]knowledge.RunInput
-	// The producer per run
+	// The producer and the time per run
 	producers map[string]string
+	times     map[string]time.Time
 	applied   map[knowledge.Ref][]string
 	// Latest verdict of a person per trace or else the one the conversation and the capture leave together
 	verdicts map[string]feedback.Feedback
@@ -73,7 +74,7 @@ type Runs struct {
 // Failed runs and runs whose input does not read are left out because they applied nothing a person could judge
 func NewRuns(traces trace.Traces, verdicts feedback.Records) Runs {
 	r := Runs{
-		ids: map[string]bool{}, inputs: map[string]knowledge.RunInput{}, producers: map[string]string{},
+		ids: map[string]bool{}, inputs: map[string]knowledge.RunInput{}, producers: map[string]string{}, times: map[string]time.Time{},
 		applied:  map[knowledge.Ref][]string{},
 		verdicts: map[string]feedback.Feedback{}, conversation: map[string]feedback.Records{}, firstCorrection: map[string]time.Time{},
 	}
@@ -87,7 +88,7 @@ func NewRuns(traces trace.Traces, verdicts feedback.Records) Runs {
 		}
 		r.ids[tr.ID] = true
 		r.inputs[tr.ID] = in
-		r.producers[tr.ID] = tr.Producer
+		r.producers[tr.ID], r.times[tr.ID] = tr.Producer, tr.Time
 		for _, ref := range in.Applied {
 			r.applied[ref] = append(r.applied[ref], tr.ID)
 		}

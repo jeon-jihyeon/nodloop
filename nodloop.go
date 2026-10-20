@@ -11,6 +11,7 @@ import (
 	feedbackfile "github.com/jeon-jihyeon/nodloop/internal/feedback/file"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	knowledgefile "github.com/jeon-jihyeon/nodloop/internal/knowledge/file"
+	"github.com/jeon-jihyeon/nodloop/internal/loop"
 	"github.com/jeon-jihyeon/nodloop/internal/retain"
 	tracefile "github.com/jeon-jihyeon/nodloop/internal/trace/file"
 	"github.com/jeon-jihyeon/nodloop/internal/veto"
@@ -126,7 +127,8 @@ func Open(dir string, opts ...Option) (*Client, error) {
 	if days == 0 {
 		return c, nil
 	}
-	retainer := retain.New(traces, verdicts, outcomes, ledger)
+	counter := loop.Stores{Traces: traces, Verdicts: verdicts, Outcomes: outcomes, Items: ledger}
+	retainer := retain.New(traces, verdicts, outcomes, ledger, counter.Rollup, o.now)
 	daily := retain.NewDaily(c.marks, days, func() (*retain.Retainer, error) { return retainer, nil }, o.now)
 	c.prune = &daily
 	return c, nil

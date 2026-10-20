@@ -314,6 +314,25 @@
       "text": []
     },
     {
+      "kind": "rollup",
+      "version": 1,
+      "versions": [
+        1
+      ],
+      "store": "traces.jsonl",
+      "schema": "https://github.com/jeon-jihyeon/nodloop/schema/rollup.v1.json",
+      "description": "The counts of a closed cycle the reports read once a prune may remove its runs",
+      "links": [
+        "subject",
+        "input.cycle_id",
+        "input.producers.units.unit",
+        "input.items.id",
+        "input.items.version",
+        "input.items.units.unit"
+      ],
+      "text": []
+    },
+    {
       "kind": "verdict",
       "version": 1,
       "versions": [

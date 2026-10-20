@@ -53,13 +53,18 @@ func (d Days) Window(now, lastCutoff time.Time) time.Time {
 	return cutoff
 }
 
-// The traces a prune reads and the one removal it calls
+// The traces a prune reads, the rollups it appends and the one removal it calls
 type TraceStore interface {
 	Heads(ctx context.Context, names ...string) ([]record.Trace, error)
+	Append(ctx context.Context, tr record.Trace) error
 	// Removes the traces of the ids decide returns
 	// The store runs decide where no run can be cited unseen between it and the removal as far as the store can tell
 	Prune(ctx context.Context, decide func(context.Context) ([]string, error)) (int, error)
 }
+
+// Counts a closed cycle as the reports read it in place of its runs and gives the input of its rollup trace
+// The composition root passes the count of loop so a cycle reads alike from its rollup and from its runs
+type Count func(ctx context.Context, c trace.Cycle) (json.RawMessage, error)
 
 type FeedbackStore interface {
 	List(ctx context.Context, f record.FeedbackFilter) ([]record.Feedback, error)
@@ -79,31 +84,38 @@ type Retainer struct {
 	verdicts FeedbackStore
 	outcomes OutcomeStore
 	items    KnowledgeStore
+	count    Count
+	now      func() time.Time
 }
 
-func New(traces TraceStore, verdicts FeedbackStore, outcomes OutcomeStore, items KnowledgeStore) *Retainer {
-	return &Retainer{traces: traces, verdicts: verdicts, outcomes: outcomes, items: items}
+func New(traces TraceStore, verdicts FeedbackStore, outcomes OutcomeStore, items KnowledgeStore, count Count, now func() time.Time) *Retainer {
+	return &Retainer{traces: traces, verdicts: verdicts, outcomes: outcomes, items: items, count: count, now: now}
 }
 
 // What one prune removes and keeps
 type Plan struct {
+	// The earlier of the cutoff the prune was asked for and the start of the open cycle
 	Cutoff time.Time
 	// Run traces older than the cutoff that nothing keeps
 	Runs []string
 	// Classify traces whose Ref is one of Runs whatever their age
 	Classify []string
-	// Turn traces older than the cutoff
-	// The run of a turn holds its duration once recorded and nothing cites a turn
-	Turns []string
+	// Turn, instructions and capture traces older than the cutoff since a later record holds what they held
+	// 1. a run holds the duration of its turn
+	// 2. an anchor version holds the files it read
+	// 3. only the newest capture of a session holds an offset still read
+	Session []string
 	// Run traces older than the cutoff that a citation or the first or last use of an approved version keeps
 	Kept int
+	// The closed cycles the cutoff reaches that no rollup counts yet
+	Rollups []trace.Cycle
 	// The run each classify trace of the plan judged
 	judged map[string]string
 }
 
 // The plan without the runs cited and without the classify traces of those runs
 func (p Plan) without(cited map[string]bool) Plan {
-	out := Plan{Cutoff: p.Cutoff, Kept: p.Kept, Turns: p.Turns, judged: p.judged}
+	out := Plan{Cutoff: p.Cutoff, Kept: p.Kept, Session: p.Session, Rollups: p.Rollups, judged: p.judged}
 	for _, id := range p.Runs {
 		if cited[id] {
 			out.Kept++
@@ -119,15 +131,24 @@ func (p Plan) without(cited map[string]bool) Plan {
 	return out
 }
 
+// The names a prune reads the heads of
+var planned = []string{
+	string(trace.NameRun), string(trace.NameClassify), string(trace.NameTurn), string(trace.NameInstructions), string(trace.NameCapture),
+	string(trace.NameKnob), string(trace.NameRollup),
+}
+
 // The traces older than the cutoff that nothing keeps
-// 1. a run is kept by any verdict of a person or a session and by a withdraw
-// 2. a run is kept by an outcome and by any knowledge version that cites it
-// 3. the newest run that applied each approved version is kept so the health of the version still sees that use
-// 4. the first run that received each approved version applied or withheld is kept so the queue never takes a later run for the first
-// 5. a classify trace goes with the run it judged and with nothing else
-// 6. a turn trace older than the cutoff goes since its run holds the duration
-// 7. a trace of any other name such as check or refill is never planned
-// 8. any read error fails the plan since a verdict on a corrupt line would leave its run unprotected
+// 1. the cutoff moves back to the start of the open cycle so no run of the open cycle goes
+// Before the first knob trace there is no cycle and the cutoff stays as asked
+// 2. each closed cycle the cutoff reaches without a rollup is planned for one so Apply counts it before any of its runs goes
+// 3. a run is kept by any verdict of a person or a session and by a withdraw
+// 4. a run is kept by an outcome and by any knowledge version that cites it
+// 5. the newest run that applied each approved version is kept so the health of the version still sees that use
+// 6. the first run that received each approved version applied or withheld is kept so the queue never takes a later run for the first
+// 7. a classify trace goes with the run it judged and with nothing else
+// 8. a turn, instructions or capture trace older than the cutoff goes since a later record holds what it held
+// 9. a trace of any other name such as check, decide or rollup is never planned
+// 10. any read error fails the plan since a verdict on a corrupt line would leave its run unprotected
 func (r *Retainer) Plan(ctx context.Context, cutoff time.Time) (Plan, error) {
 	plan := Plan{Cutoff: cutoff, judged: map[string]string{}}
 	if cutoff.IsZero() {
@@ -141,11 +162,12 @@ func (r *Retainer) Plan(ctx context.Context, cutoff time.Time) (Plan, error) {
 	if err != nil {
 		return Plan{}, err
 	}
-	found, err := r.traces.Heads(ctx, string(trace.NameRun), string(trace.NameClassify), string(trace.NameTurn))
+	found, err := r.traces.Heads(ctx, planned...)
 	if err != nil {
 		return Plan{}, err
 	}
 	hs := heads(trace.RestoreAll(found))
+	plan.Cutoff, plan.Rollups = hs.cycles(cutoff, r.now())
 	approved := items.Approved().Refs()
 	for id := range hs.lastToApply(approved) {
 		keep[id] = true
@@ -154,10 +176,10 @@ func (r *Retainer) Plan(ctx context.Context, cutoff time.Time) (Plan, error) {
 		keep[id] = true
 	}
 	removed := map[string]bool{}
-	plan.Turns = hs.turnsBefore(cutoff)
+	plan.Session = hs.sessionBefore(plan.Cutoff)
 	for _, t := range hs {
 		switch {
-		case t.Name != trace.NameRun || !t.Time.Before(cutoff):
+		case t.Name != trace.NameRun || !t.Time.Before(plan.Cutoff):
 		case keep[t.ID]:
 			plan.Kept++
 		default:
@@ -200,10 +222,14 @@ func (r *Retainer) cited(ctx context.Context, items knowledge.Set) (map[string]b
 }
 
 // Removes the traces of the plan and returns how many the store removed
-// 1. the store asks for the ids when its prune runs and the citations are read again then so a verdict recorded since the plan keeps its run
-// 2. a verdict writer takes no lock of the trace store so a verdict recorded while the store writes the lines it keeps can still lose its run
+// 1. the rollups of the plan land before anything is removed so no run of a closed cycle goes uncounted
+// 2. the store asks for the ids when its prune runs and the citations are read again then so a verdict recorded since the plan keeps its run
+// 3. a verdict writer takes no lock of the trace store so a verdict recorded while the store writes the lines it keeps can still lose its run
 func (r *Retainer) Apply(ctx context.Context, p Plan) (int, error) {
-	if len(p.Runs) == 0 && len(p.Turns) == 0 {
+	if err := r.rollup(ctx, p.Rollups); err != nil {
+		return 0, err
+	}
+	if len(p.Runs) == 0 && len(p.Session) == 0 {
 		return 0, nil
 	}
 	return r.traces.Prune(ctx, func(ctx context.Context) ([]string, error) {
@@ -216,8 +242,37 @@ func (r *Retainer) Apply(ctx context.Context, p Plan) (int, error) {
 			return nil, err
 		}
 		left := p.without(cited)
-		return slices.Concat(left.Runs, left.Classify, left.Turns), nil
+		return slices.Concat(left.Runs, left.Classify, left.Session), nil
 	})
+}
+
+// Appends one rollup per closed cycle that none counts yet
+// 1. the rollups are read again so a prune that ran beside this one since the plan never counts a cycle twice
+// 2. a count or an append that fails fails the prune before it removes anything
+func (r *Retainer) rollup(ctx context.Context, cycles []trace.Cycle) error {
+	if len(cycles) == 0 {
+		return nil
+	}
+	found, err := r.traces.Heads(ctx, string(trace.NameRollup))
+	if err != nil {
+		return err
+	}
+	counted := heads(trace.RestoreAll(found)).rolled()
+	for _, c := range cycles {
+		if counted[c.ID] {
+			continue
+		}
+		input, err := r.count(ctx, c)
+		if err != nil {
+			return err
+		}
+		now := r.now()
+		tr := trace.Trace{ID: trace.NewID(now), Name: trace.NameRollup, Subject: c.ID, Time: now, Input: input}
+		if err := r.traces.Append(ctx, tr.Record()); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Plans and applies the prune of the cutoff and returns how many traces the store removed
@@ -229,18 +284,56 @@ func (r *Retainer) Prune(ctx context.Context, cutoff time.Time) (int, error) {
 	return r.Apply(ctx, plan)
 }
 
-// The run, classify and turn traces newest first as a prune reads them
+// The traces newest first as a prune reads them
 type heads trace.Traces
 
-// The turn traces older than the cutoff
-func (hs heads) turnsBefore(cutoff time.Time) []string {
+// The turn, instructions and capture traces older than the cutoff
+func (hs heads) sessionBefore(cutoff time.Time) []string {
 	var out []string
 	for _, t := range hs {
-		if t.Name == trace.NameTurn && t.Time.Before(cutoff) {
+		session := t.Name == trace.NameTurn || t.Name == trace.NameInstructions || t.Name == trace.NameCapture
+		if session && t.Time.Before(cutoff) {
 			out = append(out, t.ID)
 		}
 	}
 	return out
+}
+
+// The cycles of a rollup trace
+type rollupMark struct {
+	CycleID string `json:"cycle_id"`
+}
+
+// The cycle ids a rollup counts
+// A rollup that does not decode counts no cycle so its cycle is counted again
+func (hs heads) rolled() map[string]bool {
+	out := map[string]bool{}
+	for _, t := range hs {
+		var m rollupMark
+		if t.Name == trace.NameRollup && json.Unmarshal(t.Input, &m) == nil && m.CycleID != "" {
+			out[m.CycleID] = true
+		}
+	}
+	return out
+}
+
+// The cutoff a prune keeps to and the closed cycles it reaches that no rollup counts yet
+// 1. the cutoff is the earlier of the asked one and the start of the open cycle so no run of the open cycle goes
+// 2. before the first knob trace there is no cycle and the cutoff stays as asked
+// 3. every cycle that starts before the cutoff is closed since the cutoff never passes the start of the open cycle
+func (hs heads) cycles(cutoff, now time.Time) (time.Time, []trace.Cycle) {
+	cycles := trace.Traces(hs).Cycles(now)
+	if open, ok := cycles.Open(now); ok && open.Start.Before(cutoff) {
+		cutoff = open.Start
+	}
+	counted := hs.rolled()
+	var reached []trace.Cycle
+	for _, c := range cycles {
+		if c.Start.Before(cutoff) && !c.End.After(now) && !counted[c.ID] {
+			reached = append(reached, c)
+		}
+	}
+	return cutoff, reached
 }
 
 // The runs that applied nothing as the reports count it are left out: a failed run and a run whose input does not read
