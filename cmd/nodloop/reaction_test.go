@@ -46,7 +46,7 @@ func TestRunHookReactionKeepsNoWords(t *testing.T) {
 				_, _ = w.Write([]byte(tc.args))
 			}))
 			t.Cleanup(srv.Close)
-			require.Equal(t, 0, runClassifier([]string{"set", "reaction", "--url", srv.URL}, getenv, now, &bytes.Buffer{}, &bytes.Buffer{}))
+			require.Equal(t, 0, runClassifier([]string{"set", "reaction", "--url", srv.URL}, getenv, now, atTerminal, &bytes.Buffer{}, &bytes.Buffer{}))
 			run := hookPromptSetup(t, getenv, now, repo, true, false, false)
 			stdin := `{"session_id":"s1","cwd":"` + repo + `","prompt":"` + words + `"}`
 			var stderr bytes.Buffer
@@ -97,7 +97,7 @@ func TestRunHookReactionWithoutKey(t *testing.T) {
 		_, _ = w.Write([]byte(`{"answers":{"corrects":{"noul":0.95},"approves":{"noul":0.05}}}`))
 	}))
 	t.Cleanup(srv.Close)
-	require.Equal(t, 0, runClassifier([]string{"set", "reaction", "--url", srv.URL}, getenv, now, &bytes.Buffer{}, &bytes.Buffer{}))
+	require.Equal(t, 0, runClassifier([]string{"set", "reaction", "--url", srv.URL}, getenv, now, atTerminal, &bytes.Buffer{}, &bytes.Buffer{}))
 	hookPromptSetup(t, getenv, now, repo, true, false, false)
 	require.NoError(t, os.Mkdir(filepath.Join(records, textkey.FileName), 0o700))
 	var stderr bytes.Buffer

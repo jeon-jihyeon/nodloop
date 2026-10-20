@@ -122,6 +122,7 @@ type Interventions struct {
 	// The person's interventions in time order
 	person []intervention
 	// The agent's proposals in time order with every digest left out
+	// A reverse takes back only a person's intervention so every proposal stays
 	proposals []intervention
 	answers   []answered
 	// The ids of the interventions and the answers taken back
@@ -209,22 +210,30 @@ func (f Interventions) holding(action trace.Action) []intervention {
 }
 
 // Whether a pause that holds covers a change of the kind in the scope
+func (f Interventions) Paused(kind ChangeKind, scope knowledge.RunScope) bool {
+	for _, in := range f.holding(trace.ActionPause) {
+		if in.pauses(kind, scope) {
+			return true
+		}
+	}
+	return false
+}
+
+// Whether the pause covers a change of the kind in the scope
 // 1. a pause of a kind covers that kind in every scope and a pause of a scope every kind there
 // 2. a scope is covered when for each label of the pause it requires none or one of the values the pause names
 // So a pause covers every change that may reach a run of its scope
-func (f Interventions) Paused(kind ChangeKind, scope knowledge.RunScope) bool {
-	return slices.ContainsFunc(f.holding(trace.ActionPause), func(in intervention) bool {
-		if in.In.Target != "" && in.In.Target != string(kind) {
+func (in intervention) pauses(kind ChangeKind, scope knowledge.RunScope) bool {
+	if in.In.Target != "" && in.In.Target != string(kind) {
+		return false
+	}
+	for key, values := range in.In.Labels {
+		required := scope.Labels[key]
+		if len(required) > 0 && !slices.ContainsFunc(required, func(v string) bool { return slices.Contains(values, v) }) {
 			return false
 		}
-		for key, values := range in.In.Labels {
-			required := scope.Labels[key]
-			if len(required) > 0 && !slices.ContainsFunc(required, func(v string) bool { return slices.Contains(values, v) }) {
-				return false
-			}
-		}
-		return true
-	})
+	}
+	return true
 }
 
 // When a dismiss that holds closed the question of the decide and false while it is open
@@ -239,9 +248,29 @@ func (f Interventions) Dismissed(decide string) (time.Time, bool) {
 	return at, found
 }
 
-// Whether the answer was taken back by a reverse so its question is open again
+// Whether a reverse that holds took back the intervention or the answer
+// A question whose answer was taken back is open again
 func (f Interventions) Reversed(id string) bool {
 	return f.reversed[id]
+}
+
+// The value the person's newest knob intervention of the knob that holds set and 0 when none holds
+// It stands until the person sets the knob again or reverses it so no automatic lowering goes under it
+func (f Interventions) setBy(n KnobName) float64 {
+	for _, in := range slices.Backward(f.holding(trace.ActionKnob)) {
+		if KnobName(in.In.Knob) == n && in.In.Value != nil {
+			return *in.In.Value
+		}
+	}
+	return 0
+}
+
+// Whether a later setting of the person of the same knob holds
+func (f Interventions) setSince(knob intervention) bool {
+	i := slices.IndexFunc(f.person, func(in intervention) bool { return in.ID == knob.ID })
+	return slices.ContainsFunc(f.person[i+1:], func(in intervention) bool {
+		return in.In.Knob == knob.In.Knob && in.In.Value != nil && !f.reversed[in.ID]
+	})
 }
 
 // The versions nodloop approved that the person took into the anchor with the intervention or the answer that took each
@@ -276,7 +305,7 @@ func (f Interventions) Knobs(k Knobs, after time.Time) Knobs {
 // The changes of the knobs the person made after the time in the order they were made
 // 1. a knob intervention sets its value and a reverse of one sets the value it had before
 // 2. a yes to a widening opens its kind and bin and a yes to the activation ends the shadow
-// 3. a reverse of such an answer closes the kind and bin again or starts the shadow again
+// 3. a reverse of such an answer closes the kind and bin again or starts the shadow again and a reverse of that reverse gives the yes again
 func (f Interventions) settings(after time.Time) []knobSetting {
 	var out []knobSetting
 	for _, in := range f.person {
@@ -299,20 +328,28 @@ func (f Interventions) settings(after time.Time) []knobSetting {
 	return out
 }
 
-// The settings a reverse of an answer yes takes back
+// The settings a reverse sets when the chain of the reverses it names ends at an answer yes
+// 1. each reverse along the chain turns the setting the other way so a reverse of the reverse of a yes gives the yes again
+// 2. the chain is at most as long as the person's interventions so records that name each other end it
 func (f Interventions) unanswered(rev intervention) []knobSetting {
-	var out []knobSetting
-	for _, in := range f.person {
-		if in.ID != rev.In.Reverses || in.Out.Answer == "" {
-			continue
+	target, on := rev.In.Reverses, false
+	for range f.person {
+		i := slices.IndexFunc(f.person, func(in intervention) bool { return in.ID == target })
+		if i < 0 {
+			return nil
 		}
-		for _, a := range f.answers {
-			if a.ID == in.Out.Answer && a.Answer.Choice == ChoiceYes {
-				out = append(out, f.opened(a, rev.Time, false)...)
+		if answer := f.person[i].Out.Answer; answer != "" {
+			var out []knobSetting
+			for _, a := range f.answers {
+				if a.ID == answer && a.Answer.Choice == ChoiceYes {
+					out = append(out, f.opened(a, rev.Time, on)...)
+				}
 			}
+			return out
 		}
+		target, on = f.person[i].In.Reverses, !on
 	}
-	return out
+	return nil
 }
 
 // What a yes to a widening or the activation sets at the time
@@ -337,15 +374,4 @@ func (f Interventions) session(proposal string) string {
 		}
 	}
 	return ""
-}
-
-// The agent's proposals in the order they were made that no reverse took back
-func (f Interventions) proposed() []intervention {
-	var out []intervention
-	for _, p := range f.proposals {
-		if !f.reversed[p.ID] {
-			out = append(out, p)
-		}
-	}
-	return out
 }

@@ -82,44 +82,62 @@ type unconfirmed struct {
 }
 
 // The files left out for the record directory under the Claude Code config
-// The config is CLAUDE_CONFIG_DIR and else .claude under home
 func newUnconfirmed(recordDir string, home homeDir, configDir string) unconfirmed {
-	u := unconfirmed{rules: filePath(knowledgefile.RulesPath(recordDir))}
+	return unconfirmed{rules: filePath(knowledgefile.RulesPath(recordDir)), projects: claudeProjects(home, configDir)}
+}
+
+// The projects directory of the Claude Code config that holds a folder per project with its transcripts and auto memory
+// 1. the config is CLAUDE_CONFIG_DIR and else .claude under home
+// 2. empty when no home is known
+func claudeProjects(home homeDir, configDir string) filePath {
 	switch {
 	case configDir != "":
-		u.projects = filePath(filepath.Join(configDir, "projects"))
+		return filePath(filepath.Join(configDir, "projects"))
 	case home != "":
-		u.projects = filePath(filepath.Join(string(home), ".claude", "projects"))
+		return filePath(filepath.Join(string(home), ".claude", "projects"))
 	}
-	return u
+	return ""
 }
 
 // Whether the file holds lines no person confirmed
 // 1. approved.md of the record directory
 // 2. a file below <projects>/<project>/memory/ or one the host reports as auto memory
 func (u unconfirmed) holds(path, memoryType string) bool {
-	file := filePath(path).resolved()
-	if memoryType == autoMemoryType || file == u.rules.resolved() {
+	file := filePath(path)
+	if memoryType == autoMemoryType || file.resolved() == u.rules.resolved() {
 		return true
 	}
-	if u.projects == "" {
-		return false
-	}
-	rel, err := filepath.Rel(u.projects.resolved(), file)
-	parts := strings.Split(filepath.ToSlash(rel), "/")
-	return err == nil && len(parts) > 2 && parts[0] != ".." && parts[1] == "memory"
+	parts := file.below(u.projects)
+	return len(parts) > 2 && parts[1] == "memory"
 }
 
 // A path of a file the host reported or nodloop keeps
 type filePath string
 
 // The path with its links resolved and the path as given while it names nothing
-// The host may report /private/tmp for a record directory named under /tmp
+// 1. the host may report /private/tmp for a record directory named under /tmp
+// 2. a file that is not there yet takes the links of its folder so it compares with the folder resolved
 func (p filePath) resolved() string {
 	if r, err := filepath.EvalSymlinks(string(p)); err == nil {
 		return r
 	}
+	if dir, err := filepath.EvalSymlinks(filepath.Dir(string(p))); err == nil {
+		return filepath.Join(dir, filepath.Base(string(p)))
+	}
 	return filepath.Clean(string(p))
+}
+
+// The parts of the path below the root with the links of both resolved and none outside it or without a root
+func (p filePath) below(root filePath) []string {
+	if root == "" {
+		return nil
+	}
+	rel, err := filepath.Rel(root.resolved(), p.resolved())
+	parts := strings.Split(filepath.ToSlash(rel), "/")
+	if err != nil || parts[0] == ".." {
+		return nil
+	}
+	return parts
 }
 
 // Instructions traces newest first

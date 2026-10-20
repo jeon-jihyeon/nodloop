@@ -57,7 +57,7 @@ func (r Response) add(other Response) Response {
 	return r
 }
 
-// The consumers are compact and consolidate and extract and replay but the interface lives here because mockgen generates llmmock from this file
+// Every consumer of a model takes this one interface and it lives here because mockgen generates llmmock from this file
 // llmmock cannot import a consumer without an upward import
 type Client interface {
 	Complete(ctx context.Context, req Request) (Response, error)

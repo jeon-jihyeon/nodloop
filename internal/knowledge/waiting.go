@@ -29,16 +29,19 @@ func (s Set) AllWaiting() Set {
 	return s.waiting(func(RunScope) bool { return true })
 }
 
-// The retired versions that would reach a run of the producer with the labels, newest record first
+// The retired versions that would reach a run of the producer with the labels
 // 1. only ids with no approved version and no candidate so the current version names every other id
 // 2. per id the highest such version
 // 3. a version a compaction retired or proposed is left out since the item that merged it says it now
+// 4. newest record first
 func (s Set) Retired(producer string, labels trace.Labels) Set {
-	current := s.Current()
+	active := map[string]bool{}
+	for _, k := range s.Current() {
+		active[k.ID] = true
+	}
 	highest := map[string]int{}
 	for _, k := range s.Versions() {
-		_, active := current.Find(k.ID)
-		if active || k.Status != StatusRetired || k.Compaction != "" || k.Run == nil || !k.Run.Admits(producer, labels) {
+		if active[k.ID] || k.Status != StatusRetired || k.Compaction != "" || k.Run == nil || !k.Run.Admits(producer, labels) {
 			continue
 		}
 		highest[k.ID] = max(highest[k.ID], k.Version)
@@ -58,7 +61,7 @@ func (s Set) waiting(reaches func(RunScope) bool) Set {
 	out := Set{}
 	for _, id := range slices.Sorted(maps.Keys(newest)) {
 		if k := newest[id]; k.Compaction == "" && k.Run != nil && reaches(*k.Run) {
-			out = append(out, s.taught(k))
+			out = append(out, k)
 		}
 	}
 	slices.SortStableFunc(out, Knowledge.waitsBefore)
@@ -113,6 +116,7 @@ func (a Knowledge) waitsBefore(b Knowledge) int {
 }
 
 // The newest version per id whose latest record is a candidate
+// That record is the propose or the last corroborate the version waits as
 func (s Set) newestCandidates() map[string]Knowledge {
 	out := map[string]Knowledge{}
 	for _, k := range s.Versions() {
@@ -123,20 +127,6 @@ func (s Set) newestCandidates() map[string]Knowledge {
 	return out
 }
 
-// The record of the propose or the last corroborate of the version of k
-// A deferral record of an earlier release copies that record so a legacy deferral reads as a candidate
-// 1. the record it copied is the one the version waits as
-// 2. a deferral with no such record left waits without its session so no write copies the session again
-func (s Set) taught(k Knowledge) Knowledge {
-	for _, r := range s {
-		if r.ID == k.ID && r.Version == k.Version && r.DeferredIn == "" {
-			return r
-		}
-	}
-	k.DeferredIn = ""
-	return k
-}
-
 // The record the version waits as
 // Fails with ErrNotCandidate unless the version is the newest candidate of its id
 func (s Set) waitingVersion(id string, version int) (Knowledge, error) {
@@ -144,7 +134,7 @@ func (s Set) waitingVersion(id string, version int) (Knowledge, error) {
 	if !ok || k.Version != version {
 		return Knowledge{}, fmt.Errorf("%w: %s v%d", ErrNotCandidate, id, version)
 	}
-	return s.taught(k), nil
+	return k, nil
 }
 
 // The record that joins a corrected run to the teaching runs of the newest candidate version of id

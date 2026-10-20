@@ -142,7 +142,8 @@ func runSession(args []string, getenv func(string) string, client llm.Client, no
 	var records recordFlags
 	records.bind(fs)
 	session := fs.String("session", "", "capture: the session whose transcript to read")
-	path := fs.String("transcript", "", "capture: the transcript of the session as the stop hook names it")
+	path := fs.String("transcript", "", "capture: the transcript of the session as the stop hook names it. "+
+		"Without it the capture reads no message and extracts the answer the newest turn followed")
 	model := fs.String("model", "", "capture: model of the reaction, the extraction and a judge the curate pass starts. Empty means the llm default")
 	if err := fs.Parse(args[1:]); err != nil {
 		return parseFailed(err)
@@ -150,12 +151,17 @@ func runSession(args []string, getenv func(string) string, client llm.Client, no
 	switch {
 	case args[0] != "capture":
 		return fail(stderr, "session", fmt.Errorf("%w %q", errUnknownAction, args[0]))
-	case *session == "" || *path == "":
-		return fail(stderr, "session", fmt.Errorf("capture: --session and --transcript %w", errRequired))
+	case *session == "":
+		return fail(stderr, "session", fmt.Errorf("capture: --session %w", errRequired))
 	}
 	a, err := records.app(getenv, now)
 	if err != nil {
 		return fail(stderr, "session", err)
+	}
+	if *path != "" {
+		if err := transcript(*path).kept(claudeProjects(a.cfg.home, getenv(envClaudeConfigDir)), *session); err != nil {
+			return fail(stderr, "session", err)
+		}
 	}
 	mode, err := sessionModeOf(getenv(envSession), a.cfg.sessionMode)
 	if err != nil {
@@ -186,9 +192,13 @@ type captureCommand struct {
 // 2. only a mode that infers judges the person's other words
 // 3. the extractions and the curate pass come after the read since they need no offset and may take minutes
 // 4. what the read recorded before a failure still goes on to them
+// 5. without a transcript only the answer the newest turn followed goes on to them
 func (c captureCommand) capture(ctx context.Context, mode sessionMode, session string, t transcript) error {
-	if mode == sessionOff {
+	switch {
+	case mode == sessionOff:
 		return nil
+	case t == "":
+		return c.followTurn(ctx, mode, session)
 	}
 	out, err := c.read(ctx, session, t, mode.infers())
 	fmt.Fprintf(c.out, "capture\t%s\tmessages %d\tverdicts %d\tanswers %d\tsignals %d\n",
@@ -220,7 +230,8 @@ func (c captureCommand) read(ctx context.Context, session string, t transcript, 
 	}
 	from, first, offsetErr := c.offset(ctx, store, session)
 	runs, runsErr := c.runs(ctx, store, session)
-	corrupt := errors.Join(offsetErr, runsErr)
+	shown, shownErr := c.app.exposes(ctx, session, c.app.now().Add(-sessionWindow))
+	corrupt := errors.Join(offsetErr, runsErr, shownErr)
 	if corrupt != nil && !errors.Is(corrupt, tracefile.ErrCorrupt) {
 		return captureOutput{}, corrupt
 	}
@@ -232,6 +243,7 @@ func (c captureCommand) read(ctx context.Context, session string, t transcript, 
 	if err != nil {
 		return captureOutput{}, errors.Join(corrupt, err)
 	}
+	reader.shown = shown
 	out, failed := reader.judge(ctx, part.messages.after(runs.started(first)), runs)
 	tr, err := part.input.trace(session, out, c.app.now())
 	if err == nil {
@@ -240,10 +252,40 @@ func (c captureCommand) read(ctx context.Context, session string, t transcript, 
 	return out, errors.Join(corrupt, failed, err)
 }
 
+// The extraction of the answer the newest turn of the session followed when its verdict corrects it and then one curate pass
+// 1. a host whose transcript the capture cannot read names no message
+// So the start of the turn the prompt hook recorded stands for the person's prompt
+// 2. a mode that infers nothing extracts nothing
+// 3. a session with no turn or no answer before its turn follows nothing
+// 4. a corrupt line of the traces leaves out that record and the rest are read
+func (c captureCommand) followTurn(ctx context.Context, mode sessionMode, session string) error {
+	if !mode.infers() {
+		return nil
+	}
+	store, err := c.app.traces()
+	if err != nil {
+		return err
+	}
+	since := c.app.now().Add(-sessionWindow)
+	turns, turnsErr := store.List(ctx, record.TraceFilter{Name: string(trace.NameTurn), SessionID: session, Since: since, Limit: 1})
+	runs, runsErr := c.runs(ctx, store, session)
+	corrupt := errors.Join(turnsErr, runsErr)
+	if corrupt != nil && !errors.Is(corrupt, tracefile.ErrCorrupt) {
+		return corrupt
+	}
+	followed := runs.before(trace.Traces(trace.RestoreAll(turns)).Newest().Time)
+	if followed.ID == "" {
+		return corrupt
+	}
+	return errors.Join(corrupt, c.follow(ctx, []string{followed.ID}, 0))
+}
+
 // The offset where the previous capture of the session ended and whether this capture is its first
-// An input that does not decode reads as no capture so the session starts over as a first one
+// 1. an input that does not decode reads as no capture so the session starts over as a first one
+// 2. so does a capture older than sessionWindow, so the read of a new session stops there and never scans the records of every session
 func (c captureCommand) offset(ctx context.Context, store *tracefile.Store, session string) (int64, bool, error) {
-	found, err := store.List(ctx, record.TraceFilter{Name: string(trace.NameCapture), SessionID: session, Limit: 1})
+	since := c.app.now().Add(-sessionWindow)
+	found, err := store.List(ctx, record.TraceFilter{Name: string(trace.NameCapture), SessionID: session, Since: since, Limit: 1})
 	newest := trace.Traces(trace.RestoreAll(found)).Newest()
 	var in captureInput
 	if newest.ID == "" || json.Unmarshal(newest.Input, &in) != nil {
@@ -320,6 +362,8 @@ type replier interface {
 type messageReader struct {
 	session string
 	replies replier
+	// The exposes of the session the runs of the window followed
+	shown sessionExposes
 	// The name an answer is recorded under
 	person string
 	// Nil when the capture judges nothing
@@ -341,8 +385,7 @@ func (r messageReader) judge(ctx context.Context, messages personMessages, runs 
 		if m.key == "" && run.ID == "" {
 			continue
 		}
-		reply := curate.Reply{Session: r.session, Key: m.key, Run: run.ID, Word: m.firstWord(), Person: r.person}
-		replied, err := r.replies.Reply(ctx, reply)
+		replied, err := r.answer(ctx, m, run)
 		out, errs = out.answered(replied), append(errs, err)
 		if err != nil || replied.Matched || m.key != "" || r.plan == nil {
 			continue
@@ -351,6 +394,15 @@ func (r messageReader) judge(ctx context.Context, messages personMessages, runs 
 		out, errs = out.with(j), append(errs, err)
 	}
 	return out, errors.Join(errs...)
+}
+
+// The answer the message gives to a question of the stop
+// A typed message after an answer whose stop asked no question answers none so it never reads the records of curate
+func (r messageReader) answer(ctx context.Context, m personMessage, run trace.Trace) (curate.Replied, error) {
+	if m.key == "" && !r.shown.asked(run.ID) {
+		return curate.Replied{}, nil
+	}
+	return r.replies.Reply(ctx, curate.Reply{Session: r.session, Key: m.key, Run: run.ID, Word: m.firstWord(), Person: r.person})
 }
 
 // The answers of the reaction point on one message with the verdict and the signals they make
@@ -481,7 +533,7 @@ func (ts sessionTurns) before(at time.Time) trace.Trace {
 // When the messages a capture reads begin
 // 1. a later capture reads every message after the offset of the one before it
 // 2. a first capture reads only the turn its stop ended with the messages after the run before the newest one
-// So a session that began under an earlier release never sends its whole history to the model at once
+// So no capture sends the whole history of a session to the model at once, also when its previous capture lies before sessionWindow
 func (ts sessionTurns) started(first bool) time.Time {
 	if !first || len(ts) < 2 {
 		return time.Time{}
@@ -491,6 +543,16 @@ func (ts sessionTurns) started(first bool) time.Time {
 
 // A Claude Code transcript the capture reads from a byte offset and never copies
 type transcript string
+
+// Refuses a transcript Claude Code does not keep for the session: <projects>/<project>/<session>.jsonl with its links resolved
+// The capture records verdicts of reviewer nodloop and the person's answers from it
+// So no command an agent runs can name a file of its own and speak for the person
+func (t transcript) kept(projects filePath, session string) error {
+	if parts := filePath(t).below(projects); len(parts) != 2 || parts[1] != session+".jsonl" {
+		return fmt.Errorf("%w: %s", errTranscriptForeign, t)
+	}
+	return nil
+}
 
 // The part of a transcript read from an offset with the messages the person typed in it
 type transcriptPart struct {
@@ -502,6 +564,9 @@ type transcriptPart struct {
 // 1. a line still being written has no newline yet so it is left for the next capture
 // 2. an offset past the end names a file that is not the one read before so the read starts over
 // 3. a line that does not decode is passed over
+// 4. a call that asks a question of the stop with no result yet is left with every line after it for the next capture
+// So a click is always read beside the call it answers
+// A message the person typed after the call ends the wait since the call no longer waits for a click
 func (t transcript) read(from int64) (transcriptPart, error) {
 	file, err := os.Open(string(t))
 	if err != nil {
@@ -519,16 +584,17 @@ func (t transcript) read(from int64) (transcriptPart, error) {
 		return transcriptPart{}, err
 	}
 	part := transcriptPart{input: captureInput{From: from, To: from}}
-	asked := askedQuestions{}
+	asked, waiting := askedQuestions{}, map[string]transcriptCut{}
 	r := bufio.NewReader(file)
 	for {
 		line, err := r.ReadBytes('\n')
 		if errors.Is(err, io.EOF) {
-			return part, nil
+			return part.before(waiting), nil
 		}
 		if err != nil {
 			return part, err
 		}
+		start := part.input.To
 		part.input.To += int64(len(line))
 		var e transcriptEntry
 		if json.Unmarshal(line, &e) != nil {
@@ -536,10 +602,38 @@ func (t transcript) read(from int64) (transcriptPart, error) {
 		}
 		if text := e.words(); text != "" {
 			part.messages = append(part.messages, personMessage{text: text, at: e.Timestamp})
+			clear(waiting)
 		}
 		part.messages = append(part.messages, e.clicks(asked)...)
-		asked.add(e)
+		for _, id := range e.results() {
+			delete(waiting, id)
+		}
+		calls := e.calls()
+		maps.Copy(asked, calls)
+		for id := range calls {
+			if calls.stops(id) {
+				waiting[id] = transcriptCut{to: start, messages: len(part.messages)}
+			}
+		}
 	}
+}
+
+// Where a read ends when a call that asks a question of the stop waits for its result
+type transcriptCut struct {
+	// The offset of the line of the call
+	to int64
+	// The messages read before it
+	messages int
+}
+
+// The part up to the first call whose result the read did not reach
+func (p transcriptPart) before(waiting map[string]transcriptCut) transcriptPart {
+	for _, c := range waiting {
+		if c.to < p.input.To {
+			p.input.To, p.messages = c.to, p.messages[:c.messages]
+		}
+	}
+	return p
 }
 
 // One line of a Claude Code transcript as the capture reads it
@@ -560,7 +654,7 @@ type transcriptEntry struct {
 // The start of the AskUserQuestion header that names a question of the stop by its key
 const askHeaderPrefix = "nodloop "
 
-// One AskUserQuestion question as its call and its result name it
+// One AskUserQuestion question as its call names it
 type askQuestion struct {
 	Header   string `json:"header"`
 	Question string `json:"question"`
@@ -569,8 +663,8 @@ type askQuestion struct {
 // The headers of the AskUserQuestion questions by the id of their call and the text of each question
 type askedQuestions map[string]map[string]string
 
-// Keeps the questions of every AskUserQuestion call on an assistant line
-func (a askedQuestions) add(e transcriptEntry) {
+// The questions of the AskUserQuestion calls on an assistant line
+func (e transcriptEntry) calls() askedQuestions {
 	var blocks []struct {
 		Type  string `json:"type"`
 		ID    string `json:"id"`
@@ -580,39 +674,62 @@ func (a askedQuestions) add(e transcriptEntry) {
 		} `json:"input"`
 	}
 	if e.Type != "assistant" || json.Unmarshal(e.Message.Content, &blocks) != nil {
-		return
+		return nil
 	}
+	calls := askedQuestions{}
 	for _, b := range blocks {
 		if b.Type == "tool_use" && b.Name == "AskUserQuestion" {
-			a[b.ID] = map[string]string{}
+			calls[b.ID] = map[string]string{}
 			for _, q := range b.Input.Questions {
-				a[b.ID][q.Question] = q.Header
+				calls[b.ID][q.Question] = q.Header
 			}
 		}
 	}
+	return calls
 }
 
-// The labels the person picked on questions of the stop as the result of an AskUserQuestion call on the line names them
-// 1. the result names the questions with their headers or else the call of the same id does
-// 2. only a header nodloop <key> names a question of the stop
-func (e transcriptEntry) clicks(asked askedQuestions) personMessages {
+// Whether the call asks a question of the stop under a header nodloop <key>
+func (a askedQuestions) stops(id string) bool {
+	for _, header := range a[id] {
+		if strings.HasPrefix(header, askHeaderPrefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// The ids of the tool calls whose results a user line holds
+func (e transcriptEntry) results() []string {
 	var blocks []struct {
 		Type string `json:"type"`
 		ID   string `json:"tool_use_id"`
 	}
-	var result struct {
-		Questions []askQuestion     `json:"questions"`
-		Answers   map[string]string `json:"answers"`
+	if e.Type != "user" || json.Unmarshal(e.Message.Content, &blocks) != nil {
+		return nil
 	}
-	if e.Type != "user" || json.Unmarshal(e.Message.Content, &blocks) != nil || json.Unmarshal(e.ToolUseResult, &result) != nil {
+	var ids []string
+	for _, b := range blocks {
+		if b.Type == "tool_result" {
+			ids = append(ids, b.ID)
+		}
+	}
+	return ids
+}
+
+// The labels the person picked on questions of the stop as the result of an AskUserQuestion call on the line names them
+// 1. only the result of a call the same read holds counts so the result of no other tool can stand for a click
+// 2. only a header nodloop <key> names a question of the stop
+func (e transcriptEntry) clicks(asked askedQuestions) personMessages {
+	var result struct {
+		Answers map[string]string `json:"answers"`
+	}
+	ids := e.results()
+	if len(ids) == 0 || json.Unmarshal(e.ToolUseResult, &result) != nil {
 		return nil
 	}
 	headers := map[string]string{}
-	for _, b := range blocks {
-		maps.Copy(headers, asked[b.ID])
-	}
-	for _, q := range result.Questions {
-		headers[q.Question] = q.Header
+	for _, id := range ids {
+		maps.Copy(headers, asked[id])
 	}
 	var out personMessages
 	for _, question := range slices.Sorted(maps.Keys(result.Answers)) {
@@ -623,16 +740,27 @@ func (e transcriptEntry) clicks(asked askedQuestions) personMessages {
 	return out
 }
 
-// What the host writes into a turn of the person
-// Slash commands and their output, notices of background work, reminders, shell mode and interruptions
-var hostPrefixes = []string{
+// The starts of what the host writes into a turn of the person
+type hostText []string
+
+// 1. slash commands and their output, notices of background work, reminders, shell mode and interruptions
+// 2. the file and the selection an IDE attaches as blocks beside what the person typed
+var hostPrefixes = hostText{
 	"<command-", "<local-command", "<task-notification", "<system-reminder", "<bash-", "<agent-message", "[Request interrupted", "Caveat:",
+	"<ide_",
+}
+
+// Whether the host wrote the text
+func (h hostText) wrote(text string) bool {
+	text = strings.TrimSpace(text)
+	return slices.ContainsFunc(h, func(p string) bool { return strings.HasPrefix(text, p) })
 }
 
 // The words the person typed on the line and empty for any other line
 // 1. a tool result such as the answer to an AskUserQuestion call is no message the person typed
 // 2. a meta line, a line of a subagent and the summary of a compaction are no words of the person
-// 3. text the host wrote in the turn of the person starts with one of hostPrefixes
+// 3. a text the host wrote in the turn of the person starts with one of hostPrefixes
+// Each block is read apart so a block of the host never hides the person's words nor passes as them
 func (e transcriptEntry) words() string {
 	if e.Type != "user" || e.Meta || e.Sidechain || e.Summary || e.Hidden {
 		return ""
@@ -651,17 +779,16 @@ func (e transcriptEntry) words() string {
 			if b.Type == "tool_result" {
 				return ""
 			}
-			if b.Type == "text" {
+			if b.Type == "text" && !hostPrefixes.wrote(b.Text) {
 				parts = append(parts, b.Text)
 			}
 		}
 		text = strings.Join(parts, "\n")
 	}
-	text = strings.TrimSpace(text)
-	if slices.ContainsFunc(hostPrefixes, func(p string) bool { return strings.HasPrefix(text, p) }) {
+	if hostPrefixes.wrote(text) {
 		return ""
 	}
-	return text
+	return strings.TrimSpace(text)
 }
 
 // A message the person typed or a label they picked with the time the transcript recorded it

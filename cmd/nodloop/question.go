@@ -1,10 +1,12 @@
 package main
 
 import (
-	"cmp"
 	"context"
+	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
+	"time"
 
 	"github.com/jeon-jihyeon/nodloop/internal/curate"
 	"github.com/jeon-jihyeon/nodloop/internal/feedback"
@@ -17,37 +19,54 @@ import (
 // The one stop path that talks to the person after the run of the turn was recorded
 // 1. a question curate prepared through the answer shape of the host after its expose is on record
 // 2. otherwise a notice of what curate carried out in the place through Stop systemMessage on a host that shows one
-// 3. a stop with neither due reads no more records and makes no key
+// 3. curate is asked only for what the stop may still show so a stop after the question and the notice of its session makes no key
 func (c hookCommand) talk(ctx context.Context, sessionID string, place knowledge.RunScope, run string, all knowledge.Set) error {
-	notices := c.host.notices() && curate.Noticeable(all, place)
-	if len(c.mark.Due) == 0 && !notices {
-		return nil
-	}
-	dir, err := c.app.makeRecordDir()
-	if err != nil {
+	asks, notices, err := c.showable(ctx, sessionID, place, all)
+	if err != nil || !asks && !notices {
 		return err
 	}
 	iv, err := c.app.intervener()
 	if err != nil {
 		return err
 	}
-	key, err := textkey.Load(dir)
+	// The record directory exists once the exposes were read
+	key, err := textkey.Load(c.app.cfg.recordDir)
 	if err != nil {
 		return err
 	}
 	a := curate.Asking{Session: sessionID, Run: run, Place: place, Pushed: c.mode.infers(), Mark: c.mark, Seal: key.Sum, Words: c.words}
-	shown, err := iv.Ask(ctx, a)
-	if err != nil || shown.Question.Key != "" {
-		return errors.Join(err, c.ask(shown.Question))
+	if asks {
+		asked, err := iv.Ask(ctx, a)
+		if err != nil || asked.Question.Key != "" {
+			return errors.Join(err, c.ask(asked.Question))
+		}
 	}
 	if !notices {
 		return nil
 	}
-	shown, err = iv.Notice(ctx, a)
-	if err != nil || shown.Notice == "" {
+	noticed, err := iv.Notice(ctx, a)
+	if err != nil || noticed.Notice == "" {
 		return err
 	}
-	return c.host.notice(c.out, shown.Notice)
+	return c.host.notice(c.out, noticed.Notice)
+}
+
+// Whether the stop of the session may still show a question and a notice
+// 1. curate reads every question and answer on record so curate.json and the exposes of the session decide first
+// A stop after the one question and the one notice of its session reads one window of its exposes and no other record of curate
+// 2. exposes that cannot be read show nothing and the stop reports why
+func (c hookCommand) showable(ctx context.Context, sessionID string, place knowledge.RunScope, all knowledge.Set) (asks, notices bool, err error) {
+	due := dueQuestions(c.mark.Due)
+	proposed, reaching := due.proposed(sessionID), c.mode.infers() && due.reaching(place)
+	notices = c.host.notices() && curate.Noticeable(all, place)
+	if !proposed && !reaching && !notices {
+		return false, false, nil
+	}
+	shown, err := c.app.exposes(ctx, sessionID, c.app.now().Add(-sessionWindow))
+	if err != nil {
+		return false, false, err
+	}
+	return proposed || reaching && !shown.pushed(), notices && !shown.noticed(), nil
 }
 
 // The question in the answer shape of the host and nothing for none
@@ -75,21 +94,97 @@ func (c hookCommand) words(ctx context.Context, runs []string) ([]string, error)
 	return verdicts.Words(runs), nil
 }
 
-// The answer the first word of the prompt gives to the question shown after the answer the person read
-// 1. the word is recorded under approver of config.json or else person
+// The choice the first word of the prompt names of the question shown after the answer the person read and empty for none
+// 1. the hook only keeps that word from being judged and records no answer
+// Any process can pipe a prompt into the hook so the capture records the answer from the transcript the host keeps
 // 2. the rest of the message stands
-func (c hookCommand) reply(ctx context.Context, sessionID string, previous trace.Trace, message string) (curate.Replied, error) {
+// 3. a prompt after an answer whose stop asked no question reads no record of curate
+// The question shown after that answer is recorded after it so the read stops at its time
+func (c hookCommand) reply(ctx context.Context, sessionID string, previous trace.Trace, message string) (curate.Choice, error) {
 	words := strings.Fields(message)
 	if sessionID == "" || previous.ID == "" || len(words) == 0 {
-		return curate.Replied{}, nil
+		return "", nil
 	}
-	iv, err := c.app.intervener()
-	if err != nil {
-		return curate.Replied{}, err
-	}
-	return iv.Reply(ctx, curate.Reply{Session: sessionID, Run: previous.ID, Word: words[0], Person: cmp.Or(c.app.cfg.approver, unnamedPerson)})
+	shown, err := c.app.exposes(ctx, sessionID, previous.Time)
+	return shown.named(previous.ID, words[0]), err
 }
 
-// The reply word answered the question so the conversation records nothing of it
-const replyNote = "nodloop: the user's first word %s answered the nodloop question and nodloop recorded it. " +
+// The reply word names a choice of the question so the conversation records nothing of it
+const replyNote = "nodloop: the user's first word %s answers the nodloop question and nodloop records the answer after this turn. " +
 	"Record nothing about it and do not ask it again. The rest of the user's message stands.\n"
+
+// The questions curate.json leaves due as a stop reads them before curate does
+type dueQuestions []curate.Due
+
+// Whether one asks about a proposal the session made
+// Its stop asks it whatever was asked before since the person asked for it
+func (ds dueQuestions) proposed(session string) bool {
+	return slices.ContainsFunc(ds, func(d curate.Due) bool { return d.Proposal != "" && d.Session == session })
+}
+
+// Whether one curate pushes reaches the place
+func (ds dueQuestions) reaching(place knowledge.RunScope) bool {
+	return slices.ContainsFunc(ds, func(d curate.Due) bool {
+		return d.Proposal == "" && (d.Place == nil || d.Place.Admits(place.Producer, place.Labels))
+	})
+}
+
+// The exposes of one session newest first
+type sessionExposes trace.Traces
+
+// The exposes of the session since the time
+// 1. the read stops at the time so a hook never reads the records of every session
+// 2. a corrupt line returns the exposes found with the error
+func (a app) exposes(ctx context.Context, session string, since time.Time) (sessionExposes, error) {
+	store, err := a.traces()
+	if err != nil {
+		return nil, err
+	}
+	found, err := store.List(ctx, record.TraceFilter{Name: string(trace.NameExpose), SessionID: session, Since: since})
+	return sessionExposes(trace.RestoreAll(found)), err
+}
+
+// Whether the stop after the run asked a question a typed word may answer
+func (xs sessionExposes) asked(run string) bool {
+	return len(xs.questions(run)) > 0
+}
+
+// The questions the stop after the run asked
+func (xs sessionExposes) questions(run string) []curate.Exposure {
+	var out []curate.Exposure
+	for _, t := range xs {
+		var x curate.Exposure
+		if json.Unmarshal(t.Input, &x) == nil && x.Kind != curate.QuestionNotice && x.Run == run {
+			out = append(out, x)
+		}
+	}
+	return out
+}
+
+// The punctuation a reply word may end with as curate reads it
+// So keep followed by a comma still names keep
+const replyMarks = ".,!;:"
+
+// The choice the word names of a question the stop asked after the run and empty for none
+// Case and trailing punctuation are ignored as curate ignores them when it records the answer
+func (xs sessionExposes) named(run, word string) curate.Choice {
+	choice := curate.Choice(strings.TrimRight(strings.ToLower(word), replyMarks))
+	for _, x := range xs.questions(run) {
+		if slices.Contains(x.Choices, choice) {
+			return choice
+		}
+	}
+	return ""
+}
+
+// Whether curate pushed the one question of the session
+func (xs sessionExposes) pushed() bool {
+	return slices.ContainsFunc(xs, func(t trace.Trace) bool {
+		return t.Source == trace.SourcePush && t.Subject != string(curate.QuestionNotice)
+	})
+}
+
+// Whether the session was shown its one notice
+func (xs sessionExposes) noticed() bool {
+	return slices.ContainsFunc(xs, func(t trace.Trace) bool { return t.Subject == string(curate.QuestionNotice) })
+}

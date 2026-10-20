@@ -24,7 +24,7 @@ test("a corrected run teaches an item the same tenant receives once the person a
     assert.deepEqual([proposal.status, proposal.approver, proposal.proposal !== ""], ["candidate", "", true]);
     assert.deepEqual(before.items, []);
     assert.deepEqual(mine.items.map((i) => i.id), ["refund-window"]);
-    assert.match(mine.text, /^nodloop: corrections a person approved/);
+    assert.match(mine.text, /^nodloop: corrections for work in this place that a person approved or nodloop carried out/);
     assert.deepEqual(other, { items: [], text: "", withheld: [] });
     assert.ok((await runs(c)).includes(next));
   } finally {

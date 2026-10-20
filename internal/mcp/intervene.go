@@ -13,7 +13,6 @@ import (
 
 	"github.com/jeon-jihyeon/nodloop/internal/curate"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
-	"github.com/jeon-jihyeon/nodloop/internal/schema"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
 )
 
@@ -77,7 +76,7 @@ func (s *Server) intervene(ctx context.Context, req *sdk.CallToolRequest, in int
 		}
 		by.Proof, by.Person = trace.ProofElicitation, cmp.Or(s.policy.Approver, unnamedPerson)
 	}
-	answer, err := s.Intervene(ctx, r, by)
+	answer, err := s.submit(ctx, r, by)
 	return nil, answer, err
 }
 
@@ -88,35 +87,20 @@ func (s *Server) submitter() curate.Submitter {
 
 // Records the intervention of the submitter and answers it with the record in its published schema
 // A failed export rides on the answer since the intervention is recorded
-func (s *Server) Intervene(ctx context.Context, r curate.Request, by curate.Submitter) (InterveneAnswer, error) {
+func (s *Server) submit(ctx context.Context, r curate.Request, by curate.Submitter) (InterveneAnswer, error) {
 	res, err := s.intervener.Intervene(ctx, r, by)
 	if err != nil && !errors.Is(err, knowledge.ErrExport) {
 		return InterveneAnswer{}, err
 	}
 	s.afterVerdict(ctx)
 	answer := InterveneAnswer{
-		Authority: by.Proof.Authority(), Proof: by.Proof, Records: res.Wrote.Written(), Answer: res.Answer, Since: res.Since, Question: res.Decide,
+		Intervention: published(res.Trace), Authority: by.Proof.Authority(), Proof: by.Proof, Records: res.Wrote.Written(),
+		Answer: res.Answer, Since: res.Since, Question: res.Decide,
 	}
 	if err != nil {
 		answer.ExportError = err.Error()
 	}
-	rec, err := published(res.Trace)
-	answer.Intervention = rec
-	return answer, err
-}
-
-// The trace in the published schema of its kind
-func published(t trace.Trace) (json.RawMessage, error) {
-	ix, err := schema.Published.Index()
-	if err != nil {
-		return nil, err
-	}
-	k, err := ix.Kind(string(t.Name))
-	if err != nil {
-		return nil, err
-	}
-	rec, err := k.Record(t.Record())
-	return rec.JSON, err
+	return answer, nil
 }
 
 // Whether the call may send the confirm form
@@ -160,7 +144,7 @@ func (s *Server) confirm(ctx context.Context, req *sdk.CallToolRequest, r curate
 	return nil, ok && res.Action == "accept", nil
 }
 
-// The forms intervene sent and the client has yet to answer, by their nonce with the payload each asked about
+// The payload each form intervene sent asked about by the nonce of the form
 // The host keeps them across the calls of one process and its call lock serializes every use
 type forms map[string]string
 

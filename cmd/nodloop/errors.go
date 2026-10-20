@@ -26,9 +26,9 @@ var (
 	errConsolidateRunning = errors.New("another consolidate is running")
 	// The mark of the last curate pass is held by another pass
 	errCurateRunning = errors.New("another curate pass is running")
-	// go deletes a go run build on exit so a hook on it would fail open
 	// The marker lock of the record directory is held by another prune
-	errPruneRunning        = errors.New("another prune is running")
+	errPruneRunning = errors.New("another prune is running")
+	// go deletes a go run build on exit so a hook on it would fail open
 	errExecutableTemporary = errors.New("the executable is a temporary go build. Install from a built binary such as one from go install")
 	// A command that names or decides for the person runs only with the terminal proof
 	errPersonOnly = errors.New("only a person at an interactive terminal outside an agent session can run this")
@@ -36,6 +36,8 @@ var (
 	errSessionTrace = errors.New("invalid session trace")
 	// The answer of the reaction member of the capture does not decode
 	errReactionInvalid = errors.New("reaction answer invalid")
+	// A transcript the capture would read that is no transcript Claude Code keeps for the session
+	errTranscriptForeign = errors.New("not the transcript Claude Code keeps for the session")
 	// A path anchor add would designate that names no regular file
 	errAnchorNoFile = errors.New("not a file")
 	// A path anchor remove names that no designated file has

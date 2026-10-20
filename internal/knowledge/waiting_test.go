@@ -31,10 +31,6 @@ func TestSetWaiting(t *testing.T) {
 		}
 		return k
 	}
-	deferred := func(k knowledge.Knowledge, session string, minute int) knowledge.Knowledge {
-		k.DeferredIn, k.Time = session, at.Add(time.Duration(minute)*time.Minute)
-		return k
-	}
 	compacted := record("compacted", 1, knowledge.StatusCandidate, repo, 0)
 	compacted.Compaction = "c1"
 	older := record("old", 1, knowledge.StatusCandidate, repo, 1)
@@ -74,9 +70,8 @@ func TestSetWaiting(t *testing.T) {
 			[]string{"b v1", "a v1"},
 		},
 		{
-			"a corroborate makes a candidate recent again and a legacy deferral does not",
+			"a corroborate makes a candidate recent again",
 			knowledge.Set{
-				deferred(record("b", 1, knowledge.StatusCandidate, repo, 2), "s1", 20),
 				record("a", 1, knowledge.StatusCandidate, repo, 10, "r1"), record("b", 1, knowledge.StatusCandidate, repo, 2),
 				record("a", 1, knowledge.StatusCandidate, repo, 1, "r1"),
 			},
@@ -91,14 +86,12 @@ func TestSetWaiting(t *testing.T) {
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			var got, sessions []string
+			var got []string
 			for _, k := range tc.args.Waiting("session", trace.Labels{"repo": {"nodloop"}}) {
 				got = append(got, fmt.Sprintf("%s v%d", k.ID, k.Version))
-				sessions = append(sessions, k.DeferredIn)
 			}
 
 			assert.Equal(t, tc.want, got)
-			assert.Equal(t, make([]string, len(tc.want)), sessions, "a waiting candidate is the record of its propose or corroborate")
 		})
 	}
 }
@@ -168,57 +161,6 @@ func TestSetRetired(t *testing.T) {
 	}
 }
 
-// A deferral record of an earlier release reads as the candidate it copied and no write carries its session again
-func TestLedgerLegacyDeferral(t *testing.T) {
-	at := time.Date(2026, 10, 9, 0, 0, 0, 0, time.UTC)
-	candidate := runItem("k1", repoRun())
-	candidate.Version, candidate.Status, candidate.Time, candidate.Basis = 1, knowledge.StatusCandidate, at.Add(-2*time.Hour), knowledge.BasisStated
-	deferral := candidate
-	deferral.DeferredIn, deferral.Time = "s1", at.Add(-time.Hour)
-	run := trace.Trace{ID: "run-2", Name: trace.NameRun, Producer: "session", Labels: trace.Labels{"repo": {"nodloop"}}}
-	reject := feedback.Records{{TraceID: "run-2", Verdict: feedback.VerdictReject, Reviewer: "ann", Time: at}}
-	ctx := context.Background()
-	approve := func(l *knowledge.Ledger) (knowledge.Knowledge, error) { return l.Approve(ctx, "k1", 1, "ann") }
-	retire := func(l *knowledge.Ledger) (knowledge.Knowledge, error) { return l.Retire(ctx, "k1", 1, "ann") }
-	corroborate := func(l *knowledge.Ledger) (knowledge.Knowledge, error) {
-		return l.Corroborate(ctx, "k1", 1, run, reject)
-	}
-	type want struct {
-		status knowledge.Status
-		runs   []string
-	}
-	tcs := []struct {
-		name string
-		// The write on the ledger that holds the legacy deferral
-		args func(l *knowledge.Ledger) (knowledge.Knowledge, error)
-		want want
-	}{
-		{"an approval carries no session", approve, want{knowledge.StatusApproved, []string{"run-1"}}},
-		{"a retire carries no session", retire, want{knowledge.StatusRetired, []string{"run-1"}}},
-		{"a corroborate carries no session", corroborate, want{knowledge.StatusCandidate, []string{"run-1", "run-2"}}},
-	}
-	for _, tc := range tcs {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			l := waitingLedger(t, at, candidate, deferral)
-			before, err := l.All(ctx)
-			require.NoError(t, err)
-			waiting := before.Waiting("session", trace.Labels{"repo": {"nodloop"}})
-			require.Len(t, waiting, 1)
-
-			got, err := tc.args(l)
-
-			assert.NoError(t, err)
-			assert.Equal(t, tc.want, want{got.Status, got.Evidence.FeedbackTraceIDs})
-			assert.Equal(t, candidate.Time, waiting[0].Time, "the candidate waits from its propose and not from the deferral")
-			history, err := l.History(ctx, "k1")
-			require.NoError(t, err)
-			assert.Len(t, history, 3)
-			assert.Empty(t, history[0].DeferredIn)
-		})
-	}
-}
-
 // Every waiting candidate of any producer and labels in the Waiting order
 func TestSetAllWaiting(t *testing.T) {
 	candidate := func(id string, run *knowledge.RunScope, runs ...string) knowledge.Knowledge {
@@ -232,8 +174,6 @@ func TestSetAllWaiting(t *testing.T) {
 	approved.Version, approved.Status, approved.Approver = 1, knowledge.StatusApproved, "ann"
 	bot := candidate("bot", &knowledge.RunScope{Producer: "bot"}, "r1")
 	other := candidate("other", &knowledge.RunScope{Producer: "session", Labels: trace.Labels{"repo": {"other"}}}, "r1", "r2")
-	deferredOnly := bot
-	deferredOnly.DeferredIn = "s1"
 	tcs := []struct {
 		name string
 		args knowledge.Set
@@ -247,20 +187,16 @@ func TestSetAllWaiting(t *testing.T) {
 			[]string{"other", "bot"},
 		},
 		{"an approved item alone leaves nothing waiting", knowledge.Set{approved}, nil},
-		{"a legacy deferral whose propose record is missing waits as a candidate", knowledge.Set{deferredOnly}, []string{"bot"}},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			var got []string
-			var sessions string
 			for _, k := range tc.args.AllWaiting() {
 				got = append(got, k.ID)
-				sessions += k.DeferredIn
 			}
 
 			assert.Equal(t, tc.want, got)
-			assert.Empty(t, sessions, "a waiting candidate carries no session")
 		})
 	}
 }
@@ -327,8 +263,6 @@ func TestLedgerCorroborate(t *testing.T) {
 	at := time.Date(2026, 10, 9, 0, 0, 0, 0, time.UTC)
 	candidate := runItem("k1", repoRun())
 	candidate.Version, candidate.Status, candidate.Time, candidate.Basis = 1, knowledge.StatusCandidate, at.Add(-time.Hour), knowledge.BasisStated
-	deferred := candidate
-	deferred.DeferredIn = "s1"
 	approved := candidate
 	approved.Status, approved.Approver, approved.ApprovedAt = knowledge.StatusApproved, "ann", candidate.Time
 	newer := candidate
@@ -365,11 +299,7 @@ func TestLedgerCorroborate(t *testing.T) {
 		args args
 		want want
 	}{
-		{
-			"a corrected run joins the teaching runs past a legacy deferral",
-			args{[]knowledge.Knowledge{candidate, deferred}, 1, run, reject},
-			waits([]string{"run-1", "run-2"}, 3),
-		},
+		{"a corrected run joins the teaching runs", args{[]knowledge.Knowledge{candidate}, 1, run, reject}, waits([]string{"run-1", "run-2"}, 2)},
 		{
 			"a run the candidate already cites appends nothing",
 			args{[]knowledge.Knowledge{candidate}, 1, cited, feedback.Records{{TraceID: "run-1", Verdict: feedback.VerdictReject, Reviewer: "ann", Time: at}}},
@@ -403,7 +333,6 @@ func TestLedgerCorroborate(t *testing.T) {
 			assert.Equal(t, tc.want.content, got.Content, "the text a person approves never changes")
 			assert.Equal(t, tc.want.status, got.Status)
 			assert.Equal(t, tc.want.scope, got.Run)
-			assert.Empty(t, got.DeferredIn)
 		})
 	}
 }

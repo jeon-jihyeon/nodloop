@@ -29,6 +29,8 @@ type Config struct {
 // An absent backend reads as claude
 // 1. a chat backend needs a model since an endpoint has no default of its own
 // 2. a base URL with a user or a password is refused since config.json and config list would keep it in the open
+// 3. a base URL with a query or a fragment is refused without quoting it
+// The path is joined after the base so the query would cut it off, and a token in it would reach config list and hook.log
 func (c Config) Check() error {
 	switch c.Backend {
 	case "", BackendClaude:
@@ -40,6 +42,9 @@ func (c Config) Check() error {
 		}
 		if u.User != nil {
 			return ErrBaseURLCredentials
+		}
+		if u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
+			return fmt.Errorf("%w: a query or a fragment, since /chat/completions is joined after the base", ErrBaseURLInvalid)
 		}
 		if c.Model == "" {
 			return ErrModelRequired

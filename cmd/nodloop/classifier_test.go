@@ -80,11 +80,11 @@ func TestRunClassifier(t *testing.T) {
 			getenv := func(k string) string { return map[string]string{"HOME": home}[k] }
 			for _, args := range tc.args.setup {
 				var stderr bytes.Buffer
-				require.Equal(t, 0, runClassifier(args, getenv, time.Now, &bytes.Buffer{}, &stderr), stderr.String())
+				require.Equal(t, 0, runClassifier(args, getenv, time.Now, atTerminal, &bytes.Buffer{}, &stderr), stderr.String())
 			}
 			var stdout, stderr bytes.Buffer
 
-			code := runClassifier(tc.args.args, getenv, time.Now, &stdout, &stderr)
+			code := runClassifier(tc.args.args, getenv, time.Now, atTerminal, &stdout, &stderr)
 
 			assert.Equal(t, tc.want.code, code)
 			assert.Equal(t, tc.want.stdout, stdout.String())
@@ -151,7 +151,7 @@ func TestRunClassifierLegacyConfig(t *testing.T) {
 			getenv := func(k string) string { return map[string]string{"HOME": string(home)}[k] }
 			var stdout, stderr bytes.Buffer
 
-			code := runClassifier(tc.args, getenv, time.Now, &stdout, &stderr)
+			code := runClassifier(tc.args, getenv, time.Now, atTerminal, &stdout, &stderr)
 
 			assert.Equal(t, tc.want.code, code)
 			assert.Equal(t, tc.want.stdout, stdout.String())
@@ -186,7 +186,7 @@ func TestRunClassifierKeepsConfig(t *testing.T) {
 			getenv := func(k string) string { return map[string]string{"HOME": string(home)}[k] }
 			var stderr bytes.Buffer
 
-			code := runClassifier(tc.args, getenv, time.Now, &bytes.Buffer{}, &stderr)
+			code := runClassifier(tc.args, getenv, time.Now, atTerminal, &bytes.Buffer{}, &stderr)
 
 			require.Equal(t, 0, code, stderr.String())
 			saved, err := os.ReadFile(home.config().ConfigPath())
@@ -206,10 +206,10 @@ func TestRunClassifierProbe(t *testing.T) {
 	t.Cleanup(srv.Close)
 	home := t.TempDir()
 	getenv := func(k string) string { return map[string]string{"HOME": home, "LAYA_KEY": "secret"}[k] }
-	require.Equal(t, 0, runClassifier([]string{"set", "critic", "--url", srv.URL, "--key-env", "LAYA_KEY"}, getenv, time.Now, &bytes.Buffer{}, &bytes.Buffer{}))
+	require.Equal(t, 0, runClassifier([]string{"set", "critic", "--url", srv.URL, "--key-env", "LAYA_KEY"}, getenv, time.Now, trace.ProofNone, &bytes.Buffer{}, &bytes.Buffer{}))
 	var stdout, stderr bytes.Buffer
 
-	code := runClassifier([]string{"probe", "critic"}, getenv, time.Now, &stdout, &stderr)
+	code := runClassifier([]string{"probe", "critic"}, getenv, time.Now, trace.ProofNone, &stdout, &stderr)
 
 	require.Equal(t, 0, code, stderr.String())
 	assert.True(t, strings.HasPrefix(stdout.String(), "critic\t"+strings.TrimPrefix(srv.URL, "http://")+"\tblue 0.97\t"), stdout.String())
@@ -246,7 +246,7 @@ func TestRunKnowledgeExtractClassifier(t *testing.T) {
 			getenv := func(k string) string { return map[string]string{"HOME": home, envRecordDir: records}[k] }
 			now := func() time.Time { return at }
 			for _, args := range tc.setup {
-				require.Equal(t, 0, runClassifier(args, getenv, now, &bytes.Buffer{}, &bytes.Buffer{}))
+				require.Equal(t, 0, runClassifier(args, getenv, now, atTerminal, &bytes.Buffer{}, &bytes.Buffer{}))
 			}
 			out := filepath.Join(home, "out.txt")
 			require.NoError(t, os.WriteFile(out, []byte("cd repo && git status"), 0o600))

@@ -85,7 +85,7 @@ type kindTable []publishedKind
 var publishedKinds = kindTable{
 	traceKind(trace.NameRun, "An output a producer recorded with the items it applied or a holdout withheld",
 		reflect.TypeFor[knowledge.RunInput](), reflect.TypeFor[json.RawMessage](),
-		[]string{"session_id", "input.applied", "input.withheld", "input.unit", "input.continued"}, []string{"output"}),
+		[]string{"session_id", "input.applied", "input.withheld", "input.held", "input.eligible", "input.unit", "input.continued"}, []string{"output"}),
 	traceKind(trace.NameCheck, "The coverage check of a compaction",
 		reflect.TypeFor[struct{}](), reflect.TypeFor[knowledge.Coverage](),
 		[]string{"session_id", "output.items.old", "output.items.covered_by"}, []string{"output.items.lost"}),
@@ -95,7 +95,7 @@ var publishedKinds = kindTable{
 	traceKind(trace.NameExtract, "One extraction of a lesson from a corrected run with its drafts and conclusion",
 		reflect.TypeFor[extract.TraceInput](), reflect.TypeFor[extract.Record](),
 		[]string{"ref", "input.verdict_id", "output.attempts.classify", "output.candidate", "output.related"},
-		[]string{"output.attempts.draft", "output.attempts.critique", "output.attempts.error"}).
+		[]string{"output.attempts.draft", "output.attempts.critique", "output.attempts.error", "error"}).
 		withFree("output.attempts.draft.kind").withRef(trace.NameRun),
 	traceKind(trace.NameReplay, "A lesson judged against the recorded outputs it should and should not change",
 		reflect.TypeFor[replay.TraceInput](), reflect.TypeFor[replay.Result](),

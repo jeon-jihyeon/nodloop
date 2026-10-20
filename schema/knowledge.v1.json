@@ -232,9 +232,6 @@
     "compaction_size": {
       "type": "integer"
     },
-    "deferred_in": {
-      "type": "string"
-    },
     "schema_version": {
       "type": "integer",
       "const": 1

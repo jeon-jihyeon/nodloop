@@ -27,7 +27,7 @@ const (
 	ConclusionDuplicate    Conclusion = "duplicate"    // an approved item already says it
 	ConclusionConflict     Conclusion = "conflict"     // an approved item or a waiting candidate says the opposite and the draft became its next version
 	ConclusionRefused      Conclusion = "refused"      // the code checks or the critic or the ledger refused the last draft
-	ConclusionFailed       Conclusion = "failed"       // a model call failed so no draft was judged
+	ConclusionFailed       Conclusion = "failed"       // a draft or critic call failed or did not decode so the critic never judged the last draft
 )
 
 // What refused a draft
@@ -138,16 +138,11 @@ type extraction struct {
 
 // Appends the extract trace of the reaction and returns the error of the extraction joined with any failure to record it
 func (e *Extractor) record(ctx context.Context, r Reaction, path Path, rec Record, x extraction, failed error) error {
-	input, err := json.Marshal(TraceInput{
+	// Strings, numbers and bools alone always encode
+	input, _ := json.Marshal(TraceInput{
 		Verdict: string(r.Verdict.Verdict), ReasonCode: string(r.Verdict.ReasonCode), Reviewer: r.Verdict.Reviewer, VerdictID: r.Verdict.RecordID(),
 	})
-	if err != nil {
-		return errors.Join(failed, err)
-	}
-	output, err := json.Marshal(rec)
-	if err != nil {
-		return errors.Join(failed, err)
-	}
+	output, _ := json.Marshal(rec)
 	now := e.now()
 	tr := trace.Trace{
 		ID: x.id, Name: trace.NameExtract, Subject: string(path), Ref: r.Run.ID, Time: now, Model: x.model,

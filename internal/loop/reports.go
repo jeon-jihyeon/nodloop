@@ -66,7 +66,7 @@ func (s Snapshot) Extractions() []ExtractRow {
 }
 
 func (s Snapshot) Critics() CriticReport {
-	return CriticReport{Critics: s.runs.Critics(s.items, s.traces), Reactions: s.runs.Reactions(s.traces)}
+	return CriticReport{Critics: s.runs.Critics(s.items, s.traces), Reactions: s.runs.Reactions(s.traces), Capture: s.runs.Capture()}
 }
 
 func (s Snapshot) Effect() []EffectRow {
@@ -96,7 +96,7 @@ func (n ReportName) traces() []trace.Name {
 	case ReportLoop, ReportExtract:
 		return []trace.Name{trace.NameRun, trace.NameExtract}
 	case ReportCritic:
-		return []trace.Name{trace.NameExtract, trace.NameClassify}
+		return []trace.Name{trace.NameExtract, trace.NameClassify, trace.NameCapture}
 	case ReportEffect:
 		return []trace.Name{trace.NameRun, trace.NameRollup}
 	case ReportReplay:
@@ -121,6 +121,7 @@ func (s Stores) Snapshot(ctx context.Context, name ReportName) (Snapshot, error)
 // 2. a cycle is read whole from its start since no prune removes a run of a cycle that has no rollup
 // 3. a closed cycle with a rollup reads from the rollup and the runs a prune left in it count nothing
 // So the counts of a closed cycle are the same before and after the prune of its runs
+// The knob traces that mark the cycles join the traces of the names so no reader of the snapshot reads them twice
 func (s Stores) cycled(ctx context.Context, names []trace.Name) (Snapshot, error) {
 	marks, err := s.list(ctx, trace.NameKnob, s.Since)
 	if err != nil {
@@ -135,6 +136,7 @@ func (s Stores) cycled(ctx context.Context, names []trace.Name) (Snapshot, error
 		return Snapshot{}, err
 	}
 	outcomes, err := s.Outcomes.List(ctx, "")
+	snap.traces = append(snap.traces, marks...)
 	snap.outcomes, snap.rollups = feedback.RestoreOutcomes(outcomes), NewRollups(snap.traces)
 	return snap, err
 }

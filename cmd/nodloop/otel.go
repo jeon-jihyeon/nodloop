@@ -37,7 +37,8 @@ type otelConfig struct {
 	Content bool `json:"content,omitempty"`
 }
 
-// An endpoint must be an http URL without a user or a password since the config file is no secret store
+// An endpoint must be an http URL without a user, a password or a query since the config file is no secret store
+// The signal paths are joined after the base so a query would also cut them off
 func (c otelConfig) check() error {
 	u, err := url.Parse(c.Endpoint)
 	switch {
@@ -45,7 +46,7 @@ func (c otelConfig) check() error {
 		return fmt.Errorf("%w: %w", errOTelEndpoint, err)
 	case u.Scheme != "http" && u.Scheme != "https" || u.Host == "":
 		return fmt.Errorf("%w: %q is not an http or https URL", errOTelEndpoint, c.Endpoint)
-	case u.User != nil:
+	case u.User != nil, u.RawQuery != "" || u.ForceQuery, u.Fragment != "":
 		return fmt.Errorf("%w: put the credentials in the variable of --headers-env and not in the URL", errOTelEndpoint)
 	case c.Protocol != "" && !c.Protocol.Valid():
 		return fmt.Errorf("%w %q. Use %s or %s", errOTelProtocol, c.Protocol, otel.ProtocolProtobuf, otel.ProtocolJSON)

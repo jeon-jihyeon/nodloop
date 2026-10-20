@@ -262,7 +262,8 @@ func (c *Client) Records(ctx context.Context, q Query) (Page, error) {
 
 // One report of the records as JSON in the shape the MCP tool report and nodloop report --json answer
 //
-// Deprecated: Records carries the published contract, so page the raw records instead. Report is removed in the next release
+// Deprecated: Records carries the published contract so page the raw records instead
+// Report is removed in the next release
 //
 // 1. a name that names no report fails with ErrReportUnknown
 // 2. the runs are read from the later of the WithRetention cutoff and the cutoff of the last prune of the directory
@@ -450,8 +451,7 @@ func (c *Client) fromRun(ctx context.Context, id string, draft knowledge.Knowled
 }
 
 // Records the approval of a candidate version as an agent proposal and returns it
-// 1. a call in process proves no person so the version stays as it is until the person decides it
-// from a terminal or under a person key of nodloop-server
+// 1. a call in process proves no person so the version stays as it is until the person decides it at a terminal or under a person key of nodloop-server
 // 2. an empty name fails with ErrApproverRequired and the reserved name with ErrApproverReserved
 // 3. an unknown version fails with ErrNotFound
 func (c *Client) Approve(ctx context.Context, id string, version int, approver string) (Intervention, error) {
@@ -484,7 +484,8 @@ func (c *Client) Retire(ctx context.Context, id string, version int, approver st
 // One intervention of the write side as a caller submits it and as the records keep it
 // The package records every intervention but a digest as an agent proposal since a call in process proves no person
 type Intervention struct {
-	// The trace id of the intervention record, set on what Intervene answers
+	// The trace id of the intervention record
+	// Set on what Intervene answers
 	ID     string
 	Action InterventionAction
 	// What it acts on as Target names it: an item version as id:version, a compaction, the decide of a question, the change kind of a pause,

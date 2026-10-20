@@ -314,7 +314,7 @@ func (s Set) propose(draft Knowledge, now time.Time) (Knowledge, error) {
 	}
 	draft.Version, draft.Status, draft.Time = s.nextVersion(draft.ID), StatusCandidate, now
 	draft.Approver, draft.ApprovedAt, draft.ReviewedAt, draft.Supersedes = "", time.Time{}, time.Time{}, 0
-	draft.Compaction, draft.CompactionSize, draft.Base, draft.DeferredIn, draft.Reason, draft.Decision = "", 0, 0, "", "", ""
+	draft.Compaction, draft.CompactionSize, draft.Base, draft.Reason, draft.Decision = "", 0, 0, "", ""
 	if cur := s.current(draft.ID); cur != nil {
 		draft.Base = cur.Version
 	}

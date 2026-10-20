@@ -62,7 +62,7 @@ func (r Run) span(content bool) span {
 		s.Attributes = append(s.Attributes, str("output.value", text(r.Output)), str("output.mime_type", "text/plain"))
 	}
 	if r.Error != "" {
-		s.failed("nodloop.run_failed", r.Error)
+		s.failed("nodloop.run_failed", r.Error, content)
 	}
 	return s
 }
@@ -136,7 +136,7 @@ func (e Evaluation) span(content bool) span {
 // The model step as an invoke_agent root and its inference child when a model ran
 // 1. the root names the step in the trace list of every tool
 // 2. the child is the inference span whose usage and cost the tools read
-func (c Call) spans() []span {
+func (c Call) spans(content bool) []span {
 	ids := TraceSpan(c.ID)
 	agent := "nodloop." + c.Name
 	root := span{
@@ -157,7 +157,7 @@ func (c Call) spans() []span {
 		root.Links = append(root.Links, link(l))
 	}
 	if c.Error != "" {
-		root.failed("nodloop."+c.Name+"_failed", c.Error)
+		root.failed("nodloop."+c.Name+"_failed", c.Error, content)
 	}
 	if c.Model == "" && c.Usage.empty() {
 		return []span{root}
@@ -204,10 +204,14 @@ func (c Call) inference(root span) span {
 	return s
 }
 
-// Marks the span failed with the error type and the error as its status message
-func (s *span) failed(errorType, message string) {
+// Marks the span failed with the error type and with content the error as its status message
+// An error may quote what a model or a producer wrote such as the refusal of a critic
+func (s *span) failed(errorType, message string, content bool) {
 	s.Attributes = append(s.Attributes, str("error.type", errorType))
-	s.Status = &status{Code: statusError, Message: message}
+	s.Status = &status{Code: statusError}
+	if content {
+		s.Status.Message = message
+	}
 }
 
 func (r Ref) ref() string {

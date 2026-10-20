@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/jeon-jihyeon/nodloop/internal/compact"
 	"github.com/jeon-jihyeon/nodloop/internal/extract"
-	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	"github.com/jeon-jihyeon/nodloop/internal/llm"
 )
 
@@ -19,7 +19,7 @@ func (f knowledgeFlags) runExtract(ctx context.Context, a app, client llm.Client
 	return f.extractRun(ctx, a, client, getenv, f.from, stdout)
 }
 
-// The extraction of one run that knowledge extract and the daily gaps of curate share
+// The extraction of one run that knowledge extract, the capture and the daily gaps of curate share
 func (f knowledgeFlags) extractRun(ctx context.Context, a app, client llm.Client, getenv func(string) string, runID string, stdout io.Writer) error {
 	ledger, err := a.ledger()
 	if err != nil {
@@ -55,7 +55,11 @@ func (f knowledgeFlags) extractRun(ctx context.Context, a app, client llm.Client
 		for _, o := range res.Overlaps {
 			fmt.Fprintf(stdout, "overlap\t%s\tv%d\t%s\n", o.ID, o.Version, o.Content)
 		}
-		prepared = f.prepareCompaction(ctx, a, ledger, client, *k, stdout)
+		// The compaction calls go through the client and not the meter since the extract trace counts only the drafter and the critic
+		cmd := compactionCommand{ledger: ledger, compactor: compact.New(ledger, traces, verdicts, traces, a.now), client: client, out: stdout}
+		if err := cmd.prepare(ctx, *k, f.model, f.author); err != nil {
+			prepared = fmt.Errorf("prepared compaction: %w", err)
+		}
 	}
 	next := extractNext[res.Relation]
 	switch {
@@ -66,22 +70,6 @@ func (f knowledgeFlags) extractRun(ctx context.Context, a app, client llm.Client
 	}
 	fmt.Fprintf(stdout, "next\t%s\n", next)
 	return prepared
-}
-
-// Drafts the compaction an approval of the candidate needs through the same client
-// The calls are not metered since the extract trace counts only the drafter and the critic
-func (f knowledgeFlags) prepareCompaction(
-	ctx context.Context, a app, ledger *knowledge.Ledger, client llm.Client, candidate knowledge.Knowledge, stdout io.Writer,
-) error {
-	compactor, err := a.compactor(ledger)
-	if err != nil {
-		return err
-	}
-	cmd := compactionCommand{ledger: ledger, compactor: compactor, client: client, out: stdout}
-	if err := cmd.prepare(ctx, candidate, f.model, f.author); err != nil {
-		return fmt.Errorf("prepared compaction: %w", err)
-	}
-	return nil
 }
 
 // What happens after a duplicate of a waiting candidate

@@ -94,13 +94,13 @@ func (m knobMark) cycles(next, now time.Time) (Cycles, bool) {
 // 2. the next one starts where it ends with the same length until a knob trace records another
 // So a cycle closes by its length even when no later pass started the next one
 // 3. a cycle ends early where a later knob trace starts one
-// 4. a trace of another name, a knob trace that does not decode and one without a positive length mark nothing
-// So there is no cycle before the first knob trace
+// 4. a trace of another name, a knob trace that does not decode and one without a start or a positive length mark nothing
+// So there is no cycle before the first knob trace and none from year one on
 func (ts Traces) Cycles(now time.Time) Cycles {
 	marks := map[string]knobMark{}
 	for _, t := range ts {
 		m := knobMark{at: t.Time, id: t.ID}
-		if t.Name != NameKnob || json.Unmarshal(t.Input, &m) != nil || m.CycleID == "" || m.Knobs.CycleWeeks <= 0 {
+		if t.Name != NameKnob || json.Unmarshal(t.Input, &m) != nil || m.CycleID == "" || m.Start.IsZero() || m.Knobs.CycleWeeks <= 0 {
 			continue
 		}
 		if old, ok := marks[m.CycleID]; ok && !m.earlier(old) {

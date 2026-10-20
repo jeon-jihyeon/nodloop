@@ -65,9 +65,9 @@ func (e events) overturns(asked units, carried map[knowledge.Ref]bool, items kno
 	for _, in := range e.interventions {
 		switch {
 		case in.in.Authority != trace.AuthorityPerson:
-		case in.in.Action == string(trace.ActionJudge) && in.in.Choice == string(trace.ChoiceUndo) && carried[knowledge.Ref{ID: in.in.ID, Version: in.in.Version}]:
+		case in.in.Action == trace.ActionJudge && in.in.Choice == trace.ChoiceUndo && carried[knowledge.Ref{ID: in.in.ID, Version: in.in.Version}]:
 			out.Undo++
-		case in.in.Action == actionPause:
+		case in.in.Action == trace.ActionPause:
 			out.Pause++
 		}
 	}

@@ -3,6 +3,7 @@ package trace
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"slices"
 	"time"
 )
@@ -38,9 +39,10 @@ func (p Proof) Valid() bool {
 	return slices.Contains(Proofs(), p)
 }
 
-// A person for every proof but none
+// A person for every known proof but none
+// An empty or unknown proof is an agent's so a caller that forgot to set one never writes as the person
 func (p Proof) Authority() Authority {
-	if p == ProofNone {
+	if p == ProofNone || !p.Valid() {
 		return AuthorityAgent
 	}
 	return AuthorityPerson
@@ -178,17 +180,12 @@ func (in Intervention) Trace(id, session string, source Source, out Intervention
 		return Trace{}, fmt.Errorf("%w: source %q is not one the person chose", ErrInterventionInvalid, source)
 	}
 	in.Authority = in.Proof.Authority()
-	input, err := json.Marshal(in)
-	if err != nil {
-		return Trace{}, err
-	}
 	if out.Records == nil {
 		out.Records = []Written{}
 	}
-	output, err := json.Marshal(out)
-	if err != nil {
-		return Trace{}, err
-	}
+	// check refused every knob value JSON cannot hold so both always encode
+	input, _ := json.Marshal(in)
+	output, _ := json.Marshal(out)
 	if id == "" {
 		id = NewID(now)
 	}
@@ -205,6 +202,8 @@ func (in Intervention) check(out InterventionOutput) error {
 		return fmt.Errorf("%w: unknown choice %q", ErrInterventionInvalid, in.Choice)
 	case !in.Proof.Valid():
 		return fmt.Errorf("%w: unknown proof %q", ErrInterventionInvalid, in.Proof)
+	case !finite(in.Value) || !finite(in.Before):
+		return fmt.Errorf("%w: a knob value is no finite number", ErrInterventionInvalid)
 	case in.Proof.Authority() == AuthorityPerson && in.Person == "":
 		return fmt.Errorf("%w: a person's intervention names the person", ErrInterventionInvalid)
 	case in.Proof.Authority() == AuthorityAgent && (in.Person != "" || out.wrote()):
@@ -213,6 +212,11 @@ func (in Intervention) check(out InterventionOutput) error {
 		return fmt.Errorf("%w: a %s names %s", ErrInterventionInvalid, in.Action, in.Action.needs())
 	}
 	return nil
+}
+
+// Whether a knob value is absent or a number JSON can hold
+func finite(v *float64) bool {
+	return v == nil || !math.IsNaN(*v) && !math.IsInf(*v, 0)
 }
 
 // Whether the intervention names what its action acts on

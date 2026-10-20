@@ -17,6 +17,7 @@ import (
 	"github.com/jeon-jihyeon/nodloop/internal/llm"
 	"github.com/jeon-jihyeon/nodloop/internal/llm/llmmock"
 	"github.com/jeon-jihyeon/nodloop/internal/testkit"
+	"github.com/jeon-jihyeon/nodloop/internal/trace"
 	"github.com/jeon-jihyeon/nodloop/internal/userconfig"
 )
 
@@ -112,7 +113,7 @@ func TestRunLLMProbe(t *testing.T) {
 			client.EXPECT().Complete(gomock.Any(), req).Return(tc.args.res, tc.args.err)
 			var stdout, stderr bytes.Buffer
 
-			code := runLLM(tc.args.args, llmEnv(home, tc.args.homeless), client, testkit.Open(t).Clock.Now, &stdout, &stderr)
+			code := runLLM(tc.args.args, llmEnv(home, tc.args.homeless), client, testkit.Open(t).Clock.Now, trace.ProofNone, &stdout, &stderr)
 
 			assert.Equal(t, tc.want.code, code)
 			assert.Equal(t, tc.want.stdout, stdout.String())
@@ -164,6 +165,7 @@ func TestRunLLM(t *testing.T) {
 		{"set without a home is refused", args{[]string{"set", "claude"}, "", true}, want{1, "", "home directory unknown", ""}},
 		{"unset without a home is refused", args{[]string{"unset"}, "", true}, want{1, "", "home directory unknown", ""}},
 		{"a broken config is not overwritten", args{[]string{"unset"}, "{broken", false}, want{1, "", "is not valid JSON", "{broken"}},
+		{"a broken config keeps set from saving", args{[]string{"set", "claude"}, "{broken", false}, want{1, "", "is not valid JSON", "{broken"}},
 		{"a broken config fails the probe", args{[]string{"probe"}, "{broken", false}, want{1, "", "is not valid JSON", "{broken"}},
 		{"another action is refused", args{[]string{"list"}, "", false}, want{1, "", "unknown action", ""}},
 		{"no action is refused", args{nil, "", false}, want{1, "", "an action is required", ""}},
@@ -174,7 +176,7 @@ func TestRunLLM(t *testing.T) {
 			home := savedHome(t, tc.args.saved)
 			var stdout, stderr bytes.Buffer
 
-			code := runLLM(tc.args.args, llmEnv(home, tc.args.homeless), nil, testkit.Open(t).Clock.Now, &stdout, &stderr)
+			code := runLLM(tc.args.args, llmEnv(home, tc.args.homeless), nil, testkit.Open(t).Clock.Now, atTerminal, &stdout, &stderr)
 
 			assert.Equal(t, tc.want.code, code)
 			assert.Equal(t, tc.want.stdout, stdout.String())

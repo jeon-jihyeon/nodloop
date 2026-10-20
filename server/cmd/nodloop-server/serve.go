@@ -55,9 +55,8 @@ func runServe(args []string, getenv func(string) string, now func() time.Time, s
 	if len(uc.Server.Keys) == 0 {
 		return fail(stderr, "serve", fmt.Errorf("%w. Add one with nodloop-server key add", errNoKeys))
 	}
-	// A key name becomes the approver of every judgment under it
-	if uc.Server.has(knowledge.ApproverNodloop) {
-		return fail(stderr, "serve", fmt.Errorf("%w: remove the key %s and add it again under another name", knowledge.ErrApproverReserved, knowledge.ApproverNodloop))
+	if err := uc.Server.check(); err != nil {
+		return fail(stderr, "serve", err)
 	}
 	policy := mcp.Policy{Holdout: knowledge.Holdout(uc.Holdout), Retention: retain.Days(uc.Retention), Build: buildVersion()}
 	if err := errors.Join(policy.Holdout.Check(), policy.Retention.Check()); err != nil {
@@ -111,7 +110,7 @@ func runServe(args []string, getenv func(string) string, now func() time.Time, s
 // 3. one host per key so its calls are serialized like a stdio server while keys of one tenant share the file locks of its records
 // 4. GET /v1/records/{kind} answers a page of the raw records of a kind to a key whose role may read records
 // 5. POST /v1/interventions records one intervention of the write side through the host of the key so it serializes with its tool calls
-// 6. GET /v1/reports/{name} answers a report as JSON for a dashboard to a key whose role may read reports, deprecated for the record pages
+// 6. GET /v1/reports/{name} answers a report as JSON to a key whose role may read reports until the record pages replace it in the next release
 // 7. GET /healthz and GET /v1/openapi.json answer without a key so a load balancer probes it and a client reads the contract
 type serveHandler struct {
 	stores tenantStores
@@ -139,7 +138,7 @@ func newServeHandler(stores tenantStores, config serverConfig, now func() time.T
 	h.mcp = sdk.NewStreamableHTTPHandler(h.server, &sdk.StreamableHTTPOptions{Stateless: true})
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { fmt.Fprintln(w, "ok") })
-	mux.Handle("GET /v1/openapi.json", openAPIHandler{files: schema.Published, version: buildVersion(), log: log})
+	mux.Handle("GET /v1/openapi.json", newOpenAPIHandler(schema.Published, buildVersion(), log))
 	mux.Handle("GET /v1/records/{kind}", h.authorized(http.HandlerFunc(h.records)))
 	mux.Handle("POST /v1/interventions", h.authorized(http.HandlerFunc(h.interventions)))
 	mux.Handle("GET /v1/reports/{name}", h.authorized(http.HandlerFunc(h.report)))
@@ -273,7 +272,8 @@ func (h *serveHandler) hostOf(key serverKey) keyHost {
 	return kh
 }
 
-// What a payload the records cannot carry out names, answered 422 with the refusal
+// What a payload the records cannot carry out names
+// Each is answered 422 with the refusal and any other failure 500 without its cause
 var refusals = []error{
 	curate.ErrTargetInvalid, trace.ErrInterventionInvalid, knowledge.ErrApproverRequired, knowledge.ErrTransitionInvalid, knowledge.ErrNotFound,
 	knowledge.ErrFolderFull, knowledge.ErrScopeWidened, knowledge.ErrVetoLifted, knowledge.ErrCandidateOutdated, knowledge.ErrScopeUnobserved,

@@ -40,7 +40,7 @@ func (s state) describe(in trace.Intervention) string {
 	case trace.ActionResume:
 		return "End the pause you set, so nodloop carries out again only what you had opened"
 	case trace.ActionKnob:
-		return fmt.Sprintf("Set %s to %g from the next cycle", knobWords(KnobName(in.Knob)), *in.Value)
+		return fmt.Sprintf("Set %s to %g from the next cycle", KnobName(in.Knob).words(), *in.Value)
 	case trace.ActionReanchor:
 		return fmt.Sprintf("Take the lessons nodloop approved for %s as your own", knowledge.RunScope{Producer: in.Target, Labels: in.Labels})
 	case trace.ActionReverse:
@@ -93,7 +93,7 @@ func labelWords(labels trace.Labels) string {
 	return strings.Join(parts, " and ")
 }
 
-func knobWords(n KnobName) string {
+func (n KnobName) words() string {
 	switch n {
 	case KnobAuditTier0:
 		return "the share of rule decisions checked with you"

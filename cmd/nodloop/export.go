@@ -12,7 +12,10 @@ import (
 	"strings"
 	"time"
 
+	feedbackfile "github.com/jeon-jihyeon/nodloop/internal/feedback/file"
+	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	"github.com/jeon-jihyeon/nodloop/internal/otel"
+	tracefile "github.com/jeon-jihyeon/nodloop/internal/trace/file"
 )
 
 // Time one export request may take before the collector counts as down
@@ -36,25 +39,27 @@ func (h *headerFlag) Set(v string) error {
 }
 
 // The headers of a variable in the OTEL_EXPORTER_OTLP_HEADERS format that a --header flag left out
-// The variable holds comma separated name=value pairs with URL encoded values
+// 1. the variable holds comma separated name=value pairs with URL encoded values
+// 2. an error names the variable and never a part of a value since a value holds a token and a detached export writes its error to hook.log
 func (h *headerFlag) fill(name, env string) error {
+	if *h == nil {
+		*h = headerFlag{}
+	}
 	for pair := range strings.SplitSeq(env, ",") {
 		if strings.TrimSpace(pair) == "" {
 			continue
 		}
 		key, value, ok := strings.Cut(pair, "=")
-		if !ok {
+		key = strings.TrimSpace(key)
+		if !ok || key == "" {
 			return fmt.Errorf("%w: %s holds a pair that is not name=value", errHeaderFlag, name)
 		}
 		decoded, err := url.QueryUnescape(strings.TrimSpace(value))
 		if err != nil {
-			return fmt.Errorf("%w: %s: %w", errHeaderFlag, name, err)
+			return fmt.Errorf("%w: %s holds a value that is not URL encoded", errHeaderFlag, name)
 		}
-		if _, set := (*h)[strings.TrimSpace(key)]; set {
-			continue
-		}
-		if err := h.Set(strings.TrimSpace(key) + "=" + decoded); err != nil {
-			return err
+		if _, set := (*h)[key]; !set {
+			(*h)[key] = decoded
 		}
 	}
 	return nil
@@ -71,7 +76,7 @@ type exportFlags struct {
 // Where the export sends
 // 1. --endpoint names a traces URL and sends traces only with the --header headers
 // 2. else the otel key of config.json with the headers of the variable it names
-// 3. else the OTEL_EXPORTER_OTLP variables with their headers, since a person or an SDK producer may run it outside Claude Code
+// 3. else the OTEL_EXPORTER_OTLP variables with their headers since a person or an SDK producer may run it outside Claude Code
 // 4. the protocol is --protocol, then the config or the environment, then http/protobuf
 func (f exportFlags) target(saved *otelConfig, getenv func(string) string) (otel.Config, error) {
 	headers := headerFlag{}
@@ -164,7 +169,10 @@ func runExport(args []string, getenv func(string) string, now func() time.Time, 
 	// A redirect fails as its status since following it would carry the records and the headers to an endpoint nobody named
 	cfg.Client = &http.Client{Timeout: exportTimeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	cfg.Version = buildVersion()
-	c := exportCommand{app: a, out: stdout, exporter: otel.New(cfg)}
+	c, err := a.exportCommand(otel.New(cfg), stdout)
+	if err != nil {
+		return fail(stderr, "export", err)
+	}
 	if *pending {
 		err = c.pending(context.Background())
 	} else {
@@ -177,53 +185,73 @@ func runExport(args []string, getenv func(string) string, now func() time.Time, 
 }
 
 type exportCommand struct {
-	app      app
+	// The record directory whose mark --pending moves
+	dir      string
+	traces   *tracefile.Store
+	verdicts *feedbackfile.Store
+	outcomes *feedbackfile.OutcomeStore
+	ledger   *knowledge.Ledger
 	out      io.Writer
 	exporter *otel.Exporter
 }
 
-// Sends every record from the time on
-func (c exportCommand) since(ctx context.Context, since time.Time) error {
-	recs, err := c.read(ctx, since)
+// The export over the stores of the record directory each opened once
+func (a app) exportCommand(exporter *otel.Exporter, out io.Writer) (exportCommand, error) {
+	traces, err := a.traces()
 	if err != nil {
-		return err
+		return exportCommand{}, err
 	}
-	return c.send(ctx, recs)
+	verdicts, err := a.feedback()
+	if err != nil {
+		return exportCommand{}, err
+	}
+	outcomes, err := a.outcomes()
+	if err != nil {
+		return exportCommand{}, err
+	}
+	ledger, err := a.ledger()
+	if err != nil {
+		return exportCommand{}, err
+	}
+	// The record directory exists once the stores above opened
+	return exportCommand{
+		dir: a.cfg.recordDir, traces: traces, verdicts: verdicts, outcomes: outcomes, ledger: ledger, out: out, exporter: exporter,
+	}, nil
 }
 
-// Sends the records recorded after the mark and then moves the mark
-// 1. another export holding the mark ends this one at once since it sends the same records
-// 2. a failure leaves the mark where it was so the next export sends them again under the same ids
-// 3. the mark moves to the newest record sent and not to the clock so a record written during the export goes next time
-func (c exportCommand) pending(ctx context.Context) (err error) {
-	dir, err := c.app.makeRecordDir()
+// Sends every record stamped at the time or later
+func (c exportCommand) since(ctx context.Context, since time.Time) error {
+	all, err := c.stored(ctx)
 	if err != nil {
 		return err
 	}
-	held, err := otel.NewMarker(dir).Hold()
+	return c.send(ctx, all.lookup(), all.since(since))
+}
+
+// Sends the records each store appended after the mark and then moves the mark
+// 1. another export holding the mark ends this one at once since it sends the same records
+// 2. a failure leaves the mark where it was so the next export sends them again under the same ids
+// 3. the mark keeps the newest record each store held when read so a record a slower process appends later goes next time whatever its time
+func (c exportCommand) pending(ctx context.Context) (err error) {
+	held, err := otel.NewMarker(c.dir).Hold()
 	if err != nil || held == nil {
 		return err
 	}
 	defer func() { err = errors.Join(err, held.Release()) }()
-	recs, err := c.read(ctx, held.At)
+	all, err := c.stored(ctx)
 	if err != nil {
 		return err
 	}
-	fresh := recs.after(held.At)
-	newest := fresh.newest(held.At)
-	if err := c.send(ctx, fresh); err != nil || newest.Equal(held.At) {
+	fresh := all.after(held.Mark)
+	if err := c.send(ctx, all.lookup(), fresh); err != nil {
 		return err
 	}
-	return held.Move(newest)
+	return held.Move(otel.Mark{At: fresh.newest(held.At), After: all.cursors(held.After)})
 }
 
-// Sends the records and prints what went out
-func (c exportCommand) send(ctx context.Context, recs exportRecords) error {
-	b, err := c.batch(ctx, recs)
-	if err != nil {
-		return err
-	}
-	sent, err := c.exporter.Export(ctx, b)
+// Sends the records with what they name of every record and prints what went out
+func (c exportCommand) send(ctx context.Context, l lookup, recs exportRecords) error {
+	sent, err := c.exporter.Export(ctx, l.batch(recs))
 	if err != nil {
 		return err
 	}

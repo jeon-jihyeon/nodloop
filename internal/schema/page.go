@@ -20,6 +20,12 @@ type Cursor struct {
 	RecordID string
 }
 
+// The opaque form of the cursor that starts after the record of the time and the record_id
+// The func a composition root hands curate for the cursor of a digest
+func CursorAt(at time.Time, recordID string) string {
+	return Cursor{Time: at, RecordID: recordID}.String()
+}
+
 // The opaque form a page answers and the next call passes back
 // The zero cursor is empty
 func (c Cursor) String() string {

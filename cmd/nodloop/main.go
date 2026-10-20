@@ -30,7 +30,9 @@ commands:
                             continued so the conversation records the user's verdict on it. start adds every item again
                             after a compact or a clear and subagent adds them to a subagent. stop records the answer as a
                             run, marked continued when a stop hook continued the turn, and starts session capture in the
-                            background on the transcript Claude Code names. instructions records the path and an HMAC of
+                            background on the transcript Claude Code names, or with no transcript on codex. A first word
+                            that names a choice of the question shown is kept from being judged and the capture records
+                            it. instructions records the path and an HMAC of
                             the content of each CLAUDE.md and rules file Claude Code loads, leaving out approved.md and
                             auto memory. All exit 0.
                             --host reads the input and writes the answer of that agent and labels the run host,
@@ -40,12 +42,16 @@ commands:
                             then deferred: deferred records verdicts silently and drafts their lessons after the turn,
                             manual leaves out the note and off records nothing. immediate of an earlier release reads as
                             deferred
-  session capture --session <id> --transcript <path> [--model <m>]
+  session capture --session <id> [--transcript <path>] [--model <m>]
                             Read the messages the user typed in the transcript since the last capture of the session,
                             ask the reaction point whether each corrects or approves the answer it followed and whether it
                             asks to stop following a lesson in that answer's context, and record what is sure as verdicts
                             of reviewer nodloop and signals for curate. Then draft the lesson of each corrected run no
-                            record cites and run one curate pass. Only a mode that infers reads anything. hook stop starts it
+                            record cites and run one curate pass. Every mode but off reads the answers to the questions of
+                            the stop and only a mode that infers reads the other words. Only the transcript Claude Code
+                            keeps for the session under projects of ~/.claude or CLAUDE_CONFIG_DIR is read. Without one
+                            it drafts the answer the newest turn followed when the conversation corrected it. hook stop
+                            starts it
   feedback list [--trace <id>] [--verdict <v>] [--reviewer <r>] [--limit <n>]
                             List feedback newest first with the reason code or a dash after the verdict
   feedback add --trace <id> --verdict <v> --reviewer <r> [--reason-code <c>] [--reason <r>] [--edited <file>] [--audit]
@@ -64,14 +70,14 @@ commands:
                             producer, labels and evidence from a run a person corrected. A judgment with a veto becomes a
                             guard veto once approved
   knowledge extract --from <run id> [--model <m>] [--author <a>]
-                            Draft through claude -p what a correction of the run taught, check it against the items the run
-                            reaches with the critic, a second claude call or the endpoint set for the critic point, and
-                            propose an add or an update. A duplicate or a conflict names the item
+                            Draft through the configured model what a correction of the run taught, check it against the
+                            items the run reaches with the critic, a second model call or the endpoint set for the critic
+                            point, and propose an add or an update. A duplicate or a conflict names the item
   knowledge replay <id> [--version <n>] [--model <m>]
-                            Judge the version through claude -p against the outputs it should change, the corrected runs it
-                            cites, and those it should leave alone, the newest ten approved runs its scope reaches. A lesson
-                            that would change an approved output reaches too far. Recorded as a replay trace and shown by
-                            knowledge waiting. It never blocks an approval
+                            Judge the version through the configured model against the outputs it should change, the
+                            corrected runs it cites, and those it should leave alone, the newest ten approved runs its scope
+                            reaches. A lesson that would change an approved output reaches too far. Recorded as a replay
+                            trace and shown by knowledge waiting. It never blocks an approval
   knowledge consolidate [--daily] [--model <m>]
                             Ask the model in one call per cluster of waiting candidates one run may carry together which
                             ones say the same lesson, and print one line per group. Recorded as a consolidate trace per
@@ -120,10 +126,10 @@ commands:
                             Append the records of a file not yet recorded, only at an interactive terminal outside an
                             agent session since the records name their approvers
   knowledge compact <id> [--model <m>] [--author <a>]
-                            Draft through claude -p a smaller set of items for the runs the item reaches, with nothing said
-                            twice and nothing lost, and propose it
+                            Draft through the configured model a smaller set of items for the runs the item reaches, with
+                            nothing said twice and nothing lost, and propose it
   knowledge check <compaction id> [--model <m>] [--replay]
-                            One claude -p call lists for every old item the new items that state it and the facts they lose,
+                            One model call lists for every old item the new items that state it and the facts they lose,
                             and records it as the coverage check. --replay then replays every new item, whose evidence joins
                             the corrections of the items it replaces, and totals what they miss and where they reach too far
   knowledge compaction <compaction id>
@@ -136,13 +142,14 @@ commands:
                             Runs without a verdict in the order to check them, with a random audit share
   report online [--since <RFC3339>]
                             Weekly verdict rates, waits and edit widths, and the runs with and without knowledge compared
-  report loop               A window line with the start of the runs read or all. A totals line of runs, verdicts by a person and by a session, corrections, candidates waiting
-                            and approved items. A scope line per plugin version: current items, those whose scope admits
-                            one session at most and approved ones never applied. A drafts line per plugin version and
-                            drafting path: drafted, approved, dropped, waiting and the median time to a decision. Then per
-                            approved item: runs that applied it, how many a person approved of
-                            those judged, how many were corrected again for the reason that taught it, the same two counts
-                            over verdicts a session inferred, and the time from that correction to the approval
+  report loop               A window line with the start of the runs read or all. A totals line of runs, verdicts by a
+                            proven person, by a name and inferred, corrections, candidates waiting and approved items. A
+                            scope line per plugin version: current items, those whose scope admits one session at most and
+                            approved ones never applied. A drafts line per plugin version and drafting path: drafted,
+                            approved, dropped, waiting and the median time to a decision. Then per approved item: runs that
+                            applied it, how many a proven person approved of those judged, how many were corrected again for
+                            the reason that taught it, the same two counts over named verdicts and over inferred ones, and
+                            the time from that correction to the approval
   report effect             A window line with the start of the runs read and the drawn runs per arm. Then per producer,
                             drawn runs that applied items against drawn runs the holdout kept them from: runs, judged,
                             corrected and corrected again for a reason an item was taught by, then the draw units, the
@@ -201,8 +208,9 @@ commands:
                             Call an OpenAI compatible Chat Completions endpoint such as http://localhost:11434/v1 of
                             Ollama instead of claude -p in every command that calls a model, or claude with a default
                             model NODLOOP_LLM_MODEL still overrides. The key is read from the env when a command starts
-                            and never saved
-  llm unset                 Every command calls claude -p again
+                            and never saved. Only an interactive terminal outside an agent session sets it, since the
+                            backend also answers as the judge of curate
+  llm unset                 Every command calls claude -p again, only at an interactive terminal outside an agent session
   config                    Every setting with its value and where it came from: an environment variable, config.json
                             or the default
   config approver [<name>]  Print the name saved in ~/.nodloop/config.json to decide under, or save one, which only an
@@ -216,7 +224,8 @@ commands:
                             the text of report loop, critic and effect names its start in a first window line
   config session_mode [<mode>]
                             Print or save how a conversation records the verdicts it infers: deferred, manual or off.
-                            deferred by default and NODLOOP_SESSION overrides it
+                            deferred by default and NODLOOP_SESSION overrides it. Only an interactive terminal outside an
+                            agent session saves one
   anchor [add <path> | remove <path>]
                             List what nodloop reads as your judgment on record in every place: the lessons you approved,
                             the files you designate and the CLAUDE.md and rules files your sessions there loaded, and
@@ -238,7 +247,9 @@ commands:
                             which judges whether the user's message corrects or approves the previous answer before the
                             conversation does, and judge, where the endpoint answers beside the three claude judges
                             whether your recorded decisions settle a change curate prepared. The key is read from the
-                            env at call time and never saved. Every answer is recorded as a classify trace
+                            env at call time and never saved. Every answer is recorded as a classify trace. The judge and
+                            the reaction point predict you, so only an interactive terminal outside an agent session sets
+                            or unsets them
   classifier unset <point>  The point asks claude alone again
   classifier list           Every point with its endpoint or claude alone
   classifier probe <point>  Ask the endpoint of the point one question and print its answer and time
@@ -264,14 +275,15 @@ commands:
                             guard log of this machine included. The folder must be missing or empty. --since takes the
                             descriptor of an earlier export and writes only what came after the cursor of each kind.
                             --with-content also writes outputs, reasons, notes, lesson content and paths
-  doctor [--repair]        Read every record file and the guard log, and name the lines that fail to decode.
+  doctor [--repair]         Read every record file and the guard log, and name the lines that fail to decode.
                             A read skips such a line, and --repair moves them to <file>.corrupt. Run it while nothing writes
   version                   Print the build version
   help [<command>]          Print this text or the part of one command. -h or --help as the first flag does the same
 
 Every command that reads records accepts --record-dir, which overrides NODLOOP_RECORD_DIR, then record_dir of
 ~/.nodloop/config.json, then ~/.nodloop/records
-An approved version is stale 90 days after its approval or last reaffirm. Nothing is approved or retired without a person
+An approved version is stale 90 days after its approval or last reaffirm. nodloop carries out on its own only what your
+recorded decisions already settle and asks you about the rest
 `
 
 // Set by goreleaser through ldflags
@@ -339,7 +351,9 @@ func run(args []string, getenv func(string) string, stdin io.Reader, stdout io.W
 		"queue":    func(args []string) int { return runQueue(args, getenv, time.Now, stdout, stderr) },
 		"report":   func(args []string) int { return runReport(args, getenv, time.Now, stdout, stderr) },
 		"guard":    func(args []string) int { return runGuard(args, getenv, os.Executable, time.Now, stdin, stdout, stderr) },
-		"llm":      func(args []string) int { return runLLM(args, getenv, configuredLLM(getenv), time.Now, stdout, stderr) },
+		"llm": func(args []string) int {
+			return runLLM(args, getenv, configuredLLM(getenv), time.Now, person, stdout, stderr)
+		},
 		"knowledge": func(args []string) int {
 			return runKnowledge(args, getenv, configuredLLM(getenv), time.Now, person, stdout, stderr)
 		},
@@ -349,7 +363,7 @@ func run(args []string, getenv func(string) string, stdin io.Reader, stdout io.W
 		"config":     func(args []string) int { return runConfig(args, getenv, person, stdout, stderr) },
 		"anchor":     func(args []string) int { return runAnchor(args, getenv, time.Now, person, stdout, stderr) },
 		"intervene":  func(args []string) int { return runIntervene(args, getenv, time.Now, person, stdin, stdout, stderr) },
-		"classifier": func(args []string) int { return runClassifier(args, getenv, time.Now, stdout, stderr) },
+		"classifier": func(args []string) int { return runClassifier(args, getenv, time.Now, person, stdout, stderr) },
 		"server":     func([]string) int { return fail(stderr, "server", errServerMoved) },
 		"doctor":     func(args []string) int { return runDoctor(args, getenv, time.Now, stdout, stderr) },
 		"export":     func(args []string) int { return runExport(args, getenv, time.Now, stdout, stderr) },

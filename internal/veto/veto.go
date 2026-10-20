@@ -33,6 +33,10 @@ func Actions() []Action {
 	return []Action{ActionBlock, ActionAsk}
 }
 
+func (a Action) Valid() bool {
+	return slices.Contains(Actions(), a)
+}
+
 // Validate the required fields and split the tool list
 // 1. tool is one exact `tool_name` or a list such as `Edit|Write`
 // 2. an empty action blocks
@@ -40,11 +44,10 @@ func New(id, tool string, when []Condition, reason string, action Action, enable
 	if id == "" {
 		return Veto{}, ErrIDMissing
 	}
-	switch action {
-	case "":
+	if action == "" {
 		action = ActionBlock
-	case ActionBlock, ActionAsk:
-	default:
+	}
+	if !action.Valid() {
 		return Veto{}, fmt.Errorf("%w: %q", ErrActionUnknown, action)
 	}
 	var tools []string

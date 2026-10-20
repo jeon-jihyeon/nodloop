@@ -106,36 +106,24 @@ func (c compactionCommand) prepare(ctx context.Context, candidate knowledge.Know
 		}
 		id = proposed.ID
 	}
-	if _, err := c.compactor.Coverage(ctx, id); errors.Is(err, compact.ErrNoCoverage) {
-		if _, err := c.compactor.Check(ctx, c.client, id, model); err != nil {
-			return err
-		}
+	cov, err := c.compactor.Coverage(ctx, id)
+	if errors.Is(err, compact.ErrNoCoverage) {
+		cov, err = c.compactor.Check(ctx, c.client, id, model)
 	}
-	result, err := c.coverageResult(ctx, id)
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(c.out, "compaction\t%s\t%s\n", id, result)
-	return nil
-}
-
-// The newest coverage of the compaction as a person reads it beside the candidate
-func (c compactionCommand) coverageResult(ctx context.Context, id string) (string, error) {
 	compaction, err := c.ledger.Compaction(ctx, id)
 	if err != nil {
-		return "", err
+		return err
 	}
-	cov, err := c.compactor.Coverage(ctx, id)
-	switch {
-	case errors.Is(err, compact.ErrNoCoverage):
-		return "coverage not checked yet", nil
-	case err != nil:
-		return "", err
-	}
+	// The newest coverage as a person reads it beside the candidate
+	result := "coverage passed"
 	if err := cov.Passes(compaction); err != nil {
-		return "coverage failed: " + err.Error(), nil
+		result = "coverage failed: " + err.Error()
 	}
-	return "coverage passed", nil
+	fmt.Fprintf(c.out, "compaction\t%s\t%s\n", id, result)
+	return nil
 }
 
 // One model call checks that the new items state every old item and the answer is recorded for the approval

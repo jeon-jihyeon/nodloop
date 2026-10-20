@@ -60,7 +60,8 @@ func (c knowledgeCommand) audit(ctx context.Context) error {
 }
 
 // Without a version the approved version of the id is the one reaffirmed
-// Without the terminal proof the call records an agent proposal on an approved version and changes nothing
+// 1. without the terminal proof the call records an agent proposal on an approved version and changes nothing
+// 2. a failed export still prints the line and records the intervention the written record names in decision before the error follows
 func (c knowledgeCommand) reaffirm(ctx context.Context, id string, version int, approver string) error {
 	if id == "" {
 		return fmt.Errorf("reaffirm: an id %w", errRequired)
@@ -83,11 +84,11 @@ func (c knowledgeCommand) reaffirm(ctx context.Context, id string, version int, 
 	}
 	decision := trace.NewID(c.app.now())
 	k, err := c.ledger.Under(decision).Reaffirm(ctx, id, version, judgment.Person)
-	if err != nil {
+	if err != nil && !errors.Is(err, knowledge.ErrExport) {
 		return err
 	}
 	fmt.Fprintf(c.out, "%s\tv%d\treaffirmed\t%s\n", k.ID, k.Version, k.Approver)
-	return c.intervened(ctx, decision, judgment, knowledge.Set{k})
+	return errors.Join(err, c.intervened(ctx, decision, judgment, knowledge.Set{k}))
 }
 
 // Proposes the next version that excepts the values of the key its refuted runs carried
@@ -318,6 +319,7 @@ func seconds(d time.Duration) string {
 // The window line first and one line per critic after it
 // 1. a critic line holds the drafts it judged and how its judgments matched what a person later decided on the run
 // 2. a reaction line follows per member of the reaction point with how its answers matched the verdict the conversation recorded
+// 3. the capture line ends it with how the verdicts of the capture stood against those of the conversation
 func (c loopCommand) critics(e loop.Snapshot) {
 	fmt.Fprintf(c.out, "window\t%s\n", windowText(e.Since()))
 	report := e.Critics()
@@ -329,6 +331,9 @@ func (c loopCommand) critics(e loop.Snapshot) {
 		fmt.Fprintf(c.out, "critic\t%s\tasked %d\tsure %d\tagree %d\tdisagree %d\tmissed correction %d\tmissed approval %d\tdeferred %d\n",
 			row.Critic, row.Asked, row.Sure, row.Agree, row.Disagree, row.MissedCorrection, row.MissedApproval, row.Deferred)
 	}
+	capture := report.Capture
+	fmt.Fprintf(c.out, "critic\t%s\truns %d\tagree %d\tdisputed %d\tcapture only %d\tconversation only %d\n",
+		capture.Critic, capture.Runs, capture.Agree, capture.Disputed, capture.CaptureOnly, capture.ConversationOnly)
 }
 
 // A first line with the window and the drawn runs of each arm
@@ -423,7 +428,9 @@ func counts(m map[string]int) string {
 
 // The window line first
 // A line of totals then one scope line per plugin version and one drafts line per plugin version and drafting path
-// One line per approved run item after them: applied, followed of judged and repeat by proven people then by names then by inferred readers, and settle
+// with the approvals nodloop carried out apart
+// One line per approved run item after them: applied, followed of judged and repeat by proven people then by names then by inferred readers,
+// settle and who approved it
 // A last line says misapplied is not measured
 func (c loopCommand) runs(e loop.Snapshot) {
 	fmt.Fprintf(c.out, "window\t%s\n", windowText(e.Since()))
@@ -435,14 +442,14 @@ func (c loopCommand) runs(e loop.Snapshot) {
 		fmt.Fprintf(c.out, "scope\t%s\titems %d\tsingle session %d\tnever applied %d\n", sc.Version, sc.Items, sc.SingleSession, sc.NeverApplied)
 	}
 	for _, d := range report.Drafts {
-		fmt.Fprintf(c.out, "drafts\t%s\t%s\tdrafted %d\tapproved %d\tdropped %d\twaiting %d\tdecide %s\n",
-			d.Version, d.Path, d.Drafted, d.Approved, d.Dropped, d.Waiting, seconds(d.Decide))
+		fmt.Fprintf(c.out, "drafts\t%s\t%s\tdrafted %d\tapproved %d\tby nodloop %d\tdropped %d\twaiting %d\tdecide %s\n",
+			d.Version, d.Path, d.Drafted, d.Approved, d.ApprovedNodloop, d.Dropped, d.Waiting, seconds(d.Decide))
 	}
 	for _, row := range report.Items {
 		fmt.Fprintf(c.out, "%s\tv%d\tapplied %d\tfollowed %d of %d\trepeat %d", row.ID, row.Version, row.Applied, row.Followed, row.Judged, row.Repeat)
 		fmt.Fprintf(c.out, "\tnamed followed %d of %d\tnamed repeat %d", row.NamedFollowed, row.NamedJudged, row.NamedRepeat)
-		fmt.Fprintf(c.out, "\tinferred followed %d of %d\tinferred repeat %d\tsettle %s\n",
-			row.InferredFollowed, row.InferredJudged, row.InferredRepeat, seconds(row.Settle))
+		fmt.Fprintf(c.out, "\tinferred followed %d of %d\tinferred repeat %d\tsettle %s\tapprover %s\n",
+			row.InferredFollowed, row.InferredJudged, row.InferredRepeat, seconds(row.Settle), row.Approver)
 	}
 	fmt.Fprintln(c.out, "misapplied\tnot measured: no label says which runs an item should have reached")
 }

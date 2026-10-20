@@ -138,7 +138,7 @@ func (b Batch) items(content bool) []item {
 		out = append(out, item{kind: string(ev.Name), span: ev.span(content), last: true})
 	}
 	for _, c := range b.Calls {
-		spans := c.spans()
+		spans := c.spans(content)
 		for i, s := range spans {
 			out = append(out, item{kind: "call", span: s, last: i == len(spans)-1})
 		}

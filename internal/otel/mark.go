@@ -6,13 +6,22 @@ import (
 	"time"
 
 	"github.com/jeon-jihyeon/nodloop/internal/markfile"
-	"github.com/jeon-jihyeon/nodloop/internal/record"
 )
 
 // The mark of the last export in the record directory
 const MarkFile = "export.json"
 
-// The mark of the newest record an export of one record directory sent
+// Where the last export of one record directory ended
+type Mark struct {
+	// The newest record time the export sent and zero before the first
+	At time.Time `json:"at"`
+	// Per store the key of the newest record the export read in the order the store appended them
+	// So a record appended after the export with an older time still goes next time
+	// Absent in a mark of a release that kept the time alone
+	After map[string]string `json:"after,omitempty"`
+}
+
+// The mark an export of one record directory keeps
 type Marker struct {
 	dir string
 }
@@ -23,27 +32,27 @@ func NewMarker(dir string) Marker {
 
 // The mark one export holds until Release
 type Held struct {
-	held *markfile.Held[record.Mark]
-	// The newest record the last export sent and zero before the first
-	At time.Time
+	held *markfile.Held[Mark]
+	Mark
 }
 
 // Takes the mark without waiting and reads where the last export ended
 // 1. nil without an error when another export holds it so the caller ends at once
 // 2. a mark that does not decode reads as no export so far
 func (m Marker) Hold() (*Held, error) {
-	held, err := markfile.Hold[record.Mark](filepath.Join(m.dir, MarkFile))
+	held, err := markfile.Hold[Mark](filepath.Join(m.dir, MarkFile))
 	if err != nil || held == nil {
 		return nil, markErr(err)
 	}
-	return &Held{held: held, At: held.Mark.At}, nil
+	return &Held{held: held, Mark: held.Mark}, nil
 }
 
-// Moves the mark to the newest record the export sent
-func (h *Held) Move(at time.Time) error {
-	err := h.held.Write(record.Mark{At: at.UTC()})
+// Moves the mark to where the export ended
+func (h *Held) Move(m Mark) error {
+	m.At = m.At.UTC()
+	err := h.held.Write(m)
 	if err == nil {
-		h.At = at
+		h.Mark = m
 	}
 	return markErr(err)
 }

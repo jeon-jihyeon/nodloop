@@ -4,7 +4,8 @@ import (
 	"cmp"
 	"context"
 	"encoding/json"
-	"errors"
+	"fmt"
+	"maps"
 	"slices"
 	"time"
 
@@ -15,7 +16,6 @@ import (
 	"github.com/jeon-jihyeon/nodloop/internal/otel"
 	"github.com/jeon-jihyeon/nodloop/internal/record"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
-	tracefile "github.com/jeon-jihyeon/nodloop/internal/trace/file"
 )
 
 // The trace names an export sends as model steps
@@ -26,6 +26,125 @@ var callNames = []trace.Name{
 // The trace names an export sends as questions and as evaluations of curate and of the write side
 var curateNames = []trace.Name{trace.NameExpose, trace.NameAnswer, trace.NameIntervention, trace.NameDecide}
 
+// The records of one store newest first in the order the store appended them with the key that names each
+type appended[T any] struct {
+	records []T
+	key     func(T) string
+	time    func(T) time.Time
+}
+
+// The records stamped at the time or later
+func (a appended[T]) stamped(since time.Time) []T {
+	return slices.DeleteFunc(slices.Clone(a.records), func(r T) bool { return a.time(r).Before(since) })
+}
+
+// The records appended after the one the cursor names
+// 1. a cursor of no record the store holds falls back to the records stamped after the time of the mark since the mark itself was sent
+// 2. that holds before the first export that kept a cursor and once a prune removed the record a cursor names
+func (a appended[T]) after(cursor string, mark time.Time) []T {
+	if i := slices.IndexFunc(a.records, func(r T) bool { return a.key(r) == cursor }); cursor != "" && i >= 0 {
+		return slices.Clone(a.records[:i])
+	}
+	return slices.DeleteFunc(slices.Clone(a.records), func(r T) bool { return !a.time(r).After(mark) })
+}
+
+// The key of the newest record appended and the cursor given for a store that holds none
+func (a appended[T]) cursor(given string) string {
+	if len(a.records) == 0 {
+		return given
+	}
+	return a.key(a.records[0])
+}
+
+// The names of the stores in the cursors of the mark
+const (
+	storeTraces   = "traces"
+	storeVerdicts = "verdicts"
+	storeOutcomes = "outcomes"
+	storeLedger   = "knowledge"
+)
+
+// Every record of the stores of the record directory
+type stored struct {
+	traces   appended[trace.Trace]
+	verdicts appended[feedback.Feedback]
+	outcomes appended[feedback.Outcome]
+	ledger   appended[knowledge.Knowledge]
+}
+
+// Reads every store whole
+// A read that stops at the first record older than a time would end at a record a slower process appended late with an older time
+func (c exportCommand) stored(ctx context.Context) (stored, error) {
+	traces, err := c.traces.List(ctx, record.TraceFilter{})
+	if err != nil {
+		return stored{}, err
+	}
+	verdicts, err := c.verdicts.List(ctx, record.FeedbackFilter{})
+	if err != nil {
+		return stored{}, err
+	}
+	outcomes, err := c.outcomes.List(ctx, "")
+	if err != nil {
+		return stored{}, err
+	}
+	ledger, err := c.ledger.All(ctx)
+	if err != nil {
+		return stored{}, err
+	}
+	// A verdict and an outcome are named by their run and time and a knowledge record by its version, status and time
+	return stored{
+		traces: appended[trace.Trace]{trace.RestoreAll(traces), func(t trace.Trace) string { return t.ID }, func(t trace.Trace) time.Time { return t.Time }},
+		verdicts: appended[feedback.Feedback]{feedback.RestoreAll(verdicts),
+			func(v feedback.Feedback) string { return fmt.Sprintf("%s:%d", v.TraceID, v.Time.UnixNano()) },
+			func(v feedback.Feedback) time.Time { return v.Time }},
+		outcomes: appended[feedback.Outcome]{feedback.RestoreOutcomes(outcomes),
+			func(o feedback.Outcome) string { return fmt.Sprintf("%s:%d", o.TraceID, o.Time.UnixNano()) },
+			func(o feedback.Outcome) time.Time { return o.Time }},
+		ledger: appended[knowledge.Knowledge]{ledger,
+			func(k knowledge.Knowledge) string {
+				return fmt.Sprintf("%s:%d:%s:%d", k.ID, k.Version, k.Status, k.Time.UnixNano())
+			},
+			func(k knowledge.Knowledge) time.Time { return k.Time }},
+	}, nil
+}
+
+// The records stamped at the time or later
+func (s stored) since(at time.Time) exportRecords {
+	return exportRecords{traces: s.traces.stamped(at), verdicts: s.verdicts.stamped(at), outcomes: s.outcomes.stamped(at), items: s.ledger.stamped(at)}.sent()
+}
+
+// The records each store appended after where the mark left it
+func (s stored) after(m otel.Mark) exportRecords {
+	return exportRecords{
+		traces: s.traces.after(m.After[storeTraces], m.At), verdicts: s.verdicts.after(m.After[storeVerdicts], m.At),
+		outcomes: s.outcomes.after(m.After[storeOutcomes], m.At), items: s.ledger.after(m.After[storeLedger], m.At),
+	}.sent()
+}
+
+// The newest record of each store as the next export reads on from it and no cursor for a store that never held one
+func (s stored) cursors(given map[string]string) map[string]string {
+	out := map[string]string{
+		storeTraces: s.traces.cursor(given[storeTraces]), storeVerdicts: s.verdicts.cursor(given[storeVerdicts]),
+		storeOutcomes: s.outcomes.cursor(given[storeOutcomes]), storeLedger: s.ledger.cursor(given[storeLedger]),
+	}
+	maps.DeleteFunc(out, func(_, cursor string) bool { return cursor == "" })
+	return out
+}
+
+// What the records of an export name from every record the stores hold
+func (s stored) lookup() lookup {
+	l := lookup{verdicts: s.verdicts.records, ledger: s.ledger.records, byID: map[string]trace.Trace{}}
+	for _, t := range s.traces.records {
+		if _, ok := l.byID[t.ID]; !ok {
+			l.byID[t.ID] = t
+		}
+		if t.Name == trace.NameExtract {
+			l.extracts = append(l.extracts, t)
+		}
+	}
+	return l
+}
+
 // The records an export sends
 type exportRecords struct {
 	// The runs, the model steps and the curate events newest first
@@ -34,91 +153,14 @@ type exportRecords struct {
 	outcomes feedback.Outcomes
 	// Decisions of knowledge versions
 	items knowledge.Set
-	// Every knowledge record whatever its time for the text of a version a question names
-	ledger knowledge.Set
 }
 
-// Every record from the time on newest first as the stores list them
-func (c exportCommand) read(ctx context.Context, since time.Time) (exportRecords, error) {
-	traces, err := c.readTraces(ctx, since)
-	if err != nil {
-		return exportRecords{}, err
-	}
-	recs := exportRecords{traces: traces}
-	if recs.verdicts, recs.outcomes, err = c.readJudgments(ctx, since); err != nil {
-		return exportRecords{}, err
-	}
-	ledger, err := c.app.ledger()
-	if err != nil {
-		return exportRecords{}, err
-	}
-	if recs.ledger, err = ledger.All(ctx); err != nil {
-		return exportRecords{}, err
-	}
-	for _, k := range recs.ledger {
-		if !k.Time.Before(since) && k.Decided() {
-			recs.items = append(recs.items, k)
-		}
-	}
-	return recs, nil
-}
-
-// The runs, the model step traces and the curate events from the time on
-func (c exportCommand) readTraces(ctx context.Context, since time.Time) (trace.Traces, error) {
-	traces, err := c.app.traces()
-	if err != nil {
-		return nil, err
-	}
-	found, err := traces.List(ctx, record.TraceFilter{Since: since})
-	if err != nil {
-		return nil, err
-	}
+// The records of the kinds an export sends
+func (r exportRecords) sent() exportRecords {
 	exported := slices.Concat([]trace.Name{trace.NameRun}, callNames, curateNames)
-	var out trace.Traces
-	for _, t := range trace.RestoreAll(found) {
-		if slices.Contains(exported, t.Name) {
-			out = append(out, t)
-		}
-	}
-	return out, nil
-}
-
-// The verdicts and the outcomes from the time on
-func (c exportCommand) readJudgments(ctx context.Context, since time.Time) (feedback.Records, feedback.Outcomes, error) {
-	store, err := c.app.feedback()
-	if err != nil {
-		return nil, nil, err
-	}
-	verdicts, err := store.List(ctx, record.FeedbackFilter{Since: since})
-	if err != nil {
-		return nil, nil, err
-	}
-	checks, err := c.app.outcomes()
-	if err != nil {
-		return nil, nil, err
-	}
-	all, err := checks.List(ctx, "")
-	if err != nil {
-		return nil, nil, err
-	}
-	var outcomes feedback.Outcomes
-	for _, o := range feedback.RestoreOutcomes(all) {
-		if !o.Time.Before(since) {
-			outcomes = append(outcomes, o)
-		}
-	}
-	return feedback.RestoreAll(verdicts), outcomes, nil
-}
-
-// The records strictly after the mark since the mark itself was sent
-func (r exportRecords) after(mark time.Time) exportRecords {
-	return exportRecords{
-		traces:   slices.DeleteFunc(slices.Clone(r.traces), func(t trace.Trace) bool { return !t.Time.After(mark) }),
-		verdicts: slices.DeleteFunc(slices.Clone(r.verdicts), func(v feedback.Feedback) bool { return !v.Time.After(mark) }),
-		outcomes: slices.DeleteFunc(slices.Clone(r.outcomes), func(o feedback.Outcome) bool { return !o.Time.After(mark) }),
-		items:    slices.DeleteFunc(slices.Clone(r.items), func(k knowledge.Knowledge) bool { return !k.Time.After(mark) }),
-		ledger:   r.ledger,
-	}
+	r.traces = slices.DeleteFunc(r.traces, func(t trace.Trace) bool { return !slices.Contains(exported, t.Name) })
+	r.items = slices.DeleteFunc(r.items, func(k knowledge.Knowledge) bool { return !k.Decided() })
+	return r
 }
 
 // The time of the newest record and the mark when no record is newer
@@ -139,124 +181,62 @@ func (r exportRecords) newest(mark time.Time) time.Time {
 	return slices.MaxFunc(times, time.Time.Compare)
 }
 
-// The batch of the records with what each names of the records before them
-func (c exportCommand) batch(ctx context.Context, recs exportRecords) (otel.Batch, error) {
-	traces, err := c.app.traces()
-	if err != nil {
-		return otel.Batch{}, err
-	}
-	store, err := c.app.feedback()
-	if err != nil {
-		return otel.Batch{}, err
-	}
-	verdicts, err := store.List(ctx, record.FeedbackFilter{})
-	if err != nil {
-		return otel.Batch{}, err
-	}
-	l := lookup{ctx: ctx, traces: traces, verdicts: feedback.RestoreAll(verdicts), ledger: recs.ledger, byID: map[string]trace.Trace{}}
-	for _, t := range recs.traces {
-		l.byID[t.ID] = t
-	}
-	return l.batch(recs)
-}
-
 // What the records of an export name from earlier records
+// A record the records lack reads as the zero record since a trace the retention removed still names its span through the derived ids
 type lookup struct {
-	ctx    context.Context
-	traces *tracefile.Store
+	// Every trace by id with the newest record of each
+	byID map[string]trace.Trace
 	// Every verdict newest first
 	verdicts feedback.Records
 	// Every knowledge record
 	ledger knowledge.Set
-	// The traces read by id with the records of the export first
-	// A trace the records lack is kept as the zero trace so it is read once
-	byID map[string]trace.Trace
 	// Every extract trace newest first
-	// Read once a decision needs it
 	extracts trace.Traces
-	read     bool
 }
 
-func (l *lookup) batch(recs exportRecords) (otel.Batch, error) {
+func (l lookup) batch(recs exportRecords) otel.Batch {
 	var b otel.Batch
-	var errs []error
 	for _, v := range recs.verdicts {
-		run, err := l.trace(v.TraceID)
-		errs = append(errs, err)
-		b.Evaluations = append(b.Evaluations, verdictEvaluation(v, run.SessionID))
+		b.Evaluations = append(b.Evaluations, verdictEvaluation(v, l.byID[v.TraceID].SessionID))
 	}
 	for _, o := range recs.outcomes {
-		run, err := l.trace(o.TraceID)
-		errs = append(errs, err)
-		b.Evaluations = append(b.Evaluations, outcomeEvaluation(o, run.SessionID))
+		b.Evaluations = append(b.Evaluations, outcomeEvaluation(o, l.byID[o.TraceID].SessionID))
 	}
 	for _, k := range recs.items {
-		ev, err := l.decision(k)
-		errs = append(errs, err)
-		b.Evaluations = append(b.Evaluations, ev)
+		b.Evaluations = append(b.Evaluations, l.decision(k))
 	}
 	for _, t := range recs.traces {
-		errs = append(errs, l.add(&b, t))
+		l.add(&b, t)
 	}
-	return b, errors.Join(errs...)
+	return b
 }
 
 // The span or the evaluation of one trace in the batch
-func (l *lookup) add(b *otel.Batch, t trace.Trace) error {
+func (l lookup) add(b *otel.Batch, t trace.Trace) {
 	switch {
 	case t.Name == trace.NameRun:
 		b.Runs = append(b.Runs, exportRun(t))
 	case t.Name == trace.NameExpose:
 		b.Questions = append(b.Questions, l.question(t))
 	case slices.Contains(callNames, t.Name):
-		call, err := l.call(t)
-		b.Calls = append(b.Calls, call)
-		return err
+		b.Calls = append(b.Calls, l.call(t))
 	default:
-		ev, err := l.evaluation(t)
-		b.Evaluations = append(b.Evaluations, ev)
-		return err
+		b.Evaluations = append(b.Evaluations, l.evaluation(t))
 	}
-	return nil
-}
-
-// The trace of the id and the zero trace when the records hold none
-// A trace the retention removed still names its span through the derived ids
-func (l *lookup) trace(id string) (trace.Trace, error) {
-	if t, ok := l.byID[id]; ok || id == "" {
-		return t, nil
-	}
-	found, err := l.traces.Get(l.ctx, id)
-	if err != nil && !errors.Is(err, record.ErrTraceNotFound) {
-		return trace.Trace{}, err
-	}
-	var t trace.Trace
-	if err == nil {
-		t = trace.Restore(found)
-	}
-	l.byID[id] = t
-	return t, nil
 }
 
 // The newest extract trace whose candidate is the version
-func (l *lookup) drafted(id string, version int) (trace.Trace, error) {
-	if !l.read {
-		found, err := l.traces.List(l.ctx, record.TraceFilter{Name: string(trace.NameExtract)})
-		if err != nil {
-			return trace.Trace{}, err
-		}
-		l.extracts, l.read = trace.RestoreAll(found), true
-	}
+func (l lookup) drafted(id string, version int) trace.Trace {
 	for _, t := range l.extracts {
 		if out := extractOutput(t.Output); out.Candidate != nil && out.Candidate.ID == id && out.Candidate.Version == version {
-			return t, nil
+			return t
 		}
 	}
-	return trace.Trace{}, nil
+	return trace.Trace{}
 }
 
 // The model step of a trace with the run it judged and the correction that caused it
-func (l *lookup) call(t trace.Trace) (otel.Call, error) {
+func (l lookup) call(t trace.Trace) otel.Call {
 	duration := time.Duration(t.DurationMS) * time.Millisecond
 	c := otel.Call{
 		ID: t.ID, Name: string(t.Name), Time: t.Time, Duration: duration, Subject: t.Subject, Model: t.Model, Error: t.Error,
@@ -278,12 +258,11 @@ func (l *lookup) call(t trace.Trace) (otel.Call, error) {
 		}
 	}
 	if t.Ref == "" {
-		return c, nil
+		return c
 	}
-	run, err := l.trace(t.Ref)
-	c.SessionID, c.Links = run.SessionID, []otel.SpanRef{otel.RunSpan(t.Ref)}
+	c.SessionID, c.Links = l.byID[t.Ref].SessionID, []otel.SpanRef{otel.RunSpan(t.Ref)}
 	if t.Name != trace.NameExtract {
-		return c, err
+		return c
 	}
 	start := t.Time.Add(-duration)
 	for _, v := range l.verdicts {
@@ -292,7 +271,7 @@ func (l *lookup) call(t trace.Trace) (otel.Call, error) {
 			break
 		}
 	}
-	return c, err
+	return c
 }
 
 // What the members of a judge classify answered and found as the decide read it

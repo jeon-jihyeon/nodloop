@@ -65,6 +65,12 @@ func refuseReserved(name string) error {
 	return nil
 }
 
+// Whether curate approved the version and no person reaffirmed it since
+// The latest approve or reaffirm names who stood behind the version last
+func (k Knowledge) carriedOut() bool {
+	return k.Approver == ApproverNodloop
+}
+
 // The current approved versions whose latest approve or reaffirm names a person in id order
 // curate reads them as the anchor so a version nodloop approved never becomes direction on its own
 func (s Set) PersonApproved() Set {

@@ -17,4 +17,6 @@ var (
 	errQueryInvalid = errors.New("invalid query")
 	// A body POST /v1/interventions cannot read as one payload
 	errPayloadInvalid = errors.New("invalid intervention payload")
+	// A key add --person that no person typed at a terminal of their own
+	errPersonUnproven = errors.New("--person is taken only at an interactive terminal outside an agent session, since the key decides for the person it names")
 )

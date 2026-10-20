@@ -183,7 +183,7 @@ func (f Feedback) WithProof(p trace.Proof) Feedback {
 // Whether a proof shows that the person the verdict names gave it
 // So every report counts a named verdict of a script or a program apart from a proven person's
 func (f Feedback) Proven() bool {
-	return !f.Implicit() && f.Proof.Valid() && f.Proof.Authority() == trace.AuthorityPerson
+	return !f.Implicit() && f.Proof.Authority() == trace.AuthorityPerson
 }
 
 func (f Feedback) withdraws() bool {
@@ -257,7 +257,7 @@ func (rs Records) Words(traceIDs []string) []string {
 // 5. a reader that judged alone leaves its own record
 // A person's record is no reader and the caller lets it win over this one
 func (rs Records) Inferred() Records {
-	conversation, capture := rs.reader(ReviewerSession), rs.reader(ReviewerNodloop)
+	conversation, capture := rs.Reader(ReviewerSession), rs.Reader(ReviewerNodloop)
 	seen := map[string]bool{}
 	var out Records
 	for _, r := range rs {
@@ -297,7 +297,7 @@ func (rs Records) Reconciled() Records {
 
 // The newest record per trace of one inferred reader
 // Every withdraw counts as the reader's own so a withdraw of anyone takes back what the reader inferred before it
-func (rs Records) reader(reviewer string) map[string]Feedback {
+func (rs Records) Reader(reviewer string) map[string]Feedback {
 	var own Records
 	for _, r := range rs {
 		if r.Reviewer == reviewer || r.withdraws() {

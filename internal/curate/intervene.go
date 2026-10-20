@@ -2,7 +2,6 @@ package curate
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"slices"
 	"strconv"
@@ -95,23 +94,24 @@ func (iv *Intervener) Intervene(ctx context.Context, r Request, by Submitter) (I
 		return Intervened{}, err
 	}
 	in.Proof = by.Proof
+	if by.Proof.Authority() == trace.AuthorityPerson {
+		if err := knowledge.CheckApprover(by.Person); err != nil {
+			return Intervened{}, err
+		}
+		in.Person = by.Person
+	}
 	switch {
 	case in.Action == trace.ActionDigest:
 		return iv.digest(ctx, in, r.Session, by, s)
 	case by.Proof.Authority() == trace.AuthorityAgent:
 		return iv.propose(ctx, in, r.Session, by, s)
 	}
-	if err := knowledge.CheckApprover(by.Person); err != nil {
-		return Intervened{}, err
-	}
-	in.Person = by.Person
 	return iv.carry(ctx, in, r.Session, by, s)
 }
 
 // The records an intervention reads
 type state struct {
 	all   knowledge.Set
-	runs  trace.Traces
 	ints  Interventions
 	knobs knobTraces
 	// The decides and the exposes by id
@@ -120,15 +120,16 @@ type state struct {
 	// The draw each decide was recorded under by its id
 	draws map[string]trace.Draw
 	// The exposes newest first with what each showed
-	shown []shownExpose
+	shown shownExposes
 	// The newest anchor version
-	anchor  int
 	anchors AnchorVersion
 }
 
 // The traces every intervention reads
+// No run is among them since the prompt hook replies on every prompt and a record directory holds thousands
+// The scope of a judgment and the place of a mine read the runs they need
 var interveneNames = []trace.Name{
-	trace.NameIntervention, trace.NameAnswer, trace.NameDecide, trace.NameExpose, trace.NameKnob, trace.NameAnchor, trace.NameRun,
+	trace.NameIntervention, trace.NameAnswer, trace.NameDecide, trace.NameExpose, trace.NameKnob, trace.NameAnchor,
 }
 
 func (iv *Intervener) read(ctx context.Context) (state, error) {
@@ -136,7 +137,6 @@ func (iv *Intervener) read(ctx context.Context) (state, error) {
 }
 
 // The state of the traces of the names
-// The stop reads no run since a question never needs one and a record directory holds thousands
 func (iv *Intervener) readOf(ctx context.Context, names []trace.Name) (state, error) {
 	all, err := iv.ledger.All(ctx)
 	if err != nil {
@@ -149,9 +149,10 @@ func (iv *Intervener) readOf(ctx context.Context, names []trace.Name) (state, er
 		if err != nil {
 			return state{}, err
 		}
-		s.add(name, trace.RestoreAll(found))
+		ts := trace.RestoreAll(found)
+		s.add(name, ts)
 		if name == trace.NameIntervention || name == trace.NameAnswer || name == trace.NameDecide {
-			folded = append(folded, trace.RestoreAll(found)...)
+			folded = append(folded, ts...)
 		}
 	}
 	s.ints = RestoreInterventions(folded)
@@ -174,19 +175,14 @@ func (s *state) add(name trace.Name, ts trace.Traces) {
 	case trace.NameExpose:
 		for _, t := range ts {
 			s.exposes[t.ID] = t
-			var x Exposure
-			if json.Unmarshal(t.Input, &x) == nil && t.Draw != nil {
-				s.shown = append(s.shown, shownExpose{Trace: t, Exposure: x})
-			}
 		}
+		s.shown = shownOf(ts)
 	case trace.NameKnob:
 		s.knobs = knobTraces(ts)
 	case trace.NameAnchor:
 		if a, err := RestoreAnchor(ts.Newest()); err == nil {
-			s.anchor, s.anchors = a.Version, a
+			s.anchors = a
 		}
-	case trace.NameRun:
-		s.runs = ts
 	}
 }
 
@@ -201,7 +197,7 @@ func (iv *Intervener) resolve(ctx context.Context, r Request, s state) (trace.In
 	case trace.ActionAnswer, trace.ActionDismiss:
 		err = s.question(&in)
 	case trace.ActionPause:
-		err = pauseTarget(in)
+		err = pauseTarget(&in)
 	case trace.ActionResume:
 		err = s.pauseOf(&in)
 	case trace.ActionKnob:
@@ -224,27 +220,29 @@ func itemVersion(target string) (string, int, bool) {
 	return id, n, ok && id != "" && err == nil && n > 0
 }
 
-// The item version, the decide or the compaction a judgment acts on
+// The item version or the compaction a judgment acts on as the target names it or as a decide about it names it
+// Either one is found in the records so a form never names what the judgment cannot carry out
 func (iv *Intervener) judgeTarget(ctx context.Context, in *trace.Intervention, s state) error {
-	if id, v, ok := itemVersion(in.Target); ok {
+	id, v, versioned := itemVersion(in.Target)
+	compaction := in.Target
+	if d, ok := s.decides[in.Target]; ok {
+		id, v, versioned, compaction, in.Decide = d.Change.ID, d.Change.Version, d.Change.ID != "", d.Change.Compaction, d.ID
+	}
+	if versioned {
 		if _, err := s.all.Version(id, v); err != nil {
 			return fmt.Errorf("%w: %w", ErrTargetInvalid, err)
 		}
 		in.ID, in.Version = id, v
 		return nil
 	}
-	if d, ok := s.decides[in.Target]; ok && (d.Change.ID != "" || d.Change.Compaction != "") {
-		in.ID, in.Version, in.Compaction, in.Decide = d.Change.ID, d.Change.Version, d.Change.Compaction, d.ID
-		return nil
-	}
-	if _, err := iv.ledger.Compaction(ctx, in.Target); err != nil {
+	if _, err := iv.ledger.Compaction(ctx, compaction); err != nil {
 		return fmt.Errorf("%w: %q names no item version as id:version, decide or compaction: %w", ErrTargetInvalid, in.Target, err)
 	}
-	in.Compaction = in.Target
+	in.Compaction = compaction
 	return nil
 }
 
-// The open question an answer or a dismiss closes, named by its decide or by an expose of it
+// The open question an answer or a dismiss closes as its decide or an expose of it names it
 // 1. a question an answer that holds settled or a dismiss closed is no longer open
 // 2. an answer takes one of the two choices of the question
 func (s state) question(in *trace.Intervention) error {
@@ -273,11 +271,17 @@ func (s state) answered(decide string) bool {
 	return slices.ContainsFunc(s.ints.answers, func(a answered) bool { return a.Answer.Decide == decide && !s.ints.Reversed(a.ID) })
 }
 
-// A pause names a kind tier 1 may carry out or none
-func pauseTarget(in trace.Intervention) error {
+// A pause names a kind tier 1 may carry out or none and labels that each name a value
+// A label without a value would cover only the scopes that never name it
+func pauseTarget(in *trace.Intervention) error {
 	if in.Target != "" && !slices.Contains([]ChangeKind{ChangeAdd, ChangeUpdate, ChangeCompaction}, ChangeKind(in.Target)) {
 		return fmt.Errorf("%w: a pause names the kind add, update or compaction and not %q", ErrTargetInvalid, in.Target)
 	}
+	labels, err := in.Labels.Normalized()
+	if err != nil {
+		return fmt.Errorf("%w: %w", ErrTargetInvalid, err)
+	}
+	in.Labels = labels
 	return nil
 }
 
@@ -299,23 +303,26 @@ func (s state) holds(id string) (intervention, bool) {
 	return s.ints.person[i], true
 }
 
-// The knob and its value within its range with the value the knobs hold now
+// The knob and its value within its range with the value the next cycle start would give it without this setting
+// A reverse returns the knob there so a setting the person made before it in the same cycle still holds
 func (s state) knobTarget(in *trace.Intervention, value *float64) error {
 	n := KnobName(in.Target)
 	if value == nil || !n.admits(*value) {
 		return fmt.Errorf("%w: the knob %q takes a value within its range", ErrTargetInvalid, in.Target)
 	}
-	before := s.knobsNow().value(n)
+	before := s.pending().value(n)
 	in.Knob, in.Value, in.Before = string(n), value, &before
 	return nil
 }
 
-// The knobs of the newest knob event and the start knobs before the first
-func (s state) knobsNow() Knobs {
+// The knobs the next cycle start gives as the records stand
+// The knobs of the newest knob event or the start knobs before the first with every setting of the person since the cycle started
+func (s state) pending() Knobs {
+	k := StartKnobs()
 	if ev, ok := s.knobEvent(); ok {
-		return ev.Knobs
+		k = ev.Knobs
 	}
-	return StartKnobs()
+	return s.ints.Knobs(k, s.knobs.started())
 }
 
 func (s state) knobEvent() (KnobEvent, bool) {
@@ -339,7 +346,8 @@ func (s state) placeOf(in *trace.Intervention) error {
 }
 
 // The person's intervention a reverse takes back with the value a knob returns to
-// A digest changed nothing so nothing reverses it
+// 1. a digest changed nothing so nothing reverses it
+// 2. a knob a later setting of the person changed since is refused as the ledger refuses an id another write changed
 func (s state) reverseTarget(in *trace.Intervention) error {
 	x, ok := s.holds(in.Target)
 	if !ok || x.In.Action == trace.ActionDigest {
@@ -347,9 +355,13 @@ func (s state) reverseTarget(in *trace.Intervention) error {
 	}
 	in.Reverses = in.Target
 	for _, y := range []intervention{s.carried(x), x} {
-		if y.In.Value != nil && y.In.Before != nil {
-			in.Knob, in.Value, in.Before = y.In.Knob, y.In.Before, y.In.Value
+		if y.In.Value == nil || y.In.Before == nil {
+			continue
 		}
+		if s.ints.setSince(y) {
+			return fmt.Errorf("%w: %w: a later setting of %s holds", ErrTargetInvalid, knowledge.ErrReverseStale, y.In.Knob)
+		}
+		in.Knob, in.Value, in.Before = y.In.Knob, y.In.Before, y.In.Value
 	}
 	return nil
 }
@@ -404,9 +416,6 @@ func (iv *Intervener) digest(ctx context.Context, in trace.Intervention, session
 	if id != "" && iv.s.Cursor != nil {
 		out.Since = iv.s.Cursor(at, id)
 	}
-	if by.Proof.Authority() == trace.AuthorityPerson {
-		in.Person = by.Person
-	}
 	tr, err := iv.record(ctx, "", in, session, by, out)
 	return Intervened{Trace: tr, Since: out.Since}, err
 }
@@ -423,8 +432,11 @@ func (iv *Intervener) propose(ctx context.Context, in trace.Intervention, sessio
 }
 
 // The decide of the proposal appended and its question added to the questions due
+// Only while curate.json names the cycle of the knob event in force so the decide draws under the knobs a pass would read
+// A cycle that ended with no pass since has no knob event yet and its first pass prepares the question
 func (iv *Intervener) due(ctx context.Context, p intervention, s state) (string, error) {
-	if iv.s.Marks == nil {
+	ev, _, open := s.knobs.current(iv.now())
+	if iv.s.Marks == nil || !open {
 		return "", nil
 	}
 	held, err := iv.s.Marks.Hold()
@@ -433,11 +445,10 @@ func (iv *Intervener) due(ctx context.Context, p intervention, s state) (string,
 	}
 	defer func() { _ = held.Release() }()
 	m := held.Mark
-	if m.CycleID == "" {
+	if m.CycleID != ev.CycleID {
 		return "", nil
 	}
-	ev := KnobEvent{CycleID: m.CycleID, PolicyVersion: m.PolicyVersion, Seed: m.Seed}
-	tr, due, err := ev.proposal(p, s.anchor, s.all, iv.now())
+	tr, due, err := ev.proposal(p, s.anchors.Version, s.all, iv.now())
 	if err != nil {
 		return "", err
 	}

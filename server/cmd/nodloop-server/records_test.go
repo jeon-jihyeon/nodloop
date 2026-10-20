@@ -8,6 +8,8 @@ import (
 	"maps"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"slices"
 	"sync"
 	"testing"
@@ -155,15 +157,30 @@ func TestServeHandlerRecordsRefuses(t *testing.T) {
 	}
 }
 
-// A failure of the stores answers a records page without its cause
+// Stores that do not open and records that do not read answer a records page without the cause
 func TestServeHandlerRecordsInternalError(t *testing.T) {
-	srv := httptest.NewServer(newServeHandler(unopened{}, serverConfig{Keys: []serverKey{hashed("ann", "acme", mcp.RoleApprover)}}, time.Now, io.Discard))
-	t.Cleanup(srv.Close)
+	corrupt := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(corrupt, "tenants", "acme"), 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(corrupt, "tenants", "acme", "traces.jsonl"), []byte("{not json\n"), 0o600))
+	tcs := []struct {
+		name string
+		args tenantStores
+	}{
+		{"stores that do not open", unopened{}},
+		{"traces with a corrupt line", fileTenants{base: corrupt}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			srv := httptest.NewServer(newServeHandler(tc.args, serverConfig{Keys: []serverKey{hashed("ann", "acme", mcp.RoleApprover)}}, time.Now, io.Discard))
+			t.Cleanup(srv.Close)
 
-	status, body := get(t, srv.URL+"/v1/records/run", "ann")
+			status, body := get(t, srv.URL+"/v1/records/run", "ann")
 
-	assert.Equal(t, http.StatusInternalServerError, status)
-	assert.Equal(t, "internal error\n", body)
+			assert.Equal(t, http.StatusInternalServerError, status)
+			assert.Equal(t, "internal error\n", body)
+		})
+	}
 }
 
 // The OpenAPI document answers without a key and holds the published schema of every kind the server keeps and every route
@@ -237,7 +254,7 @@ func TestOpenAPIHandlerRefuses(t *testing.T) {
 			var log bytes.Buffer
 			rec := httptest.NewRecorder()
 
-			openAPIHandler{files: schema.NewFiles(tc.args), version: "dev", log: &log}.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/openapi.json", nil))
+			newOpenAPIHandler(schema.NewFiles(tc.args), "dev", &log).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/openapi.json", nil))
 
 			assert.Equal(t, http.StatusInternalServerError, rec.Code)
 			assert.Equal(t, "internal error\n", rec.Body.String())

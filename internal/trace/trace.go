@@ -14,11 +14,10 @@ import (
 // Field names follow Langfuse and LangSmith traces so readers need no glossary
 type Trace struct {
 	// Time sortable id built by NewID
-	ID string `json:"id"`
-	// run, check, classify or extract
-	Name Name `json:"name"`
-	// Groups runs
-	// A Claude Code session id or the id of a compaction its check belongs to
+	ID   string `json:"id"`
+	Name Name   `json:"name"`
+	// Groups traces
+	// The session of a host or of the MCP server or the compaction a check belongs to
 	SessionID string `json:"session_id,omitempty"`
 	// What the run was about in a few words
 	Subject string `json:"subject,omitempty"`

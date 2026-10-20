@@ -106,6 +106,8 @@ func (f knowledgeFlags) extractGaps(ctx context.Context, a app, client llm.Clien
 // The curator of the record directory with what its pass reads besides the records
 // 1. the anchor is refreshed first so every decide names the version it was judged against
 // 2. the numbers of report curation go to the knobs as plain values since curate never reads loop
+// The pass asks for them only when its knobs can move on them so a pass with nothing new reads no report
+// They come from the records of the judge configuration of now alone so the read never grows with every record
 // 3. the judge runs the model --model names or else the model of a chat endpoint or else the default of curate
 // 4. an endpoint set for the judge point joins the claude variants as a member of another model family
 func (f knowledgeFlags) curator(ctx context.Context, a app, client llm.Client, getenv func(string) string) (*curate.Curator, curate.Setting, error) {
@@ -113,13 +115,13 @@ func (f knowledgeFlags) curator(ctx context.Context, a app, client llm.Client, g
 	if err != nil {
 		return nil, curate.Setting{}, err
 	}
-	stores, err := a.reportStores(ctx)
-	if err != nil {
-		return nil, curate.Setting{}, err
-	}
-	report, err := stores.Curation(ctx, a.now())
-	if err != nil {
-		return nil, curate.Setting{}, err
+	numbers := func(ctx context.Context) (curate.Numbers, error) {
+		stores, err := a.reportStores(ctx)
+		if err != nil {
+			return curate.Numbers{}, err
+		}
+		report, err := stores.Knobbed(ctx, a.now())
+		return curationNumbers(report), err
 	}
 	var members []classify.Member
 	endpoints, err := a.cfg.classifiers.endpoints()
@@ -143,7 +145,7 @@ func (f knowledgeFlags) curator(ctx context.Context, a app, client llm.Client, g
 	_, _ = rand.Read(seed[:])
 	return curator, curate.Setting{
 		Build: buildVersion(), Judge: judge, Seed: hex.EncodeToString(seed[:]), Anchor: state.anchor, Version: state.version, Since: state.at,
-		Window: state.since, Temp: tempDirs(), Read: readText, Numbers: curationNumbers(report),
+		Window: state.since, Temp: tempDirs(), Read: readText, Numbers: numbers,
 	}, nil
 }
 
@@ -188,19 +190,11 @@ func readText(path string) (string, error) {
 }
 
 // Starts knowledge curate --daily in a process of its own when its mark is a day old
-// 1. the mark is read here without its lock so most stops start nothing and the started process holds the mark itself
+// 1. the mark is the one the hook read without its lock so most stops start nothing and the started process holds the mark itself
 // 2. only a mode that infers starts it since the pass works on what the capture and the extraction prepared
 func (c hookCommand) curate() error {
-	if !c.mode.infers() {
+	if !c.mode.infers() || !c.marked || !c.mark.Daily(c.app.now()) {
 		return nil
-	}
-	dir, err := c.app.makeRecordDir()
-	if err != nil {
-		return err
-	}
-	mark, err := curate.ReadMark(dir)
-	if err != nil || !mark.Daily(c.app.now()) {
-		return err
 	}
 	return c.detach([]string{"knowledge", "curate", "--daily"})
 }

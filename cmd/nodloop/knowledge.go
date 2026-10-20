@@ -163,7 +163,7 @@ func runKnowledge(
 	case args[0] == "propose":
 		err = flags.runPropose(ctx, a, stdout)
 	case args[0] == "extract":
-		// The extraction runs detached after a stop so its trace leaves at once instead of after the next stop
+		// extract, consolidate and curate call a model for a while so their traces leave when they end instead of at the next stop
 		err = flags.runExtract(ctx, a, client, getenv, stdout)
 		a.exportAfter(detached(a.cfg.home.hookLog()), stderr)
 	case args[0] == "replay":

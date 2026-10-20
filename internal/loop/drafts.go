@@ -15,10 +15,13 @@ import (
 type DraftRow struct {
 	// The plugin version of the first run the candidate cites
 	Version string `json:"version"`
-	// The path of the extraction that proposed it and unknown before 0.7
-	Path     string `json:"path"`
-	Drafted  int    `json:"drafted"`
-	Approved int    `json:"approved"`
+	// The path of the extraction that proposed it and unknown when no extract trace names it
+	Path    string `json:"path"`
+	Drafted int    `json:"drafted"`
+	// Approved by anyone and of them the ones nodloop approved without the person
+	// So the person sees what curate decided on their behalf apart from what they decided
+	Approved        int `json:"approved"`
+	ApprovedNodloop int `json:"approved_nodloop"`
 	// Retired or superseded before any approval
 	Dropped int `json:"dropped"`
 	Waiting int `json:"waiting"`
@@ -33,6 +36,8 @@ type draft struct {
 	proposed      time.Time
 	approved      time.Time
 	dropped       time.Time
+	// The first approval named nodloop as its approver
+	carried bool
 }
 
 // The first decision and when it came
@@ -65,6 +70,9 @@ func (r Runs) Drafts(items knowledge.Set, traces trace.Traces) []DraftRow {
 			row.Waiting++
 		case !d.approved.IsZero():
 			row.Approved++
+			if d.carried {
+				row.ApprovedNodloop++
+			}
 		default:
 			row.Dropped++
 		}
@@ -100,7 +108,7 @@ func (r Runs) drafted(items knowledge.Set, paths map[knowledge.Ref]string) map[k
 		case !ok:
 			drafts[ref] = &draft{version: r.version(k.Evidence.FirstFeedback()), path: cmp.Or(paths[ref], unknown), proposed: k.Time}
 		case k.Status == knowledge.StatusApproved && d.approved.IsZero():
-			d.approved = k.Time
+			d.approved, d.carried = k.Time, k.Approver == knowledge.ApproverNodloop
 		case (k.Status == knowledge.StatusRetired || k.Status == knowledge.StatusSuperseded) && d.dropped.IsZero():
 			d.dropped = k.Time
 		}

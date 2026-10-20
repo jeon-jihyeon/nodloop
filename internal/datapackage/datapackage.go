@@ -93,9 +93,11 @@ type descriptor struct {
 // Makes the folder and writes the first descriptor with the nodloop key the writer passes
 // 1. the folder is missing or an empty real folder and never a link
 // so the records land nowhere a link would send them
+// The path is cleaned first since a trailing slash makes lstat follow a link
 // 2. it is made or set to mode 0700
 // 3. the first descriptor lists no table so a reader who opens the folder before Close sees the export is not done
 func Create(folder, name string, created time.Time, nodloop any) (*Package, error) {
+	folder = filepath.Clean(folder)
 	if err := makeFolder(folder); err != nil {
 		return nil, err
 	}

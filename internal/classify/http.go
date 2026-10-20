@@ -11,9 +11,6 @@ import (
 	"time"
 )
 
-// Bytes of an error body a message quotes
-const bodyQuote = 200
-
 // Bytes of an answer read at most
 // A few questions answer in well under a kilobyte so a larger body is a wrong endpoint and is cut before it fills memory
 const bodyLimit = 1 << 20
@@ -27,8 +24,12 @@ type HTTP struct {
 	client *http.Client
 }
 
+// A redirect is answered as the status it carries
+// Following a 307 or a 308 would send the person's words or the anchor to an endpoint no point names
 func NewHTTP(endpoint Endpoint, key string, timeout time.Duration) *HTTP {
-	return &HTTP{endpoint: endpoint, key: key, client: &http.Client{Timeout: timeout}}
+	return &HTTP{endpoint: endpoint, key: key, client: &http.Client{
+		Timeout: timeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}}
 }
 
 type wireQuestion struct {
@@ -66,10 +67,8 @@ func (h *HTTP) answers(ctx context.Context, req Request) (Answers, string, error
 	for name, instructions := range req.Questions {
 		questions[name] = wireQuestion{Type: "noul", Instructions: instructions}
 	}
-	body, err := json.Marshal(wireRequest{Model: h.endpoint.Model, State: req.State, Questions: questions})
-	if err != nil {
-		return nil, "", err
-	}
+	// Strings alone always encode
+	body, _ := json.Marshal(wireRequest{Model: h.endpoint.Model, State: req.State, Questions: questions})
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, h.endpoint.URL, bytes.NewReader(body))
 	if err != nil {
 		return nil, "", err
@@ -88,16 +87,19 @@ func (h *HTTP) answers(ctx context.Context, req Request) (Answers, string, error
 	if err != nil {
 		return nil, "", err
 	}
+	// The error names the status alone since the classify trace keeps it
+	// and an endpoint that echoes its request would put the state in a field no export strips
 	if res.StatusCode < 200 || res.StatusCode > 299 {
-		return nil, "", fmt.Errorf("%w: %d %s", ErrStatus, res.StatusCode, b[:min(len(b), bodyQuote)])
+		return nil, "", fmt.Errorf("%w: %d", ErrStatus, res.StatusCode)
 	}
 	var wire wireResponse
 	if err := json.Unmarshal(b, &wire); err != nil {
 		return nil, "", fmt.Errorf("%w: %w", ErrResponseInvalid, err)
 	}
+	// Only the questions asked are kept so an answer to another never makes the endpoint unsure or reaches a record
 	answers := Answers{}
-	for name, a := range wire.Answers {
-		if a.Noul != nil {
+	for name := range req.Questions {
+		if a := wire.Answers[name]; a.Noul != nil {
 			answers[name] = Answer{Yes: *a.Noul}
 		}
 	}

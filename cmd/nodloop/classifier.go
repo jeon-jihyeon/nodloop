@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/jeon-jihyeon/nodloop/internal/classify"
+	"github.com/jeon-jihyeon/nodloop/internal/trace"
 )
 
 // The question a probe asks
@@ -144,7 +145,8 @@ func (s legacySetup) thresholdNote() string {
 	return fmt.Sprintf(" with threshold %g while a point now falls back below %g", s.Threshold, legacyThreshold)
 }
 
-func runClassifier(args []string, getenv func(string) string, now func() time.Time, stdout, stderr io.Writer) int {
+// The proof is the terminal proof of the process since only the person picks who answers at a point that predicts them
+func runClassifier(args []string, getenv func(string) string, now func() time.Time, proof trace.Proof, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		return fail(stderr, "classifier", errNoAction)
 	}
@@ -163,7 +165,7 @@ func runClassifier(args []string, getenv func(string) string, now func() time.Ti
 	if err != nil {
 		return fail(stderr, "classifier", err)
 	}
-	cmd := classifierCommand{home: h, now: now, out: stdout}
+	cmd := classifierCommand{home: h, now: now, proof: proof, out: stdout}
 	point := classify.Point(name)
 	switch args[0] {
 	case "set":
@@ -196,11 +198,27 @@ func (f *classifierFlags) bind(fs *flag.FlagSet) {
 type classifierCommand struct {
 	home homeDir
 	now  func() time.Time
-	out  io.Writer
+	// The terminal proof of the process
+	proof trace.Proof
+	out   io.Writer
+}
+
+// The points whose answers stand for the person: the judge predicts their decision and the reaction reads their words
+var personPoints = []classify.Point{classify.PointJudge, classify.PointReaction}
+
+// A point that stands for the person changes only with the terminal proof so an agent never swaps who answers for them
+func (c classifierCommand) changeable(point classify.Point) error {
+	if c.proof == trace.ProofNone && slices.Contains(personPoints, point) {
+		return fmt.Errorf("%s: %w", point, errPersonOnly)
+	}
+	return nil
 }
 
 // A config before 0.7.0 is read without the decision of the point so set repairs a setup nodloop no longer runs
 func (c classifierCommand) set(cfg classifierConfig, point classify.Point, e classify.Endpoint) error {
+	if err := c.changeable(point); err != nil {
+		return err
+	}
 	current, err := cfg.without(point).endpoints()
 	if err != nil {
 		return err
@@ -219,6 +237,9 @@ func (c classifierCommand) set(cfg classifierConfig, point classify.Point, e cla
 // The point asks claude alone again
 // A config before 0.7.0 is read without the decision of the point so unset also clears a setup nodloop no longer runs
 func (c classifierCommand) unset(cfg classifierConfig, point classify.Point) error {
+	if err := c.changeable(point); err != nil {
+		return err
+	}
 	current, err := cfg.without(point).endpoints()
 	if err != nil {
 		return err

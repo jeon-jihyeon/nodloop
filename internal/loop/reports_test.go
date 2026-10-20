@@ -3,12 +3,15 @@ package loop_test
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	feedbackfile "github.com/jeon-jihyeon/nodloop/internal/feedback/file"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	knowledgefile "github.com/jeon-jihyeon/nodloop/internal/knowledge/file"
 	"github.com/jeon-jihyeon/nodloop/internal/loop"
@@ -110,7 +113,9 @@ func TestStoresReport(t *testing.T) {
 			Totals: loop.Totals{Runs: 1}, Scopes: []loop.ScopeRow{}, Drafts: []loop.DraftRow{}, Items: []loop.RunItem{},
 		})}},
 		{"extract has no row without an extraction", loop.ReportExtract, want{report: reportJSON([]loop.ExtractRow{})}},
-		{"critic has no row without a critic", loop.ReportCritic, want{report: reportJSON(loop.CriticReport{Critics: []loop.CriticRow{}, Reactions: []loop.ReactionRow{}})}},
+		{"critic has no row without a critic", loop.ReportCritic, want{report: reportJSON(loop.CriticReport{
+			Critics: []loop.CriticRow{}, Reactions: []loop.ReactionRow{}, Capture: loop.CaptureRow{Critic: "capture"},
+		})}},
 		{
 			"effect has a row per arm without runs that received items",
 			loop.ReportEffect,
@@ -135,23 +140,31 @@ func TestStoresReport(t *testing.T) {
 func TestStoresReportLoadFails(t *testing.T) {
 	type args struct {
 		name loop.ReportName
-		// Reads of the knowledge and the feedback store that succeed before each fails
-		items, verdicts int
+		// Reads of the knowledge, the feedback and the trace store that succeed before each fails
+		items, verdicts, lists int
+		// The lines of outcomes.jsonl
+		outcomes string
 	}
 	tcs := []struct {
 		name string
 		args args
+		want error
 	}{
-		{"loop fails on the knowledge", args{loop.ReportLoop, 0, 1}},
-		{"loop fails on the verdicts", args{loop.ReportLoop, 1, 0}},
-		{"replay fails on the knowledge", args{loop.ReportReplay, 0, 1}},
-		{"health fails on the knowledge", args{loop.ReportHealth, 0, 1}},
-		{"health fails on the verdicts", args{loop.ReportHealth, 1, 0}},
+		{"loop fails on the knowledge", args{loop.ReportLoop, 0, 1, 9, ""}, assert.AnError},
+		{"loop fails on the verdicts", args{loop.ReportLoop, 1, 0, 9, ""}, assert.AnError},
+		{"replay fails on the knowledge", args{loop.ReportReplay, 0, 1, 9, ""}, assert.AnError},
+		{"health fails on the knowledge", args{loop.ReportHealth, 0, 1, 9, ""}, assert.AnError},
+		{"health fails on the verdicts", args{loop.ReportHealth, 1, 0, 9, ""}, assert.AnError},
+		{"critic fails on the traces", args{loop.ReportCritic, 9, 9, 0, ""}, assert.AnError},
+		{"effect fails on the knob traces", args{loop.ReportEffect, 9, 9, 0, ""}, assert.AnError},
+		{"effect fails on the runs after the knob traces", args{loop.ReportEffect, 9, 9, 1, ""}, assert.AnError},
+		{"effect fails on a corrupt outcome", args{loop.ReportEffect, 9, 9, 9, "not json\n"}, feedbackfile.ErrCorrupt},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			st := testkit.Open(t)
+			require.NoError(t, os.WriteFile(filepath.Join(st.Dir, "outcomes.jsonl"), []byte(tc.args.outcomes), 0o600))
 			dir := t.TempDir()
 			items, err := knowledgefile.New(dir)
 			require.NoError(t, err)
@@ -160,11 +173,12 @@ func TestStoresReportLoadFails(t *testing.T) {
 				vetofile.NewApprovedFile(t.TempDir(), dir), st.Clock.Now, func(prefix string) string { return prefix + "generated" },
 			)
 			verdicts := &testkit.FlakyFeedback{Store: st.Feedback, Reads: testkit.Reads{Allowed: tc.args.verdicts, Err: assert.AnError}}
-			stores := loop.Stores{Traces: st.Traces, Verdicts: verdicts, Outcomes: st.Outcomes, Items: ledger}
+			traces := &testkit.FlakyTraces{Store: st.Traces, Lists: testkit.Reads{Allowed: tc.args.lists, Err: assert.AnError}}
+			stores := loop.Stores{Traces: traces, Verdicts: verdicts, Outcomes: st.Outcomes, Items: ledger}
 
 			got, err := stores.Report(context.Background(), tc.args.name, st.Clock.Now())
 
-			assert.ErrorIs(t, err, assert.AnError)
+			assert.ErrorIs(t, err, tc.want)
 			assert.Nil(t, got)
 		})
 	}

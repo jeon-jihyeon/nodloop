@@ -68,7 +68,9 @@ type Setting struct {
 	// The text of an anchor file read at check time
 	Read func(path string) (string, error)
 	// What the curation report of loop found that the knobs move on
-	Numbers Numbers
+	// 1. called at most once and only when the knobs can move on it so a pass with nothing new reads no report
+	// 2. nil reads no numbers
+	Numbers func(ctx context.Context) (Numbers, error)
 }
 
 // One decide as a pass made it or reads it back
@@ -221,7 +223,7 @@ func (c *Curator) open(ctx context.Context, s Setting) (*pass, error) {
 	if err := p.reload(ctx); err != nil {
 		return nil, err
 	}
-	return p, p.cycle(ctx, knobTraces(knobs))
+	return p, p.cycle(ctx, knobTraces(knobs), answers)
 }
 
 func (c *Curator) list(ctx context.Context, f record.TraceFilter) (trace.Traces, error) {
@@ -229,22 +231,36 @@ func (c *Curator) list(ctx context.Context, f record.TraceFilter) (trace.Traces,
 	return trace.RestoreAll(found), err
 }
 
+// Reads the knowledge records again after a write
+// A read that fails keeps the records read last so no later change of the pass is decided on a part of them
 func (p *pass) reload(ctx context.Context) error {
 	all, err := p.ledger.All(ctx)
+	if err != nil {
+		return err
+	}
 	p.all = all
-	return err
+	return nil
 }
 
 // The knob event of the cycle that holds now with the move of the knobs on the numbers of loop
 // 1. a pass inside the cycle hands the numbers to Alarm and appends a narrowing of the same cycle only when a knob moved
+// An alarm comes from an answer so a pass with no answer after the newest knob event reads no numbers
 // 2. the first pass of a cycle hands them to Start and appends the knob event of the cycle with the move and its offers
 // 3. a cycle that starts a new judge configuration reads no number since every answer was given under another judge
-func (p *pass) cycle(ctx context.Context, knobs knobTraces) error {
+func (p *pass) cycle(ctx context.Context, knobs knobTraces, answers trace.Traces) error {
 	now := p.now()
 	if ev, id, ok := knobs.current(now); ok {
-		move := ev.Knobs.Alarm(p.s.Numbers)
+		p.event = ev
+		newest := knobs[0].Time
+		if !slices.ContainsFunc(answers, func(a trace.Trace) bool { return a.Time.After(newest) }) {
+			return nil
+		}
+		numbers, err := p.numbers(ctx)
+		if err != nil {
+			return err
+		}
+		move := ev.Knobs.Alarm(numbers)
 		if len(move.Changes) == 0 {
-			p.event = ev
 			return nil
 		}
 		ev.Cause, ev.Before = KnobNarrow, id
@@ -252,11 +268,22 @@ func (p *pass) cycle(ctx context.Context, knobs knobTraces) error {
 	}
 	ev, started := knobs.next(now, p.s.Seed, p.s.Judge, p.s.Anchor.Shots(p.s.Judge.StartAt(now)))
 	ev.Knobs = p.ints.Knobs(ev.Knobs, knobs.started())
-	numbers := p.s.Numbers
-	if started {
-		numbers = Numbers{}
+	var numbers Numbers
+	if !started {
+		var err error
+		if numbers, err = p.numbers(ctx); err != nil {
+			return err
+		}
 	}
-	return p.append(ctx, ev, ev.Knobs.Start(numbers), now)
+	return p.append(ctx, ev, ev.Knobs.Start(numbers, p.ints.setBy(KnobAuditTier1)), now)
+}
+
+// The numbers the setting reads and none without a reader
+func (p *pass) numbers(ctx context.Context) (Numbers, error) {
+	if p.s.Numbers == nil {
+		return Numbers{}, nil
+	}
+	return p.s.Numbers(ctx)
 }
 
 // Appends the knob event with the knobs and the changes of the move and runs the pass under it
@@ -286,11 +313,16 @@ func (p *pass) offered(ctx context.Context) error {
 }
 
 // Carries out the decides a crash left before their ledger write in the order they were made
-// A version no longer in the state the decide found was decided since so it stays as it is
+// 1. a version no longer in the state the decide found was decided since so it stays as it is
+// 2. the decisions the records name are read once since every decide of the records is checked at every pass
 func (p *pass) recover(ctx context.Context) error {
+	named := map[string]bool{}
+	for _, k := range p.all {
+		named[k.Decision] = true
+	}
 	var errs []error
 	for _, d := range slices.Backward(p.decides) {
-		if d.Decision.carries() && !p.all.HasDecision(d.ID) && p.waits(d) {
+		if d.Decision.carries() && !named[d.ID] && p.waits(d) {
 			errs = append(errs, p.carry(ctx, d))
 		}
 	}
@@ -326,7 +358,8 @@ type signal struct {
 	reason knowledge.Reason
 }
 
-// The withdrawals the signals of the window ask for in the order they were found, each decided once
+// The withdrawals the signals of the window ask for in the order they were found
+// Each signal is decided once per version it names
 func (p *pass) withdrawals(ctx context.Context) error {
 	signals, err := p.signals(ctx)
 	if err != nil {
@@ -423,14 +456,15 @@ func conflicted(t trace.Trace) (knowledge.Ref, bool) {
 }
 
 // Decides each waiting candidate version that is due a decision in the Waiting order
-// A candidate that cites no run has no evidence a decide could name so it waits for the person as before
+// 1. a candidate that cites no run has no evidence a decide could name so it waits for the person as before
+// 2. every waiting candidate is scoped to runs so the tier rules read its scope
 func (p *pass) candidates(ctx context.Context) error {
 	latest := p.decides.latest()
 	var errs []error
 	for _, k := range p.all.AllWaiting() {
 		retried, due := p.pending(k, latest)
 		ref := cited(k.Evidence)
-		if !due || ref == "" || k.Run == nil {
+		if !due || ref == "" {
 			continue
 		}
 		r, err := p.sort(ctx, k, ref, retried)
@@ -462,7 +496,7 @@ type ruling struct {
 // Whether the candidate version is due a decision and whether its last one was a retry
 // 1. a version no decide named yet
 // 2. a retry after a judge call that failed
-// 3. a version corroborate joined new evidence to after its decide, or after the person dismissed its question
+// 3. a version corroborate joined new evidence to after its decide or after the person dismissed its question
 // 4. a version decided in shadow that no answer settled once the shadow ended
 // A dismissed question stays closed without new evidence so nodloop never carries it out
 func (p *pass) pending(k knowledge.Knowledge, latest map[string]Decided) (retried, due bool) {
@@ -495,7 +529,7 @@ func (p *pass) proposals(ctx context.Context) error {
 		asked[d.Change.Proposal] = true
 	}
 	var errs []error
-	for _, prop := range p.ints.proposed() {
+	for _, prop := range p.ints.proposals {
 		if asked[prop.ID] {
 			continue
 		}
@@ -532,11 +566,7 @@ func (p *pass) sort(ctx context.Context, k knowledge.Knowledge, ref string, retr
 	}
 	run := p.run(ctx, ref)
 	place := p.place(run)
-	rule, asks, err := p.asks(k, run, place)
-	switch {
-	case err != nil:
-		return ruling{}, err
-	case asks:
+	if rule, asks := p.asks(k, run, place); asks {
 		r.decision = Decision{Tier: topTier, RuleCode: rule, Action: ActionAsk}
 		return r, nil
 	}
@@ -546,6 +576,7 @@ func (p *pass) sort(ctx context.Context, k knowledge.Knowledge, ref string, retr
 // The judge on the change and the tier its outcome gives
 // 1. a member that failed leaves the change for the next pass once with action retry and then it is decided as split
 // 2. the outcome, the vote, the bin and the confidence it reads stay on the decide whatever the tier
+// 3. a judge whose trace failed to append fails the change since a decide names the trace of its judge
 func (p *pass) judged(ctx context.Context, r *ruling, k knowledge.Knowledge, ref string, run trace.Trace, place AnchorPlace, retried bool) error {
 	cs, err := p.caseOf(ctx, k, r.change.Kind, run, place)
 	if err != nil {
@@ -557,7 +588,10 @@ func (p *pass) judged(ctx context.Context, r *ruling, k knowledge.Knowledge, ref
 		return err
 	}
 	j, err := judge.Judge(ctx, ref, cs)
-	r.failed = errors.Join(err, j.Err)
+	if err != nil {
+		return err
+	}
+	r.failed = j.Err
 	if r.failed != nil && !retried {
 		r.decision = Decision{Tier: 1, Judge: j.Trace, Action: ActionRetry, Failure: FailureRepairable, Reopen: ReopenNextPass}
 		return nil
@@ -632,29 +666,33 @@ func (p *pass) settle(ctx context.Context, ref string, r ruling) error {
 }
 
 // The ledger write the decide carries out under its id and the records read again after it
+// 1. each kind has its own ledger call and a decide whose action is not the one of its kind writes nothing
+// 2. a compaction is approved only with its passed coverage check that no pass holds so tier 1 applies an add or an update alone
 func (p *pass) carry(ctx context.Context, d Decided) error {
-	c := d.Change
+	c, action := d.Change, d.Decision.Action
 	var err error
-	switch d.Decision.Action {
-	case ActionApply:
+	switch {
+	case action == ActionApply && (c.Kind == ChangeAdd || c.Kind == ChangeUpdate):
 		_, err = p.ledger.Apply(ctx, c.ID, c.Version, d.ID)
-	case ActionWithdraw:
+	case action == ActionWithdraw && c.Kind == ChangeWithdraw:
 		_, err = p.ledger.Withdraw(ctx, c.ID, c.Version, d.Decision.Reason, d.ID)
-	case ActionDrop:
+	case action == ActionDrop && c.Kind == ChangeDrop:
 		_, err = p.ledger.Drop(ctx, c.ID, c.Version, d.Decision.Reason, d.ID)
-	case ActionJoin:
+	case action == ActionJoin && c.Kind == ChangeJoin:
 		err = p.join(ctx, d)
+	default:
+		return fmt.Errorf("%w: a decide of a %s carries out no %s", ErrDecideInvalid, c.Kind, action)
 	}
 	return errors.Join(err, p.reload(ctx))
 }
 
 // Joins the corrected runs of the candidate to the older candidate that says the same and then drops it
-// A run that no longer carries a correction or that the older candidate does not reach joins nothing
+// 1. a run that no longer carries a correction or that the older candidate does not reach joins nothing
+// 2. an older candidate a person decided after a crash cut the join off takes no evidence and the candidate is still dropped
+// So a join the next pass carries out again never fails at every pass
+// 3. the set holds the candidate since the pass sorted it from there or found it waiting
 func (p *pass) join(ctx context.Context, d Decided) error {
-	newer, err := p.all.Version(d.Change.ID, d.Change.Version)
-	if err != nil {
-		return err
-	}
+	newer, _ := p.all.Version(d.Change.ID, d.Change.Version)
 	if len(d.Change.Old) != 1 {
 		return fmt.Errorf("%w: join %s names %d older candidates", ErrDecideInvalid, d.ID, len(d.Change.Old))
 	}
@@ -672,11 +710,12 @@ func (p *pass) join(ctx context.Context, d Decided) error {
 			return err
 		}
 		_, err = p.ledger.Corroborate(ctx, older.ID, older.Version, trace.Restore(found), verdicts)
-		if err != nil && !errors.Is(err, knowledge.ErrNotCorrected) && !errors.Is(err, knowledge.ErrScopeWidened) {
+		refused := errors.Is(err, knowledge.ErrNotCorrected) || errors.Is(err, knowledge.ErrScopeWidened) || errors.Is(err, knowledge.ErrNotCandidate)
+		if err != nil && !refused {
 			return err
 		}
 	}
-	_, err = p.ledger.Drop(ctx, d.Change.ID, d.Change.Version, d.Decision.Reason, d.ID)
+	_, err := p.ledger.Drop(ctx, d.Change.ID, d.Change.Version, d.Decision.Reason, d.ID)
 	return err
 }
 

@@ -112,12 +112,12 @@ func TestPanelClassify(t *testing.T) {
 				failed:  []bool{true},
 				members: []asked{{Name: "claude:1", Model: "claude-opus-5-5", Effort: "high", Error: "classify: endpoint answer is not valid: decided is NaN"}},
 			}},
-		{"a failing endpoint keeps the model it was sent",
+		{"a failing endpoint keeps the model it was sent and the status without its body",
 			[]member{{name: "laya", endpoint: &endpoint{status: http.StatusServiceUnavailable}}},
 			want{
 				votes:   []classify.Reply{{Model: "laya"}},
 				failed:  []bool{true},
-				members: []asked{{Name: "laya", Model: "laya", Error: "classify: endpoint answered an error status: 503 model not loaded\n"}},
+				members: []asked{{Name: "laya", Model: "laya", Error: "classify: endpoint answered an error status: 503"}},
 			}},
 	}
 	for _, tc := range tcs {
@@ -226,31 +226,4 @@ func TestPanelClassifyAppendFails(t *testing.T) {
 	assert.Empty(t, got.TraceID)
 	require.Len(t, got.Votes, 1)
 	assert.Equal(t, reply, got.Votes[0].Reply)
-}
-
-func TestHTTPReply(t *testing.T) {
-	tcs := []struct {
-		name string
-		args endpoint
-		want classify.Reply
-	}{
-		{"the model the endpoint answered with is named",
-			endpoint{yes: map[string]float64{"holds": 1, "states": 1}, model: "laya-2"},
-			classify.Reply{Answers: classify.Answers{"holds": {Yes: 1}, "states": {Yes: 1}}, Model: "laya-2"}},
-		{"an endpoint that names none keeps the model it was sent",
-			endpoint{yes: map[string]float64{"holds": 1, "states": 1}},
-			classify.Reply{Answers: classify.Answers{"holds": {Yes: 1}, "states": {Yes: 1}}, Model: "laya"}},
-	}
-	for _, tc := range tcs {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			srv, _, _ := tc.args.serve(t)
-			h := classify.NewHTTP(classify.Endpoint{URL: srv.URL, Model: "laya"}, "", time.Second)
-
-			got, err := h.Reply(context.Background(), classify.Request{State: "the draft", Questions: questions})
-
-			require.NoError(t, err)
-			assert.Equal(t, tc.want, got)
-		})
-	}
 }

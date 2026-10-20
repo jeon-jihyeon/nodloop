@@ -46,7 +46,7 @@ type TraceStore interface {
 	List(ctx context.Context, f record.TraceFilter) ([]record.Trace, error)
 }
 
-// The coverage checks beside the runs
+// The coverage checks and the compact traces of the drafts beside the runs
 // Newest first
 type CheckStore interface {
 	Append(ctx context.Context, t record.Trace) error
@@ -112,15 +112,6 @@ func (c *Compactor) propose(ctx context.Context, f Folder, d Draft, author strin
 		return knowledge.Compaction{}, err
 	}
 	return c.ledger.ProposeCompaction(ctx, f.Anchor, drafts)
-}
-
-// Approves the compaction on behalf of a named person once its newest coverage check passed
-func (c *Compactor) Approve(ctx context.Context, id, approver string) (knowledge.Compaction, error) {
-	cov, err := c.Coverage(ctx, id)
-	if err != nil {
-		return knowledge.Compaction{}, err
-	}
-	return c.ledger.ApproveCompaction(ctx, id, approver, cov)
 }
 
 // The latest verdict on every evidence trace of the items, once each in the order the items cite them

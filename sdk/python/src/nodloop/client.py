@@ -37,10 +37,11 @@ VERSION = "0.9.0"
 
 
 # The reports report reads
-# Deprecated: page the raw records with records instead, which carry the published contract
+# Deprecated: page the raw records with records instead since they carry the published contract
 ReportName = Literal["loop", "extract", "critic", "effect", "health", "replay"]
 
 # The actions of the write side
+# A test checks them against the generated record type of an intervention
 InterventionAction = Literal["judge", "answer", "dismiss", "pause", "resume", "knob", "reanchor", "digest", "reverse"]
 
 # What a real check found for a run
@@ -135,7 +136,7 @@ class Knowledge:
 class Report:
     """One report of the records with the start of the runs it read
 
-    Deprecated: page the raw records with records instead, which carry the published contract
+    Deprecated: page the raw records with records instead since they carry the published contract
     """
 
     # The report as JSON
@@ -150,7 +151,8 @@ class Page:
 
     # Each record as the TypedDict of its kind in nodloop.records
     records: list[AnyRecord]
-    # The cursor to pass as since for the next page, the same while no newer record is settled
+    # The cursor to pass as since for the next page
+    # It stays the same while no newer record is settled
     next: str = ""
 
 
@@ -339,7 +341,8 @@ class Client:
     async def report(self, name: ReportName) -> Report:
         """One report of the records as JSON with the start of the window it read
 
-        Deprecated: page the raw records with records instead, which carry the published contract. report is removed in the next release
+        Deprecated: page the raw records with records instead since they carry the published contract
+        report is removed in the next release
         """
         answer = await self.call("report", {"name": name})
         return Report(answer["report"], answer.get("since", ""))

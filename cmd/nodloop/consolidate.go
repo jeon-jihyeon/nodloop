@@ -59,15 +59,12 @@ func (f knowledgeFlags) runConsolidate(ctx context.Context, a app, client llm.Cl
 // 1. only a mode that infers starts it since manual leaves every candidate to the person
 // 2. the mark is read here without its lock so most turns start nothing and the started process claims it
 // 3. fewer than consolidateMin waiting candidates start nothing since no pair can say the same
+// The record directory exists once the stop read the ledger whose candidates it counts
 func (c hookCommand) consolidate(all knowledge.Set) error {
 	if !c.mode.infers() || len(all.AllWaiting()) < consolidateMin {
 		return nil
 	}
-	dir, err := c.app.makeRecordDir()
-	if err != nil {
-		return err
-	}
-	due, err := consolidate.NewMarker(dir).Due(c.app.now())
+	due, err := consolidate.NewMarker(c.app.cfg.recordDir).Due(c.app.now())
 	if err != nil || !due {
 		return err
 	}

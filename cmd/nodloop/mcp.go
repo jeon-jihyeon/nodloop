@@ -10,6 +10,7 @@ import (
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/jeon-jihyeon/nodloop/internal/compact"
 	"github.com/jeon-jihyeon/nodloop/internal/curate"
 	"github.com/jeon-jihyeon/nodloop/internal/extract"
 	"github.com/jeon-jihyeon/nodloop/internal/mcp"
@@ -128,18 +129,12 @@ func (o mcpOpen) open(context.Context) (*mcp.Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	compactor, err := a.compactor(ledger)
-	if err != nil {
-		return nil, err
-	}
-	dir, err := a.makeRecordDir()
-	if err != nil {
-		return nil, err
-	}
 	source, err := a.source()
 	if err != nil {
 		return nil, err
 	}
+	// The record directory exists once the stores above opened
+	dir := a.cfg.recordDir
 	policy := mcp.Policy{
 		Holdout: a.cfg.holdout, Retention: a.cfg.retention, Marks: retain.NewMarker(dir), AfterRun: a.afterRun(o.log),
 		Approver: a.cfg.approver, Curate: curate.NewMarker(dir), Build: buildVersion(),
@@ -149,7 +144,7 @@ func (o mcpOpen) open(context.Context) (*mcp.Server, error) {
 		policy.AfterVerdict = a.afterVerdict(o.export, o.log)
 	}
 	return mcp.New(
-		traces, verdicts, outcomes, ledger, source, compactor, extract.New(ledger, traces, verdicts, o.now), o.now, o.session, executable(),
-		a.cfg.recordArgs(), o.caller, policy,
+		traces, verdicts, outcomes, ledger, source, compact.New(ledger, traces, verdicts, traces, o.now), extract.New(ledger, traces, verdicts, o.now),
+		o.now, o.session, executable(), a.cfg.recordArgs(), o.caller, policy,
 	), nil
 }

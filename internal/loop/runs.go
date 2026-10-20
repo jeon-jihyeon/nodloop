@@ -15,6 +15,8 @@ import (
 type RunItem struct {
 	ID      string `json:"id"`
 	Version int    `json:"version"`
+	// Who approved or last reaffirmed the version: the person by name or nodloop for what curate approved without them
+	Approver string `json:"approver"`
 	// Runs whose input names the version
 	Applied int `json:"applied"`
 	// Applied runs with a verdict of a person a proof shows
@@ -67,6 +69,8 @@ type Runs struct {
 	verdicts map[string]feedback.Feedback
 	// Every record the conversation inferred per trace in the order of the store
 	conversation map[string]feedback.Records
+	// The newest verdict per trace of the conversation and of the capture as Inferred reconciles them
+	said, heard map[string]feedback.Feedback
 	// First correction per trace by anyone
 	firstCorrection map[string]time.Time
 }
@@ -77,6 +81,7 @@ func NewRuns(traces trace.Traces, verdicts feedback.Records) Runs {
 		ids: map[string]bool{}, inputs: map[string]knowledge.RunInput{}, producers: map[string]string{}, times: map[string]time.Time{},
 		applied:  map[knowledge.Ref][]string{},
 		verdicts: map[string]feedback.Feedback{}, conversation: map[string]feedback.Records{}, firstCorrection: map[string]time.Time{},
+		said: verdicts.Reader(feedback.ReviewerSession), heard: verdicts.Reader(feedback.ReviewerNodloop),
 	}
 	for _, tr := range traces {
 		if tr.Name != trace.NameRun || tr.Error != "" {
@@ -151,7 +156,7 @@ func (r Runs) Report(items knowledge.Set) []RunItem {
 		if k.Status != knowledge.StatusApproved || k.Run == nil {
 			continue
 		}
-		row := RunItem{ID: k.ID, Version: k.Version}
+		row := RunItem{ID: k.ID, Version: k.Version, Approver: k.Approver}
 		codes, taught := r.taught(k.Evidence.FeedbackTraceIDs)
 		for _, id := range r.applied[knowledge.Ref{ID: k.ID, Version: k.Version}] {
 			row.Applied++

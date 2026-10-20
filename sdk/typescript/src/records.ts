@@ -988,7 +988,6 @@ export interface KnowledgeRecord {
   } | null;
   compaction?: string;
   compaction_size?: number;
-  deferred_in?: string;
   schema_version: 1;
 }
 

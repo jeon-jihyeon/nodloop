@@ -55,6 +55,16 @@ func runFolder(t *testing.T) (testkit.Stores, *compact.Compactor, knowledge.Comp
 	return s, c, proposed
 }
 
+// Approves the compaction as sam with its newest coverage as every caller hands it to the ledger
+func approve(s testkit.Stores, c *compact.Compactor, id string) (knowledge.Compaction, error) {
+	ctx := context.Background()
+	cov, err := c.Coverage(ctx, id)
+	if err != nil {
+		return knowledge.Compaction{}, err
+	}
+	return s.Ledger.ApproveCompaction(ctx, id, "sam", cov)
+}
+
 func TestCompactRuns(t *testing.T) {
 	type want struct {
 		recordErr  error
@@ -86,12 +96,12 @@ func TestCompactRuns(t *testing.T) {
 			t.Parallel()
 			ctx := context.Background()
 			s, c, proposed := runFolder(t)
-			_, err := c.Approve(ctx, proposed.ID, "sam")
+			_, err := approve(s, c, proposed.ID)
 			require.ErrorIs(t, err, compact.ErrNoCoverage, "nothing approves before a check")
 
 			_, err = c.Record(ctx, proposed.ID, tc.args)
 			require.ErrorIs(t, err, tc.want.recordErr)
-			got, err := c.Approve(ctx, proposed.ID, "sam")
+			got, err := approve(s, c, proposed.ID)
 
 			require.ErrorIs(t, err, tc.want.approveErr)
 			if tc.want.approveErr != nil {
@@ -168,58 +178,157 @@ func TestCompactRunsRefusals(t *testing.T) {
 	}
 }
 
-// One model call answers the coverage and it is recorded for the approval
+// One model call answers the coverage and it is recorded for the approval with what the call cost
+// A call that fails and an answer code refuses record nothing so the approval waits for a check that holds
 func TestCompactRunsCheck(t *testing.T) {
 	ctx := context.Background()
-	s, c, proposed := runFolder(t)
-	client := llmmock.NewMockClient(gomock.NewController(t))
-	client.EXPECT().Complete(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, req llm.Request) (llm.Response, error) {
-		assert.Equal(t, compact.CoverageRules, req.System)
-		assert.True(t, strings.Contains(req.Prompt, "## Old items") && strings.Contains(req.Prompt, "Replaces: a, b"), req.Prompt)
-		return llm.Response{
-			Output:      json.RawMessage(`{"items":[{"old":"a","covered_by":["a"]},{"old":"b","covered_by":["a"]}]}`),
-			InputTokens: 12, OutputTokens: 3, CostUSD: 0.01, Duration: 2 * time.Second, Model: "claude-haiku-4-5",
-		}, nil
-	})
+	covered := `{"items":[{"old":"a","covered_by":["a"]},{"old":"b","covered_by":["a"]}]}`
+	type args struct {
+		output string
+		// The call fails with it
+		callErr error
+		// Every append of a check fails with it
+		appendErr error
+	}
+	// A check trace as the test reads it back
+	type check struct {
+		model    string
+		usage    record.Usage
+		duration int64
+	}
+	type want struct {
+		err        error
+		checks     []check
+		approveErr error
+	}
+	tcs := []struct {
+		name string
+		args args
+		want want
+	}{
+		{
+			"a check is recorded with the model that answered and lets the compaction through",
+			args{covered, nil, nil},
+			want{nil, []check{{"claude-haiku-4-5", record.Usage{InputTokens: 12, OutputTokens: 3, CostUSD: 0.01}, 2000}}, nil},
+		},
+		{"a failed call records nothing", args{"", errModel, nil}, want{errModel, []check{}, compact.ErrNoCoverage}},
+		{"an answer that does not decode is refused", args{`{"items":"all"}`, nil, nil}, want{compact.ErrCoverageInvalid, []check{}, compact.ErrNoCoverage}},
+		{
+			"an answer naming an item outside the compaction is refused",
+			args{`{"items":[{"old":"z","covered_by":["a"]}]}`, nil, nil},
+			want{compact.ErrCoverageInvalid, []check{}, compact.ErrNoCoverage},
+		},
+		{"a check that fails to append is refused", args{covered, nil, assert.AnError}, want{assert.AnError, []check{}, compact.ErrNoCoverage}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			s, _, proposed := runFolder(t)
+			checks := &testkit.FlakyTraces{Store: s.Traces, Appends: testkit.Reads{Err: tc.args.appendErr}}
+			c := compact.New(s.Ledger, s.Traces, s.Feedback, checks, s.Clock.Now)
+			client := llmmock.NewMockClient(gomock.NewController(t))
+			client.EXPECT().Complete(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, req llm.Request) (llm.Response, error) {
+				assert.Equal(t, compact.CoverageRules, req.System)
+				assert.True(t, strings.Contains(req.Prompt, "## Old items") && strings.Contains(req.Prompt, "Replaces: a, b"), req.Prompt)
+				return llm.Response{
+					Output:      json.RawMessage(tc.args.output),
+					InputTokens: 12, OutputTokens: 3, CostUSD: 0.01, Duration: 2 * time.Second, Model: "claude-haiku-4-5",
+				}, tc.args.callErr
+			})
 
-	cov, err := c.Check(ctx, client, proposed.ID, "haiku")
+			_, err := c.Check(ctx, client, proposed.ID, "haiku")
 
-	require.NoError(t, err)
-	assert.Len(t, cov.Items, 2)
-	_, err = c.Approve(ctx, proposed.ID, "sam")
-	assert.NoError(t, err)
-	checks, err := s.Traces.List(ctx, record.TraceFilter{Name: string(trace.NameCheck)})
-	require.NoError(t, err)
-	require.Len(t, checks, 1)
-	assert.Equal(t, "claude-haiku-4-5", checks[0].Model)
-	assert.Equal(t, record.Usage{InputTokens: 12, OutputTokens: 3, CostUSD: 0.01}, checks[0].Usage)
-	assert.Equal(t, int64(2000), checks[0].DurationMS)
-	assert.NoError(t, schema.Validate(string(trace.NameCheck), checks[0]))
+			found, listErr := s.Traces.List(ctx, record.TraceFilter{Name: string(trace.NameCheck)})
+			require.NoError(t, listErr)
+			got := make([]check, 0, len(found))
+			for _, tr := range found {
+				require.NoError(t, schema.Validate(string(trace.NameCheck), tr))
+				got = append(got, check{tr.Model, tr.Usage, tr.DurationMS})
+			}
+			_, approveErr := approve(s, c, proposed.ID)
+			assert.ErrorIs(t, err, tc.want.err)
+			assert.Equal(t, tc.want.checks, got)
+			assert.ErrorIs(t, approveErr, tc.want.approveErr)
+		})
+	}
 }
 
-// Every draft that reaches the model leaves a compact trace with its usage, wall time and error
+// Every draft that reaches the model leaves one compact trace with the usage of its calls, its wall time and its error
+// A fixable refusal is sent back once and a folder with a pending compaction asks nothing
 func TestCompactDraftTrace(t *testing.T) {
 	ctx := context.Background()
 	draft := `{"items":[{"id":"a","kind":"judgment","content":"Use git -C <dir> and never cd before git","from":["a","b"],` +
 		`"producer":"session","labels":{"repo":["nodloop"]}}]}`
-	type want struct {
-		err     error
+	// Two judgments of one place that the ledger refuses as an overlap the model can fix
+	overlap := `{"items":[{"id":"a","kind":"judgment","content":"Use git -C <dir>","from":["a"],"producer":"session","labels":{"repo":["nodloop"]}},` +
+		`{"id":"b","kind":"judgment","content":"Never cd before git","from":["b"],"producer":"session","labels":{"repo":["nodloop"]}}]}`
+	// One answer of the model in the order of the calls
+	type answer struct {
+		res llm.Response
+		err error
+	}
+	answered := func(output string) answer {
+		return answer{res: llm.Response{Output: json.RawMessage(output), InputTokens: 40, OutputTokens: 9, Model: "claude-sonnet-5"}}
+	}
+	down := answer{err: errModel}
+	type args struct {
+		answers []answer
+		// The compaction the folder waits for and empty for none
+		pending string
+		// Every append of a compact trace fails with it
+		appendErr error
+	}
+	// A compact trace as the test reads it back
+	type traced struct {
+		subject string
+		// Its session names the compaction the draft proposed
 		session bool
 		model   string
 		usage   record.Usage
 		failed  bool
 	}
+	type want struct {
+		err    error
+		traces []traced
+	}
+	once := record.Usage{InputTokens: 40, OutputTokens: 9}
 	tcs := []struct {
 		name string
-		args func(context.Context, llm.Request) (llm.Response, error)
+		args args
 		want want
 	}{
-		{"a proposed draft names its compaction with the model that answered", func(context.Context, llm.Request) (llm.Response, error) {
-			return llm.Response{Output: json.RawMessage(draft), InputTokens: 40, OutputTokens: 9, Model: "claude-sonnet-5"}, nil
-		}, want{session: true, model: "claude-sonnet-5", usage: record.Usage{InputTokens: 40, OutputTokens: 9}}},
-		{"a failed call keeps the model asked and the error", func(context.Context, llm.Request) (llm.Response, error) {
-			return llm.Response{}, errModel
-		}, want{err: errModel, model: "sonnet", failed: true}},
+		{
+			"a proposed draft names its compaction with the model that answered",
+			args{[]answer{answered(draft)}, "", nil},
+			want{nil, []traced{{"a", true, "claude-sonnet-5", once, false}}},
+		},
+		{
+			"a failed call keeps the model asked and the error",
+			args{[]answer{down}, "", nil},
+			want{errModel, []traced{{"a", false, "sonnet", record.Usage{}, true}}},
+		},
+		{
+			"an answer that does not decode is refused at once",
+			args{[]answer{answered(`{"items":"none"}`)}, "", nil},
+			want{compact.ErrDraftInvalid, []traced{{"a", false, "claude-sonnet-5", once, true}}},
+		},
+		{
+			"a fixable refusal is sent back once and the second draft proposed with the usage of both calls",
+			args{[]answer{answered(overlap), answered(draft)}, "", nil},
+			want{nil, []traced{{"a", true, "claude-sonnet-5", record.Usage{InputTokens: 80, OutputTokens: 18}, false}}},
+		},
+		{
+			"a second call that fails keeps its error",
+			args{[]answer{answered(overlap), down}, "", nil},
+			want{errModel, []traced{{"a", false, "claude-sonnet-5", once, true}}},
+		},
+		{
+			"a second refusal is returned as it is",
+			args{[]answer{answered(overlap), answered(overlap)}, "", nil},
+			want{knowledge.ErrCompactionOverlap, []traced{{"a", false, "claude-sonnet-5", record.Usage{InputTokens: 80, OutputTokens: 18}, true}}},
+		},
+		{"a folder with a pending compaction is refused before any call", args{nil, "c-pending", nil}, want{knowledge.ErrCompactionPending, []traced{}}},
+		{"a trace that fails to append joins the error of the draft", args{[]answer{answered(draft)}, "", assert.AnError}, want{assert.AnError, []traced{}}},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
@@ -238,24 +347,30 @@ func TestCompactDraftTrace(t *testing.T) {
 				require.NoError(t, err)
 				require.NoError(t, testkit.Err(s.Ledger.Approve(ctx, id, 1, "ann")))
 			}
-			c := compact.New(s.Ledger, s.Traces, s.Feedback, s.Traces, s.Clock.Now)
+			checks := &testkit.FlakyTraces{Store: s.Traces, Appends: testkit.Reads{Err: tc.args.appendErr}}
+			c := compact.New(s.Ledger, s.Traces, s.Feedback, checks, s.Clock.Now)
 			f, err := c.Folder(ctx, "a")
 			require.NoError(t, err)
+			f.Pending = tc.args.pending
 			client := llmmock.NewMockClient(gomock.NewController(t))
-			client.EXPECT().Complete(gomock.Any(), gomock.Any()).DoAndReturn(tc.args)
+			calls := 0
+			client.EXPECT().Complete(gomock.Any(), gomock.Any()).DoAndReturn(func(context.Context, llm.Request) (llm.Response, error) {
+				a := tc.args.answers[calls]
+				calls++
+				return a.res, a.err
+			}).Times(len(tc.args.answers))
 
 			proposed, err := c.Draft(ctx, client, f, "sonnet", "")
 
-			require.ErrorIs(t, err, tc.want.err)
-			found, err := s.Traces.List(ctx, record.TraceFilter{Name: string(trace.NameCompact)})
-			require.NoError(t, err)
-			require.Len(t, found, 1)
-			assert.Equal(t, "a", found[0].Subject)
-			assert.Equal(t, tc.want.session, found[0].SessionID != "" && found[0].SessionID == proposed.ID)
-			assert.Equal(t, tc.want.model, found[0].Model)
-			assert.Equal(t, tc.want.usage, found[0].Usage)
-			assert.Equal(t, tc.want.failed, found[0].Error != "")
-			assert.NoError(t, schema.Validate(string(trace.NameCompact), found[0]))
+			found, listErr := s.Traces.List(ctx, record.TraceFilter{Name: string(trace.NameCompact)})
+			require.NoError(t, listErr)
+			got := make([]traced, 0, len(found))
+			for _, tr := range found {
+				require.NoError(t, schema.Validate(string(trace.NameCompact), tr))
+				got = append(got, traced{tr.Subject, tr.SessionID != "" && tr.SessionID == proposed.ID, tr.Model, tr.Usage, tr.Error != ""})
+			}
+			assert.ErrorIs(t, err, tc.want.err)
+			assert.Equal(t, tc.want.traces, got)
 		})
 	}
 }

@@ -1465,7 +1465,6 @@ class KnowledgeRecord(_KnowledgeRecordRequired, total=False):
     veto: KnowledgeRecordVeto | None
     compaction: str
     compaction_size: int
-    deferred_in: str
 
 
 class _GuardRecordRequired(TypedDict):

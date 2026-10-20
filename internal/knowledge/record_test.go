@@ -32,7 +32,7 @@ func TestKnowledgeRecord(t *testing.T) {
 			When:    []knowledge.VetoCondition{{Field: "command", Match: `sed\s+-i`, Unless: "--dry"}},
 			Example: map[string]any{"command": "sed -i s/a/b/ f"},
 		},
-		Compaction: "c-1", CompactionSize: 2, DeferredIn: "s1", Decision: "d1", Extract: "e1",
+		Compaction: "c-1", CompactionSize: 2, Decision: "d1", Extract: "e1",
 	}
 	retired := full
 	retired.Status, retired.Reason = knowledge.StatusRetired, knowledge.ReasonWords

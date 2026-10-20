@@ -121,9 +121,7 @@ func (s Set) reversal(decision, approver string, now time.Time) (Set, error) {
 	}
 	r := reversing{work: s, approver: approver, now: now}
 	for _, p := range plans {
-		if err := r.retire(p); err != nil {
-			return nil, err
-		}
+		r.retire(p)
 	}
 	for _, p := range plans {
 		if err := r.restore(p); err != nil {
@@ -185,19 +183,18 @@ func (r *reversing) add(records ...Knowledge) {
 }
 
 // Retires the approved version and the candidate the write left in place of the ones before
-func (r *reversing) retire(p returned) error {
+// Both are the newest records of their versions and an approved version and a candidate may always be retired
+// so no transition check can refuse the retire
+func (r *reversing) retire(p returned) {
 	for _, pair := range [][2]*Knowledge{{p.approvedNow, p.approvedBefore}, {p.waitingNow, p.waitingBefore}} {
 		now, before := pair[0], pair[1]
 		if now == nil || !differs(now, before) {
 			continue
 		}
-		k, err := r.work.retire(now.ID, now.Version, r.approver, r.now)
-		if err != nil {
-			return err
-		}
+		k := now.changed(StatusRetired, r.approver, r.now)
+		k.Reason = ReasonPerson
 		r.add(k)
 	}
-	return nil
 }
 
 // Restates the approved version and the candidate the write took away as the next versions of the id

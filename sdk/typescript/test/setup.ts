@@ -7,7 +7,16 @@ import { Client } from "../src/client.ts";
 
 const root = resolve(import.meta.dirname, "..", "..", "..");
 
-// A home of the test process so an approval never writes a veto file under the real one
+// Prefixes of the variables a shell may set that change what nodloop or the SDK reads and writes
+// 1. NODLOOP_ names the record dir, the binary, the session mode, the plugin version and the database of the server
+// 2. CLAUDE names an agent session, which turns a decision at a terminal into a proposal, and the config dir of the host
+// 3. OTEL_ names a target of the export
+const shellPrefixes = ["NODLOOP_", "CLAUDE", "OTEL_"];
+for (const name of Object.keys(process.env)) {
+  if (shellPrefixes.some((p) => name.startsWith(p))) delete process.env[name];
+}
+
+// A home of the test process so neither an approval nor a config read ever reaches the real ~/.nodloop
 // The build keeps the real home since go finds its caches there
 const realHome = process.env.HOME;
 process.env.HOME = mkdtempSync(join(tmpdir(), "nodloop-home-"));
@@ -45,17 +54,18 @@ export async function open(): Promise<Client & { recordDir: string }> {
   return Object.assign(await Client.open({ recordDir: records, binary: binary() }), { recordDir: records });
 }
 
-// Approves a version of the records as the person ann at a terminal of their own
-// An SDK call proves no person so it records a proposal
-// The CLI decides only when stdin and stdout are a terminal outside an agent session
-// script gives the command the pseudo terminal that stands for the person here
-export function approve(records: string, id: string, version: number, ...flags: string[]): void {
-  const args = [binary(), "knowledge", "approve", id, "--version", String(version), "--approver", "ann", "--record-dir", records, ...flags];
-  const env: NodeJS.ProcessEnv = { ...process.env };
-  delete env.CLAUDECODE;
+// Runs the command as a person at a terminal of their own and answers what it printed
+// A command that decides for a person or adds a key that proves one runs only when stdin and stdout are a terminal outside an agent session
+// script gives the command the pseudo terminal that stands for the person here and the test process names no agent session
+function atTerminal(args: string[], env: NodeJS.ProcessEnv = process.env): string {
   const quoted = args.map((a) => `'${a.replaceAll("'", `'\\''`)}'`).join(" ");
   const argv = process.platform === "darwin" ? ["-q", "/dev/null", ...args] : ["-q", "-e", "-c", quoted, "/dev/null"];
-  execFileSync("script", argv, { env, stdio: ["ignore", "pipe", "pipe"] });
+  return execFileSync("script", argv, { env, stdio: ["ignore", "pipe", "pipe"] }).toString();
+}
+
+// Approves a version of the records as the person ann at a terminal of their own since an SDK call records only a proposal
+export function approve(records: string, id: string, version: number, ...flags: string[]): void {
+  atTerminal([binary(), "knowledge", "approve", id, "--version", String(version), "--approver", "ann", "--record-dir", records, ...flags]);
 }
 
 export const acme = { tenant: ["acme"] };
@@ -105,7 +115,8 @@ async function freePort(): Promise<number> {
 export async function server(): Promise<{ url: string; key: string; service: string; proc: ChildProcess; records: string }> {
   // A home of its own so its keys never meet those of another server
   const env = { ...process.env, HOME: mkdtempSync(join(tmpdir(), "nodloop-home-")) };
-  const key = execFileSync(serverBinary(), ["key", "add", "ann", "--tenant", "acme", "--role", "approver", "--person"], { env }).toString().trim();
+  const printed = atTerminal([serverBinary(), "key", "add", "ann", "--tenant", "acme", "--role", "approver", "--person"], env);
+  const key = /nl_[0-9a-f]{64}/.exec(printed)?.[0] ?? "";
   const service = execFileSync(serverBinary(), ["key", "add", "ci", "--tenant", "acme", "--role", "approver"], { env }).toString().trim();
   const port = await freePort();
   const records = join(mkdtempSync(join(tmpdir(), "nodloop-rec-")), "records");
