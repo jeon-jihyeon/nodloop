@@ -517,6 +517,52 @@ func TestCuratorPassWithdrawal(t *testing.T) {
 	assert.Equal(t, second.Decided[0].ID, b.decision(t, "k-carried", 1))
 }
 
+// A capture trace whose person's words asked to drop k-carried and the person's lesson beside one that does not decode
+func (b bench) words(t *testing.T) {
+	t.Helper()
+	ctx := context.Background()
+	outputs := map[string]string{
+		"c-words": `{"messages":1,"stops":[{"id":"k-carried","version":1,"run":"r-k-carried"},{"id":"k-person","version":1,"run":"r-k-carried"}]}`,
+		"c-torn":  `["stops"]`,
+	}
+	for id, output := range outputs {
+		capture := trace.Trace{ID: id, Name: trace.NameCapture, SessionID: "s-r-k-carried", Time: written.Add(time.Hour), Input: json.RawMessage(`{}`),
+			Output: json.RawMessage(output)}
+		require.NoError(t, b.stores.Traces.Append(ctx, capture.Record()))
+	}
+}
+
+// The person's words asking to drop a version nodloop approved withdraw it once the shadow ended
+// and on a version a person approved they ask the person, each once
+func TestCuratorPassWords(t *testing.T) {
+	ctx := context.Background()
+	b := newBench(t, nil, []knowledge.Knowledge{
+		lesson("k-carried", 1, "Squash before a merge", acme("acme"), knowledge.StatusApproved, knowledge.ApproverNodloop),
+	}, nil)
+	b.words(t)
+
+	first, err := b.curator().Pass(ctx, b.setting(t))
+	require.NoError(t, err)
+	// No audit draws the withdrawal so the question of the person's lesson is the only one due
+	b.narrow(t, first.Event, func(k *curate.Knobs) { k.Activated, k.Audit = true, curate.Audit{} })
+	second, err := b.curator().Pass(ctx, b.setting(t))
+	require.NoError(t, err)
+	third, err := b.curator().Pass(ctx, b.setting(t))
+	require.NoError(t, err)
+
+	assert.Equal(t, []string{"withdraw k-carried v1 shadow  1", "withdraw k-person v1 ask person_item 2"}, decisionsOf(first.Decided))
+	require.Equal(t, []string{"withdraw k-carried v1 withdraw  1"}, decisionsOf(second.Decided))
+	assert.Empty(t, third.Decided)
+	assert.Equal(t, "c-words", second.Decided[0].Change.Signal)
+	assert.Equal(t, "r-k-carried", second.Decided[0].Ref)
+	assert.Equal(t, []string{"k-carried v1 retired nodloop words"}, statuses(t, b))
+	require.Len(t, third.Due, 1)
+	assert.Equal(t, curate.Due{
+		Kind: curate.QuestionDirection, Decide: third.Due[0].Decide, Change: curate.ChangeWithdraw, Ref: knowledge.Ref{ID: "k-person", Version: 1},
+		Rule: curate.RulePersonItem, Run: "r-k-carried", Place: acme("acme"), At: third.Due[0].At,
+	}, third.Due[0])
+}
+
 // Each decide that leaves a question lists it due once in the order it was decided until an answer or a person's decision settles it
 func TestCuratorPassDue(t *testing.T) {
 	ctx := context.Background()
@@ -775,6 +821,11 @@ func TestCuratorPassFails(t *testing.T) {
 				numbers: curate.Numbers{ShadowCycles: 2, ShadowMet: true},
 			},
 			want{assert.AnError, []string{"k-dup v1 candidate"}, 0},
+		},
+		{
+			"captures that cannot be read fail the withdrawals and the candidates are still decided",
+			args{lessons: []knowledge.Knowledge{dup}, appends: -1, lists: 6, reads: -1, seed: "5eed"},
+			want{assert.AnError, []string{"k-dup v1 retired nodloop duplicate"}, 1},
 		},
 	}
 	ctx := context.Background()

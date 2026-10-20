@@ -1,10 +1,13 @@
 package curate
 
 import (
+	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
@@ -139,6 +142,97 @@ type Exposure struct {
 
 // The runes a question or a notice may show at most
 const MaxRunes = 600
+
+// One question as the stop asks it with no id, version or number the person cannot see
+type Question struct {
+	Kind QuestionKind
+	// 4 lowercase letters and digits that the AskUserQuestion header names
+	Key     string
+	Choices [2]Choice
+	// The change in one line with a %s for each lesson it quotes
+	Change  string
+	Lessons []string
+	// Why the change needs the person
+	Why string
+	// The person's own words that started the change
+	Words []string
+	// What else was prepared, each a short phrase
+	Prepared []string
+}
+
+const (
+	// The line before the question
+	// It is short since a question through additionalContext carries no error label to explain
+	questionHeading = "nodloop question for you"
+	// Runes a quoted text starts at and the step it shrinks by until the question fits MaxRunes
+	quoteRunes = 200
+	quoteStep  = 20
+)
+
+// The question in the lines of SPEC-curate Questions within MaxRunes
+// The quoted lessons and words shrink together until the text fits so the reply line always shows
+func (q Question) Text() string {
+	limit := quoteRunes
+	text := q.render(limit)
+	for utf8.RuneCountInString(text) > MaxRunes && limit > quoteStep {
+		limit -= quoteStep
+		text = q.render(limit)
+	}
+	return string([]rune(text)[:min(utf8.RuneCountInString(text), MaxRunes)])
+}
+
+func (q Question) render(limit int) string {
+	lessons := make([]any, 0, len(q.Lessons))
+	for _, l := range q.Lessons {
+		lessons = append(lessons, quoted(l, limit))
+	}
+	prepared := make([]string, 0, len(q.Words)+len(q.Prepared))
+	for _, w := range q.Words {
+		prepared = append(prepared, "your words "+quoted(w, limit))
+	}
+	prepared = append(prepared, q.Prepared...)
+	return fmt.Sprintf("One decision for you: %s\nWhy you: %s\nPrepared: %s\nReply %s or %s",
+		fmt.Sprintf(q.Change, lessons...), q.Why, strings.Join(prepared, " · "), q.Choices[0], q.Choices[1])
+}
+
+// The text on one line in quotes cut at the runes with the cut marked
+func quoted(text string, limit int) string {
+	r := []rune(strings.Join(strings.Fields(text), " "))
+	if len(r) > limit {
+		r = append(r[:limit-1], '…')
+	}
+	return `"` + string(r) + `"`
+}
+
+// The question between its heading and the instruction to ask it as Stop additionalContext carries it
+// The lines up to Prepared go into the AskUserQuestion call word for word
+// A model that worded the question itself left out the person's words on 10 of 10 Haiku and 3 of 10 Sonnet runs
+func (q Question) Block() string {
+	first, second := q.Choices[0], q.Choices[1]
+	return fmt.Sprintf("%s\n%s\nAsk this in one AskUserQuestion call with header \"nodloop %s\", the two choices %s and %s, "+
+		"and as its question the lines from One decision to Prepared copied word for word, keeping every quote. "+
+		"Where that tool does not exist, end your answer with those lines and the reply keys %s or %s. "+
+		"Record nothing and decide nothing yourself.", questionHeading, q.Text(), q.Key, first, second, first, second)
+}
+
+// The characters of a question key
+const keyAlphabet = "abcdefghijklmnopqrstuvwxyz0123456789"
+
+// The key of a question about the decide that no key taken holds
+// The first 4 bytes of SHA-256 of the decide and a counter pick its characters
+// So the AskUserQuestion header nodloop and the key stays within the 12 characters the tool allows
+func questionKey(decide string, taken []string) string {
+	for n := 0; ; n++ {
+		sum := sha256.Sum256(fmt.Appendf(nil, "%s:%d", decide, n))
+		key := make([]byte, 4)
+		for i := range key {
+			key[i] = keyAlphabet[int(sum[i])%len(keyAlphabet)]
+		}
+		if !slices.Contains(taken, string(key)) {
+			return string(key)
+		}
+	}
+}
 
 // A notice asks nothing and a question names its key, its two choices and what it asks about
 func (x Exposure) check(asks string) error {
