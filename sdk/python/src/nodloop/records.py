@@ -710,7 +710,7 @@ class DecideRecordInputOld(TypedDict):
 
 
 class _DecideRecordInputOpensRequired(TypedDict):
-    kind: Literal["add", "update", "join", "drop", "withdraw", "compaction", "reanchor", "widen", "activate"]
+    kind: Literal["add", "update", "join", "drop", "withdraw", "compaction", "reanchor", "widen", "activate", "intervention"]
 
 
 class DecideRecordInputOpens(_DecideRecordInputOpensRequired, total=False):
@@ -718,7 +718,7 @@ class DecideRecordInputOpens(_DecideRecordInputOpensRequired, total=False):
 
 
 class _DecideRecordInputRequired(TypedDict):
-    kind: Literal["add", "update", "join", "drop", "withdraw", "compaction", "reanchor", "widen", "activate"]
+    kind: Literal["add", "update", "join", "drop", "withdraw", "compaction", "reanchor", "widen", "activate", "intervention"]
     anchor: int
 
 
@@ -731,6 +731,7 @@ class DecideRecordInput(_DecideRecordInputRequired, total=False):
     signal: str
     diff: str
     opens: DecideRecordInputOpens | None
+    proposal: str
 
 
 class _DecideRecordOutputRequired(TypedDict):
@@ -820,7 +821,7 @@ class DecideRecord(_DecideRecordRequired, total=False):
 
 
 class _KnobRecordInputKnobsOpenRequired(TypedDict):
-    kind: Literal["add", "update", "join", "drop", "withdraw", "compaction", "reanchor", "widen", "activate"]
+    kind: Literal["add", "update", "join", "drop", "withdraw", "compaction", "reanchor", "widen", "activate", "intervention"]
 
 
 class KnobRecordInputKnobsOpen(_KnobRecordInputKnobsOpenRequired, total=False):
@@ -875,7 +876,7 @@ class KnobRecordInputJudge(_KnobRecordInputJudgeRequired, total=False):
 
 
 class _KnobRecordInputChangesOpeningRequired(TypedDict):
-    kind: Literal["add", "update", "join", "drop", "withdraw", "compaction", "reanchor", "widen", "activate"]
+    kind: Literal["add", "update", "join", "drop", "withdraw", "compaction", "reanchor", "widen", "activate", "intervention"]
 
 
 class KnobRecordInputChangesOpening(_KnobRecordInputChangesOpeningRequired, total=False):
@@ -883,7 +884,7 @@ class KnobRecordInputChangesOpening(_KnobRecordInputChangesOpeningRequired, tota
 
 
 class _KnobRecordInputChangesRequired(TypedDict):
-    rule: Literal["posterior", "alarm", "raise", "lower"]
+    rule: Literal["posterior", "alarm", "raise", "lower", "person"]
 
 
 class KnobRecordInputChanges(_KnobRecordInputChangesRequired, total=False):
@@ -891,6 +892,7 @@ class KnobRecordInputChanges(_KnobRecordInputChangesRequired, total=False):
     answers: int
     differ: int
     p: float
+    knob: str
 
 
 class _KnobRecordInputRequired(TypedDict):
@@ -1081,6 +1083,11 @@ class AnswerRecordInputChange(TypedDict):
     version: int
 
 
+class AnswerRecordInputRefs(TypedDict):
+    id: str
+    version: int
+
+
 class _AnswerRecordInputRequired(TypedDict):
     choice: Literal["keep", "drop", "merge", "separate", "mine", "review", "yes", "notyet", "same", "undo", "no_answer"]
     hidden: bool
@@ -1094,6 +1101,7 @@ class AnswerRecordInput(_AnswerRecordInputRequired, total=False):
     decide: str
     change: AnswerRecordInputChange | None
     person: str
+    refs: list[AnswerRecordInputRefs] | None
 
 
 class AnswerRecordOutputRecords(TypedDict):
@@ -1102,8 +1110,12 @@ class AnswerRecordOutputRecords(TypedDict):
     status: str
 
 
-class AnswerRecordOutput(TypedDict):
+class _AnswerRecordOutputRequired(TypedDict):
     records: list[AnswerRecordOutputRecords] | None
+
+
+class AnswerRecordOutput(_AnswerRecordOutputRequired, total=False):
+    carried: str
 
 
 class _AnswerRecordUsageRequired(TypedDict):

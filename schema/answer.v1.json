@@ -103,6 +103,27 @@
         },
         "person": {
           "type": "string"
+        },
+        "refs": {
+          "type": [
+            "null",
+            "array"
+          ],
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "version": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "id",
+              "version"
+            ]
+          }
         }
       },
       "required": [
@@ -141,6 +162,9 @@
               "status"
             ]
           }
+        },
+        "carried": {
+          "type": "string"
         }
       },
       "required": [

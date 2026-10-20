@@ -21,4 +21,6 @@ var (
 	ErrExposeInvalid = errors.New("curate: invalid expose")
 	// An answer whose choice, proof or person does not hold together
 	ErrReplyInvalid = errors.New("curate: invalid answer to a question")
+	// An intervention that names nothing it can act on or a value outside the range of its knob
+	ErrTargetInvalid = errors.New("curate: the intervention names no target it can act on")
 )

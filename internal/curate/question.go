@@ -65,6 +65,53 @@ func (c Choice) offered() bool {
 	return c != ChoiceNoAnswer && slices.Contains(Choices(), c)
 }
 
+// The two choices the question of the decide offers with the one curate prepared first
+// 1. an audit of a change carried out: same or undo
+// 2. a widening, the activation and a proposal of an agent: yes or notyet
+// 3. drift: mine or review
+// 4. a compaction or a change that needs room: merge or separate
+// 5. any other change: keep or drop
+func (d Decided) Choices() [2]Choice {
+	switch {
+	case d.Decision.carries():
+		return [2]Choice{ChoiceSame, ChoiceUndo}
+	case d.Change.Kind.offered() || d.Change.Kind == ChangeIntervention:
+		return [2]Choice{ChoiceYes, ChoiceNotYet}
+	case d.Decision.RuleCode == RuleDrift:
+		return [2]Choice{ChoiceMine, ChoiceReview}
+	case d.Change.Kind == ChangeCompaction || d.Decision.RuleCode == RuleRoom:
+		return [2]Choice{ChoiceMerge, ChoiceSeparate}
+	}
+	return [2]Choice{ChoiceKeep, ChoiceDrop}
+}
+
+// Whether the choice reverses what curate carried out or differs from what the judge predicted
+func (d Decided) overturned(c Choice) bool {
+	switch {
+	case d.Decision.carries():
+		return c == ChoiceUndo
+	case d.Decision.Outcome == OutcomeConform:
+		return c == ChoiceDrop
+	case d.Decision.Outcome == OutcomeAgainst:
+		return c == ChoiceKeep
+	}
+	return false
+}
+
+// The kind of question the decide leaves and false for a decide that asks nothing
+// A change carried out asks only once the audit drew it
+func (d Decided) asks() (QuestionKind, bool) {
+	switch {
+	case d.Decision.carries():
+		return QuestionAudit, d.Drawn
+	case d.Decision.Action == ActionAsk:
+		return QuestionDirection, true
+	case d.Decision.Action == ActionShadow:
+		return QuestionShadow, true
+	}
+	return "", false
+}
+
 // The version of the question rules and wording an expose records
 // A changed wording is measured again before it ships so each one gets a version
 const QuestionRules = "1"
@@ -158,29 +205,37 @@ type Answer struct {
 	// The name the decision is recorded under
 	// Empty on no answer
 	Person string `json:"person,omitempty"`
+	// The versions nodloop approved in the place that a mine took into the anchor
+	Refs []knowledge.Ref `json:"refs,omitempty"`
 }
 
-// The knowledge records an answer wrote
+// What an answer wrote
 type AnswerOutput struct {
+	// The knowledge records it wrote
 	Records []trace.Written `json:"records"`
+	// The intervention a yes to a proposal carried out under the person's name
+	Carried string `json:"carried,omitempty"`
 }
 
-// The answer event of the expose the event names with the records it wrote
-// 1. the choice and the proof are known and the answer names the expose it answers
+// The answer event of the expose or the decide the event and the answer name with what it wrote
+// 1. the choice and the proof are known and the answer names the expose it answers or the decide of a question the person picked
 // 2. an answer of the person has a proof of a person and names the person
 // 3. no answer is recorded by code with no proof and wrote nothing
-func (e Event) Answer(a Answer, wrote []trace.Written, now time.Time) (trace.Trace, error) {
+func (e Event) Answer(a Answer, out AnswerOutput, now time.Time) (trace.Trace, error) {
 	unanswered := a.Choice == ChoiceNoAnswer
 	switch {
-	case !slices.Contains(Choices(), a.Choice) || !a.Proof.Valid() || e.Ref == "":
+	case !slices.Contains(Choices(), a.Choice) || !a.Proof.Valid() || e.Ref == "" && a.Decide == "":
 		return trace.Trace{}, fmt.Errorf("%w: choice %q and proof %q of the expose %q", ErrReplyInvalid, a.Choice, a.Proof, e.Ref)
-	case unanswered && (a.Proof != trace.ProofNone || a.Person != "" || len(wrote) > 0):
+	case unanswered && (a.Proof != trace.ProofNone || a.Person != "" || len(out.Records) > 0 || out.Carried != ""):
 		return trace.Trace{}, fmt.Errorf("%w: no answer has no proof, names no person and writes nothing", ErrReplyInvalid)
 	case !unanswered && (a.Proof.Authority() != trace.AuthorityPerson || a.Person == ""):
 		return trace.Trace{}, fmt.Errorf("%w: an answer of the person has the proof of a person and names the person", ErrReplyInvalid)
 	}
 	a.Authority = a.Proof.Authority()
-	tr, err := e.trace(trace.NameAnswer, string(a.Choice), a, AnswerOutput{Records: append([]trace.Written{}, wrote...)}, now)
+	if out.Records == nil {
+		out.Records = []trace.Written{}
+	}
+	tr, err := e.trace(trace.NameAnswer, string(a.Choice), a, out, now)
 	if err != nil {
 		return trace.Trace{}, fmt.Errorf("%w: %w", ErrReplyInvalid, err)
 	}

@@ -489,7 +489,7 @@ export interface DecideRecord {
   time: string;
   model?: string;
   input: {
-    kind: "add" | "update" | "join" | "drop" | "withdraw" | "compaction" | "reanchor" | "widen" | "activate";
+    kind: "add" | "update" | "join" | "drop" | "withdraw" | "compaction" | "reanchor" | "widen" | "activate" | "intervention";
     id?: string;
     version?: number;
     compaction?: string;
@@ -502,9 +502,10 @@ export interface DecideRecord {
     anchor: number;
     diff?: string;
     opens?: {
-      kind: "add" | "update" | "join" | "drop" | "withdraw" | "compaction" | "reanchor" | "widen" | "activate";
+      kind: "add" | "update" | "join" | "drop" | "withdraw" | "compaction" | "reanchor" | "widen" | "activate" | "intervention";
       bin?: "b1" | "b2" | "b3" | "b4";
     } | null;
+    proposal?: string;
   };
   output?: {
     tier: number;
@@ -566,7 +567,7 @@ export interface KnobRecord {
       item_hold: number;
       cycle_weeks?: number;
       open?: {
-        kind: "add" | "update" | "join" | "drop" | "withdraw" | "compaction" | "reanchor" | "widen" | "activate";
+        kind: "add" | "update" | "join" | "drop" | "withdraw" | "compaction" | "reanchor" | "widen" | "activate" | "intervention";
         bin?: "b1" | "b2" | "b3" | "b4";
       }[] | null;
       audit?: {
@@ -598,14 +599,15 @@ export interface KnobRecord {
     cause: "start" | "narrow";
     before?: string;
     changes?: {
-      rule: "posterior" | "alarm" | "raise" | "lower";
+      rule: "posterior" | "alarm" | "raise" | "lower" | "person";
       opening?: {
-        kind: "add" | "update" | "join" | "drop" | "withdraw" | "compaction" | "reanchor" | "widen" | "activate";
+        kind: "add" | "update" | "join" | "drop" | "withdraw" | "compaction" | "reanchor" | "widen" | "activate" | "intervention";
         bin?: "b1" | "b2" | "b3" | "b4";
       } | null;
       answers?: number;
       differ?: number;
       p?: number;
+      knob?: string;
     }[] | null;
   };
   error?: string;
@@ -740,6 +742,10 @@ export interface AnswerRecord {
     authority: "person" | "agent";
     proof: "key" | "terminal" | "elicitation" | "reply" | "none";
     person?: string;
+    refs?: {
+      id: string;
+      version: number;
+    }[] | null;
   };
   output?: {
     records: {
@@ -747,6 +753,7 @@ export interface AnswerRecord {
       version: number;
       status: string;
     }[] | null;
+    carried?: string;
   };
   error?: string;
   usage: {

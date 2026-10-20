@@ -112,7 +112,7 @@ func joinedAnswer(t *testing.T, records string, at time.Time, run string, k know
 	answered := asked
 	answered.ID, answered.Ref = trace.NewID(at), expose.ID
 	answer, err := answered.Answer(curate.Answer{Choice: curate.ChoiceKeep, Decide: decide.ID, Change: change, Proof: trace.ProofReply, Person: "ann"},
-		[]trace.Written{{ID: k.ID, Version: k.Version, Status: string(knowledge.StatusApproved)}}, at)
+		curate.AnswerOutput{Records: []trace.Written{{ID: k.ID, Version: k.Version, Status: string(knowledge.StatusApproved)}}}, at)
 	require.NoError(t, err)
 	for _, tr := range []trace.Trace{decide, expose, answer} {
 		require.NoError(t, traces.Append(context.Background(), tr.Record()))

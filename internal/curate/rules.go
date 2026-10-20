@@ -110,6 +110,7 @@ func (p *pass) corrected(ctx context.Context, k knowledge.Knowledge) (bool, erro
 // 3. veto when it or the version it replaces carries a veto
 // 4. room when its approval needs a compaction so its one question carries the prepared compaction
 // 5. drift when versions nodloop approved in the place reach the lessons a person approved there
+// 6. paused when a pause of the person covers its kind or its scope so no judge runs on it
 func (p *pass) asks(k knowledge.Knowledge, run trace.Trace, place AnchorPlace) (RuleCode, bool, error) {
 	cur, replaces := p.all.Approved().Find(k.ID)
 	switch {
@@ -128,8 +129,18 @@ func (p *pass) asks(k knowledge.Knowledge, run trace.Trace, place AnchorPlace) (
 		return RuleRoom, true, nil
 	case p.drifted(run, place):
 		return RuleDrift, true, nil
+	case p.ints.Paused(p.kindOf(k), *k.Run):
+		return RulePaused, true, nil
 	}
 	return "", false, nil
+}
+
+// The kind of change a waiting candidate makes
+func (p *pass) kindOf(k knowledge.Knowledge) ChangeKind {
+	if _, ok := p.all.Approved().Find(k.ID); ok {
+		return ChangeUpdate
+	}
+	return ChangeAdd
 }
 
 // Whether a person decided the version last under a name of their own

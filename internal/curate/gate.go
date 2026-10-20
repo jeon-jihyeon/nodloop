@@ -127,10 +127,11 @@ const (
 	KnobAlarm     KnobRule = "alarm"     // the CUSUM alarmed with a differ of the kind and bin since it last stood at zero
 	KnobRaise     KnobRule = "raise"     // a narrowing or a judge shift doubled the tier 1 audit p
 	KnobLower     KnobRule = "lower"     // every open kind and bin met its bound so the tier 1 audit p went down
+	KnobPerson    KnobRule = "person"    // a person's knob intervention raised an audit p at once
 )
 
 func KnobRules() []KnobRule {
-	return []KnobRule{KnobPosterior, KnobAlarm, KnobRaise, KnobLower}
+	return []KnobRule{KnobPosterior, KnobAlarm, KnobRaise, KnobLower, KnobPerson}
 }
 
 // One move of a knob with the numbers behind it as the knob event records it
@@ -141,8 +142,10 @@ type KnobChange struct {
 	// The answers behind a narrowing and how many of them differ
 	Answers int `json:"answers,omitempty"`
 	Differ  int `json:"differ,omitempty"`
-	// The tier 1 audit p a raise or a lower set
+	// The audit p a raise, a lower or a person set
 	P float64 `json:"p,omitempty"`
+	// The knob a person raised at once
+	Knob KnobName `json:"knob,omitempty"`
 }
 
 // A widening or the activation the gate offers the person as a question

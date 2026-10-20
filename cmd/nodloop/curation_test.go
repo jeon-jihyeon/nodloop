@@ -110,7 +110,7 @@ func (r *curationRecords) audit(week int, p float64, choice curate.Choice) {
 	answered := curate.Event{Session: "s1", Ref: expose.ID, Source: trace.SourcePush, Draw: event.Draw}
 	r.append(answered.Answer(curate.Answer{
 		Choice: choice, Decide: decide.ID, Change: change, Hidden: true, Overturn: choice == curate.ChoiceUndo, Proof: trace.ProofReply, Person: "ann",
-	}, nil, r.next(week)))
+	}, curate.AnswerOutput{}, r.next(week)))
 }
 
 // A judgment the person asked for through the manual path that drops a change curate carried out
@@ -129,7 +129,7 @@ func (r *curationRecords) manual(week int) {
 	answered.Ref = expose.ID
 	r.append(answered.Answer(curate.Answer{
 		Choice: curate.ChoiceDrop, Decide: decide.ID, Overturn: true, Proof: trace.ProofTerminal, Person: "ann",
-	}, []trace.Written{{ID: "k-1", Version: 1, Status: "retired"}}, r.next(week)))
+	}, curate.AnswerOutput{Records: []trace.Written{{ID: "k-1", Version: 1, Status: "retired"}}}, r.next(week)))
 }
 
 // A change the judge members split on prepared as a question for the person
@@ -156,7 +156,8 @@ func (r *curationRecords) shadow(week int, pSelect float64) {
 	}, r.next(week)))
 	answered := asked
 	answered.Ref = expose.ID
-	r.append(answered.Answer(curate.Answer{Choice: curate.ChoiceKeep, Decide: decide.ID, Hidden: true, Proof: trace.ProofReply, Person: "ann"}, nil, r.next(week)))
+	r.append(answered.Answer(curate.Answer{Choice: curate.ChoiceKeep, Decide: decide.ID, Hidden: true, Proof: trace.ProofReply, Person: "ann"},
+		curate.AnswerOutput{}, r.next(week)))
 }
 
 // A change the judge found conform in a bin tier 1 does not carry out yet asked as a direction question the person answered with the choice
@@ -176,7 +177,7 @@ func (r *curationRecords) direction(week int, bin curate.Bin, choice curate.Choi
 	}, r.next(week)))
 	answered := asked
 	answered.Ref = expose.ID
-	r.append(answered.Answer(curate.Answer{Choice: choice, Decide: decide.ID, Proof: trace.ProofReply, Person: "ann"}, nil, r.next(week)))
+	r.append(answered.Answer(curate.Answer{Choice: choice, Decide: decide.ID, Proof: trace.ProofReply, Person: "ann"}, curate.AnswerOutput{}, r.next(week)))
 }
 
 // A candidate tier 0 dropped as a duplicate and drew for audit at p 1

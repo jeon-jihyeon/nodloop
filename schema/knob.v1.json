@@ -82,7 +82,8 @@
                       "compaction",
                       "reanchor",
                       "widen",
-                      "activate"
+                      "activate",
+                      "intervention"
                     ]
                   },
                   "bin": {
@@ -237,7 +238,8 @@
                   "posterior",
                   "alarm",
                   "raise",
-                  "lower"
+                  "lower",
+                  "person"
                 ]
               },
               "opening": {
@@ -257,7 +259,8 @@
                       "compaction",
                       "reanchor",
                       "widen",
-                      "activate"
+                      "activate",
+                      "intervention"
                     ]
                   },
                   "bin": {
@@ -282,6 +285,9 @@
               },
               "p": {
                 "type": "number"
+              },
+              "knob": {
+                "type": "string"
               }
             },
             "required": [

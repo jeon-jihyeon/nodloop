@@ -126,15 +126,31 @@ type Anchor struct {
 	designated []AnchorFile
 	// The rules files sessions loaded since the cutoff of the window newest first
 	loaded []Loaded
+	// The versions nodloop approved that a reanchor or an answer mine of the person took with the record that took each
+	taken map[knowledge.Ref]string
 }
 
 func NewAnchor(all knowledge.Set, designated []AnchorFile, loaded []Loaded) Anchor {
 	return Anchor{all: all, designated: designated, loaded: loaded}
 }
 
-// The versions a person approved in id order
+// The anchor with the versions nodloop approved that the person took as their own
+// Such a version is direction only while it stays approved and no reverse took it back
+func (a Anchor) Taking(taken map[knowledge.Ref]string) Anchor {
+	a.taken = taken
+	return a
+}
+
+// The versions a person approved and those nodloop approved that the person took, in id order
 func (a Anchor) Items() knowledge.Set {
-	return a.all.PersonApproved()
+	out := a.all.PersonApproved()
+	for _, k := range a.all.Approved() {
+		if _, ok := a.taken[knowledge.Ref{ID: k.ID, Version: k.Version}]; ok && k.Approver == knowledge.ApproverNodloop {
+			out = append(out, k)
+		}
+	}
+	slices.SortStableFunc(out, func(x, y knowledge.Knowledge) int { return strings.Compare(x.ID, y.ID) })
+	return out
 }
 
 // The files every place reads
@@ -186,7 +202,13 @@ func (a Anchor) Next(newest AnchorVersion) (AnchorVersion, bool) {
 }
 
 // The decision of the newest record of one of the refs and CauseApproval when it names none
+// A version the person took as their own names the record that took it
 func (a Anchor) cause(refs []knowledge.Ref) string {
+	for _, r := range refs {
+		if by, ok := a.taken[r]; ok {
+			return by
+		}
+	}
 	i := slices.IndexFunc(a.all, func(k knowledge.Knowledge) bool {
 		return slices.Contains(refs, knowledge.Ref{ID: k.ID, Version: k.Version})
 	})
