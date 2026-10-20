@@ -2,6 +2,7 @@
 package replay
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -273,11 +274,8 @@ func (r *Replayer) record(ctx context.Context, item knowledge.Knowledge, res llm
 	}
 	now := r.now()
 	tr := trace.Trace{
-		ID: trace.NewID(now), Name: trace.NameReplay, Subject: item.ID, Time: now, Input: input, Output: output, Error: failure,
-		Usage: trace.Usage{
-			InputTokens: res.InputTokens, OutputTokens: res.OutputTokens, CacheReadTokens: res.CacheRead, CacheCreateTokens: res.CacheCreate,
-			CostUSD: res.CostUSD,
-		},
+		ID: trace.NewID(now), Name: trace.NameReplay, Subject: item.ID, Time: now, Model: cmp.Or(res.Model, r.model),
+		Input: input, Output: output, Error: failure, Usage: res.Usage(), DurationMS: res.Duration.Milliseconds(),
 	}
 	return r.traces.Append(ctx, tr.Record())
 }

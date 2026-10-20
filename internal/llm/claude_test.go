@@ -33,6 +33,7 @@ func TestClaudeCLIComplete(t *testing.T) {
 		CacheRead:      30230,
 		CacheCreate:    16785,
 		Duration:       2839 * time.Millisecond,
+		Model:          "claude-haiku-4-5-20251001",
 	}
 	tcs := []struct {
 		name string

@@ -3,8 +3,10 @@ package compact_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -14,9 +16,12 @@ import (
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	"github.com/jeon-jihyeon/nodloop/internal/llm"
 	"github.com/jeon-jihyeon/nodloop/internal/llm/llmmock"
+	"github.com/jeon-jihyeon/nodloop/internal/record"
 	"github.com/jeon-jihyeon/nodloop/internal/testkit"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
 )
+
+var errModel = errors.New("model down")
 
 // Two approved run items of the repo nodloop that say one thing twice, a compactor and its proposal
 func runFolder(t *testing.T) (testkit.Stores, *compact.Compactor, knowledge.Compaction) {
@@ -165,18 +170,89 @@ func TestCompactRunsRefusals(t *testing.T) {
 // One model call answers the coverage and it is recorded for the approval
 func TestCompactRunsCheck(t *testing.T) {
 	ctx := context.Background()
-	_, c, proposed := runFolder(t)
+	s, c, proposed := runFolder(t)
 	client := llmmock.NewMockClient(gomock.NewController(t))
 	client.EXPECT().Complete(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, req llm.Request) (llm.Response, error) {
 		assert.Equal(t, compact.CoverageRules, req.System)
 		assert.True(t, strings.Contains(req.Prompt, "## Old items") && strings.Contains(req.Prompt, "Replaces: a, b"), req.Prompt)
-		return llm.Response{Output: json.RawMessage(`{"items":[{"old":"a","covered_by":["a"]},{"old":"b","covered_by":["a"]}]}`)}, nil
+		return llm.Response{
+			Output:      json.RawMessage(`{"items":[{"old":"a","covered_by":["a"]},{"old":"b","covered_by":["a"]}]}`),
+			InputTokens: 12, OutputTokens: 3, CostUSD: 0.01, Duration: 2 * time.Second, Model: "claude-haiku-4-5",
+		}, nil
 	})
 
-	cov, err := c.Check(ctx, client, proposed.ID, "")
+	cov, err := c.Check(ctx, client, proposed.ID, "haiku")
 
 	require.NoError(t, err)
 	assert.Len(t, cov.Items, 2)
 	_, err = c.Approve(ctx, proposed.ID, "sam")
 	assert.NoError(t, err)
+	checks, err := s.Traces.List(ctx, record.TraceFilter{Name: string(trace.NameCheck)})
+	require.NoError(t, err)
+	require.Len(t, checks, 1)
+	assert.Equal(t, "claude-haiku-4-5", checks[0].Model)
+	assert.Equal(t, record.Usage{InputTokens: 12, OutputTokens: 3, CostUSD: 0.01}, checks[0].Usage)
+	assert.Equal(t, int64(2000), checks[0].DurationMS)
+}
+
+// Every draft that reaches the model leaves a compact trace with its usage, wall time and error
+func TestCompactDraftTrace(t *testing.T) {
+	ctx := context.Background()
+	draft := `{"items":[{"id":"a","kind":"judgment","content":"Use git -C <dir> and never cd before git","from":["a","b"],` +
+		`"producer":"session","labels":{"repo":["nodloop"]}}]}`
+	type want struct {
+		err     error
+		session bool
+		model   string
+		usage   record.Usage
+		failed  bool
+	}
+	tcs := []struct {
+		name string
+		args func(context.Context, llm.Request) (llm.Response, error)
+		want want
+	}{
+		{"a proposed draft names its compaction with the model that answered", func(context.Context, llm.Request) (llm.Response, error) {
+			return llm.Response{Output: json.RawMessage(draft), InputTokens: 40, OutputTokens: 9, Model: "claude-sonnet-5"}, nil
+		}, want{session: true, model: "claude-sonnet-5", usage: record.Usage{InputTokens: 40, OutputTokens: 9}}},
+		{"a failed call keeps the model asked and the error", func(context.Context, llm.Request) (llm.Response, error) {
+			return llm.Response{}, errModel
+		}, want{err: errModel, model: "sonnet", failed: true}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			s := testkit.Open(t)
+			at := s.Clock.Now()
+			run, err := trace.NewRun("session", "", trace.Labels{"repo": {"nodloop"}}, nil, []byte("x"), at)
+			require.NoError(t, err)
+			require.NoError(t, s.Traces.Append(ctx, run.Record()))
+			for id, content := range map[string]string{"a": "Use git -C <dir>", "b": "Never cd before git"} {
+				_, _, err := s.Ledger.Propose(ctx, knowledge.Knowledge{
+					ID: id, Kind: knowledge.KindJudgment, Content: content, Author: "author",
+					Run:      &knowledge.RunScope{Producer: "session", Labels: trace.Labels{"repo": {"nodloop"}}},
+					Evidence: knowledge.Evidence{FeedbackTraceIDs: []string{run.ID}},
+				})
+				require.NoError(t, err)
+				require.NoError(t, testkit.Err(s.Ledger.Approve(ctx, id, 1, "ann")))
+			}
+			c := compact.New(s.Ledger, s.Traces, s.Feedback, s.Traces, s.Clock.Now)
+			f, err := c.Folder(ctx, "a")
+			require.NoError(t, err)
+			client := llmmock.NewMockClient(gomock.NewController(t))
+			client.EXPECT().Complete(gomock.Any(), gomock.Any()).DoAndReturn(tc.args)
+
+			proposed, err := c.Draft(ctx, client, f, "sonnet", "")
+
+			require.ErrorIs(t, err, tc.want.err)
+			found, err := s.Traces.List(ctx, record.TraceFilter{Name: string(trace.NameCompact)})
+			require.NoError(t, err)
+			require.Len(t, found, 1)
+			assert.Equal(t, "a", found[0].Subject)
+			assert.Equal(t, tc.want.session, found[0].SessionID != "" && found[0].SessionID == proposed.ID)
+			assert.Equal(t, tc.want.model, found[0].Model)
+			assert.Equal(t, tc.want.usage, found[0].Usage)
+			assert.Equal(t, tc.want.failed, found[0].Error != "")
+		})
+	}
 }

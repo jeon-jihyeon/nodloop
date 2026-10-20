@@ -2,6 +2,15 @@
 
 Every release tag publishes the plugin, the darwin and linux binaries of `nodloop` and, from 0.7.0, `nodloop-server`, and both SDKs under one version. Versions before 0.6.0 reviewed incident data, which left this repository in 0.6.0.
 
+## Unreleased
+
+### Added
+- `nodloop llm set chat --base-url <u> --model <m> [--key-env <ENV>]` points every command that calls a model, such as `knowledge extract`, `knowledge compact` and `llm probe`, at an OpenAI compatible Chat Completions endpoint like Ollama, vLLM, OpenAI, Gemini or a LiteLLM proxy, so background drafts need no claude login. `llm set claude` and `llm unset` go back to `claude -p`. The key is read from the env named and never saved. Every answer is checked against the schema and sent back once when it fails. A config.json that names chat without a model fails like one without a base URL. `nodloop config` lists the backend. The refusal a draft is resent with says the relation is add when the run reaches no item or candidate and lists the label keys the run carries, since a small local model kept the same mistake on the resend until it did
+- Model call traces name the model the backend answered with, such as `claude-haiku-4-5-20251001` for `haiku`: extract, replay, consolidate and a coverage check through a model. A coverage check records its usage and duration, a replay its duration, and every compaction draft through a model records a `compact` trace with its usage, duration and error, which retention keeps
+
+### Changed
+- `llm probe` asks the configured backend, with haiku as the default model on claude and the configured model on a chat endpoint
+
 ## 0.9.0 - 2026-10-15
 
 ### Added

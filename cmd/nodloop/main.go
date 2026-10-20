@@ -9,8 +9,6 @@ import (
 	"runtime/debug"
 	"strings"
 	"time"
-
-	"github.com/jeon-jihyeon/nodloop/internal/llm"
 )
 
 const usage = `usage: nodloop <command>
@@ -158,7 +156,14 @@ commands:
                             Registers ~/.nodloop/bin/nodloop when it links to this binary and replaces a stale hook
   guard uninstall           Remove the hook registered by guard install
   mcp                       Serve the MCP tools on stdio. --list prints the tool names
-  llm probe [--model <m>]   Send a minimal structured-output request through claude -p and print cost
+  llm probe [--model <m>]   Send a minimal structured-output request through the configured backend and print cost.
+                            The model is haiku on claude and the configured model on chat by default
+  llm set chat --base-url <u> --model <m> [--key-env <ENV>] | llm set claude [--model <m>]
+                            Call an OpenAI compatible Chat Completions endpoint such as http://localhost:11434/v1 of
+                            Ollama instead of claude -p in every command that calls a model, or claude with a default
+                            model NODLOOP_LLM_MODEL still overrides. The key is read from the env when a command starts
+                            and never saved
+  llm unset                 Every command calls claude -p again
   config                    Every setting with its value and where it came from: an environment variable, config.json
                             or the default
   config approver [<name>]  Print the name saved in ~/.nodloop/config.json to approve under, or save one
@@ -256,9 +261,9 @@ func run(args []string, getenv func(string) string, stdin io.Reader, stdout io.W
 		"queue":    func(args []string) int { return runQueue(args, getenv, time.Now, stdout, stderr) },
 		"report":   func(args []string) int { return runReport(args, getenv, time.Now, stdout, stderr) },
 		"guard":    func(args []string) int { return runGuard(args, getenv, os.Executable, time.Now, stdin, stdout, stderr) },
-		"llm":      func(args []string) int { return runLLM(args, claudeCLI(getenv), time.Now, stdout, stderr) },
+		"llm":      func(args []string) int { return runLLM(args, getenv, configuredLLM(getenv), time.Now, stdout, stderr) },
 		"knowledge": func(args []string) int {
-			return runKnowledge(args, getenv, claudeCLI(getenv), time.Now, stdout, stderr)
+			return runKnowledge(args, getenv, configuredLLM(getenv), time.Now, stdout, stderr)
 		},
 		"mcp":        func(args []string) int { return runMCP(args, getenv, time.Now, stdin, stdout, stderr) },
 		"config":     func(args []string) int { return runConfig(args, getenv, stdout, stderr) },
@@ -277,12 +282,6 @@ func run(args []string, getenv func(string) string, stdin io.Reader, stdout io.W
 		return 1
 	}
 	return command(args[1:])
-}
-
-// The model client of every command that calls claude
-// The env names the binary and the default model
-func claudeCLI(getenv func(string) string) *llm.ClaudeCLI {
-	return llm.NewClaudeCLI(getenv(envClaudeBin), getenv(envLLMModel), "", 0)
 }
 
 // flag stops at the first positional argument so an id before the flags is taken out first

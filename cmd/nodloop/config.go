@@ -120,6 +120,12 @@ func (c configCommand) list(getenv func(string) string) error {
 	if err != nil {
 		session = err.Error()
 	}
+	// NODLOOP_LLM_MODEL names the model of claude alone
+	backend, modelEnv := strings.TrimSpace(string(uc.LLM.Backend)+" "+uc.LLM.BaseURL), envLLMModel
+	model := cmp.Or(getenv(envLLMModel), uc.LLM.Model, llm.DefaultModel)
+	if uc.LLM.Backend == llm.BackendChat {
+		model, modelEnv = uc.LLM.Model, ""
+	}
 	share, days := "", ""
 	if uc.Holdout != 0 {
 		share = strconv.FormatFloat(uc.Holdout, 'g', -1, 64)
@@ -134,8 +140,9 @@ func (c configCommand) list(getenv func(string) string) error {
 		{"holdout", "", share, cmp.Or(share, "0")},
 		{"retention", "", days, cmp.Or(days, "0")},
 		{"decision_points", "", uc.pointsText(), ""},
+		{"llm", "", backend, cmp.Or(backend, string(llm.BackendClaude))},
 		{"claude binary", envClaudeBin, "", cmp.Or(getenv(envClaudeBin), llm.DefaultBin)},
-		{"model", envLLMModel, "", cmp.Or(getenv(envLLMModel), llm.DefaultModel)},
+		{"model", modelEnv, uc.LLM.Model, model},
 	}
 	for _, r := range rows {
 		from := "default"

@@ -3,6 +3,7 @@ package main
 import (
 	"path/filepath"
 
+	"github.com/jeon-jihyeon/nodloop/internal/llm"
 	"github.com/jeon-jihyeon/nodloop/internal/userconfig"
 )
 
@@ -21,6 +22,8 @@ type userConfig struct {
 	// How a conversation records the verdicts it infers
 	// NODLOOP_SESSION overrides it per process
 	SessionMode string `json:"session_mode,omitempty"`
+	// The backend every command that calls a model builds its client from
+	LLM llm.Config `json:"llm"`
 	classifierConfig
 }
 

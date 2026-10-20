@@ -4,6 +4,7 @@ package llm
 //go:generate mockgen -source=llm.go -destination=llmmock/client.go -package=llmmock Client
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -34,10 +35,27 @@ type Response struct {
 	CacheRead      int
 	CacheCreate    int
 	Duration       time.Duration
+	// The model the backend answered with and empty when it named none
+	// An alias such as haiku in the request comes back as the full model id
+	Model string
 }
 
-// The consumer is compact but the interface lives here because mockgen generates llmmock from this file
-// llmmock cannot import compact without an upward import
+// The usage and the duration of both summed
+// The output stays the one of the receiver and so does its model unless it named none
+func (r Response) add(other Response) Response {
+	r.Model = cmp.Or(r.Model, other.Model)
+	r.CostUSD += other.CostUSD
+	r.InputTokens += other.InputTokens
+	r.OutputTokens += other.OutputTokens
+	r.ThinkingTokens += other.ThinkingTokens
+	r.CacheRead += other.CacheRead
+	r.CacheCreate += other.CacheCreate
+	r.Duration += other.Duration
+	return r
+}
+
+// The consumers are compact and consolidate and extract and replay but the interface lives here because mockgen generates llmmock from this file
+// llmmock cannot import a consumer without an upward import
 type Client interface {
 	Complete(ctx context.Context, req Request) (Response, error)
 }
