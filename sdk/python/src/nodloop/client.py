@@ -80,19 +80,22 @@ class Candidate:
 
 @dataclass(frozen=True)
 class Approval:
-    """An approved knowledge version"""
+    """An approved knowledge version or the agent proposal of a call that proves no person while the version stays as it was"""
 
     id: str
     version: int
     status: str
     # The approver the records keep, which a server sets to the key's name
     approver: str
-    # Whether the approved version carries a veto the guard now applies
+    # Whether the version carries a veto the guard applies once approved
     veto: bool = False
     # Why approved.md or the veto file could not be written, while the approval itself stands
     export_error: str = ""
     # Why the items one run carries with it could not be read, while the approval itself stands
     folder_error: str = ""
+    # The intervention recorded as an agent proposal when the call proved no person
+    # Empty when it approved
+    proposal: str = ""
 
 
 @dataclass(frozen=True)
@@ -247,12 +250,15 @@ class Client:
         self,
         run: str,
         verdict: str,
+        reviewer: str,
         reason: str = "",
         reason_code: str = "",
         edited: Any = None,
-        reviewer: str = "",
     ) -> None:
-        """Records a verdict on a run: approve, edit with the corrected output, reject with what was wrong, or withdraw an earlier one"""
+        """Records a verdict on a run: approve, edit with the corrected output, reject with what was wrong, or withdraw an earlier one
+
+        reviewer names who judged so a verdict without a name never reads as a person's
+        """
         args: dict[str, Any] = {"trace_id": run, "verdict": verdict}
         for key, value in (("reason", reason), ("reason_code", reason_code), ("reviewer", reviewer)):
             if value:
@@ -266,6 +272,7 @@ class Client:
 
         A different fact from the verdict on the output
         confirmed_cause only goes with confirmed
+        reviewer names who checked and is required over stdio while a server key names itself
         """
         args: dict[str, Any] = {"trace_id": run, "result": result}
         for key, value in (("confirmed_cause", confirmed_cause), ("note", note), ("reviewer", reviewer)):
@@ -307,8 +314,9 @@ class Client:
         return Candidate(answer["id"], answer["version"], answer["status"], answer.get("overlaps") or [])
 
     async def approve(self, item_id: str, version: int, approver: str, *, labels: dict[str, list[str]] | None = None) -> Approval:
-        """Approves a candidate on behalf of the named person
+        """Approves a candidate under a key of nodloop-server that a person holds
 
+        Any other call such as one over stdio records an agent proposal the person is asked about: the status stays and proposal names it
         labels approves it for the runs carrying them instead of the proposed scope and an empty mapping for every run of its producer
         """
         args: dict[str, Any] = {"id": item_id, "version": version, "approver": approver}
@@ -323,6 +331,7 @@ class Client:
             veto=bool(answer.get("veto")),
             export_error=answer.get("export_error", ""),
             folder_error=answer.get("folder_error", ""),
+            proposal=answer.get("proposal", ""),
         )
 
     async def check_call(self, tool: str, arguments: dict[str, Any], producer: str = "") -> Decision:

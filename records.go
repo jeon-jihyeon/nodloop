@@ -4,7 +4,6 @@ import (
 	"cmp"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"time"
 
@@ -33,6 +32,11 @@ type (
 	Result     = feedback.Result
 	Kind       = knowledge.Kind
 	Status     = knowledge.Status
+	// What an intervention does as against the Action of a vetted tool call
+	InterventionAction = trace.Action
+	Choice             = trace.Choice
+	Authority          = trace.Authority
+	Proof              = trace.Proof
 )
 
 const (
@@ -53,6 +57,21 @@ const (
 
 	KindJudgment = knowledge.KindJudgment // what to do or not do
 	KindMeaning  = knowledge.KindMeaning  // how to read something in this place
+
+	InterventionJudge = trace.ActionJudge // keep, undo or scope one knowledge version
+
+	ChoiceKeep  = trace.ChoiceKeep  // approve a candidate or reaffirm an approved version
+	ChoiceUndo  = trace.ChoiceUndo  // retire a version
+	ChoiceScope = trace.ChoiceScope // approve a candidate in the labels picked
+
+	AuthorityPerson = trace.AuthorityPerson // a proof shows the person made the call so it decided
+	AuthorityAgent  = trace.AuthorityAgent  // no proof so the call is a proposal the person is asked about
+
+	ProofKey         = trace.ProofKey         // a nodloop-server key of role approver added with --person
+	ProofTerminal    = trace.ProofTerminal    // a CLI call from an interactive terminal outside an agent session
+	ProofElicitation = trace.ProofElicitation // an MCP form the person accepted
+	ProofReply       = trace.ProofReply       // the person's own click or reply word
+	ProofNone        = trace.ProofNone        // any other call such as every call of this package
 )
 
 // One output of a producer to record
@@ -152,12 +171,13 @@ type Judgment struct {
 	// The corrected output in full for an edit
 	// JSON is kept as JSON and any other text as a JSON string
 	Edited []byte
-	// Who judged
+	// Who judged, required so no verdict without a name reads as a person's
 	// session marks a verdict a conversation inferred from the person's words
 	Reviewer string
 }
 
 // Records the verdict on a run that exists
+// A judgment without a reviewer fails with ErrReviewerRequired
 func (c *Client) Judge(ctx context.Context, j Judgment) error {
 	if err := c.checkRun(ctx, j.Run); err != nil {
 		return err
@@ -184,7 +204,7 @@ type Outcome struct {
 	ConfirmedCause string
 	// What the check showed beyond the result
 	Note string
-	// Who checked and author when empty
+	// Who checked, required like the reviewer of a judgment
 	Reviewer string
 }
 
@@ -386,43 +406,75 @@ func (c *Client) fromRun(ctx context.Context, id string, draft knowledge.Knowled
 	return draft.From(trace.Restore(tr), feedback.RestoreAll(verdicts))
 }
 
-// Approves a candidate version on behalf of the named person
-// A failed export of approved.md or of the veto file keeps the approval and returns the item with the error
-func (c *Client) Approve(ctx context.Context, id string, version int, approver string) (Item, error) {
-	k, err := c.ledger.Approve(ctx, id, version, approver)
-	if err != nil && !errors.Is(err, knowledge.ErrExport) {
-		return Item{}, err
-	}
-	return newItems(knowledge.Set{k})[0], err
+// Records the approval of a candidate version as an agent proposal and returns it
+// 1. a call in process proves no person so the version stays as it is until the person decides it
+// from a terminal or under a person key of nodloop-server
+// 2. an empty name fails with ErrApproverRequired and the reserved name with ErrApproverReserved
+// 3. an unknown version fails with ErrNotFound
+func (c *Client) Approve(ctx context.Context, id string, version int, approver string) (Intervention, error) {
+	return c.proposal(ctx, trace.Intervention{ID: id, Version: version, Choice: trace.ChoiceKeep}, approver)
 }
 
-// Approves a candidate in the labels the person picked instead of the proposed ones
-// 1. empty labels reach every run of its producer
+// Records the approval of a candidate in the labels the person picked as an agent proposal and returns it
+// 1. empty labels reach every run of its producer once the person decides it
 // 2. every label value must be one a recorded run of the producer carries
-func (c *Client) ApproveIn(ctx context.Context, id string, version int, labels Labels, approver string) (Item, error) {
+func (c *Client) ApproveIn(ctx context.Context, id string, version int, labels Labels, approver string) (Intervention, error) {
 	scope, err := c.ledger.ScopeIn(ctx, id, version, labels)
 	if err != nil {
-		return Item{}, err
+		return Intervention{}, err
 	}
 	runs, err := c.traces.List(ctx, record.TraceFilter{Name: string(trace.NameRun)})
 	if err != nil {
-		return Item{}, err
+		return Intervention{}, err
 	}
 	if err := scope.Recorded(trace.RestoreAll(runs).Vocabulary(scope.Producer)); err != nil {
-		return Item{}, err
+		return Intervention{}, err
 	}
-	k, err := c.ledger.ApproveIn(ctx, id, version, labels, approver)
-	if err != nil && !errors.Is(err, knowledge.ErrExport) {
-		return Item{}, err
-	}
-	return newItems(knowledge.Set{k})[0], err
+	return c.proposal(ctx, trace.Intervention{ID: id, Version: version, Choice: trace.ChoiceScope, Labels: labels}, approver)
 }
 
-// Retires a version on behalf of the named person
-func (c *Client) Retire(ctx context.Context, id string, version int, approver string) (Item, error) {
-	k, err := c.ledger.Retire(ctx, id, version, approver)
-	if err != nil {
-		return Item{}, err
+// Records the retire of a version as an agent proposal and returns it
+func (c *Client) Retire(ctx context.Context, id string, version int, approver string) (Intervention, error) {
+	return c.proposal(ctx, trace.Intervention{ID: id, Version: version, Choice: trace.ChoiceUndo}, approver)
+}
+
+// One judgment on a knowledge version as the records keep it
+// The package records every judgment as an agent proposal since a call in process proves no person
+type Intervention struct {
+	// The trace id of the intervention record
+	ID     string
+	Action InterventionAction
+	// The version it acts on
+	Ref    Ref
+	Choice Choice
+	// Where a scope choice approves the candidate
+	Labels    Labels
+	Authority Authority
+	Proof     Proof
+}
+
+// The intervention of the target recorded once the name passes and the version is found
+func (c *Client) proposal(ctx context.Context, target trace.Intervention, approver string) (Intervention, error) {
+	if err := knowledge.CheckApprover(approver); err != nil {
+		return Intervention{}, err
 	}
-	return newItems(knowledge.Set{k})[0], nil
+	all, err := c.ledger.All(ctx)
+	if err != nil {
+		return Intervention{}, err
+	}
+	if _, err := all.Version(target.ID, target.Version); err != nil {
+		return Intervention{}, err
+	}
+	target.Action, target.Proof = trace.ActionJudge, trace.ProofNone
+	tr, err := target.Trace(nil, "", c.now())
+	if err != nil {
+		return Intervention{}, err
+	}
+	if err := c.traces.Append(ctx, tr.Record()); err != nil {
+		return Intervention{}, err
+	}
+	return Intervention{
+		ID: tr.ID, Action: target.Action, Ref: Ref{ID: target.ID, Version: target.Version}, Choice: target.Choice, Labels: target.Labels,
+		Authority: target.Proof.Authority(), Proof: target.Proof,
+	}, nil
 }

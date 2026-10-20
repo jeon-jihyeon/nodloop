@@ -30,4 +30,8 @@ var (
 	ErrRunNotFound = record.ErrTraceNotFound
 	// A Run whose Duration is below zero
 	ErrDurationNegative = trace.ErrDurationNegative
+	// A Judgment or an Outcome that names no reviewer
+	ErrReviewerRequired = feedback.ErrReviewerRequired
+	// An Approve, ApproveIn or Retire under the name only what nodloop carries out is recorded under
+	ErrApproverReserved = knowledge.ErrApproverReserved
 )

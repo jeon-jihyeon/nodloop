@@ -23,22 +23,21 @@ async with Client() as c:
     run = await c.record("support-bot", answer, labels=acme, applied=knowledge.items)
 
     # later, when a person reads the answer
-    await c.judge(run, "reject", reason="the refund window was missing", reason_code="scope")
+    await c.judge(run, "reject", "ann", reason="the refund window was missing", reason_code="scope")
     candidate = await c.propose("judgment", "Quote the refund window before the steps", from_run=run)
-    approval = await c.approve(candidate.id, candidate.version, approver="ann")
 ```
 
-From then on every `knowledge("support-bot", acme)` carries the item, and a run of another tenant never does. `judge` takes `approve`, `edit` with `edited=` holding the corrected output, `reject` with what was wrong, or `withdraw` to take back the verdict before it.
+The person approves the candidate in a terminal of their own with `nodloop knowledge approve <id> --version <n>`, or the client approves it through a nodloop server under an approver key the person holds, added with `--person`. Over stdio `approve` records a proposal and changes nothing, since a program proves no person. From then on every `knowledge("support-bot", acme)` carries the item, and a run of another tenant never does. `judge` takes `approve`, `edit` with `edited=` holding the corrected output, `reject` with what was wrong, or `withdraw` to take back the verdict before it, and always the name of the reviewer.
 
 | Method | Returns |
 |---|---|
 | `knowledge(producer, labels, holdout_key)` | `Knowledge` with `items`, the `text` to put in the prompt and `withheld`. With a `holdout_key` such as `<service>:<hour>`, the `holdout` share of config.json gets no items and `withheld` instead |
 | `record(producer, output, *, labels, applied, subject, withheld, holdout_key, model)` | the run id a verdict cites. Pass `knowledge.withheld` as `withheld` and the `holdout_key` the run passed to `knowledge`. `report effect` counts only runs recorded with the key and counts a run without it as `undrawn`. `withheld` takes `Ref` or `Item` values. `model` names the one model the producer runs, which the OTLP export sends as `gen_ai.request.model`. Leave it out when the producer may switch models |
-| `judge(run, verdict, reason, reason_code, edited, reviewer)` | nothing |
+| `judge(run, verdict, reviewer, reason, reason_code, edited)` | nothing. `reviewer` is required, so a verdict without a name never reads as a person's |
 | `propose(kind, content, from_run, producer, labels, new_labels, item_id, veto)` | `Candidate` with `id`, `version`, `status` and `overlaps`, the current items of the same kind one run may carry with it |
-| `approve(item_id, version, approver, labels=)` | Approves as proposed, or for the runs carrying `labels` when given, and `{}` for every run of the producer. `Approval` with `id`, `version`, `status`, `approver`, `veto`, and `export_error` and `folder_error` when a step after the approval failed |
+| `approve(item_id, version, approver, labels=)` | Under a key of a nodloop server that a person holds, approves as proposed, or for the runs carrying `labels` when given, and `{}` for every run of the producer. Anywhere else it records a proposal the person is asked about and the status stays. `Approval` with `id`, `version`, `status`, `approver`, `veto`, `proposal` when a proposal was recorded, and `export_error` and `folder_error` when a step after the approval failed |
 | `check_call(tool, arguments, producer)` | `Decision` with `action` of allow, block or ask, `veto` and `reason` |
-| `outcome(run, result, confirmed_cause, note, reviewer)` | nothing. `result` is a `Result`, confirmed, refuted or inconclusive: what a real check found, apart from the verdict on the output |
+| `outcome(run, result, confirmed_cause, note, reviewer)` | nothing. `result` is a `Result`, confirmed, refuted or inconclusive: what a real check found, apart from the verdict on the output. Over stdio `reviewer` is required |
 | `report(name)` | `Report` with `report`, the report as JSON, and `since`, the RFC3339 start of the runs it read or empty for every run. `name` is a `ReportName`: `loop`, `extract`, `critic`, `effect`, `health` or `replay`. `critic` is `{critics, reactions}`: the rows of the draft critics and of the reaction classifiers |
 
 A tool that refuses, such as a proposal from a run nobody corrected, raises `ToolError` with the reason.
@@ -61,7 +60,7 @@ run = await c.record(
 )
 
 # later, when the cause was checked
-await c.outcome(run, "confirmed", confirmed_cause="partition 7 was hot")
+await c.outcome(run, "confirmed", confirmed_cause="partition 7 was hot", reviewer="ann")
 effect = (await c.report("effect")).report
 ```
 
@@ -77,7 +76,7 @@ from nodloop.langchain import NodloopMiddleware
 mw = NodloopMiddleware(c, "support-bot", acme)
 agent = create_agent(model, tools, middleware=[mw])
 await agent.ainvoke({"messages": [...]})
-await c.judge(mw.run, "approve")
+await c.judge(mw.run, "approve", "ann")
 ```
 
 OpenAI Agents SDK hooks and a tool input guardrail:

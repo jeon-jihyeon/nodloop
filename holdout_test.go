@@ -24,11 +24,10 @@ func taught(t *testing.T, opts ...nodloop.Option) (*nodloop.Client, string) {
 	require.NoError(t, err)
 	run, err := c.Record(ctx, nodloop.Run{Producer: "stream-bot", Labels: nodloop.Labels{"tenant": {"acme"}}, Output: []byte("lag rose")})
 	require.NoError(t, err)
-	require.NoError(t, c.Judge(ctx, nodloop.Judgment{Run: run, Verdict: nodloop.VerdictReject, Reason: "name the partition"}))
+	require.NoError(t, c.Judge(ctx, nodloop.Judgment{Run: run, Verdict: nodloop.VerdictReject, Reason: "name the partition", Reviewer: "ann"}))
 	proposed, err := c.Propose(ctx, nodloop.Proposal{Kind: nodloop.KindJudgment, Content: "Name the partition", From: run, ID: "partition"})
 	require.NoError(t, err)
-	_, err = c.Approve(ctx, proposed.ID, proposed.Version, "ann")
-	require.NoError(t, err)
+	approveAsPerson(t, dir, proposed.ID, proposed.Version)
 	return c, dir
 }
 
@@ -228,7 +227,7 @@ func TestClientOutcome(t *testing.T) {
 			id, err := c.Record(ctx, nodloop.Run{Producer: "stream-bot", Output: []byte("x")})
 			require.NoError(t, err)
 
-			err = c.Outcome(ctx, nodloop.Outcome{Run: strings.ReplaceAll(tc.args.run, "{recorded}", id), Result: tc.args.result})
+			err = c.Outcome(ctx, nodloop.Outcome{Run: strings.ReplaceAll(tc.args.run, "{recorded}", id), Result: tc.args.result, Reviewer: "ann"})
 
 			assert.ErrorIs(t, err, tc.want)
 		})
@@ -283,7 +282,7 @@ func TestClientRetention(t *testing.T) {
 	require.NoError(t, err)
 	judged, err := c.Record(ctx, nodloop.Run{Producer: "stream-bot", Output: []byte("judged")})
 	require.NoError(t, err)
-	require.NoError(t, c.Judge(ctx, nodloop.Judgment{Run: judged, Verdict: nodloop.VerdictApprove}))
+	require.NoError(t, c.Judge(ctx, nodloop.Judgment{Run: judged, Verdict: nodloop.VerdictApprove, Reviewer: "ann"}))
 	_, err = c.Record(ctx, nodloop.Run{Producer: "stream-bot", Output: []byte("unjudged")})
 	require.NoError(t, err)
 	c.WaitPrune()

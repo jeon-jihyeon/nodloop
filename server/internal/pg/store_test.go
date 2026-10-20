@@ -113,7 +113,7 @@ func TestPruneKeepsRunsCitedAfterDecide(t *testing.T) {
 		fb, err := feedback.New(runs["judged"].ID, feedback.VerdictApprove, "", "", nil, "ann", time.Now())
 		require.NoError(t, err)
 		require.NoError(t, db.Feedback(tenant).Append(ctx, fb.Record()))
-		o, err := feedback.NewOutcome(runs["checked"].ID, feedback.ResultConfirmed, "", "", "", time.Now())
+		o, err := feedback.NewOutcome(runs["checked"].ID, feedback.ResultConfirmed, "", "", "ann", time.Now())
 		require.NoError(t, err)
 		require.NoError(t, db.Outcomes(tenant).Append(ctx, o.Record()))
 		require.NoError(t, db.Knowledge(tenant).Append(ctx, record.Knowledge{

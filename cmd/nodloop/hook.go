@@ -142,18 +142,20 @@ type hookCommand struct {
 // 1. a failed read of the runs still adds the items
 // 2. a corrupt line in the records leaves out that record and the rest still reach the prompt
 // 3. a turn of a session the holdout draws gets the note and no item
-// 4. the two newest runs of the session and its newest refill tell which items are in the context already
+// 4. the newest answer of the session with the run before it and the newest refill tell which items are in the context already
 // 5. the start of the turn is recorded first so the stop knows how long the turn took
+// 6. the note and the reaction point name the newest answer since a run a stop hook continued answers the stop and never the person
 func (c hookCommand) prompt(ctx context.Context, sessionID, message string, labels trace.Labels) error {
 	turnErr := c.recordTurn(ctx, sessionID)
 	all, allErr := c.all(ctx)
 	if allErr != nil && !errors.Is(allErr, knowledgefile.ErrCorrupt) {
 		return allErr
 	}
-	runs, runsErr := c.sessionRuns(ctx, sessionID, 2)
+	runs, runsErr := c.recentRuns(ctx, sessionID)
 	refill, refillErr := c.refill(ctx, sessionID)
 	runsErr = errors.Join(runsErr, refillErr)
-	previous := trace.Traces(runs).Newest()
+	answered := runs.answered()
+	previous := trace.Traces(answered).Newest()
 	items := hookItems(all.For(sessionProducer, labels))
 	if c.holdout.WithholdsRun(sessionProducer, sessionID) {
 		items = nil
@@ -161,7 +163,7 @@ func (c hookCommand) prompt(ctx context.Context, sessionID, message string, labe
 	recorded, reactErr := c.react(ctx, turn{run: previous, message: message})
 	note := c.note(sessionID, previous)
 	note.recorded = recorded
-	text := items.context(runs.inContext(knowledge.Set(items), refill), note)
+	text := items.context(answered.inContext(knowledge.Set(items), refill), note)
 	runsErr = errors.Join(turnErr, allErr, runsErr, reactErr)
 	if text == "" {
 		return runsErr
@@ -174,7 +176,7 @@ func (c hookCommand) addContext(event, text string) error {
 	return c.host.context(c.out, event, text)
 }
 
-// The note on the previous run of the session
+// The note on the newest answer of the session
 // A mode that infers nothing and a prompt without a session id get no note
 func (c hookCommand) note(sessionID string, run trace.Trace) sessionNote {
 	if !c.mode.infers() || sessionID == "" {
@@ -245,7 +247,7 @@ func (c hookCommand) recordTurn(ctx context.Context, sessionID string) error {
 // When the turn the stop ends began
 // 1. the newest turn trace of the session after the previous run
 // The prompt that began the turn wrote it
-// 2. else the previous run when a stop hook continued the turn since the turn began as that stop blocked
+// 2. else the previous run when a stop hook continued the turn since the turn went on from that stop
 // 3. else the zero time and the run records no duration
 func (c hookCommand) turnStart(ctx context.Context, sessionID string, previous trace.Trace, continued bool) (time.Time, error) {
 	if sessionID == "" {
@@ -299,10 +301,17 @@ func (c hookCommand) refill(ctx context.Context, sessionID string) (trace.Trace,
 	return trace.Traces(trace.RestoreAll(found)).Newest(), err
 }
 
-// The newest run of the session within sessionWindow or none
-func (c hookCommand) previousRun(ctx context.Context, sessionID string) (trace.Trace, error) {
-	runs, err := c.sessionRuns(ctx, sessionID, 1)
-	return trace.Traces(runs).Newest(), err
+// The runs of the session within sessionWindow newest first back to the run before its newest answer
+// 1. the run before the answer bounds the turn the answer ended so the read reaches it too
+// 2. the read starts at two runs and doubles past continued runs since another stop hook may continue a turn more than once
+// 3. it ends at the first read that holds both or returns fewer runs than it asked for
+func (c hookCommand) recentRuns(ctx context.Context, sessionID string) (sessionTurns, error) {
+	for limit := 2; ; limit *= 2 {
+		runs, err := c.sessionRuns(ctx, sessionID, limit)
+		if len(runs) < limit || len(runs.answered()) > 1 {
+			return runs, err
+		}
+	}
 }
 
 // At most limit runs of the session within sessionWindow newest first
@@ -324,13 +333,28 @@ func (c hookCommand) sessionRuns(ctx context.Context, sessionID string, limit in
 // The runs of a session newest first
 type sessionTurns trace.Traces
 
+// The runs from the newest answer back and none when every run was continued
+// 1. an answer is a run no stop hook continued and so the answer the person read before they typed
+// 2. an input that does not decode reads as an answer like every run of an earlier release
+func (ts sessionTurns) answered() sessionTurns {
+	i := slices.IndexFunc(ts, func(run trace.Trace) bool {
+		var in knowledge.RunInput
+		return json.Unmarshal(run.Input, &in) != nil || !in.Continued
+	})
+	if i < 0 {
+		return nil
+	}
+	return ts[i:]
+}
+
 // The versions of the items that are in the context of the session already
-// 1. the newest run recorded the fitting items of its stop as applied since each was in the context then
+// The runs start at the newest answer
+// 1. the newest answer recorded the fitting items of its stop as applied since each was in the context then
 // 2. a version approved after the run before it may have come during that turn after its prompt
-// Its stop recorded it though no hook added it so it counts as missing and the next prompt adds it
+// A stop of that turn recorded it though no hook added it so it counts as missing and the next prompt adds it
 // 3. a first turn has no run before it so a version approved during it counts as in the context
 // 4. an unreadable input names none so every fitting item is added again
-// 5. a refill after the newest run added every fitting item of its time so its refs are the context
+// 5. a refill after the newest answer added every fitting item of its time so its refs are the context
 func (ts sessionTurns) inContext(items knowledge.Set, refill trace.Trace) []knowledge.Ref {
 	if refill.ID != "" && (len(ts) == 0 || refill.Time.After(ts[0].Time)) {
 		var in knowledge.RunInput
@@ -357,7 +381,8 @@ func (ts sessionTurns) inContext(items knowledge.Set, refill trace.Trace) []know
 
 // The answer as a run of the session and then the background work the turn left
 // 1. an empty answer such as an interrupted turn records nothing
-// 2. the previous run is the one the prompt hook named this turn so each run is looked at for a lesson once
+// 2. the newest answer before the stop is the one the prompt hook named this turn so each run is looked at for a lesson once
+// A stop of a turn a stop hook continued looks at none since the first stop of its turn looked at that answer
 // 3. a correction a knowledge record already cites is not drafted again in the background
 // The conversation usually drafted it in the same turn
 // 4. the holdout draws once per session so every turn of a conversation is in one arm
@@ -370,10 +395,11 @@ func (c hookCommand) stop(ctx context.Context, sessionID string, labels trace.La
 	if c.host.answers() && strings.TrimSpace(string(answer)) == "" {
 		return nil
 	}
-	previous, runsErr := c.previousRun(ctx, sessionID)
+	runs, runsErr := c.recentRuns(ctx, sessionID)
 	if runsErr != nil && !errors.Is(runsErr, tracefile.ErrCorrupt) {
 		return runsErr
 	}
+	previous := trace.Traces(runs).Newest()
 	all, allErr := c.all(ctx)
 	if allErr != nil && !errors.Is(allErr, knowledgefile.ErrCorrupt) {
 		return allErr
@@ -387,8 +413,8 @@ func (c hookCommand) stop(ctx context.Context, sessionID string, labels trace.La
 		failed = c.app.startExport(c.export)
 	}
 	failed = errors.Join(failed, c.prune(ctx), c.consolidate(all))
-	if !all.Cites(previous.ID) {
-		failed = errors.Join(failed, c.extract(ctx, previous.ID, previous.Time))
+	if judged := trace.Traces(runs.answered()).Newest(); !continued && !all.Cites(judged.ID) {
+		failed = errors.Join(failed, c.extract(ctx, judged.ID, judged.Time))
 	}
 	return errors.Join(corrupt, failed)
 }
@@ -396,6 +422,7 @@ func (c hookCommand) stop(ctx context.Context, sessionID string, labels trace.La
 // The answer as a run of the session with every fitting item of the place in its context and the duration of its turn
 // 1. a turn start that cannot be read leaves the duration out and still records the run
 // 2. a corrupt line is left to the read of the previous run that reports it already
+// 3. the run of a turn a stop hook continued is marked so no reader takes it for the answer the person judged
 func (c hookCommand) record(
 	ctx context.Context, sessionID string, labels trace.Labels, answer reply, all knowledge.Set, previous trace.Trace, continued bool,
 ) error {
@@ -409,6 +436,7 @@ func (c hookCommand) record(
 	if err != nil {
 		return err
 	}
+	in.Continued = continued
 	input, err := json.Marshal(c.holdout.Drawn(in, sessionProducer, sessionID))
 	if err != nil {
 		return err
@@ -546,9 +574,9 @@ func (items hookItems) fitting() (knowledge.Set, []string) {
 
 // What the prompt hook tells the conversation about its session
 type sessionNote struct {
-	// The previous run of the session, empty on its first prompt
+	// The newest answer of the session that no stop hook continued and empty before its first
 	run string
-	// The verdict the reaction point recorded on the previous run and empty when the conversation judges it
+	// The verdict the reaction point recorded on that answer and empty when the conversation judges it
 	recorded feedback.Verdict
 }
 

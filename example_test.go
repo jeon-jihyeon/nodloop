@@ -10,7 +10,9 @@ import (
 	"github.com/jeon-jihyeon/nodloop"
 )
 
-// The loop of the README: a corrected run teaches an item the next run of the same tenant receives
+// The loop of the README: a corrected run teaches a candidate
+// A call in process proves no person so its approval is a proposal until the person decides it from a terminal
+// or under a person key of nodloop-server
 func Example() {
 	dir, err := os.MkdirTemp("", "nodloop")
 	if err != nil {
@@ -25,19 +27,23 @@ func Example() {
 	labels := nodloop.Labels{"tenant": {"acme"}, "task": {"refund"}}
 	items := must(c.Items(ctx, "support-bot", labels))
 	id := must(c.Record(ctx, nodloop.Run{Producer: "support-bot", Labels: labels, Output: []byte("Here are the refund steps"), Applied: items.Refs()}))
-	err = c.Judge(ctx, nodloop.Judgment{Run: id, Verdict: nodloop.VerdictReject, ReasonCode: nodloop.ReasonScope, Reason: "the refund window was missing"})
+	err = c.Judge(ctx, nodloop.Judgment{
+		Run: id, Verdict: nodloop.VerdictReject, ReasonCode: nodloop.ReasonScope, Reason: "the refund window was missing", Reviewer: "ann",
+	})
 	if err != nil {
 		panic(err)
 	}
 
 	item := must(c.Propose(ctx, nodloop.Proposal{Kind: nodloop.KindJudgment, Content: "Quote the refund window before the steps", From: id, ID: "refund-window"}))
-	must(c.Approve(ctx, item.ID, item.Version, "ann"))
-	items = must(c.Items(ctx, "support-bot", labels))
-	fmt.Println(items.Refs())
+	proposal := must(c.Approve(ctx, item.ID, item.Version, "ann"))
+	fmt.Println(proposal.Authority, proposal.Ref)
+	waiting := must(c.Waiting(ctx, "support-bot", labels))
+	fmt.Println(waiting.Refs())
 
 	d := must(c.CheckCall(ctx, "support-bot", "Bash", map[string]any{"command": "ls"}))
 	fmt.Println(d.Action)
 	// Output:
+	// agent {refund-window 1}
 	// [{refund-window 1}]
 	// allow
 }
@@ -65,7 +71,7 @@ func Example_holdout() {
 		Producer: "stream-bot", Labels: labels, Output: []byte("lag rose on partition 3"),
 		Applied: d.Items.Refs(), Withheld: d.Withheld, HoldoutKey: key,
 	}))
-	err = c.Outcome(ctx, nodloop.Outcome{Run: id, Result: nodloop.ResultConfirmed, ConfirmedCause: "a slow consumer"})
+	err = c.Outcome(ctx, nodloop.Outcome{Run: id, Result: nodloop.ResultConfirmed, ConfirmedCause: "a slow consumer", Reviewer: "ann"})
 	if err != nil {
 		panic(err)
 	}

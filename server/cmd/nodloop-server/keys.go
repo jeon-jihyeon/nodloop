@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"slices"
 
+	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	"github.com/jeon-jihyeon/nodloop/internal/mcp"
 	"github.com/jeon-jihyeon/nodloop/internal/userconfig"
 )
@@ -18,11 +19,19 @@ import (
 // Only the SHA-256 of the key is saved so config.json never holds a key
 type serverKey struct {
 	// The person or service the key names
-	// Approvals through the key are recorded under it
+	// Judgments through the key are recorded under it
 	Name   string   `json:"name"`
 	Tenant string   `json:"tenant"`
 	Role   mcp.Role `json:"role"`
 	SHA256 string   `json:"sha256"`
+	// Whether a person holds the key so a judgment under an approver key decides at once
+	// A key of a bot or a service leaves it out and a key saved before the field reads as without it
+	Person bool `json:"person,omitempty"`
+}
+
+// Who calls the tools under the key
+func (k serverKey) caller() mcp.Caller {
+	return mcp.Caller{Person: k.Name, Proves: k.Role.Proves(k.Person)}
 }
 
 // What the server section of config.json holds
@@ -88,6 +97,7 @@ func runKey(args []string, getenv func(string) string, stdout, stderr io.Writer)
 	fs := newFlagSet("key "+args[0], stderr)
 	tenant := fs.String("tenant", "", "add: the tenant whose records the key reads and writes")
 	role := fs.String("role", "", "add: producer, reviewer or approver")
+	person := fs.Bool("person", false, "add: a person holds the key, so a judgment under an approver key decides at once")
 	name, err := parseName(fs, args[1:])
 	if err != nil {
 		return parseFailed(err)
@@ -99,7 +109,7 @@ func runKey(args []string, getenv func(string) string, stdout, stderr io.Writer)
 	cmd := serverCommand{home: h, keys: uc.Server, out: stdout}
 	switch args[0] {
 	case "add":
-		err = cmd.add(serverKey{Name: name, Tenant: *tenant, Role: mcp.Role(*role)})
+		err = cmd.add(serverKey{Name: name, Tenant: *tenant, Role: mcp.Role(*role), Person: *person})
 	case "list":
 		cmd.list()
 	case "remove":
@@ -125,6 +135,8 @@ func (c serverCommand) add(k serverKey) error {
 	switch {
 	case k.Name == "":
 		return fmt.Errorf("add: a key name %w", errRequired)
+	case k.Name == knowledge.ApproverNodloop:
+		return fmt.Errorf("add: %w, since a key name becomes the approver", knowledge.ErrApproverReserved)
 	case !tenantName.MatchString(k.Tenant):
 		return fmt.Errorf("%w: %q. Use lower case letters, digits, - and _", errTenantInvalid, k.Tenant)
 	case !k.Role.Valid():
@@ -150,9 +162,14 @@ func (c serverCommand) add(k serverKey) error {
 	return nil
 }
 
+// The person column says whether a person holds the key
 func (c serverCommand) list() {
 	for _, k := range c.keys.Keys {
-		fmt.Fprintf(c.out, "%s\t%s\t%s\n", k.Name, k.Tenant, k.Role)
+		holder := "service"
+		if k.Person {
+			holder = "person"
+		}
+		fmt.Fprintf(c.out, "%s\t%s\t%s\t%s\n", k.Name, k.Tenant, k.Role, holder)
 	}
 }
 

@@ -9,26 +9,49 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeon-jihyeon/nodloop"
+	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
+	knowledgefile "github.com/jeon-jihyeon/nodloop/internal/knowledge/file"
+	vetofile "github.com/jeon-jihyeon/nodloop/internal/veto/file"
 )
 
 var at = time.Date(2026, 10, 6, 9, 0, 0, 0, time.UTC)
 
 func open(t *testing.T) *nodloop.Client {
 	t.Helper()
-	c, err := nodloop.Open(t.TempDir(), nodloop.WithClock(func() time.Time { return at }))
-	require.NoError(t, err)
+	c, _ := openIn(t)
 	return c
 }
 
-// A run a person corrected teaches an item the next run of the same tenant receives and another tenant does not
+// A client over a new record directory and the directory
+func openIn(t *testing.T) (*nodloop.Client, string) {
+	t.Helper()
+	dir := t.TempDir()
+	c, err := nodloop.Open(dir, nodloop.WithClock(func() time.Time { return at }))
+	require.NoError(t, err)
+	return c, dir
+}
+
+// Approves the version as the person ann at her terminal over the records a client writes
+// The package itself records only proposals since a call in process proves no person
+func approveAsPerson(t *testing.T, dir, id string, version int) {
+	t.Helper()
+	store, err := knowledgefile.New(dir)
+	require.NoError(t, err)
+	now := func() time.Time { return at }
+	_, err = knowledge.NewLedger(store, vetofile.NewApprovedFile("", ""), now, knowledge.NewIDs(now)).Approve(context.Background(), id, version, "ann")
+	require.NoError(t, err)
+}
+
+// A run a person corrected teaches an item the next run of the same tenant receives once the person approved it
+// A run of another tenant never receives it
 func TestClientLoop(t *testing.T) {
 	ctx := context.Background()
-	c := open(t)
+	c, dir := openIn(t)
 	acme := nodloop.Labels{"tenant": {"acme"}, "task": {"refund"}}
 	run, err := c.Record(ctx, nodloop.Run{Producer: "support-bot", Labels: acme, Output: []byte("Here are the refund steps")})
 	require.NoError(t, err)
 	require.NoError(t, c.Judge(ctx, nodloop.Judgment{
-		Run: run, Verdict: nodloop.VerdictReject, ReasonCode: nodloop.ReasonScope, Reason: "the refund window was missing",
+		Run: run, Verdict: nodloop.VerdictReject, ReasonCode: nodloop.ReasonScope, Reason: "the refund window was missing", Reviewer: "ann",
 	}))
 	proposed, err := c.Propose(ctx, nodloop.Proposal{
 		Kind: nodloop.KindJudgment, Content: "Quote the refund window before the steps", From: run, ID: "refund-window",
@@ -36,18 +59,86 @@ func TestClientLoop(t *testing.T) {
 	require.NoError(t, err)
 	waiting, err := c.Waiting(ctx, "support-bot", acme)
 	require.NoError(t, err)
-
-	_, err = c.Approve(ctx, proposed.ID, proposed.Version, "ann")
+	proposal, err := c.Approve(ctx, proposed.ID, proposed.Version, "ann")
 	require.NoError(t, err)
+	before, err := c.Items(ctx, "support-bot", acme)
+	require.NoError(t, err)
+
+	approveAsPerson(t, dir, proposed.ID, proposed.Version)
 
 	items, err := c.Items(ctx, "support-bot", acme)
 	require.NoError(t, err)
 	other, err := c.Items(ctx, "support-bot", nodloop.Labels{"tenant": {"globex"}, "task": {"refund"}})
 	require.NoError(t, err)
 	assert.Equal(t, []string{"refund-window"}, ids(waiting))
+	assert.Equal(t, nodloop.AuthorityAgent, proposal.Authority)
+	assert.Empty(t, before, "a proposal changes nothing a run receives")
 	assert.Equal(t, []string{"refund-window"}, ids(items))
 	assert.Equal(t, acme, items[0].Labels)
 	assert.Empty(t, other)
+}
+
+// Approve, ApproveIn and Retire record an agent proposal and change no status
+func TestClientJudgmentsProveNoPerson(t *testing.T) {
+	type want struct {
+		choice nodloop.Choice
+		err    error
+	}
+	tcs := []struct {
+		name string
+		args func(ctx context.Context, c *nodloop.Client, id string) (nodloop.Intervention, error)
+		want want
+	}{
+		{"approve records a proposal", func(ctx context.Context, c *nodloop.Client, id string) (nodloop.Intervention, error) {
+			return c.Approve(ctx, id, 1, "ann")
+		}, want{choice: nodloop.ChoiceKeep}},
+		{"approve in labels records a proposal", func(ctx context.Context, c *nodloop.Client, id string) (nodloop.Intervention, error) {
+			return c.ApproveIn(ctx, id, 1, nodloop.Labels{}, "ann")
+		}, want{choice: nodloop.ChoiceScope}},
+		{"retire records a proposal", func(ctx context.Context, c *nodloop.Client, id string) (nodloop.Intervention, error) {
+			return c.Retire(ctx, id, 1, "ann")
+		}, want{choice: nodloop.ChoiceUndo}},
+		{"the reserved name is refused", func(ctx context.Context, c *nodloop.Client, id string) (nodloop.Intervention, error) {
+			return c.Approve(ctx, id, 1, "nodloop")
+		}, want{err: nodloop.ErrApproverReserved}},
+		{"an unknown version is refused", func(ctx context.Context, c *nodloop.Client, id string) (nodloop.Intervention, error) {
+			return c.Retire(ctx, id, 9, "ann")
+		}, want{err: nodloop.ErrNotFound}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ctx := context.Background()
+			c := open(t)
+			run, err := c.Record(ctx, nodloop.Run{Producer: "support-bot", Labels: nodloop.Labels{"tenant": {"acme"}}, Output: []byte("x")})
+			require.NoError(t, err)
+			require.NoError(t, c.Judge(ctx, nodloop.Judgment{Run: run, Verdict: nodloop.VerdictReject, Reason: "wrong", Reviewer: "ann"}))
+			proposed, err := c.Propose(ctx, nodloop.Proposal{Kind: nodloop.KindJudgment, Content: "x", From: run})
+			require.NoError(t, err)
+
+			got, err := tc.args(ctx, c, proposed.ID)
+
+			assert.ErrorIs(t, err, tc.want.err)
+			assert.Equal(t, tc.want.choice, got.Choice)
+			waiting, err := c.Waiting(ctx, "support-bot", nodloop.Labels{"tenant": {"acme"}})
+			require.NoError(t, err)
+			assert.Equal(t, []string{proposed.ID}, ids(waiting), "the candidate still waits")
+		})
+	}
+}
+
+// A judgment and an outcome without a reviewer are refused before anything is recorded
+func TestClientReviewerRequired(t *testing.T) {
+	ctx := context.Background()
+	c := open(t)
+	run, err := c.Record(ctx, nodloop.Run{Producer: "support-bot", Output: []byte("x")})
+	require.NoError(t, err)
+
+	judged := c.Judge(ctx, nodloop.Judgment{Run: run, Verdict: nodloop.VerdictApprove})
+	checked := c.Outcome(ctx, nodloop.Outcome{Run: run, Result: nodloop.ResultConfirmed})
+
+	assert.ErrorIs(t, judged, nodloop.ErrReviewerRequired)
+	assert.ErrorIs(t, checked, nodloop.ErrReviewerRequired)
 }
 
 func ids(items []nodloop.Item) []string {
@@ -85,7 +176,7 @@ func TestClientPropose(t *testing.T) {
 			run, err := c.Record(ctx, nodloop.Run{Producer: "support-bot", Labels: nodloop.Labels{"tenant": {"acme"}}, Output: []byte("answer")})
 			require.NoError(t, err)
 			if tc.args.corrected {
-				require.NoError(t, c.Judge(ctx, nodloop.Judgment{Run: run, Verdict: nodloop.VerdictReject, Reason: "wrong"}))
+				require.NoError(t, c.Judge(ctx, nodloop.Judgment{Run: run, Verdict: nodloop.VerdictReject, Reason: "wrong", Reviewer: "ann"}))
 			}
 			p := tc.args.proposal
 			if p.From != "" {
@@ -102,7 +193,7 @@ func TestClientPropose(t *testing.T) {
 	}
 }
 
-// ApproveIn approves a candidate where the person picked, every tenant or one a run carries
+// ApproveIn proposes a candidate where the person picked, every tenant or one a run carries, and reaches no run until the person decides
 func TestClientApproveIn(t *testing.T) {
 	type args struct {
 		labels nodloop.Labels
@@ -117,8 +208,8 @@ func TestClientApproveIn(t *testing.T) {
 		args args
 		want want
 	}{
-		{"empty labels reach every tenant", args{nodloop.Labels{}}, want{globex: true}},
-		{"a recorded tenant keeps it there", args{nodloop.Labels{"tenant": {"acme"}}}, want{}},
+		{"empty labels are proposed for every tenant", args{nodloop.Labels{}}, want{}},
+		{"a recorded tenant is proposed", args{nodloop.Labels{"tenant": {"acme"}}}, want{}},
 		{"a tenant no run carries is refused", args{nodloop.Labels{"tenant": {"initech"}}}, want{err: nodloop.ErrScopeUnobserved}},
 	}
 	for _, tc := range tcs {
@@ -131,7 +222,7 @@ func TestClientApproveIn(t *testing.T) {
 			require.NoError(t, err)
 			_, err = c.Record(ctx, nodloop.Run{Producer: "support-bot", Labels: nodloop.Labels{"tenant": {"globex"}}, Output: []byte("ok")})
 			require.NoError(t, err)
-			require.NoError(t, c.Judge(ctx, nodloop.Judgment{Run: run, Verdict: nodloop.VerdictReject, Reason: "too long"}))
+			require.NoError(t, c.Judge(ctx, nodloop.Judgment{Run: run, Verdict: nodloop.VerdictReject, Reason: "too long", Reviewer: "ann"}))
 			proposed, err := c.Propose(ctx, nodloop.Proposal{Kind: nodloop.KindJudgment, Content: "Answer in three lines", From: run})
 			require.NoError(t, err)
 
@@ -148,10 +239,10 @@ func TestClientApproveIn(t *testing.T) {
 // An approved veto blocks the call it names and lets others through
 func TestClientCheckCall(t *testing.T) {
 	ctx := context.Background()
-	c := open(t)
+	c, dir := openIn(t)
 	run, err := c.Record(ctx, nodloop.Run{Producer: "ops-bot", Labels: nodloop.Labels{"env": {"prod"}}, Output: []byte("ran rm -rf /data")})
 	require.NoError(t, err)
-	require.NoError(t, c.Judge(ctx, nodloop.Judgment{Run: run, Verdict: nodloop.VerdictReject, Reason: "never delete data"}))
+	require.NoError(t, c.Judge(ctx, nodloop.Judgment{Run: run, Verdict: nodloop.VerdictReject, Reason: "never delete data", Reviewer: "ann"}))
 	proposed, err := c.Propose(ctx, nodloop.Proposal{
 		Kind: nodloop.KindJudgment, Content: "Never delete under /data", From: run, ID: "no-rm-data",
 		Veto: &nodloop.VetoRule{
@@ -160,8 +251,7 @@ func TestClientCheckCall(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	_, err = c.Approve(ctx, proposed.ID, proposed.Version, "ann")
-	require.NoError(t, err)
+	approveAsPerson(t, dir, proposed.ID, proposed.Version)
 	type args struct {
 		producer string
 		tool     string

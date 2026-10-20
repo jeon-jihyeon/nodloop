@@ -36,8 +36,12 @@ func TestRunKey(t *testing.T) {
 		want want
 	}{
 		{"a new key is printed once", args{nil, []string{"key", "add", "ann", "--tenant", "acme", "--role", "approver"}}, want{0, "{key}\n", ""}},
-		{"keys list without their secret", args{[][]string{{"key", "add", "ann", "--tenant", "acme", "--role", "approver"}}, []string{"key", "list"}},
-			want{0, "ann\tacme\tapprover\n", ""}},
+		{"keys list without their secret and with who holds them", args{[][]string{
+			{"key", "add", "ann", "--tenant", "acme", "--role", "approver", "--person"}, {"key", "add", "ci", "--tenant", "acme", "--role", "approver"},
+		}, []string{"key", "list"}},
+			want{0, "ann\tacme\tapprover\tperson\nci\tacme\tapprover\tservice\n", ""}},
+		{"the reserved name is refused", args{nil, []string{"key", "add", "nodloop", "--tenant", "acme", "--role", "approver", "--person"}},
+			want{1, "", "nodloop-server key: add: knowledge: the approver name is reserved"}},
 		{"a removed key leaves the list", args{[][]string{{"key", "add", "ann", "--tenant", "acme", "--role", "approver"}, {"key", "remove", "ann"}}, []string{"key", "list"}},
 			want{0, "", ""}},
 		{"a name is used once", args{[][]string{{"key", "add", "ann", "--tenant", "acme", "--role", "approver"}}, []string{"key", "add", "ann", "--tenant", "acme", "--role", "producer"}},
@@ -72,7 +76,7 @@ func TestServerKeySavedAsHash(t *testing.T) {
 	home := userconfig.Home(t.TempDir())
 	getenv := func(k string) string { return map[string]string{"HOME": string(home)}[k] }
 	var stdout bytes.Buffer
-	require.Equal(t, 0, run([]string{"key", "add", "ann", "--tenant", "acme", "--role", "approver"}, getenv, time.Now, &stdout, &bytes.Buffer{}))
+	require.Equal(t, 0, run([]string{"key", "add", "ann", "--tenant", "acme", "--role", "approver", "--person"}, getenv, time.Now, &stdout, &bytes.Buffer{}))
 	key := strings.TrimSpace(stdout.String())
 
 	var uc fileConfig
@@ -81,7 +85,7 @@ func TestServerKeySavedAsHash(t *testing.T) {
 	require.NoError(t, err)
 	sum := sha256.Sum256([]byte(key))
 	assert.True(t, strings.HasPrefix(key, "nl_"))
-	assert.Equal(t, []serverKey{{Name: "ann", Tenant: "acme", Role: mcp.RoleApprover, SHA256: hex.EncodeToString(sum[:])}}, uc.Server.Keys)
+	assert.Equal(t, []serverKey{{Name: "ann", Tenant: "acme", Role: mcp.RoleApprover, SHA256: hex.EncodeToString(sum[:]), Person: true}}, uc.Server.Keys)
 	saved, err := os.ReadFile(home.ConfigPath())
 	require.NoError(t, err)
 	assert.NotContains(t, string(saved), key)

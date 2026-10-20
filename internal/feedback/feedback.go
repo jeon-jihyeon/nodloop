@@ -9,7 +9,8 @@ import (
 )
 
 const (
-	// Reviewer when the caller names none
+	// The author of a proposal whose caller names none
+	// Records of earlier releases also carry it as the reviewer a call left out and read as a person
 	ReviewerAuthor = "author"
 	// Reviewer of a record mined from a Claude Code session and not given by a person
 	ReviewerSession = "session"
@@ -80,18 +81,18 @@ type Feedback struct {
 	// Present when Verdict is edit
 	// The corrected output in full so a report can diff it against the run output
 	Edited json.RawMessage `json:"edited,omitempty"`
-	// author for the project author
-	// session for implicit feedback
+	// A person's name or session for a verdict a session inferred
+	// Records of earlier releases may carry author for a call that named no one
 	Reviewer string `json:"reviewer"`
 	// Set when the run was a random audit sample of the queue
 	Audit bool `json:"audit,omitempty"`
 }
 
-// The reviewer defaults to author
-// 1. an edit verdict carries a valid JSON edited output and no other verdict carries one
-// 2. a reason code is optional and only a correction carries one because an approval or a withdraw corrects nothing
+// 1. a reason code is optional and only a correction carries one because an approval or a withdraw corrects nothing
+// 2. the reviewer is required so no verdict without a name reads as a person's
 // 3. a session record has the secrets of its reason and edited output redacted before it is checked
 // A person's own record is kept as written
+// 4. an edit verdict carries a valid JSON edited output and no other verdict carries one
 func New(
 	traceID string, verdict Verdict, code ReasonCode, reason string, edited json.RawMessage, reviewer string, now time.Time,
 ) (Feedback, error) {
@@ -103,6 +104,9 @@ func New(
 	}
 	if err := code.check(verdict); err != nil {
 		return Feedback{}, err
+	}
+	if reviewer == "" {
+		return Feedback{}, ErrReviewerRequired
 	}
 	if reviewer == ReviewerSession {
 		reason = Redact(reason)
@@ -118,9 +122,6 @@ func New(
 	}
 	if len(edited) > 0 && !json.Valid(edited) {
 		return Feedback{}, ErrEditedInvalid
-	}
-	if reviewer == "" {
-		reviewer = ReviewerAuthor
 	}
 	return Feedback{
 		TraceID: traceID, Time: now.UTC(), Verdict: verdict, ReasonCode: code, Reason: reason, Edited: edited, Reviewer: reviewer,

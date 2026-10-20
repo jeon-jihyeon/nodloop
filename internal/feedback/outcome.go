@@ -33,20 +33,20 @@ type Outcome struct {
 	Reviewer       string `json:"reviewer"`
 }
 
-// The reviewer defaults to author
+// The reviewer is required like on a verdict
 // A session outcome has the secrets of its cause and note redacted and a person's own outcome is kept as written
 func NewOutcome(traceID string, result Result, confirmedCause, note, reviewer string, now time.Time) (Outcome, error) {
 	if traceID == "" {
 		return Outcome{}, ErrTraceIDRequired
+	}
+	if reviewer == "" {
+		return Outcome{}, ErrReviewerRequired
 	}
 	if !result.Valid() {
 		return Outcome{}, fmt.Errorf("%w: %q", ErrResultUnknown, result)
 	}
 	if result != ResultConfirmed && confirmedCause != "" {
 		return Outcome{}, fmt.Errorf("%w: %s", ErrCauseUnexpected, result)
-	}
-	if reviewer == "" {
-		reviewer = ReviewerAuthor
 	}
 	if reviewer == ReviewerSession {
 		confirmedCause, note = Redact(confirmedCause), Redact(note)

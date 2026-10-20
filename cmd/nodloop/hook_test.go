@@ -230,6 +230,7 @@ func TestRunHookPromptDelta(t *testing.T) {
 	const (
 		prompt  step = "prompt"  // a prompt of session s1 whose context is kept
 		stop    step = "stop"    // an answer of session s1
+		cont    step = "cont"    // the stop of a turn of session s1 a stop hook continued
 		approve step = "approve" // an approval of item pr-c
 		revise  step = "revise"  // an approval of version 2 of git-c
 		compact step = "compact" // a session start after a compaction
@@ -254,6 +255,12 @@ func TestRunHookPromptDelta(t *testing.T) {
 			want{[]string{knowledge.DeltaLead + prC}, []string{"[git-c"}}},
 		{"an item approved between turns is added again once and then never", []step{prompt, stop, approve, prompt, stop, prompt, stop, prompt},
 			want{nil, []string{"[pr-c", "[git-c"}}},
+		{"a prompt after a stop a stop hook continued adds no item", []step{prompt, stop, cont, prompt},
+			want{nil, []string{"[git-c", knowledge.PromptLead, knowledge.DeltaLead}}},
+		{"an item approved before the answer of a continued turn is added at the next prompt", []step{prompt, stop, prompt, approve, stop, cont, prompt},
+			want{[]string{knowledge.DeltaLead + prC}, []string{"[git-c"}}},
+		{"an item approved while a stop hook continued the turn is added at the next prompt", []step{prompt, stop, prompt, stop, approve, cont, prompt},
+			want{[]string{knowledge.DeltaLead + prC}, []string{"[git-c"}}},
 		{"a prompt after a compaction adds no item since the start added them", []step{prompt, stop, compact, prompt},
 			want{nil, []string{"[git-c", knowledge.PromptLead}}},
 	}
@@ -279,17 +286,17 @@ func TestRunHookPromptDelta(t *testing.T) {
 					return ""
 				}
 			}
-			hook := func(action string) func() string {
+			hook := func(action string, continued bool) func() string {
 				return func() string {
 					var stdout, stderr bytes.Buffer
-					stdin := `{"session_id":"s1","cwd":"` + repo + `","source":"compact","last_assistant_message":"done"}`
+					stdin := fmt.Sprintf(`{"session_id":"s1","cwd":%q,"source":"compact","last_assistant_message":"done","stop_hook_active":%t}`, repo, continued)
 					require.Equal(t, 0, runHook([]string{action}, getenv, nil, now, strings.NewReader(stdin), &stdout, &stderr))
 					require.Empty(t, stderr.String())
 					return stdout.String()
 				}
 			}
 			steps := map[step]func() string{
-				prompt: hook("prompt"), stop: hook("stop"), compact: hook("start"),
+				prompt: hook("prompt", false), stop: hook("stop", false), cont: hook("stop", true), compact: hook("start", false),
 				approve: propose("pr-c", "write the motivation first", "1"), revise: propose("git-c", "use git -C always", "2"),
 			}
 			// The output of the last run of each step
@@ -670,6 +677,14 @@ func TestRunHookStop(t *testing.T) {
 			args{stdin: "codex_stop.json", flags: []string{"--host", "codex"}},
 			want{runs: recorded("codex", `"Ran git -C repo status."`)},
 		},
+		{
+			"the stop of a turn a stop hook continued records its run as continued",
+			args{stdin: `{"session_id":"s1","cwd":"{repo}","last_assistant_message":"Reply keep or drop","stop_hook_active":true}`},
+			want{runs: []run{{
+				trace.Labels{"repo": {"nodloop"}, "dir": {"."}, "host": {"claude-code"}},
+				`{"applied":[{"id":"git-c","version":1}],"plugin":"0.7.0","continued":true}`, `"Reply keep or drop"`,
+			}}},
+		},
 		{"a Cursor stop carries no answer and records nothing", args{stdin: "cursor_stop.json", flags: []string{"--host", "cursor"}}, want{}},
 		{"a Copilot stop carries no answer and records nothing", args{stdin: "copilot_stop.json", flags: []string{"--host", "copilot"}}, want{}},
 		{"off records nothing", args{stdin: `{"session_id":"s1","cwd":"{repo}","last_assistant_message":"x"}`, session: "off"}, want{}},
@@ -728,11 +743,15 @@ func hookFixture(t *testing.T, stdin, repo string) string {
 // The stop hook starts the extraction of the previous run only when the conversation inferred a correction of it
 func TestRunHookStopExtract(t *testing.T) {
 	type args struct {
+		// Stops of the first turn a stop hook continued after its answer and before its verdicts
+		questions int
 		// The feedback flags recorded in order on the first answer
 		verdicts [][]string
 		session  string
 		// Answers after the first one
 		stops int
+		// The answers after the first one end turns a stop hook continued
+		continued bool
 		// The error of the start and none when nil
 		startErr error
 		// The conversation drafted the lesson of the reject in its turn
@@ -773,6 +792,12 @@ func TestRunHookStopExtract(t *testing.T) {
 		},
 		{"a correction the turn already drafted is not extracted again", args{verdicts: inferred, stops: 1, drafted: true}, want{runs: 2}},
 		{
+			"the answer before a question a stop hook continued is extracted at the next answer",
+			args{questions: 1, verdicts: inferred, stops: 1},
+			want{runs: 3, extracts: true},
+		},
+		{"a stop of a continued turn leaves the extraction to a later answer", args{verdicts: inferred, stops: 1, continued: true}, want{runs: 2}},
+		{
 			"a failed start still records the answer",
 			args{verdicts: inferred, stops: 1, startErr: errors.New("no process")},
 			want{runs: 2, extracts: true, stderr: "nodloop hook: no process"},
@@ -799,18 +824,21 @@ func TestRunHookStopExtract(t *testing.T) {
 				started = append(started, args)
 				return tc.args.startErr
 			}
-			stop := func(answer string) string {
+			stop := func(answer string, continued bool) string {
 				var stderr bytes.Buffer
-				stdin := `{"session_id":"s1","cwd":"` + repo + `","last_assistant_message":"` + answer + `"}`
+				stdin := fmt.Sprintf(`{"session_id":"s1","cwd":%q,"last_assistant_message":%q,"stop_hook_active":%t}`, repo, answer, continued)
 				require.Equal(t, 0, runHook([]string{"stop"}, getenv, start, now, strings.NewReader(stdin), &bytes.Buffer{}, &stderr))
 				return stderr.String()
 			}
-			stop("committed with a long message")
+			stop("committed with a long message", false)
 			store, err := tracefile.New(records)
 			require.NoError(t, err)
 			first, err := store.List(context.Background(), record.TraceFilter{Name: string(trace.NameRun), SessionID: "s1"})
 			require.NoError(t, err)
 			require.Len(t, first, 1)
+			for range tc.args.questions {
+				require.Empty(t, stop("Reply keep or drop", true))
+			}
 			for _, flags := range tc.args.verdicts {
 				var stderr bytes.Buffer
 				require.Equal(t, 0, runFeedback(slices.Concat([]string{"add", "--trace", first[0].ID}, flags), getenv, now, &bytes.Buffer{}, &stderr), stderr.String())
@@ -826,7 +854,7 @@ func TestRunHookStopExtract(t *testing.T) {
 			require.NoError(t, os.Chmod(filepath.Join(records, "traces.jsonl"), cmp.Or(tc.args.mode, 0o600)))
 			var stderr string
 			for i := range tc.args.stops {
-				stderr += stop(fmt.Sprintf("answer %d", i))
+				stderr += stop(fmt.Sprintf("answer %d", i), tc.args.continued)
 			}
 
 			runs, err := store.List(context.Background(), record.TraceFilter{Name: string(trace.NameRun), SessionID: "s1"})
@@ -1440,6 +1468,107 @@ func TestRunHookReaction(t *testing.T) {
 			assert.NotContains(t, added, tc.want.absent)
 			assert.Equal(t, tc.want.stderr, stderr.String())
 			assert.Equal(t, tc.want.verdicts, latest)
+		})
+	}
+}
+
+// A prompt after stops a stop hook continued names and judges the newest answer before them
+// A continued stop answers what the stop asked so a correction in the next prompt is about the answer before it
+func TestRunHookContinued(t *testing.T) {
+	type want struct {
+		// The run oldest first the note names and the reaction point rejects and -1 for none
+		judged int
+	}
+	tcs := []struct {
+		name string
+		// Whether each stop before the prompt ends a turn a stop hook continued
+		args []bool
+		want want
+	}{
+		{"a prompt after an answer names it", []bool{false}, want{0}},
+		{"a prompt after a question a stop hook continued names the answer before it", []bool{false, true}, want{0}},
+		{"an answer before several continued stops is still named", []bool{false, true, true, true}, want{0}},
+		{"the answer of a later turn is named over the earlier one", []bool{false, true, false}, want{2}},
+		{"continued stops alone name no run", []bool{true}, want{-1}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = w.Write([]byte(`{"answers":{"corrects":{"noul":0.9},"approves":{"noul":0.1}}}`))
+			}))
+			t.Cleanup(srv.Close)
+			home, records, repo := hookHome(t, "use git -C")
+			getenv := func(k string) string { return map[string]string{"HOME": home, envRecordDir: records}[k] }
+			now := hookClock()
+			var setStderr bytes.Buffer
+			require.Equal(t, 0, runClassifier([]string{"set", "reaction", "--url", srv.URL}, getenv, now, &bytes.Buffer{}, &setStderr), setStderr.String())
+			for i, continued := range tc.args {
+				stdin := fmt.Sprintf(`{"session_id":"s1","cwd":%q,"last_assistant_message":"answer %d","stop_hook_active":%t}`, repo, i, continued)
+				require.Equal(t, 0, runHook([]string{"stop"}, getenv, nil, now, strings.NewReader(stdin), &bytes.Buffer{}, &bytes.Buffer{}))
+			}
+			traces, err := tracefile.New(records)
+			require.NoError(t, err)
+			found, err := traces.List(context.Background(), record.TraceFilter{Name: string(trace.NameRun), SessionID: "s1"})
+			require.NoError(t, err)
+			require.Len(t, found, len(tc.args))
+			// The run ids oldest first after the empty id of none
+			ids := []string{""}
+			for _, r := range slices.Backward(found) {
+				ids = append(ids, r.ID)
+			}
+			judged := ids[tc.want.judged+1]
+			stdin := fmt.Sprintf(`{"session_id":"s1","cwd":%q,"prompt":"that was wrong, use git -C"}`, repo)
+			var stdout, stderr bytes.Buffer
+
+			code := runHook([]string{"prompt"}, getenv, nil, now, strings.NewReader(stdin), &stdout, &stderr)
+
+			_, added := hookOutput(t, stdout.Bytes())
+			verdicts, err := feedbackfile.New(records)
+			require.NoError(t, err)
+			recorded, err := verdicts.List(context.Background(), record.FeedbackFilter{})
+			require.NoError(t, err)
+			var rejected []string
+			for _, f := range feedback.RestoreAll(recorded) {
+				rejected = append(rejected, f.TraceID)
+			}
+			// The run the note names and empty when it names none
+			named := regexp.MustCompile(`run ([0-9a-f]*)\.`).FindStringSubmatch(added + "run .")[1]
+			assert.Equal(t, 0, code)
+			assert.Empty(t, stderr.String())
+			assert.Equal(t, judged, named, added)
+			assert.Equal(t, map[bool][]string{true: {judged}}[judged != ""], rejected)
+		})
+	}
+}
+
+// The runs from the newest one no stop hook continued back
+func TestSessionTurnsAnswered(t *testing.T) {
+	run := func(id, input string) trace.Trace {
+		return trace.Trace{ID: id, Name: trace.NameRun, Input: json.RawMessage(input)}
+	}
+	answer := func(id string) trace.Trace { return run(id, `{"applied":[]}`) }
+	question := func(id string) trace.Trace { return run(id, `{"applied":[],"continued":true}`) }
+	tcs := []struct {
+		name string
+		args sessionTurns
+		// The ids of the runs newest first
+		want []string
+	}{
+		{"no run has no answer", nil, nil},
+		{"the newest answer and every run before it", sessionTurns{answer("a2"), question("q1"), answer("a1")}, []string{"a2", "q1", "a1"}},
+		{"continued runs before the answer are left out", sessionTurns{question("q2"), question("q1"), answer("a1"), answer("a0")}, []string{"a1", "a0"}},
+		{"continued runs alone have no answer", sessionTurns{question("q1")}, nil},
+		{"an input that does not decode reads as an answer", sessionTurns{question("q1"), run("r0", `{"applied":7}`)}, []string{"r0"}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var got []string
+			for _, r := range tc.args.answered() {
+				got = append(got, r.ID)
+			}
+			assert.Equal(t, tc.want, got)
 		})
 	}
 }
