@@ -196,19 +196,6 @@ func (k Knowledge) vouchedAt() time.Time {
 	return k.ApprovedAt
 }
 
-// The candidates a person has yet to approve that would reach a run of the producer with the labels
-// 1. a candidate beside the approved version of its id counts because it waits all the same
-// 2. a candidate of a compaction is left out because only its coverage check leads to approval
-func (s Set) Waiting(producer string, labels trace.Labels) Set {
-	out := Set{}
-	for _, k := range s.Versions() {
-		if k.Status == StatusCandidate && k.Compaction == "" && k.Run != nil && k.Run.Admits(producer, labels) {
-			out = append(out, k)
-		}
-	}
-	return out
-}
-
 // The approved run items the fullest run the item reaches carries with it
 func (s Set) runFolder(item Knowledge) Folder {
 	carried := s.fullestRun(item.ID, *item.Run)

@@ -6,10 +6,14 @@ Every release tag publishes the plugin, the darwin and linux binaries of `nodloo
 
 ### Added
 - `nodloop llm set chat --base-url <u> --model <m> [--key-env <ENV>]` points every command that calls a model, such as `knowledge extract`, `knowledge compact` and `llm probe`, at an OpenAI compatible Chat Completions endpoint like Ollama, vLLM, OpenAI, Gemini or a LiteLLM proxy, so background drafts need no claude login. `llm set claude` and `llm unset` go back to `claude -p`. The key is read from the env named and never saved. Every answer is checked against the schema and sent back once when it fails. A config.json that names chat without a model fails like one without a base URL. `nodloop config` lists the backend. The refusal a draft is resent with says the relation is add when the run reaches no item or candidate and lists the label keys the run carries, since a small local model kept the same mistake on the resend until it did
+- Every extract trace of `knowledge extract` carries the usage of the drafter and critic calls summed, cost included, and the wall time of the extraction in `duration_ms`
+- An extraction reads the waiting candidates the run reaches beside the approved items. A correction that repeats a candidate adds the run to its evidence and keeps its text, with conclusion `corroborated`, so it asks no new question. An update can name a candidate and a conflict names it too. The MCP `extraction` answer adds `candidates`, `propose_extraction` answers `corroborated`, and the extract trace adds `related` with the id, version and status it named
 - Model call traces name the model the backend answered with, such as `claude-haiku-4-5-20251001` for `haiku`: extract, replay, consolidate and a coverage check through a model. A coverage check records its usage and duration, a replay its duration, and every compaction draft through a model records a `compact` trace with its usage, duration and error, which retention keeps
 
 ### Changed
 - `llm probe` asks the configured backend, with haiku as the default model on claude and the configured model on a chat endpoint
+- `knowledge waiting` lists one candidate per id, the newest version, with those taught by more corrections first and then the most recently proposed or corroborated
+- The `next` line of `knowledge extract` and the `next` of the MCP `propose_extraction` name no command or tool that decides: a candidate waits for you and is asked once unless your earlier decisions settle it, since a model that read the approve command approved without asking
 
 ## 0.9.0 - 2026-10-15
 

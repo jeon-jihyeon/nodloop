@@ -11,7 +11,7 @@ func Restore(r record.Knowledge) Knowledge {
 		ID: r.ID, Version: r.Version, Kind: Kind(r.Kind), Content: r.Content, Basis: Basis(r.Basis), Status: Status(r.Status),
 		Approver: r.Approver, ApprovedAt: r.ApprovedAt, ReviewedAt: r.ReviewedAt, Supersedes: r.Supersedes, Base: r.Base,
 		Time: r.Time, Author: r.Author, Drafted: r.Drafted, NewLabels: r.NewLabels, Compaction: r.Compaction,
-		CompactionSize: r.CompactionSize,
+		CompactionSize: r.CompactionSize, DeferredIn: r.DeferredIn,
 		Evidence: Evidence{
 			FeedbackTraceIDs: r.Evidence.FeedbackTraceIDs, OutcomeTraceIDs: r.Evidence.OutcomeTraceIDs,
 			ParagraphIDs: r.Evidence.ParagraphIDs, Knowledge: restoreRefs(r.Evidence.Knowledge),
@@ -44,7 +44,7 @@ func (k Knowledge) Record() record.Knowledge {
 		ID: k.ID, Version: k.Version, Kind: string(k.Kind), Content: k.Content, Basis: string(k.Basis),
 		Status: string(k.Status), Approver: k.Approver, ApprovedAt: k.ApprovedAt, ReviewedAt: k.ReviewedAt,
 		Supersedes: k.Supersedes, Base: k.Base, Time: k.Time, Author: k.Author, Drafted: k.Drafted, NewLabels: k.NewLabels,
-		Compaction: k.Compaction, CompactionSize: k.CompactionSize,
+		Compaction: k.Compaction, CompactionSize: k.CompactionSize, DeferredIn: k.DeferredIn,
 		Evidence: record.Evidence{
 			FeedbackTraceIDs: k.Evidence.FeedbackTraceIDs, OutcomeTraceIDs: k.Evidence.OutcomeTraceIDs,
 			ParagraphIDs: k.Evidence.ParagraphIDs, Knowledge: refRecords(k.Evidence.Knowledge),
