@@ -168,7 +168,8 @@ func IDTime(id string) (time.Time, bool) {
 		return time.Time{}, false
 	}
 	// ParseUint refuses a sign that ParseInt would take
-	ms, err := strconv.ParseUint(id[:12], 16, 64)
+	// 12 hex digits hold 48 bits so the bound keeps the int64 conversion exact
+	ms, err := strconv.ParseUint(id[:12], 16, 48)
 	if err != nil {
 		return time.Time{}, false
 	}
