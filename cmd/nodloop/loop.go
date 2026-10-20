@@ -195,6 +195,9 @@ func runReport(args []string, getenv func(string) string, now func() time.Time, 
 	if show, ok := recordReports[args[0]]; ok {
 		return runRecordReport(args, show, getenv, now, stdout, stderr)
 	}
+	if args[0] == "curation" {
+		return runCurationReport(args[1:], getenv, now, stdout, stderr)
+	}
 	if args[0] != "online" {
 		return fail(stderr, "report", fmt.Errorf("%w %q", errUnknownAction, args[0]))
 	}

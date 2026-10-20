@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -175,6 +176,131 @@ func TestRunKnowledgeCurate(t *testing.T) {
 	rules, err := os.ReadFile(filepath.Join(records, "approved.md"))
 	require.NoError(t, err)
 	assert.Contains(t, string(rules), "Name the failing test first")
+}
+
+// The knob changes as "rule kind bin differ of answers" or "rule p" in their order
+func knobChanges(cs []curate.KnobChange) []string {
+	out := []string{}
+	for _, c := range cs {
+		if c.Opening == nil {
+			out = append(out, fmt.Sprintf("%s p %v", c.Rule, c.P))
+			continue
+		}
+		out = append(out, strings.TrimSpace(fmt.Sprintf("%s %s %s %d of %d", c.Rule, c.Opening.Kind, c.Opening.Bin, c.Differ, c.Answers)))
+	}
+	return out
+}
+
+// knowledge curate moves the knobs on the numbers of report curation before it decides and asks each offer as a question
+// 1. a cycle start lowers the tier 1 audit p once every open kind and bin met its bound
+// 2. a cycle start offers the first closed kind and bin whose direction answers met the bound and the activation once the shadow earned it
+// 3. a CUSUM alarm inside a cycle narrows its kind and bin at once and the next pass narrows nothing again
+// 4. a cycle that --model starts a new judge for reads no number of the judge before
+func TestRunKnowledgeCurateKnobs(t *testing.T) {
+	b1, withdraw := curate.Opening{Kind: curate.ChangeAdd, Bin: curate.Bin1}, curate.Opening{Kind: curate.ChangeWithdraw}
+	activated := func(k *curate.Knobs) { k.Activated = true }
+	met := func(r *curationRecords) {
+		r.knobs(0, func(k *curate.Knobs) { k.Open, k.Activated = []curate.Opening{b1}, true })
+		for range 43 {
+			r.audit(0, 0.15, curate.ChoiceSame)
+		}
+	}
+	secondCycle := curationMonday.AddDate(0, 0, 15).Add(9 * time.Hour)
+	type args struct {
+		flags []string
+		fill  func(r *curationRecords)
+		now   time.Time
+	}
+	type want struct {
+		stdout string
+		// The knob events the two passes appended as "cause cycle changes"
+		appended []string
+		open     []curate.Opening
+		tier1    float64
+		due      []string
+	}
+	tcs := []struct {
+		name string
+		args args
+		want want
+	}{
+		{
+			"a cycle start lowers the tier 1 audit p once every open kind and bin met its bound",
+			args{[]string{"curate"}, met, secondCycle},
+			want{"", []string{"start 2026-10-05 [lower p 0.05]"}, []curate.Opening{b1}, 0.05, []string{}},
+		},
+		{
+			"a cycle start offers the first closed kind and bin whose direction answers met the bound",
+			args{[]string{"curate"}, func(r *curationRecords) {
+				r.knobs(0, activated)
+				for range 43 {
+					r.direction(0, curate.Bin2, curate.ChoiceKeep)
+				}
+			}, secondCycle},
+			want{"ask\twiden\tadd b2\t-\ttier 2\t-\n", []string{"start 2026-10-05 []"}, []curate.Opening{b1, withdraw}, 0.15, []string{"direction widen"}},
+		},
+		{
+			"a cycle start offers the activation once two closed cycles in shadow met the bound of the shadow answers of add",
+			args{[]string{"curate"}, func(r *curationRecords) {
+				r.knobs(0, func(*curate.Knobs) {})
+				r.knobs(2, func(*curate.Knobs) {})
+				for range 43 {
+					r.shadow(0, 0.5)
+				}
+			}, curationMonday.AddDate(0, 0, 29).Add(9 * time.Hour)},
+			want{"ask\tactivate\t-\t-\ttier 2\t-\n", []string{"start 2026-10-19 []"}, []curate.Opening{b1, withdraw}, 0.15, []string{"direction activate"}},
+		},
+		{
+			"a CUSUM alarm inside a cycle narrows its kind and bin at once and the next pass narrows nothing again",
+			args{[]string{"curate"}, func(r *curationRecords) {
+				r.knobs(0, activated)
+				for range 3 {
+					r.audit(0, 0.15, curate.ChoiceUndo)
+				}
+			}, curationMonday.AddDate(0, 0, 7)},
+			want{"", []string{"narrow 2026-09-21 [alarm add b1 3 of 3 raise p 0.3]"}, []curate.Opening{withdraw}, 0.3, []string{}},
+		},
+		{
+			"a cycle that --model starts a new judge for reads no number of the judge before",
+			args{[]string{"curate", "--model", "claude-haiku-4-5"}, met, secondCycle},
+			want{"", []string{"start 2026-10-05 []"}, []curate.Opening{b1}, 0.15, []string{}},
+		},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			r := newCurationRecords(t)
+			tc.args.fill(r)
+			home := t.TempDir()
+			getenv := func(k string) string { return map[string]string{"HOME": home, envRecordDir: r.records}[k] }
+			now := func() time.Time { return tc.args.now }
+			client := curateClient(t)
+			var stdout, stderr bytes.Buffer
+
+			firstCode := runKnowledge(tc.args.flags, getenv, client, now, trace.ProofNone, &stdout, &stderr)
+			secondCode := runKnowledge(tc.args.flags, getenv, client, now, trace.ProofNone, &stdout, &stderr)
+
+			require.Equal(t, 0, firstCode, stderr.String())
+			require.Equal(t, 0, secondCode, stderr.String())
+			knobs, err := r.traces.List(context.Background(), record.TraceFilter{Name: string(trace.NameKnob)})
+			require.NoError(t, err)
+			appended := []string{}
+			for _, tr := range knobs {
+				ev, ok := curate.RestoreKnob(trace.Restore(tr))
+				require.True(t, ok)
+				if tr.Time.Equal(tc.args.now) {
+					appended = append(appended, fmt.Sprintf("%s %s %v", ev.Cause, ev.CycleID, knobChanges(ev.Changes)))
+				}
+			}
+			mark, err := curate.ReadMark(r.records)
+			require.NoError(t, err)
+			due := []string{}
+			for _, d := range mark.Due {
+				due = append(due, fmt.Sprintf("%s %s", d.Kind, d.Change))
+			}
+			assert.Equal(t, tc.want, want{stdout.String(), appended, mark.Knobs.Open, mark.Knobs.Audit.Tier1, due})
+		})
+	}
 }
 
 // knowledge curate --daily extracts a correction no extraction read and decides its candidate in the same pass, once a day

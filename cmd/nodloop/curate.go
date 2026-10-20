@@ -10,16 +10,13 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"time"
+	"strings"
 
 	"github.com/jeon-jihyeon/nodloop/internal/classify"
 	"github.com/jeon-jihyeon/nodloop/internal/curate"
 	"github.com/jeon-jihyeon/nodloop/internal/llm"
 	"github.com/jeon-jihyeon/nodloop/internal/textkey"
 )
-
-// Time an endpoint of another model family may take as a member of the judge
-const judgeTimeout = 60 * time.Second
 
 // One pass of curate over the waiting candidates and the signals since the last one
 // 1. the pass holds curate.json for its whole run so two passes never decide one change twice
@@ -61,13 +58,25 @@ func (f knowledgeFlags) runCurate(ctx context.Context, a app, client llm.Client,
 	}
 	res, err := curator.Pass(ctx, setting)
 	for _, d := range res.Decided {
-		fmt.Fprintf(stdout, "%s\t%s\t%s\tv%d\ttier %d\t%s\n", d.Decision.Action, d.Change.Kind, d.Change.ID, d.Change.Version, d.Decision.Tier,
+		fmt.Fprintf(stdout, "%s\t%s\t%s\ttier %d\t%s\n", d.Decision.Action, d.Change.Kind, versionColumns(d.Change), d.Decision.Tier,
 			cmp.Or(string(d.Decision.RuleCode), string(d.Decision.Outcome), "-"))
 	}
 	if res.Event.CycleID == "" {
 		return errors.Join(gaps, err)
 	}
 	return errors.Join(gaps, err, held.Write(res.Mark(daily)))
+}
+
+// The id and version columns of a decide line
+// An offer of the gate acts on no version so a widening names the kind and bin it opens and the activation nothing
+func versionColumns(c curate.Change) string {
+	switch {
+	case c.Opens != nil:
+		return strings.TrimSpace(string(c.Opens.Kind)+" "+string(c.Opens.Bin)) + "\t-"
+	case c.ID == "":
+		return "-\t-"
+	}
+	return fmt.Sprintf("%s\tv%d", c.ID, c.Version)
 }
 
 // Extracts each corrected run of the window no extraction read
@@ -96,10 +105,19 @@ func (f knowledgeFlags) extractGaps(ctx context.Context, a app, client llm.Clien
 
 // The curator of the record directory with what its pass reads besides the records
 // 1. the anchor is refreshed first so every decide names the version it was judged against
-// 2. the judge runs the model --model names or else the model of a chat endpoint or else the default of curate
-// 3. an endpoint set for the judge point joins the claude variants as a member of another model family
+// 2. the numbers of report curation go to the knobs as plain values since curate never reads loop
+// 3. the judge runs the model --model names or else the model of a chat endpoint or else the default of curate
+// 4. an endpoint set for the judge point joins the claude variants as a member of another model family
 func (f knowledgeFlags) curator(ctx context.Context, a app, client llm.Client, getenv func(string) string) (*curate.Curator, curate.Setting, error) {
 	state, err := anchorCommand{app: a, out: io.Discard}.refresh(ctx)
+	if err != nil {
+		return nil, curate.Setting{}, err
+	}
+	stores, err := a.reportStores(ctx)
+	if err != nil {
+		return nil, curate.Setting{}, err
+	}
+	report, err := stores.Curation(ctx, a.now())
 	if err != nil {
 		return nil, curate.Setting{}, err
 	}
@@ -109,7 +127,7 @@ func (f knowledgeFlags) curator(ctx context.Context, a app, client llm.Client, g
 		return nil, curate.Setting{}, err
 	}
 	if e, ok := endpoints[classify.PointJudge]; ok {
-		members = append(members, classify.Member{Name: e.Name(), Classifier: e.Classifier(getenv, judgeTimeout)})
+		members = append(members, classify.Member{Name: e.Name(), Classifier: e.Classifier(getenv, curate.JudgeTimeout)})
 	}
 	curator, err := a.curator(client, members)
 	if err != nil {
@@ -125,7 +143,7 @@ func (f knowledgeFlags) curator(ctx context.Context, a app, client llm.Client, g
 	_, _ = rand.Read(seed[:])
 	return curator, curate.Setting{
 		Build: buildVersion(), Judge: judge, Seed: hex.EncodeToString(seed[:]), Anchor: state.anchor, Version: state.version, Since: state.at,
-		Window: state.since, Temp: tempDirs(), Read: readText,
+		Window: state.since, Temp: tempDirs(), Read: readText, Numbers: curationNumbers(report),
 	}, nil
 }
 

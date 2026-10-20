@@ -151,7 +151,12 @@ commands:
                             on the same run as agree, disagree, missed correction, missed approval and deferred
   report replay             Per knowledge version its newest replay: passed or failed, corrected outputs it missed and
                             approved outputs it would have changed
-                            --json on loop, effect, extract, critic and replay prints the report as one JSON value
+  report curation           A window line, then per cycle of curate its policy and judge, your touchpoints per cycle and
+                            per week, per change kind and judge bin the decisions, your answers, the Beta(1, 9) posterior
+                            and the anytime valid bound, the calibration of the judge, shadow agreement, Hájek estimates
+                            per cycle and tier, overturns and repeat corrections, the CUSUM, the judge shift and the effect
+                            of each lesson nodloop approved against the sessions the item hold kept it from
+                            --json on loop, effect, extract, critic, replay and curation prints the report as one JSON value
   trace list [--name <n>] [--session <id>] [--subject <s>] [--limit <n>]
                             List traces newest first
   trace show <id>           Print one trace as JSON
