@@ -2,7 +2,7 @@
   "mcpServers": {
     "nodloop": {
       "command": "${CLAUDE_PLUGIN_ROOT}/bin/nodloop",
-      "args": ["mcp"]
+      "args": ["mcp", "--agent"]
     }
   }
 }

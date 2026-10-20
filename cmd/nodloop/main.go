@@ -167,7 +167,9 @@ commands:
   guard install             Register this binary as a PreToolUse hook in ~/.claude/settings.json (backs up first)
                             Registers ~/.nodloop/bin/nodloop when it links to this binary and replaces a stale hook
   guard uninstall           Remove the hook registered by guard install
-  mcp                       Serve the MCP tools on stdio. --list prints the tool names
+  mcp [--agent]             Serve the MCP tools on stdio. --list prints the tool names. --agent serves the server the plugin
+                            starts: no approve, reaffirm or approve_compaction, and every verdict and outcome recorded as the
+                            session's. Over stdio every call that decides records a proposal
   llm probe [--model <m>]   Send a minimal structured-output request through the configured backend and print cost.
                             The model is haiku on claude and the configured model on chat by default
   llm set chat --base-url <u> --model <m> [--key-env <ENV>] | llm set claude [--model <m>]

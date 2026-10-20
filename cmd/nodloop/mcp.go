@@ -25,20 +25,27 @@ func runMCP(
 	var records recordFlags
 	records.bind(fs)
 	list := fs.Bool("list", false, "print the tool names and exit")
+	agent := fs.Bool("agent", false,
+		"serve the agent server the plugin starts: no tool that decides for a person, and every verdict and outcome recorded as the session's")
 	if err := fs.Parse(args); err != nil {
 		return parseFailed(err)
 	}
 	cmd := mcpCommand{stdin: stdin, out: stdout, log: stderr}
-	if *list {
-		cmd.list()
-		return 0
-	}
-	open := mcpOpen{flags: records, getenv: getenv, now: now, session: mcp.NewSession(now()), log: stderr, export: start}.open
+	o := mcpOpen{flags: records, getenv: getenv, now: now, session: mcp.NewSession(now()), caller: mcp.Caller{Agent: *agent}, log: stderr, export: start}
 	instructions := pluginVersion(getenv(envPluginVersion)).mismatch(buildVersion(), executable())
 	if instructions != "" {
 		instructions += ". Tell the user this before the first answer"
 	}
-	if err := mcp.NewHost(open, buildVersion(), instructions).ServeTransport(context.Background(), cmd.transport()); err != nil {
+	host := mcp.NewHost(o.open, buildVersion(), instructions)
+	tools, serve := mcp.Tools(), host.ServeTransport
+	if *agent {
+		tools, serve = mcp.AgentTools(), host.ServeAgent
+	}
+	if *list {
+		cmd.list(tools)
+		return 0
+	}
+	if err := serve(context.Background(), cmd.transport()); err != nil {
 		return fail(stderr, "mcp", err)
 	}
 	return 0
@@ -51,8 +58,8 @@ type mcpCommand struct {
 	log   io.Writer
 }
 
-func (c mcpCommand) list() {
-	fmt.Fprintln(c.out, strings.Join(mcp.Tools(), "\n"))
+func (c mcpCommand) list(tools []string) {
+	fmt.Fprintln(c.out, strings.Join(tools, "\n"))
 }
 
 // The path of this binary as a command in a message names it for the user to paste into a shell
@@ -88,8 +95,9 @@ type mcpOpen struct {
 	now    func() time.Time
 	// Made once at start so a change of record dir between calls keeps one session
 	session string
-	// The person of a server key and empty over stdio
-	person string
+	// Over stdio no key names a person
+	// The agent server records every verdict as the session's
+	caller mcp.Caller
 	// Where a failed prune after a run is written since stdout is the protocol stream
 	log io.Writer
 	// Starts the OTLP export after every record of the server when config.json holds an otel target at that call
@@ -134,6 +142,6 @@ func (o mcpOpen) open(context.Context) (*mcp.Server, error) {
 	}
 	return mcp.New(
 		traces, verdicts, outcomes, ledger, compactor, extract.New(ledger, traces, verdicts, o.now), o.now, o.session, executable(),
-		a.cfg.recordArgs(), o.person, policy,
+		a.cfg.recordArgs(), o.caller, policy,
 	), nil
 }

@@ -3,6 +3,7 @@ package mcp_test
 import (
 	"context"
 	"errors"
+	"slices"
 	"sync"
 	"testing"
 
@@ -99,4 +100,61 @@ func TestHostInstructions(t *testing.T) {
 			assert.Equal(t, tc.want, c.Instructions())
 		})
 	}
+}
+
+// Every listed tool carries an outputSchema of an object
+// The SDK checks every answer against it so each handler test also checks its answers
+func TestHostOutputSchemas(t *testing.T) {
+	objects := map[string]any{}
+	for _, name := range mcp.Tools() {
+		objects[name] = "object"
+	}
+	tcs := []struct {
+		name string
+		// The protocol version of the client and the latest when empty
+		args string
+		want map[string]any
+	}{
+		{"the latest protocol lists an object schema for every tool", "", objects},
+		{"the first protocol with output schemas lists the same", "2025-06-18", objects},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			c := testkit.ConnectWith(t, serve(testkit.Open(t), mcp.Caller{}), nil, tc.args)
+
+			got := schemaTypes(c.OutputSchemas(t))
+
+			assert.Equal(t, tc.want, got)
+		})
+	}
+}
+
+// The type of each schema by tool name and nil for a schema that is no object
+func schemaTypes(schemas map[string]any) map[string]any {
+	out := make(map[string]any, len(schemas))
+	for name, schema := range schemas {
+		m, _ := schema.(map[string]any)
+		out[name] = m["type"]
+	}
+	return out
+}
+
+// The sorted keys of a map and nil for anything else or an empty map
+func keys(v any) []string {
+	m, _ := v.(map[string]any)
+	var out []string
+	for k := range m {
+		out = append(out, k)
+	}
+	slices.Sort(out)
+	return out
+}
+
+// The text of the error and empty for none
+func errText(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
 }
