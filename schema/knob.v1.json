@@ -232,7 +232,13 @@
             "type": "object",
             "properties": {
               "rule": {
-                "type": "string"
+                "type": "string",
+                "enum": [
+                  "posterior",
+                  "alarm",
+                  "raise",
+                  "lower"
+                ]
               },
               "opening": {
                 "type": [

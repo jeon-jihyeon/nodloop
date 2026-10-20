@@ -50,8 +50,7 @@
       },
       "required": [
         "id",
-        "version",
-        "content"
+        "version"
       ]
     },
     "output": {
@@ -87,8 +86,7 @@
             "required": [
               "run",
               "expect",
-              "breaks",
-              "why"
+              "breaks"
             ]
           }
         },

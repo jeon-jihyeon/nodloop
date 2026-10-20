@@ -1,4 +1,4 @@
-// Package schema reads the published record schemas and turns a stored record into the record every transport sends
+// Package schema reads the published record schemas, turns a stored record into the record every transport sends and pages the records of a kind
 package schema
 
 import (

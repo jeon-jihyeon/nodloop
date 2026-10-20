@@ -48,6 +48,9 @@ type publishedKind struct {
 	// The trace fields of the draw envelope the name carries
 	// A trace of any other name never carries draw or source so its file names neither
 	envelope []string
+	// Top level fields that name a record of one other kind with that kind
+	// A Data Package lists them as foreign keys
+	foreign map[string]string
 }
 
 func (k publishedKind) withFree(paths ...string) publishedKind {
@@ -57,6 +60,12 @@ func (k publishedKind) withFree(paths ...string) publishedKind {
 
 func (k publishedKind) withEnvelope(fields ...string) publishedKind {
 	k.envelope = fields
+	return k
+}
+
+// The trace of a name whose ref names a record of the kind
+func (k publishedKind) withRef(kind trace.Name) publishedKind {
+	k.foreign = map[string]string{"ref": string(kind)}
 	return k
 }
 
@@ -82,12 +91,12 @@ var publishedKinds = kindTable{
 		[]string{"session_id", "output.items.old", "output.items.covered_by"}, []string{"output.items.lost"}),
 	traceKind(trace.NameClassify, "The answers of every member a decision point asked",
 		reflect.TypeFor[classify.TraceInput](), reflect.TypeFor[classify.TraceOutput](),
-		[]string{"ref", "subject"}, []string{"input.state"}),
+		[]string{"ref", "subject"}, []string{"input.state"}).withRef(trace.NameRun),
 	traceKind(trace.NameExtract, "One extraction of a lesson from a corrected run with its drafts and conclusion",
 		reflect.TypeFor[extract.TraceInput](), reflect.TypeFor[extract.Record](),
 		[]string{"ref", "input.verdict_id", "output.attempts.classify", "output.candidate", "output.related"},
 		[]string{"output.attempts.draft", "output.attempts.critique", "output.attempts.error"}).
-		withFree("output.attempts.draft.kind"),
+		withFree("output.attempts.draft.kind").withRef(trace.NameRun),
 	traceKind(trace.NameReplay, "A lesson judged against the recorded outputs it should and should not change",
 		reflect.TypeFor[replay.TraceInput](), reflect.TypeFor[replay.Result](),
 		[]string{"subject", "input.id", "input.version", "output.cases.run"}, []string{"input.content", "output.cases.why"}),
@@ -110,7 +119,7 @@ var publishedKinds = kindTable{
 			"ref", "source", "draw.cycle_id", "input.id", "input.version", "input.compaction", "input.old", "input.extract", "input.signal",
 			"input.anchor", "output.judge",
 		},
-		[]string{}).withEnvelope("draw", "source"),
+		[]string{}).withEnvelope("draw", "source").withRef(trace.NameRun),
 	traceKind(trace.NameKnob, "The knobs, the seed and the judge of a cycle at its start or at a narrowing inside it",
 		reflect.TypeFor[curate.KnobEvent](), nil,
 		[]string{"subject", "input.cycle_id", "input.policy_version", "input.before", "input.judge.sets"}, []string{}),
@@ -118,14 +127,15 @@ var publishedKinds = kindTable{
 		reflect.TypeFor[curate.AnchorVersion](), nil, []string{"input.version", "input.refs", "input.cause"}, []string{"input.files.path"}),
 	traceKind(trace.NameExpose, "A question or a notice shown to the person",
 		reflect.TypeFor[curate.Exposure](), nil,
-		[]string{"session_id", "ref", "source", "draw.cycle_id", "input.change", "input.run"}, []string{}).withEnvelope("draw", "source"),
+		[]string{"session_id", "ref", "source", "draw.cycle_id", "input.change", "input.run"}, []string{}).withEnvelope("draw", "source").
+		withRef(trace.NameDecide),
 	traceKind(trace.NameAnswer, "The answer of the person to a question or no answer after its second round",
 		reflect.TypeFor[curate.Answer](), reflect.TypeFor[curate.AnswerOutput](),
 		[]string{
 			"session_id", "ref", "source", "draw.cycle_id", "input.decide", "input.change", "input.overturn", "input.authority",
 			"input.proof", "output.records",
 		},
-		[]string{}).withEnvelope("draw", "source"),
+		[]string{}).withEnvelope("draw", "source").withRef(trace.NameExpose),
 	traceKind(trace.NameIntervention, "One action of a person or an agent with the proof of its caller and the records it wrote",
 		reflect.TypeFor[trace.Intervention](), reflect.TypeFor[trace.InterventionOutput](),
 		[]string{"session_id", "source", "input.id", "input.version", "input.compaction", "input.authority", "input.proof", "output.records"},
@@ -137,12 +147,12 @@ var publishedKinds = kindTable{
 	{
 		name: "verdict", store: schema.StoreVerdicts, version: feedback.VerdictVersion,
 		description: "A verdict on a run: approve, edit, reject or withdraw", record: reflect.TypeFor[feedback.Feedback](),
-		links: []string{"trace_id", "reviewer"}, text: []string{"reason", "edited"},
+		links: []string{"trace_id", "reviewer"}, text: []string{"reason", "edited"}, foreign: map[string]string{"trace_id": string(trace.NameRun)},
 	},
 	{
 		name: "outcome", store: schema.StoreOutcomes, version: feedback.OutcomeVersion,
 		description: "What a later check of a run found", record: reflect.TypeFor[feedback.Outcome](),
-		links: []string{"trace_id"}, text: []string{"confirmed_cause", "note"},
+		links: []string{"trace_id"}, text: []string{"confirmed_cause", "note"}, foreign: map[string]string{"trace_id": string(trace.NameRun)},
 	},
 	{
 		name: "knowledge", store: schema.StoreKnowledge, version: knowledge.SchemaVersion,
@@ -189,6 +199,7 @@ func typeSchemas() map[reflect.Type]*jsonschema.Schema {
 		reflect.TypeFor[curate.Surface]():      enum(curate.Surfaces()),
 		reflect.TypeFor[curate.Choice]():       enum(curate.Choices()),
 		reflect.TypeFor[curate.KnobCause]():    enum(curate.KnobCauses()),
+		reflect.TypeFor[curate.KnobRule]():     enum(curate.KnobRules()),
 		reflect.TypeFor[loop.Arm]():            enum(loop.Arms()),
 	}
 }
@@ -229,7 +240,19 @@ func (k publishedKind) schema() (*jsonschema.Schema, error) {
 			f.Enum = nil
 		}
 	}
+	for _, path := range k.text {
+		optional(s, strings.Split(path, "."))
+	}
 	return s, k.check(s)
+}
+
+// Leaves the field of a text path out of the required fields of its object
+// A transport leaves the text out without the content opt in and the record still validates
+func optional(s *jsonschema.Schema, path []string) {
+	parent, field := find(s, path[:len(path)-1]), path[len(path)-1]
+	if parent != nil {
+		parent.Required = slices.DeleteFunc(parent.Required, func(f string) bool { return f == field })
+	}
 }
 
 // Pins the name of the trace and types its input and output
@@ -399,6 +422,10 @@ func (c schemaCommand) write(dir string) error {
 	if err != nil {
 		return err
 	}
+	return c.writeFiles(dir, files)
+}
+
+func (c schemaCommand) writeFiles(dir string, files map[string][]byte) error {
 	for _, name := range slices.Sorted(maps.Keys(files)) {
 		if err := os.WriteFile(filepath.Join(dir, name), files[name], 0o644); err != nil {
 			return err

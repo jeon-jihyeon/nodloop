@@ -17,6 +17,8 @@ type Record struct {
 	// The id of a trace and else the digest of the key its store names
 	ID   string
 	Time time.Time
+	// The schema_version the record carries and 1 for a record of an earlier release
+	Version int
 	// The stored record with record_kind and record_id first and schema_version always present
 	JSON json.RawMessage
 }
@@ -62,11 +64,13 @@ func (k Kind) Record(stored any) (Record, error) {
 		Kind string `json:"record_kind"`
 		ID   string `json:"record_id"`
 	}{k.Name, id})
-	body := object(line.Bytes())
+	body, version := object(line.Bytes()), 1
 	if ks.SchemaVersion == nil {
 		body = body.firstVersion()
+	} else {
+		version = *ks.SchemaVersion
 	}
-	return Record{Kind: k.Name, ID: id, Time: ks.Time, JSON: slices.Concat(head[:len(head)-1], []byte(","), []byte(body[1:]))}, nil
+	return Record{Kind: k.Name, ID: id, Time: ks.Time, Version: version, JSON: slices.Concat(head[:len(head)-1], []byte(","), []byte(body[1:]))}, nil
 }
 
 // One stored record as compact JSON

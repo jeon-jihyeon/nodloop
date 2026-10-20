@@ -7,7 +7,7 @@ type Role string
 
 const (
 	RoleProducer Role = "producer" // record runs and verdicts and read the items a run receives
-	RoleReviewer Role = "reviewer" // also draft and propose knowledge and read the queue, the health and the reports
+	RoleReviewer Role = "reviewer" // also draft and propose knowledge and read the queue, the health, the reports and the raw records
 	RoleApprover Role = "approver" // also approve and reaffirm that decide only under a key proving a person
 )
 
@@ -22,7 +22,8 @@ func (r Role) Valid() bool {
 var (
 	producerTools = []string{"run", "knowledge_for", "feedback", "outcome", "check_call"}
 	reviewerTools = []string{
-		"queue", "knowledge_health", "report", "propose", "extraction", "propose_extraction", "compaction", "propose_compaction", "check_compaction",
+		"queue", "knowledge_health", "report", "records", "propose", "extraction", "propose_extraction", "compaction", "propose_compaction",
+		"check_compaction",
 	}
 	approverTools = []string{"approve", "reaffirm", "approve_compaction"}
 )

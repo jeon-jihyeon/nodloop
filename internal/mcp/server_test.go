@@ -25,7 +25,7 @@ import (
 // The calls that prove no person are tested in TestServerJudgmentProof
 func newServer(st testkit.Stores, session string, policy mcp.Policy) *mcp.Server {
 	compactor := compact.New(st.Ledger, st.Traces, st.Feedback, st.Traces, st.Clock.Now)
-	return mcp.New(st.Traces, st.Feedback, st.Outcomes, st.Ledger, compactor, extract.New(st.Ledger, st.Traces, st.Feedback, st.Clock.Now),
+	return mcp.New(st.Traces, st.Feedback, st.Outcomes, st.Ledger, st.Source(), compactor, extract.New(st.Ledger, st.Traces, st.Feedback, st.Clock.Now),
 		st.Clock.Now, session, "nodloop", "--record-dir /records", mcp.Caller{Person: "ann", Proves: true}, policy)
 }
 

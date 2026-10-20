@@ -11,6 +11,7 @@ import (
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	"github.com/jeon-jihyeon/nodloop/internal/loop"
 	"github.com/jeon-jihyeon/nodloop/internal/record"
+	"github.com/jeon-jihyeon/nodloop/internal/schema"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
 )
 
@@ -221,6 +222,25 @@ func (c *Client) Outcome(ctx context.Context, o Outcome) error {
 		return err
 	}
 	return c.outcomes.Append(ctx, out.Record())
+}
+
+// One page asked of the raw records of one kind
+// Kind is a kind of the published index such as run, verdict, knowledge or decide
+// Since is the Next of the page before and empty for the first page
+// Limit is 100 when 0 and cut to 1000
+// Content keeps the free text of the kind such as outputs, reasons and lesson content
+type Query = schema.Query
+
+// One page of raw records of one kind oldest first in the published schema of the kind
+// Pass Next back as Since for the following page
+// It stays the same while no newer record is at least 10 s old
+type Page = schema.Page
+
+// One page of the raw records of a kind as the MCP tool records pages them
+// 1. a record younger than 10 s waits for a later page so a record another process appends late is never skipped
+// 2. an unknown kind fails with ErrKindUnknown, a Since no page answered with ErrCursorInvalid and the guard log with ErrNotServed since the package reads one record directory
+func (c *Client) Records(ctx context.Context, q Query) (Page, error) {
+	return c.source.Page(ctx, q, c.now())
 }
 
 // One report of the records as JSON in the shape the MCP tool report and nodloop report --json answer

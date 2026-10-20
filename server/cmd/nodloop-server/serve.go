@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -25,6 +26,7 @@ import (
 	"github.com/jeon-jihyeon/nodloop/internal/loop"
 	"github.com/jeon-jihyeon/nodloop/internal/mcp"
 	"github.com/jeon-jihyeon/nodloop/internal/retain"
+	"github.com/jeon-jihyeon/nodloop/internal/schema"
 	tracefile "github.com/jeon-jihyeon/nodloop/internal/trace/file"
 	"github.com/jeon-jihyeon/nodloop/internal/userconfig"
 	vetofile "github.com/jeon-jihyeon/nodloop/internal/veto/file"
@@ -92,7 +94,8 @@ func runServe(args []string, getenv func(string) string, now func() time.Time, s
 			pruner{stores: stores, tenants: uc.Server.tenants(), days: policy.Retention, now: now, log: stderr}.run(ctx, pruneTick)
 		}
 	}()
-	fmt.Fprintf(stderr, "nodloop-server: %d keys, %s, listening on http://%s/mcp with reports at /v1/reports/{name}\n", len(uc.Server.Keys), where, *addr)
+	fmt.Fprintf(stderr, "nodloop-server: %d keys, %s, listening on http://%s/mcp with records at /v1/records/{kind} and their OpenAPI document at /v1/openapi.json\n",
+		len(uc.Server.Keys), where, *addr)
 	srv := &http.Server{Handler: newServeHandler(stores, uc.Server, now, stderr), ReadHeaderTimeout: 10 * time.Second}
 	if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return fail(stderr, "serve", err)
@@ -104,8 +107,9 @@ func runServe(args []string, getenv func(string) string, now func() time.Time, s
 // 1. stateless so every request carries its own key and no session outlives it
 // 2. a tenant reads and writes the records under tenants of the record directory and never those of another tenant
 // 3. one host per key so its calls are serialized like a stdio server while keys of one tenant share the file locks of its records
-// 4. GET /v1/reports/{name} answers a report as JSON for a dashboard to a key whose role may read reports
-// 5. GET /healthz answers without a key so a load balancer can probe it
+// 4. GET /v1/records/{kind} answers a page of the raw records of a kind to a key whose role may read records
+// 5. GET /v1/reports/{name} answers a report as JSON for a dashboard to a key whose role may read reports
+// 6. GET /healthz and GET /v1/openapi.json answer without a key so a load balancer probes it and a client reads the contract
 type serveHandler struct {
 	stores tenantStores
 	config serverConfig
@@ -126,6 +130,8 @@ func newServeHandler(stores tenantStores, config serverConfig, now func() time.T
 	h.mcp = sdk.NewStreamableHTTPHandler(h.server, &sdk.StreamableHTTPOptions{Stateless: true})
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { fmt.Fprintln(w, "ok") })
+	mux.Handle("GET /v1/openapi.json", openAPIHandler{files: schema.Published, version: buildVersion(), log: log})
+	mux.Handle("GET /v1/records/{kind}", h.authorized(http.HandlerFunc(h.records)))
 	mux.Handle("GET /v1/reports/{name}", h.authorized(http.HandlerFunc(h.report)))
 	mux.Handle("/", h.authorized(h.mcp))
 	return mux
@@ -171,6 +177,66 @@ func (h *serveHandler) report(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(report)
 }
 
+// One page of the raw records of a kind of the tenant of the key in the published schema of the kind
+// 1. a role without the MCP tool records is forbidden
+// 2. a kind outside the published index or one the server keeps no store for is not found
+// 3. a limit, a content flag or a cursor the page cannot read is a bad request
+func (h *serveHandler) records(w http.ResponseWriter, r *http.Request) {
+	key, _ := r.Context().Value(keyContext{}).(serverKey)
+	if !slices.Contains(key.Role.Tools(), "records") {
+		http.Error(w, fmt.Sprintf("the role %s may not read records", key.Role), http.StatusForbidden)
+		return
+	}
+	q, err := recordsQuery(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	source, err := h.stores.records(key, h.now)
+	if err != nil {
+		h.internal(w, key, err)
+		return
+	}
+	page, err := source.Page(r.Context(), q, h.now())
+	switch {
+	case errors.Is(err, schema.ErrKindUnknown), errors.Is(err, schema.ErrNotServed):
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	case errors.Is(err, schema.ErrCursorInvalid):
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	case err != nil:
+		h.internal(w, key, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	enc := json.NewEncoder(w)
+	// The records go out as their stores keep them
+	enc.SetEscapeHTML(false)
+	_ = enc.Encode(page)
+}
+
+// The query of a records page from its path and its query string
+func recordsQuery(r *http.Request) (schema.Query, error) {
+	values := r.URL.Query()
+	q := schema.Query{Kind: r.PathValue("kind"), Since: values.Get("since")}
+	if v := values.Get("limit"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return schema.Query{}, fmt.Errorf("%w: limit %q is no number", errQueryInvalid, v)
+		}
+		q.Limit = n
+	}
+	if v := values.Get("content"); v != "" {
+		content, err := strconv.ParseBool(v)
+		if err != nil {
+			return schema.Query{}, fmt.Errorf("%w: content %q is neither true nor false", errQueryInvalid, v)
+		}
+		q.Content = content
+	}
+	return q, nil
+}
+
 // Answers a failure of the server without its cause and writes the cause to the log
 // A cause may name a path or a database error that a key holder has no need to read
 func (h *serveHandler) internal(w http.ResponseWriter, key serverKey, err error) {
@@ -196,6 +262,9 @@ type tenantStores interface {
 	open(key serverKey, now func() time.Time, session string) mcp.Open
 	// The stores the reports of the tenant read without the tools of a host
 	reports(ctx context.Context, key serverKey, now func() time.Time) (loop.Stores, error)
+	// The stores the raw record pages of the tenant read
+	// No guard log since the server runs no guard
+	records(key serverKey, now func() time.Time) (schema.Source, error)
 	// The retainer over every store of the tenant that may cite a run
 	retainer(tenant string, now func() time.Time) (*retain.Retainer, error)
 	// Where the last prune of the tenant is kept
@@ -266,7 +335,12 @@ type tenantFiles struct {
 	traces   *tracefile.Store
 	verdicts *feedbackfile.Store
 	outcomes *feedbackfile.OutcomeStore
+	items    *knowledgefile.Store
 	ledger   *knowledge.Ledger
+}
+
+func (t tenantFiles) source() schema.Source {
+	return schema.Source{Traces: t.traces, Verdicts: t.verdicts, Outcomes: t.outcomes, Knowledge: t.items}
 }
 
 // No home so the config of the server user is not read for a tenant and no veto file is written under it
@@ -293,7 +367,7 @@ func (f fileTenants) files(tenant string, now func() time.Time) (tenantFiles, er
 		return tenantFiles{}, err
 	}
 	ledger := knowledge.NewLedger(items, vetofile.NewApprovedFile("", ""), now, knowledge.NewIDs(now))
-	return tenantFiles{traces: traces, verdicts: verdicts, outcomes: outcomes, ledger: ledger}, nil
+	return tenantFiles{traces: traces, verdicts: verdicts, outcomes: outcomes, items: items, ledger: ledger}, nil
 }
 
 // The policy of the server with the marks of the tenant
@@ -315,8 +389,18 @@ func (f fileTenants) open(key serverKey, now func() time.Time, session string) m
 		}
 		compactor := compact.New(t.ledger, t.traces, t.verdicts, t.traces, now)
 		extractor := extract.New(t.ledger, t.traces, t.verdicts, now)
-		return mcp.New(t.traces, t.verdicts, t.outcomes, t.ledger, compactor, extractor, now, session, cliName, "", key.caller(), f.policyOf(key.Tenant)), nil
+		return mcp.New(
+			t.traces, t.verdicts, t.outcomes, t.ledger, t.source(), compactor, extractor, now, session, cliName, "", key.caller(), f.policyOf(key.Tenant),
+		), nil
 	}
+}
+
+func (f fileTenants) records(key serverKey, now func() time.Time) (schema.Source, error) {
+	t, err := f.files(key.Tenant, now)
+	if err != nil {
+		return schema.Source{}, err
+	}
+	return t.source(), nil
 }
 
 func (f fileTenants) reports(ctx context.Context, key serverKey, now func() time.Time) (loop.Stores, error) {
@@ -379,8 +463,19 @@ func (p pgTenants) open(key serverKey, now func() time.Time, session string) mcp
 		ledger := p.ledger(key.Tenant, now)
 		compactor := compact.New(ledger, traces, verdicts, traces, now)
 		extractor := extract.New(ledger, traces, verdicts, now)
-		return mcp.New(traces, verdicts, p.db.Outcomes(key.Tenant), ledger, compactor, extractor, now, session, cliName, "", key.caller(), p.policyOf(key.Tenant)), nil
+		return mcp.New(
+			traces, verdicts, p.db.Outcomes(key.Tenant), ledger, p.source(key.Tenant), compactor, extractor, now, session, cliName, "", key.caller(),
+			p.policyOf(key.Tenant),
+		), nil
 	}
+}
+
+func (p pgTenants) source(tenant string) schema.Source {
+	return schema.Source{Traces: p.db.Traces(tenant), Verdicts: p.db.Feedback(tenant), Outcomes: p.db.Outcomes(tenant), Knowledge: p.db.Knowledge(tenant)}
+}
+
+func (p pgTenants) records(key serverKey, _ func() time.Time) (schema.Source, error) {
+	return p.source(key.Tenant), nil
 }
 
 // The policy of the server with the marks of the tenant

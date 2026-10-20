@@ -20,6 +20,7 @@ import (
 	"github.com/jeon-jihyeon/nodloop/internal/loop"
 	"github.com/jeon-jihyeon/nodloop/internal/replay"
 	"github.com/jeon-jihyeon/nodloop/internal/retain"
+	"github.com/jeon-jihyeon/nodloop/internal/schema"
 	"github.com/jeon-jihyeon/nodloop/internal/textkey"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
 	tracefile "github.com/jeon-jihyeon/nodloop/internal/trace/file"
@@ -99,6 +100,28 @@ func (a app) ledger() (*knowledge.Ledger, error) {
 		return nil, err
 	}
 	return knowledge.NewLedger(store, a.vetoFile(dir), a.now, knowledge.NewIDs(a.now)), nil
+}
+
+// The stores of the record directory and the guard log of the home as the raw record pages read them
+func (a app) source() (schema.Source, error) {
+	traces, err := a.traces()
+	if err != nil {
+		return schema.Source{}, err
+	}
+	verdicts, err := a.feedback()
+	if err != nil {
+		return schema.Source{}, err
+	}
+	outcomes, err := a.outcomes()
+	if err != nil {
+		return schema.Source{}, err
+	}
+	// The record directory exists once the stores above opened
+	items, err := knowledgefile.New(a.cfg.recordDir)
+	if err != nil {
+		return schema.Source{}, err
+	}
+	return schema.Source{Traces: traces, Verdicts: verdicts, Outcomes: outcomes, Knowledge: items, Guard: guardLog{a.cfg.home}}, nil
 }
 
 // The item hold that curate.json of the record directory turns on

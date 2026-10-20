@@ -30,6 +30,7 @@ import (
 	"github.com/jeon-jihyeon/nodloop/internal/mcp"
 	"github.com/jeon-jihyeon/nodloop/internal/record"
 	"github.com/jeon-jihyeon/nodloop/internal/retain"
+	"github.com/jeon-jihyeon/nodloop/internal/schema"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
 	"github.com/jeon-jihyeon/nodloop/server/internal/pg"
 )
@@ -121,6 +122,11 @@ func (p prefixed) open(key serverKey, now func() time.Time, session string) mcp.
 func (p prefixed) reports(ctx context.Context, key serverKey, now func() time.Time) (loop.Stores, error) {
 	key.Tenant = p.prefix + key.Tenant
 	return p.tenantStores.reports(ctx, key, now)
+}
+
+func (p prefixed) records(key serverKey, now func() time.Time) (schema.Source, error) {
+	key.Tenant = p.prefix + key.Tenant
+	return p.tenantStores.records(key, now)
 }
 
 func (p prefixed) retainer(tenant string, now func() time.Time) (*retain.Retainer, error) {
@@ -283,6 +289,10 @@ func (unopened) open(serverKey, func() time.Time, string) mcp.Open {
 
 func (unopened) reports(context.Context, serverKey, func() time.Time) (loop.Stores, error) {
 	return loop.Stores{}, errUnopened
+}
+
+func (unopened) records(serverKey, func() time.Time) (schema.Source, error) {
+	return schema.Source{}, errUnopened
 }
 
 func (unopened) retainer(string, func() time.Time) (*retain.Retainer, error) {
