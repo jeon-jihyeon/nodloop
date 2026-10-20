@@ -189,30 +189,31 @@ func TestRunConfigList(t *testing.T) {
 			"nothing saved lists the defaults",
 			args{"", nil},
 			"record_dir\t<home>/.nodloop/records\tdefault\nsession_mode\tdeferred\tdefault\napprover\t-\tdefault\nholdout\t0\tdefault\nretention\t0\tdefault\n" +
-				"decision_points\t-\tdefault\nllm\tclaude\tdefault\nclaude binary\tclaude\tdefault\nmodel\tsonnet\tdefault\n",
+				"decision_points\t-\tdefault\nllm\tclaude\tdefault\nclaude binary\tclaude\tdefault\nmodel\tsonnet\tdefault\notel\t-\tdefault\n",
 		},
 		{
 			"config.json and the environment name their source and the environment wins",
 			args{
 				`{"record_dir":"/saved","approver":"ann","holdout":0.1,"retention":30,"session_mode":"manual","classifiers":{"local":{"url":"http://x"}},` +
+					`"otel":{"endpoint":"http://192.0.2.1:4318","headers_env":"ACME_OTLP"},` +
 					`"decisions":{"critic":{"mode":"single","members":["local"]}},"server":{"keys":[{"name":"ci","tenant":"acme","role":"producer","sha256":"x"}]}}`,
 				map[string]string{envRecordDir: "/env", envSession: "off", envLLMModel: "opus"},
 			},
 			"record_dir\t/env\tNODLOOP_RECORD_DIR\nsession_mode\toff\tNODLOOP_SESSION\napprover\tann\tconfig.json\nholdout\t0.1\tconfig.json\nretention\t30\tconfig.json\n" +
 				"decision_points\tcritic\tconfig.json\nllm\tclaude\tdefault\nclaude binary\tclaude\tdefault\n" +
-				"model\topus\tNODLOOP_LLM_MODEL\n",
+				"model\topus\tNODLOOP_LLM_MODEL\notel\thttp://192.0.2.1:4318\tconfig.json\n",
 		},
 		{
 			"a chat backend names its endpoint and its model and NODLOOP_LLM_MODEL stays with claude",
 			args{`{"llm":{"backend":"chat","base_url":"http://localhost:11434/v1","model":"qwen3"}}`, map[string]string{envLLMModel: "opus"}},
 			"record_dir\t<home>/.nodloop/records\tdefault\nsession_mode\tdeferred\tdefault\napprover\t-\tdefault\nholdout\t0\tdefault\nretention\t0\tdefault\n" +
-				"decision_points\t-\tdefault\nllm\tchat http://localhost:11434/v1\tconfig.json\nclaude binary\tclaude\tdefault\nmodel\tqwen3\tconfig.json\n",
+				"decision_points\t-\tdefault\nllm\tchat http://localhost:11434/v1\tconfig.json\nclaude binary\tclaude\tdefault\nmodel\tqwen3\tconfig.json\notel\t-\tdefault\n",
 		},
 		{
 			"a claude model of config.json is the model without NODLOOP_LLM_MODEL",
 			args{`{"llm":{"backend":"claude","model":"haiku"}}`, nil},
 			"record_dir\t<home>/.nodloop/records\tdefault\nsession_mode\tdeferred\tdefault\napprover\t-\tdefault\nholdout\t0\tdefault\nretention\t0\tdefault\n" +
-				"decision_points\t-\tdefault\nllm\tclaude\tconfig.json\nclaude binary\tclaude\tdefault\nmodel\thaiku\tconfig.json\n",
+				"decision_points\t-\tdefault\nllm\tclaude\tconfig.json\nclaude binary\tclaude\tdefault\nmodel\thaiku\tconfig.json\notel\t-\tdefault\n",
 		},
 		{
 			"an unreadable classifier setup shows its error in its row",
@@ -220,14 +221,14 @@ func TestRunConfigList(t *testing.T) {
 			"record_dir\t<home>/.nodloop/records\tdefault\nsession_mode\tdeferred\tdefault\napprover\t-\tdefault\nholdout\t0\tdefault\nretention\t0\tdefault\n" +
 				"decision_points\tclassifier setup no longer run: decisions.critic in config.json asks [a b]. " +
 				"Run nodloop classifier set critic --url <url> to ask one endpoint before claude\tconfig.json\n" +
-				"llm\tclaude\tdefault\nclaude binary\tclaude\tdefault\nmodel\tsonnet\tdefault\n",
+				"llm\tclaude\tdefault\nclaude binary\tclaude\tdefault\nmodel\tsonnet\tdefault\notel\t-\tdefault\n",
 		},
 		{
 			"an invalid NODLOOP_SESSION shows its error in its row",
 			args{"", map[string]string{envSession: "later"}},
 			"record_dir\t<home>/.nodloop/records\tdefault\n" +
 				"session_mode\tunknown session mode: NODLOOP_SESSION is \"later\". Use deferred, manual or off\tNODLOOP_SESSION\n" +
-				"approver\t-\tdefault\nholdout\t0\tdefault\nretention\t0\tdefault\ndecision_points\t-\tdefault\nllm\tclaude\tdefault\nclaude binary\tclaude\tdefault\nmodel\tsonnet\tdefault\n",
+				"approver\t-\tdefault\nholdout\t0\tdefault\nretention\t0\tdefault\ndecision_points\t-\tdefault\nllm\tclaude\tdefault\nclaude binary\tclaude\tdefault\nmodel\tsonnet\tdefault\notel\t-\tdefault\n",
 		},
 	}
 	for _, tc := range tcs {

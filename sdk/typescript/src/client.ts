@@ -92,6 +92,13 @@ export interface Run {
    * report effect counts a run without it only as undrawn
    */
   holdoutKey?: string;
+  /**
+   * The one model the producer runs and the OTLP export names
+   * Leave it out when the producer may switch models
+   */
+  model?: string;
+  /** How many milliseconds the run took up to this call so its OTLP span has a length */
+  durationMs?: number;
 }
 
 /** The reports report reads */
@@ -199,6 +206,8 @@ export class Client {
     if (run.withheld?.length) args.withheld = run.withheld.map(({ id, version }) => ({ id, version }));
     if (run.subject) args.subject = run.subject;
     if (run.holdoutKey) args.holdout_key = run.holdoutKey;
+    if (run.model) args.model = run.model;
+    if (run.durationMs) args.duration_ms = Math.round(run.durationMs);
     return (await this.call("run", args)).trace_id;
   }
 

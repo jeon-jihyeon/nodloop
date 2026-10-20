@@ -87,6 +87,76 @@ func TestClientRecordWithheld(t *testing.T) {
 	assert.JSONEq(t, `{"applied":[],"withheld":[{"id":"partition","version":1}],"drawn":true,"share":0.999,"scheme":1,"unit":"9764aa8e55e52d75"}`, string(last.Input))
 }
 
+// The model of a run lands in its trace and a run without one records none
+func TestClientRecordModel(t *testing.T) {
+	tcs := []struct {
+		name string
+		args string
+		want string
+	}{
+		{"the model of the run lands in the trace", "gpt-4o-mini", "gpt-4o-mini"},
+		{"a run without a model records none", "", ""},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			c, err := nodloop.Open(dir, nodloop.WithClock(func() time.Time { return at }))
+			require.NoError(t, err)
+
+			_, err = c.Record(context.Background(), nodloop.Run{Producer: "stream-bot", Output: []byte("x"), Model: tc.args})
+
+			require.NoError(t, err)
+			b, err := os.ReadFile(filepath.Join(dir, "traces.jsonl"))
+			require.NoError(t, err)
+			var run struct {
+				Model string `json:"model"`
+			}
+			require.NoError(t, json.Unmarshal(b, &run))
+			assert.Equal(t, tc.want, run.Model)
+		})
+	}
+}
+
+// The duration of a run lands in its trace and a negative one records nothing
+func TestClientRecordDuration(t *testing.T) {
+	type want struct {
+		ms  int64
+		err error
+	}
+	tcs := []struct {
+		name string
+		args time.Duration
+		want want
+	}{
+		{"the duration of the run lands in the trace", 2500 * time.Millisecond, want{2500, nil}},
+		{"a run without a duration records none", 0, want{0, nil}},
+		{"a negative duration is refused", -time.Second, want{0, nodloop.ErrDurationNegative}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			c, err := nodloop.Open(dir, nodloop.WithClock(func() time.Time { return at }))
+			require.NoError(t, err)
+
+			_, err = c.Record(context.Background(), nodloop.Run{Producer: "stream-bot", Output: []byte("x"), Duration: tc.args})
+
+			require.ErrorIs(t, err, tc.want.err)
+			if tc.want.err != nil {
+				return
+			}
+			b, err := os.ReadFile(filepath.Join(dir, "traces.jsonl"))
+			require.NoError(t, err)
+			var run struct {
+				DurationMS int64 `json:"duration_ms"`
+			}
+			require.NoError(t, json.Unmarshal(b, &run))
+			assert.Equal(t, tc.want.ms, run.DurationMS)
+		})
+	}
+}
+
 // Report effect counts a run in its arm only when Record names the key it drew with
 func TestClientReportEffect(t *testing.T) {
 	type want struct {

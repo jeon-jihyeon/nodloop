@@ -158,11 +158,14 @@ func runKnowledge(
 	case args[0] == "propose":
 		err = flags.runPropose(ctx, a, stdout)
 	case args[0] == "extract":
+		// The extraction runs detached after a stop so its trace leaves at once instead of after the next stop
 		err = flags.runExtract(ctx, a, client, getenv, stdout)
+		a.exportAfter(detached(a.cfg.home.hookLog()), stderr)
 	case args[0] == "replay":
 		err = flags.runReplay(ctx, id, a, client, stdout)
 	case args[0] == "consolidate":
 		err = flags.runConsolidate(ctx, a, client, stdout)
+		a.exportAfter(detached(a.cfg.home.hookLog()), stderr)
 	default:
 		err = flags.runRecords(ctx, args[0], id, a, stdout)
 	}

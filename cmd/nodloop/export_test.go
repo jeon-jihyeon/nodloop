@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -20,6 +21,7 @@ import (
 
 	"github.com/jeon-jihyeon/nodloop/internal/feedback"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
+	"github.com/jeon-jihyeon/nodloop/internal/mcp"
 	"github.com/jeon-jihyeon/nodloop/internal/otel"
 	"github.com/jeon-jihyeon/nodloop/internal/record"
 	"github.com/jeon-jihyeon/nodloop/internal/testkit"
@@ -103,6 +105,16 @@ func (c *otlpCollector) names() []string {
 	return out
 }
 
+// Writes config.json of the home with the otel key and nothing when it is empty
+func exportConfig(t *testing.T, home, saved string) {
+	t.Helper()
+	if saved == "" {
+		return
+	}
+	require.NoError(t, os.MkdirAll(homeDir(home).dir(), 0o755))
+	require.NoError(t, os.WriteFile(homeDir(home).config().ConfigPath(), []byte(`{"otel":`+saved+`}`), 0o600))
+}
+
 // Records with one run of bot at 09:00, its reject at 09:01 and an outcome at 09:02
 func exportFixture(t *testing.T) string {
 	t.Helper()
@@ -126,12 +138,14 @@ func exportFixture(t *testing.T) string {
 	return records
 }
 
-// export otel resolves its endpoint, headers and protocol from the flags and then the OTLP environment
+// export otel resolves its endpoint, headers and protocol from the flags, then config.json, then the OTLP environment
 func TestRunExportOtelTarget(t *testing.T) {
 	type args struct {
 		// {srv} stands for the URL of the collector
 		args []string
-		env  map[string]string
+		// The otel key of config.json
+		saved string
+		env   map[string]string
 	}
 	type want struct {
 		code   int
@@ -143,41 +157,48 @@ func TestRunExportOtelTarget(t *testing.T) {
 	}
 	sent := "exported 1 runs, 1 verdicts, 1 outcomes, 0 model calls, 0 review questions and 0 decisions\n"
 	proto, jsonType := "application/x-protobuf", "application/json"
+	both := []string{"/c/v1/traces", "/c/v1/logs"}
 	tcs := []struct {
 		name string
 		args args
 		want want
 	}{
-		{"the flag names a traces URL and sends traces only in protobuf", args{[]string{"otel", "--endpoint", "{srv}/v1/traces", "--header", "Authorization=Basic flag"}, nil},
+		{"the flag names a traces URL and sends traces only in protobuf", args{[]string{"otel", "--endpoint", "{srv}/v1/traces", "--header", "Authorization=Basic flag"}, "", nil},
 			want{0, sent, "", []string{"/v1/traces"}, []string{proto}, []string{"Basic flag"}}},
-		{"the environment alone names the endpoint, headers and protocol", args{[]string{"otel"},
+		{"the config sends traces and logs with the headers of its variable", args{[]string{"otel"}, `{"endpoint":"{srv}/c/","headers_env":"ACME_OTLP"}`,
+			map[string]string{"ACME_OTLP": "Authorization=Basic%20cfg"}}, want{0, sent, "", both, []string{proto, proto}, []string{"Basic cfg", "Basic cfg"}}},
+		{"the config without logs sends traces only", args{[]string{"otel"}, `{"endpoint":"{srv}/c","no_logs":true,"protocol":"http/json"}`, nil},
+			want{0, sent, "", []string{"/c/v1/traces"}, []string{jsonType}, []string{""}}},
+		{"the config wins over the environment and its headers stay home", args{[]string{"otel"}, `{"endpoint":"{srv}/c"}`,
+			map[string]string{envOTLPEndpoint: "{srv}/e", envOTLPHeaders: "Authorization=Basic%20env"}}, want{0, sent, "", both, []string{proto, proto}, []string{"", ""}}},
+		{"the environment alone names the endpoint, headers and protocol", args{[]string{"otel"}, "",
 			map[string]string{envOTLPEndpoint: "{srv}/e/", envOTLPHeaders: "Authorization=Basic%20env", envOTLPProtocol: "http/json"}},
 			want{0, sent, "", []string{"/e/v1/traces", "/e/v1/logs"}, []string{jsonType, jsonType}, []string{"Basic env", "Basic env"}}},
-		{"the logs variable of the environment names the logs endpoint", args{[]string{"otel"},
+		{"the logs variable of the environment names the logs endpoint", args{[]string{"otel"}, "",
 			map[string]string{envOTLPTracesEndpoint: "{srv}/t", envOTLPLogsEndpoint: "{srv}/l"}},
 			want{0, sent, "", []string{"/t", "/l"}, []string{proto, proto}, []string{"", ""}}},
-		{"the protocol flag wins over the environment", args{[]string{"otel", "--protocol", "http/json"}, map[string]string{envOTLPTracesEndpoint: "{srv}/t", envOTLPProtocol: "http/protobuf"}},
-			want{0, sent, "", []string{"/t"}, []string{jsonType}, []string{""}}},
-		{"a header flag wins over the same name of the variable", args{[]string{"otel", "--header", "Authorization=Basic flag"},
-			map[string]string{envOTLPTracesEndpoint: "{srv}/t", envOTLPHeaders: "Authorization=Basic%20env"}}, want{0, sent, "", []string{"/t"}, []string{proto}, []string{"Basic flag"}}},
-		{"grpc of the environment fails", args{[]string{"otel"}, map[string]string{envOTLPEndpoint: "{srv}", envOTLPProtocol: "grpc"}},
+		{"the protocol flag wins over the config", args{[]string{"otel", "--protocol", "http/json"}, `{"endpoint":"{srv}/c","no_logs":true}`, nil},
+			want{0, sent, "", []string{"/c/v1/traces"}, []string{jsonType}, []string{""}}},
+		{"a header flag wins over the same name of the variable", args{[]string{"otel", "--header", "Authorization=Basic flag"}, `{"endpoint":"{srv}/c","no_logs":true,"headers_env":"ACME_OTLP"}`,
+			map[string]string{"ACME_OTLP": "Authorization=Basic%20cfg"}}, want{0, sent, "", []string{"/c/v1/traces"}, []string{proto}, []string{"Basic flag"}}},
+		{"grpc of the environment fails", args{[]string{"otel"}, "", map[string]string{envOTLPEndpoint: "{srv}", envOTLPProtocol: "grpc"}},
 			want{1, "", `unknown otel protocol "grpc"`, nil, nil, nil}},
-		{"a pair without = in the variable fails without its value", args{[]string{"otel"}, map[string]string{envOTLPEndpoint: "{srv}", envOTLPHeaders: "Authorization"}},
-			want{1, "", "bad --header: OTEL_EXPORTER_OTLP_HEADERS holds a pair that is not name=value", nil, nil, nil}},
-		{"a value the environment does not URL encode fails", args{[]string{"otel"}, map[string]string{envOTLPEndpoint: "{srv}", envOTLPHeaders: "Authorization=%zz"}},
+		{"a pair without = in the variable fails without its value", args{[]string{"otel"}, `{"endpoint":"{srv}","headers_env":"ACME_OTLP"}`, map[string]string{"ACME_OTLP": "Authorization"}},
+			want{1, "", "bad --header: ACME_OTLP holds a pair that is not name=value", nil, nil, nil}},
+		{"a value the environment does not URL encode fails", args{[]string{"otel"}, "", map[string]string{envOTLPEndpoint: "{srv}", envOTLPHeaders: "Authorization=%zz"}},
 			want{1, "", "bad --header: OTEL_EXPORTER_OTLP_HEADERS: invalid URL escape", nil, nil, nil}},
-		{"since after every record sends no request", args{[]string{"otel", "--endpoint", "{srv}", "--since", "2026-10-08T00:00:00Z"}, nil},
+		{"since after every record sends no request", args{[]string{"otel", "--endpoint", "{srv}", "--since", "2026-10-08T00:00:00Z"}, "", nil},
 			want{0, "exported 0 runs, 0 verdicts, 0 outcomes, 0 model calls, 0 review questions and 0 decisions\n", "", nil, nil, nil}},
-		{"since and pending together fail", args{[]string{"otel", "--endpoint", "{srv}", "--since", "2026-10-08T00:00:00Z", "--pending"}, nil},
+		{"since and pending together fail", args{[]string{"otel", "--endpoint", "{srv}", "--since", "2026-10-08T00:00:00Z", "--pending"}, "", nil},
 			want{1, "", errExportFlags.Error(), nil, nil, nil}},
-		{"a since that is no RFC3339 time fails", args{[]string{"otel", "--endpoint", "{srv}", "--since", "yesterday"}, nil},
+		{"a since that is no RFC3339 time fails", args{[]string{"otel", "--endpoint", "{srv}", "--since", "yesterday"}, "", nil},
 			want{1, "", `parsing time "yesterday"`, nil, nil, nil}},
-		{"no endpoint anywhere fails", args{[]string{"otel"}, nil}, want{1, "", "--endpoint is required", nil, nil, nil}},
-		{"a header flag without = fails", args{[]string{"otel", "--endpoint", "{srv}", "--header", "Authorization"}, nil},
+		{"no endpoint anywhere fails naming otel set", args{[]string{"otel"}, "", nil}, want{1, "", "--endpoint is required, or save one with nodloop otel set", nil, nil, nil}},
+		{"a header flag without = fails", args{[]string{"otel", "--endpoint", "{srv}", "--header", "Authorization"}, "", nil},
 			want{1, "", `bad --header: "Authorization" is not Name=value`, nil, nil, nil}},
-		{"an unknown flag fails", args{[]string{"otel", "--bogus"}, nil}, want{1, "", "flag provided but not defined: -bogus", nil, nil, nil}},
-		{"another target is unknown", args{[]string{"zipkin"}, nil}, want{1, "", "unknown action", nil, nil, nil}},
-		{"no target fails", args{nil, nil}, want{1, "", "an action is required", nil, nil, nil}},
+		{"an unknown flag fails", args{[]string{"otel", "--bogus"}, "", nil}, want{1, "", "flag provided but not defined: -bogus", nil, nil, nil}},
+		{"another target is unknown", args{[]string{"zipkin"}, "", nil}, want{1, "", "unknown action", nil, nil, nil}},
+		{"no target fails", args{nil, "", nil}, want{1, "", "an action is required", nil, nil, nil}},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
@@ -186,6 +207,7 @@ func TestRunExportOtelTarget(t *testing.T) {
 			srv := httptest.NewServer(c)
 			t.Cleanup(srv.Close)
 			records, home := exportFixture(t), t.TempDir()
+			exportConfig(t, home, strings.ReplaceAll(tc.args.saved, "{srv}", srv.URL))
 			args := make([]string, 0, len(tc.args.args))
 			for _, a := range tc.args.args {
 				args = append(args, strings.ReplaceAll(a, "{srv}", srv.URL))
@@ -232,7 +254,9 @@ func exportKinds(t *testing.T) (string, exportedIDs) {
 	run, err := trace.NewRun(sessionProducer, "", trace.Labels{"repo": {"nodloop"}}, json.RawMessage(`{"applied":[{"id":"git-c","version":1}]}`),
 		[]byte("done"), at.Add(90*time.Second))
 	require.NoError(t, err)
-	run.SessionID, run.DurationMS = "s1", 90_000
+	run.SessionID = "s1"
+	run, err = run.Took(90 * time.Second)
+	require.NoError(t, err)
 	require.NoError(t, traces.Append(ctx, run.Record()))
 	ids := exportedIDs{run: run.ID, verdictAt: at.Add(2 * time.Minute)}
 	verdicts, err := a.feedback()
@@ -535,4 +559,116 @@ func tracefileRuns(records string) ([]string, error) {
 		ids = append(ids, r.ID)
 	}
 	return ids, err
+}
+
+// The stop hook starts the pending export after a recorded run only once config.json holds an otel target
+func TestRunHookStopStartsTheExport(t *testing.T) {
+	type args struct {
+		saved string
+		env   map[string]string
+		flags []string
+		stdin string
+		// The error of the starter
+		err error
+	}
+	type want struct {
+		// The commands started with {records} for the record dir
+		starts []string
+		stderr string
+	}
+	answer := `{"session_id":"s1","cwd":"{repo}","last_assistant_message":"done"}`
+	export := []string{"export otel --pending --record-dir {records}"}
+	saved := `{"endpoint":"http://192.0.2.1:4318"}`
+	tcs := []struct {
+		name string
+		args args
+		want want
+	}{
+		{"the saved target starts the export", args{saved, nil, nil, answer, nil}, want{export, ""}},
+		{"an OTLP variable alone starts nothing", args{"", map[string]string{envOTLPEndpoint: "http://192.0.2.1:4318"}, nil, answer, nil}, want{nil, ""}},
+		{"no target starts nothing", args{"", nil, nil, answer, nil}, want{nil, ""}},
+		{"an empty answer records no run and starts nothing", args{saved, nil, nil,
+			`{"session_id":"s1","cwd":"{repo}","last_assistant_message":" "}`, nil}, want{nil, ""}},
+		{"a host whose stop carries no answer starts nothing", args{saved, nil, []string{"--host", "cursor"},
+			`{"conversation_id":"s1","workspace_roots":["{repo}"],"status":"completed"}`, nil}, want{nil, ""}},
+		{"a start that fails is printed and the hook passes", args{saved, nil, nil, answer, errExecutableTemporary},
+			want{export, "nodloop hook: " + errExecutableTemporary.Error()}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			home, records, repo := hookHome(t, "use git -C")
+			exportConfig(t, home, tc.args.saved)
+			getenv := func(k string) string {
+				return cmp.Or(map[string]string{"HOME": home, envRecordDir: records}[k], tc.args.env[k])
+			}
+			var starts []string
+			start := func(args []string) error {
+				starts = append(starts, strings.ReplaceAll(strings.Join(args, " "), records, "{records}"))
+				return tc.args.err
+			}
+			var stderr bytes.Buffer
+
+			code := runHook(append([]string{"stop"}, tc.args.flags...), getenv, start, func() time.Time { return exportAt },
+				strings.NewReader(strings.ReplaceAll(tc.args.stdin, "{repo}", repo)), &bytes.Buffer{}, &stderr)
+
+			assert.Equal(t, 0, code)
+			assert.Contains(t, stderr.String(), tc.want.stderr)
+			assert.Equal(t, tc.want.starts, starts)
+		})
+	}
+}
+
+// After one otel set a session turn and its verdict reach a collector with no command, each once
+// The starter runs the export in process where the hook and the MCP server start a process of their own
+func TestExportWithNoCommand(t *testing.T) {
+	c := &otlpCollector{}
+	srv := httptest.NewServer(c)
+	t.Cleanup(srv.Close)
+	home, records, repo := hookHome(t, "use git -C")
+	env := map[string]string{"HOME": home, envRecordDir: records}
+	getenv := func(k string) string { return env[k] }
+	var out bytes.Buffer
+	require.Equal(t, 0, runOTel([]string{"set", "--endpoint", srv.URL, "--protocol", "http/json"}, getenv, &out, &out), out.String())
+	at := exportAt
+	now := func() time.Time { return at }
+	out.Reset()
+	// The MCP server may call it off the test goroutine so it fails by its error and never through require
+	start := func(args []string) error {
+		if args[0] != "export" {
+			return fmt.Errorf("started %v", args)
+		}
+		if code := runExport(args[1:], getenv, now, &out, &out); code != 0 {
+			return fmt.Errorf("export exited %d: %s", code, out.String())
+		}
+		return nil
+	}
+	stdin := `{"session_id":"s1","cwd":"` + repo + `","prompt":"go","last_assistant_message":"done"}`
+	var stderr bytes.Buffer
+	require.Equal(t, 0, runHook([]string{"prompt"}, getenv, start, now, strings.NewReader(stdin), &bytes.Buffer{}, &stderr))
+	at = at.Add(time.Minute)
+	require.Equal(t, 0, runHook([]string{"stop"}, getenv, start, now, strings.NewReader(stdin), &bytes.Buffer{}, &stderr))
+	require.Empty(t, stderr.String())
+	ids, err := tracefileRuns(records)
+	require.NoError(t, err)
+	at = at.Add(time.Minute)
+	open := mcpOpen{getenv: getenv, now: now, session: "mcp-s1", log: &stderr, export: start}.open
+	mcpClient := testkit.Connect(t, mcp.NewHost(open, "test", "").ServeTransport)
+
+	feedbackErr := mcpClient.Run(t, "feedback", map[string]any{"trace_id": ids[0], "verdict": "reject", "reason": "too long", "reviewer": "session"})
+	at = at.Add(time.Minute)
+	startErr := start([]string{"export", "otel", "--pending"})
+
+	assert.NoError(t, feedbackErr)
+	assert.NoError(t, startErr)
+	assert.Empty(t, stderr.String())
+	names := c.names()
+	assert.Equal(t, 1, strings.Count(strings.Join(names, "\n"), "evaluate nodloop.verdict"), names)
+	assert.Equal(t, 2, strings.Count(strings.Join(names, "\n"), "invoke_agent session"), "the run of the setup and the turn each once")
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	turn := c.spans[slices.IndexFunc(c.spans, func(s gotSpan) bool { return s.SpanID == otel.RunSpan(ids[0]).SpanID })]
+	assert.Equal(t, fmt.Sprint(exportAt.UnixNano()), turn.Start, "the turn of the session starts at its prompt")
+	verdictLogs := slices.DeleteFunc(slices.Clone(c.logs), func(l gotLog) bool { return l.SpanID != otel.RunSpan(ids[0]).SpanID })
+	assert.Len(t, verdictLogs, 1)
 }

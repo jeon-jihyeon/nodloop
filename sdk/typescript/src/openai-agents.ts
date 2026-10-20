@@ -12,6 +12,8 @@ export class NodloopHooks {
   withheld: Ref[] = [];
   // The run the final output was recorded as so a verdict can cite it
   run = "";
+  // When the instructions were built so the run records how long it took
+  private started = performance.now();
 
   private readonly client: Client;
   private readonly producer: string;
@@ -28,6 +30,7 @@ export class NodloopHooks {
   // Dynamic instructions: the base and the approved items under it
   instructions(base: string): () => Promise<string> {
     return async () => {
+      this.started = performance.now();
       const knowledge = await this.client.knowledge(this.producer, this.labels, this.holdoutKey);
       this.applied = knowledge.items;
       this.withheld = knowledge.withheld ?? [];
@@ -38,7 +41,7 @@ export class NodloopHooks {
   // Records the output of an agent that ended as a run
   async record(output: unknown): Promise<string> {
     const text = typeof output === "string" ? output : JSON.stringify(output);
-    this.run = await this.client.record({ producer: this.producer, output: text, labels: this.labels, applied: this.applied, withheld: this.withheld, holdoutKey: this.holdoutKey });
+    this.run = await this.client.record({ producer: this.producer, output: text, labels: this.labels, applied: this.applied, withheld: this.withheld, holdoutKey: this.holdoutKey, durationMs: performance.now() - this.started });
     return this.run;
   }
 

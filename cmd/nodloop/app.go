@@ -243,6 +243,44 @@ func (a app) window(ctx context.Context) (time.Time, error) {
 	return a.cfg.retention.Window(a.now(), last.Cutoff), nil
 }
 
+// Starts export otel --pending in a process of its own
+// 1. the process names the record directory of this one since a --record-dir flag is not in its environment
+// 2. the mark of the export decides what it sends so a start per record resends nothing
+func (a app) startExport(start starter) error {
+	dir, err := a.makeRecordDir()
+	if err != nil {
+		return err
+	}
+	return start([]string{"export", "otel", "--pending", "--record-dir", dir})
+}
+
+// The OTLP export after a verdict or an outcome or an approval or a reaffirm the MCP server recorded
+// A failure to start goes to log and never fails the call since the record stands
+func (a app) afterVerdict(start starter, log io.Writer) func(ctx context.Context) {
+	return func(context.Context) {
+		if err := a.startExport(start); err != nil {
+			fmt.Fprintln(log, "nodloop: export:", err)
+		}
+	}
+}
+
+// The daily prune and the OTLP export after a run the MCP server recorded
+func (a app) afterRunExport(start starter, log io.Writer) func(ctx context.Context) {
+	prune, export := a.afterRun(log), a.afterVerdict(start, log)
+	return func(ctx context.Context) {
+		prune(ctx)
+		export(ctx)
+	}
+}
+
+// Starts the OTLP export when config.json holds an otel target
+// A command that writes a record in a detached process such as an extraction calls it once its trace is written
+func (a app) exportAfter(start starter, log io.Writer) {
+	if a.cfg.otel != nil && start != nil {
+		a.afterVerdict(start, log)(context.Background())
+	}
+}
+
 // The daily prune after a run a command recorded
 // A failure goes to stderr and never fails the command since the run is recorded
 func (a app) afterRun(stderr io.Writer) func(ctx context.Context) {

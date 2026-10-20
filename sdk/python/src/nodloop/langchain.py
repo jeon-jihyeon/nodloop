@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import time
 from collections.abc import Callable
 from typing import Any
 
@@ -43,12 +44,15 @@ class NodloopMiddleware(AgentMiddleware):
         self._knowledge: Knowledge | None = None
         # The run the final answer was recorded as so a verdict can cite it
         self.run: str = ""
+        # When the first model call of the run came so the run records how long it took
+        self._started = time.monotonic()
 
     def _labels(self, state: Any) -> Labels:
         return self.labels(state) if callable(self.labels) else self.labels
 
     async def awrap_model_call(self, request: Any, handler: Callable[[Any], Any]) -> Any:
         if self._knowledge is None:
+            self._started = time.monotonic()
             self._knowledge = await self.client.knowledge(self.producer, self._labels(request.state), self.holdout_key)
             self.applied, self.withheld = self._knowledge.items, self._knowledge.withheld
         text = self._knowledge.text
@@ -66,6 +70,7 @@ class NodloopMiddleware(AgentMiddleware):
                 applied=self.applied,
                 withheld=self.withheld,
                 holdout_key=self.holdout_key,
+                duration_ms=int((time.monotonic() - self._started) * 1000),
             )
         self._knowledge = None
 

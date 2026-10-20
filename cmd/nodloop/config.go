@@ -32,6 +32,8 @@ type config struct {
 	retention retain.Days
 	// session_mode of config.json as written, checked where a hook reads it
 	sessionMode string
+	// The export target of config.json and nil when none is saved
+	otel *otelConfig
 }
 
 // The record directory as the flag, then NODLOOP_RECORD_DIR, then config.json, then the default under home
@@ -50,7 +52,7 @@ func resolveConfig(getenv func(string) string, recordDir string) (config, error)
 	}
 	return config{
 		recordDir: records, home: h, classifiers: uc.classifierConfig, holdout: knowledge.Holdout(uc.Holdout),
-		retention: retain.Days(uc.Retention), sessionMode: uc.SessionMode,
+		retention: retain.Days(uc.Retention), sessionMode: uc.SessionMode, otel: uc.OTel,
 	}, nil
 }
 
@@ -126,7 +128,10 @@ func (c configCommand) list(getenv func(string) string) error {
 	if uc.LLM.Backend == llm.BackendChat {
 		model, modelEnv = uc.LLM.Model, ""
 	}
-	share, days := "", ""
+	share, days, export := "", "", ""
+	if uc.OTel != nil {
+		export = uc.OTel.Endpoint
+	}
 	if uc.Holdout != 0 {
 		share = strconv.FormatFloat(uc.Holdout, 'g', -1, 64)
 	}
@@ -143,6 +148,7 @@ func (c configCommand) list(getenv func(string) string) error {
 		{"llm", "", backend, cmp.Or(backend, string(llm.BackendClaude))},
 		{"claude binary", envClaudeBin, "", cmp.Or(getenv(envClaudeBin), llm.DefaultBin)},
 		{"model", modelEnv, uc.LLM.Model, model},
+		{"otel", "", export, ""},
 	}
 	for _, r := range rows {
 		from := "default"

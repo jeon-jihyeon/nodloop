@@ -78,6 +78,9 @@ func runHook(args []string, getenv func(string) string, start starter, now func(
 		app: a, detach: start, out: stdout, mode: mode, host: h,
 		plugin: cmp.Or(getenv(envPluginVersion), buildVersion()), holdout: a.cfg.holdout,
 	}
+	if a.cfg.otel != nil {
+		cmd.export = start
+	}
 	if action == "prompt" {
 		if cmd.reaction, err = a.plan(classify.PointReaction, conversation{}, getenv, reactionTimeout); err != nil {
 			fmt.Fprintln(stderr, "nodloop hook:", err)
@@ -95,7 +98,7 @@ func (c hookCommand) run(ctx context.Context, action string, in hookInput, label
 	case "prompt":
 		return c.prompt(ctx, in.SessionID, in.Prompt, labels)
 	case "stop":
-		return c.stop(ctx, in.SessionID, labels, reply(in.LastAssistantMessage))
+		return c.stop(ctx, in.SessionID, labels, reply(in.LastAssistantMessage), in.StopHookActive)
 	case "start":
 		return c.start(ctx, in.SessionID, in.Source, labels)
 	case "subagent":
@@ -130,6 +133,8 @@ type hookCommand struct {
 	holdout knowledge.Holdout
 	// The reaction point the user set up and nil when the conversation judges alone
 	reaction *classify.Plan
+	// Starts the OTLP export after every recorded run and nil when config.json holds no otel target
+	export starter
 }
 
 // The approved items of this place the context lacks and the session note as context of the prompt
@@ -138,7 +143,9 @@ type hookCommand struct {
 // 2. a corrupt line in the records leaves out that record and the rest still reach the prompt
 // 3. a turn of a session the holdout draws gets the note and no item
 // 4. the two newest runs of the session and its newest refill tell which items are in the context already
+// 5. the start of the turn is recorded first so the stop knows how long the turn took
 func (c hookCommand) prompt(ctx context.Context, sessionID, message string, labels trace.Labels) error {
+	turnErr := c.recordTurn(ctx, sessionID)
 	all, allErr := c.all(ctx)
 	if allErr != nil && !errors.Is(allErr, knowledgefile.ErrCorrupt) {
 		return allErr
@@ -155,7 +162,7 @@ func (c hookCommand) prompt(ctx context.Context, sessionID, message string, labe
 	note := c.note(sessionID, previous)
 	note.recorded = recorded
 	text := items.context(runs.inContext(knowledge.Set(items), refill), note)
-	runsErr = errors.Join(allErr, runsErr, reactErr)
+	runsErr = errors.Join(turnErr, allErr, runsErr, reactErr)
 	if text == "" {
 		return runsErr
 	}
@@ -218,6 +225,45 @@ func (c hookCommand) addItems(ctx context.Context, event, sessionID string, labe
 	}
 	added, _ := items.fitting()
 	return added, err
+}
+
+// The start of a turn of the session as a turn trace with no text
+// A turn without a session id could never be told from the turns of other sessions so it records none
+func (c hookCommand) recordTurn(ctx context.Context, sessionID string) error {
+	if sessionID == "" {
+		return nil
+	}
+	store, err := c.app.traces()
+	if err != nil {
+		return err
+	}
+	now := c.app.now()
+	tr := trace.Trace{ID: trace.NewID(now), Name: trace.NameTurn, SessionID: sessionID, Time: now, Input: json.RawMessage("{}")}
+	return store.Append(ctx, tr.Record())
+}
+
+// When the turn the stop ends began
+// 1. the newest turn trace of the session after the previous run
+// The prompt that began the turn wrote it
+// 2. else the previous run when a stop hook continued the turn since the turn began as that stop blocked
+// 3. else the zero time and the run records no duration
+func (c hookCommand) turnStart(ctx context.Context, sessionID string, previous trace.Trace, continued bool) (time.Time, error) {
+	if sessionID == "" {
+		return time.Time{}, nil
+	}
+	store, err := c.app.traces()
+	if err != nil {
+		return time.Time{}, err
+	}
+	since := cmp.Or(previous.Time, c.app.now().Add(-sessionWindow))
+	found, err := store.List(ctx, record.TraceFilter{Name: string(trace.NameTurn), SessionID: sessionID, Since: since, Limit: 1})
+	if turn := trace.Traces(trace.RestoreAll(found)).Newest(); turn.ID != "" && turn.Time.After(previous.Time) {
+		return turn.Time, err
+	}
+	if continued && previous.ID != "" {
+		return previous.Time, err
+	}
+	return time.Time{}, err
 }
 
 // The items a session start added as a refill trace of the session
@@ -316,10 +362,11 @@ func (ts sessionTurns) inContext(items knowledge.Set, refill trace.Trace) []know
 // The conversation usually drafted it in the same turn
 // 4. the holdout draws once per session so every turn of a conversation is in one arm
 // A lesson shown in one turn stays in the context of the next so a draw per turn would leak it into the withheld arm
-// 5. the extraction and the daily retention prune and the daily consolidate start in processes of their own so the turn never waits for them
+// 5. the extraction and the daily retention prune and the daily consolidate and the OTLP export start in processes of their own so the turn never waits for them
 // A failure to start one is printed and the others still start
+// A failed record starts no export since no new run waits to be sent
 // 6. a host whose stop input carries no answer records no run and still starts the background work
-func (c hookCommand) stop(ctx context.Context, sessionID string, labels trace.Labels, answer reply) error {
+func (c hookCommand) stop(ctx context.Context, sessionID string, labels trace.Labels, answer reply, continued bool) error {
 	if c.host.answers() && strings.TrimSpace(string(answer)) == "" {
 		return nil
 	}
@@ -334,7 +381,10 @@ func (c hookCommand) stop(ctx context.Context, sessionID string, labels trace.La
 	corrupt := errors.Join(runsErr, allErr)
 	var failed error
 	if c.host.answers() {
-		failed = c.record(ctx, sessionID, labels, answer, all)
+		failed = c.record(ctx, sessionID, labels, answer, all, previous, continued)
+	}
+	if c.export != nil && c.host.answers() && failed == nil {
+		failed = c.app.startExport(c.export)
 	}
 	failed = errors.Join(failed, c.prune(ctx), c.consolidate(all))
 	if !all.Cites(previous.ID) {
@@ -343,8 +393,12 @@ func (c hookCommand) stop(ctx context.Context, sessionID string, labels trace.La
 	return errors.Join(corrupt, failed)
 }
 
-// The answer as a run of the session with every fitting item of the place in its context
-func (c hookCommand) record(ctx context.Context, sessionID string, labels trace.Labels, answer reply, all knowledge.Set) error {
+// The answer as a run of the session with every fitting item of the place in its context and the duration of its turn
+// 1. a turn start that cannot be read leaves the duration out and still records the run
+// 2. a corrupt line is left to the read of the previous run that reports it already
+func (c hookCommand) record(
+	ctx context.Context, sessionID string, labels trace.Labels, answer reply, all knowledge.Set, previous trace.Trace, continued bool,
+) error {
 	shown, _ := hookItems(all.For(sessionProducer, labels)).fitting()
 	applied := shown.Refs()
 	var withheld []knowledge.Ref
@@ -364,11 +418,20 @@ func (c hookCommand) record(ctx context.Context, sessionID string, labels trace.
 		return err
 	}
 	tr.SessionID = sessionID
+	start, startErr := c.turnStart(ctx, sessionID, previous, continued)
+	if errors.Is(startErr, tracefile.ErrCorrupt) {
+		startErr = nil
+	}
+	if !start.IsZero() {
+		if tr, err = tr.Took(tr.Time.Sub(start)); err != nil {
+			return err
+		}
+	}
 	store, err := c.app.traces()
 	if err != nil {
 		return err
 	}
-	return store.Append(ctx, tr.Record())
+	return errors.Join(store.Append(ctx, tr.Record()), startErr)
 }
 
 // The extraction of the run started when the conversation alone judged it and its latest verdict corrects it

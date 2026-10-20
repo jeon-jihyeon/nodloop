@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/jeon-jihyeon/nodloop/internal/feedback"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
@@ -62,6 +63,9 @@ type Run struct {
 	Subject string
 	// Groups the runs of one conversation or job
 	SessionID string
+	// The one model the producer runs and empty when it may switch models
+	// The OTLP export names it as the requested model of the span
+	Model string
 	// The output as text or JSON
 	// Keys, tokens and passwords in it are redacted before it is stored
 	Output []byte
@@ -74,6 +78,9 @@ type Run struct {
 	// Record draws on it again and marks the run drawn so report effect counts it in its arm
 	// A run recorded without one counts in neither arm
 	HoldoutKey string
+	// How long the producer took for the run up to Record
+	// The OTLP export starts its span that long before the record and zero leaves a span of no length
+	Duration time.Duration
 }
 
 // Records the run and returns the id a verdict cites
@@ -93,7 +100,10 @@ func (c *Client) Record(ctx context.Context, r Run) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	tr.SessionID = r.SessionID
+	tr.SessionID, tr.Model = r.SessionID, r.Model
+	if tr, err = tr.Took(r.Duration); err != nil {
+		return "", err
+	}
 	if err := c.traces.Append(ctx, tr.Record()); err != nil {
 		return "", err
 	}

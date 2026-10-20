@@ -215,6 +215,8 @@ class Client:
         subject: str = "",
         withheld: list[Item | Ref] | None = None,
         holdout_key: str = "",
+        model: str = "",
+        duration_ms: int = 0,
     ) -> str:
         """Records one output and returns the run id a verdict cites
 
@@ -222,6 +224,9 @@ class Client:
         Never together with applied
         holdout_key is the key the run passed to knowledge
         report effect counts a run without it only as undrawn
+        model is the one model the producer runs and the OTLP export names it
+        Leave it out when the producer may switch models
+        duration_ms is how long the run took up to this call so its OTLP span has a length
         """
         args: dict[str, Any] = {"producer": producer, "output": output, "labels": labels or {}}
         if applied:
@@ -232,6 +237,10 @@ class Client:
             args["subject"] = subject
         if holdout_key:
             args["holdout_key"] = holdout_key
+        if model:
+            args["model"] = model
+        if duration_ms:
+            args["duration_ms"] = duration_ms
         return (await self.call("run", args))["trace_id"]
 
     async def judge(

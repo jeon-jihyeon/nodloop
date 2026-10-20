@@ -92,5 +92,6 @@ func (s *Server) reaffirm(ctx context.Context, _ *sdk.CallToolRequest, in reaffi
 	if err != nil {
 		return nil, nil, err
 	}
+	s.afterVerdict(ctx)
 	return nil, map[string]any{"id": k.ID, "version": k.Version, "approver": k.Approver, "reviewed_at": k.ReviewedAt}, nil
 }

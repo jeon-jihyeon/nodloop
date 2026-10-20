@@ -66,6 +66,11 @@ func TestRunMCP(t *testing.T) {
 		{"list prints the tool names without opening any record", args{[]string{"--list"}, map[string]string{"HOME": "{home}"}}, want{0, `^$`, tools}},
 		{"serves until stdin closes", args{nil, map[string]string{envRecordDir: "{records}"}}, want{0, `^$`, ""}},
 		{"nothing configured still serves", args{nil, map[string]string{"HOME": "{home}"}}, want{0, `^$`, ""}},
+		{
+			"an OTLP endpoint serves without an export before a verdict",
+			args{nil, map[string]string{envRecordDir: "{records}", envOTLPEndpoint: "http://192.0.2.1:4318"}},
+			want{0, `^$`, ""},
+		},
 		{"unknown flag fails", args{[]string{"--nope"}, nil}, want{1, "^flag provided but not defined: -nope\n", ""}},
 	}
 	for _, tc := range tcs {
@@ -76,17 +81,23 @@ func TestRunMCP(t *testing.T) {
 			require.NoError(t, err)
 			r := strings.NewReplacer("{home}", home, "{records}", records)
 			getenv := func(k string) string { return r.Replace(tc.args.env[k]) }
+			var starts [][]string
+			start := func(args []string) error {
+				starts = append(starts, args)
+				return nil
+			}
 			var stderr bytes.Buffer
 
-			got := runMCP(tc.args.args, getenv, func() time.Time { return at }, strings.NewReader(""), stdout, &stderr)
+			got := runMCP(tc.args.args, getenv, start, func() time.Time { return at }, strings.NewReader(""), stdout, &stderr)
+			out, err := os.ReadFile(stdout.Name())
+			require.NoError(t, err)
+			_, statErr := os.Stat(homeDir(home).config().Records())
 
 			assert.Equal(t, tc.want.code, got)
 			assert.Regexp(t, tc.want.stderr, stderr.String())
-			out, err := os.ReadFile(stdout.Name())
-			require.NoError(t, err)
 			assert.Equal(t, tc.want.stdout, string(out))
-			_, err = os.Stat(homeDir(home).config().Records())
-			assert.ErrorIs(t, err, os.ErrNotExist, "serving opens no record before a call")
+			assert.ErrorIs(t, statErr, os.ErrNotExist, "serving opens no record before a call")
+			assert.Empty(t, starts, "no export starts before a verdict")
 		})
 	}
 }
@@ -184,4 +195,60 @@ func TestMCPOpenPolicy(t *testing.T) {
 	assert.Empty(t, log.String())
 	assert.NotContains(t, traceIDs(t, records), "old-unjudged")
 	assert.NotNil(t, answer.Withheld, "the holdout of config.json draws the call")
+}
+
+// A verdict through the MCP server starts the pending export of its record directory and a run starts none
+// A start that fails goes to the log and the verdict still stands
+func TestMCPOpenExport(t *testing.T) {
+	type args struct {
+		// The otel key of config.json and none when empty
+		saved string
+		// The error of the starter
+		err error
+	}
+	type want struct {
+		starts int
+		// The log after the verdict
+		log string
+	}
+	saved := `{"endpoint":"http://192.0.2.1:4318"}`
+	failed := "nodloop: export: " + errExecutableTemporary.Error() + "\n"
+	tcs := []struct {
+		name string
+		args args
+		want want
+	}{
+		{"a run and a verdict each start the export", args{saved, nil}, want{2, ""}},
+		{"no saved target starts nothing", args{"", nil}, want{0, ""}},
+		{"a start that fails is logged", args{saved, errExecutableTemporary}, want{2, failed + failed}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			records, home := t.TempDir(), t.TempDir()
+			exportConfig(t, home, tc.args.saved)
+			getenv := func(k string) string { return map[string]string{envRecordDir: records, "HOME": home}[k] }
+			now := func() time.Time { return time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC) }
+			var log bytes.Buffer
+			var starts [][]string
+			start := func(args []string) error {
+				starts = append(starts, args)
+				return tc.args.err
+			}
+			open := mcpOpen{getenv: getenv, now: now, session: mcp.NewSession(now()), log: &log, export: start}.open
+			c := testkit.Connect(t, mcp.NewHost(open, "test", "").ServeTransport)
+			var run struct {
+				TraceID string `json:"trace_id"`
+			}
+
+			require.NoError(t, c.Call(t, "run", map[string]any{"producer": "bot", "output": "x"}, &run))
+			require.NoError(t, c.Run(t, "feedback", map[string]any{"trace_id": run.TraceID, "verdict": "approve", "reviewer": "ann"}))
+
+			assert.Len(t, starts, tc.want.starts)
+			for _, s := range starts {
+				assert.Equal(t, []string{"export", "otel", "--pending", "--record-dir", records}, s)
+			}
+			assert.Equal(t, tc.want.log, log.String())
+		})
+	}
 }

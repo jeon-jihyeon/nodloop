@@ -154,6 +154,36 @@ test("items passed as withheld and refs passed as applied are recorded by id and
   }
 });
 
+test("the model of a run lands in its trace and a run without one records none", async () => {
+  const records = join(mkdtempSync(join(tmpdir(), "nodloop-rec-")), "records");
+  const c = await Client.open({ recordDir: records, binary: binary() });
+  try {
+    const named = await c.record({ producer: "stream-bot", output: "lag rose", model: "gpt-4o-mini" });
+    const bare = await c.record({ producer: "stream-bot", output: "lag rose again" });
+
+    const traces = readFileSync(join(records, "traces.jsonl"), "utf8").split("\n").filter((l) => l.trim()).map((l) => JSON.parse(l));
+    assert.equal(traces.find((t) => t.id === named).model, "gpt-4o-mini");
+    assert.equal(traces.find((t) => t.id === bare).model, undefined);
+  } finally {
+    await c.close();
+  }
+});
+
+test("the duration of a run lands in its trace so its span has a length", async () => {
+  const records = join(mkdtempSync(join(tmpdir(), "nodloop-rec-")), "records");
+  const c = await Client.open({ recordDir: records, binary: binary() });
+  try {
+    const timed = await c.record({ producer: "stream-bot", output: "lag rose", durationMs: 1500.4 });
+    const bare = await c.record({ producer: "stream-bot", output: "lag rose again" });
+
+    const traces = readFileSync(join(records, "traces.jsonl"), "utf8").split("\n").filter((l) => l.trim()).map((l) => JSON.parse(l));
+    assert.equal(traces.find((t) => t.id === timed).duration_ms, 1500);
+    assert.equal(traces.find((t) => t.id === bare).duration_ms, 0);
+  } finally {
+    await c.close();
+  }
+});
+
 test("an outcome is recorded on a run and a report reads by name with its window", async () => {
   const records = join(mkdtempSync(join(tmpdir(), "nodloop-rec-")), "records");
   // A prune another surface ran sets the window every report reads

@@ -18,17 +18,6 @@ import (
 // Time one export request may take before the collector counts as down
 const exportTimeout = 30 * time.Second
 
-const (
-	// The endpoint, headers and protocol of the OpenTelemetry exporter environment
-	// Read only when no flag names an endpoint
-	envOTLPTracesEndpoint = "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"
-	envOTLPLogsEndpoint   = "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT"
-	envOTLPEndpoint       = "OTEL_EXPORTER_OTLP_ENDPOINT"
-	envOTLPHeaders        = "OTEL_EXPORTER_OTLP_HEADERS"
-	envOTLPProtocol       = "OTEL_EXPORTER_OTLP_PROTOCOL"
-	envOTLPTracesProtocol = "OTEL_EXPORTER_OTLP_TRACES_PROTOCOL"
-)
-
 // Repeatable Name=value flag of HTTP headers
 type headerFlag map[string]string
 
@@ -81,9 +70,10 @@ type exportFlags struct {
 
 // Where the export sends
 // 1. --endpoint names a traces URL and sends traces only with the --header headers
-// 2. else the OTEL_EXPORTER_OTLP variables with their headers
-// 3. the protocol is --protocol, then the environment, then http/protobuf
-func (f exportFlags) target(getenv func(string) string) (otel.Config, error) {
+// 2. else the otel key of config.json with the headers of the variable it names
+// 3. else the OTEL_EXPORTER_OTLP variables with their headers, since a person or an SDK producer may run it outside Claude Code
+// 4. the protocol is --protocol, then the config or the environment, then http/protobuf
+func (f exportFlags) target(saved *otelConfig, getenv func(string) string) (otel.Config, error) {
 	headers := headerFlag{}
 	maps.Copy(headers, f.headers)
 	cfg := otel.Config{Content: f.content}
@@ -91,6 +81,14 @@ func (f exportFlags) target(getenv func(string) string) (otel.Config, error) {
 	switch {
 	case f.endpoint != "":
 		cfg.Traces = f.endpoint
+	case saved != nil:
+		cfg.Traces, cfg.Logs = saved.endpoints()
+		protocol, cfg.Content = string(saved.Protocol), cfg.Content || saved.Content
+		if saved.HeadersEnv != "" {
+			if err := headers.fill(saved.HeadersEnv, getenv(saved.HeadersEnv)); err != nil {
+				return otel.Config{}, err
+			}
+		}
 	default:
 		cfg.Traces, cfg.Logs = otlpEndpoints(getenv)
 		protocol = cmp.Or(getenv(envOTLPTracesProtocol), getenv(envOTLPProtocol))
@@ -99,7 +97,7 @@ func (f exportFlags) target(getenv func(string) string) (otel.Config, error) {
 		}
 	}
 	if cfg.Traces == "" {
-		return otel.Config{}, fmt.Errorf("--endpoint %w", errRequired)
+		return otel.Config{}, fmt.Errorf("--endpoint %w, or save one with nodloop otel set", errRequired)
 	}
 	cfg.Protocol = otel.Protocol(cmp.Or(f.protocol, protocol, string(otel.ProtocolProtobuf)))
 	if !cfg.Protocol.Valid() {
@@ -156,7 +154,7 @@ func runExport(args []string, getenv func(string) string, now func() time.Time, 
 	if err != nil {
 		return fail(stderr, "export", err)
 	}
-	cfg, err := f.target(getenv)
+	cfg, err := f.target(a.cfg.otel, getenv)
 	if err != nil {
 		return fail(stderr, "export", err)
 	}

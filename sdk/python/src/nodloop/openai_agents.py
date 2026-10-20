@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import json
+import time
 from collections.abc import Callable
 from typing import Any
 
@@ -34,11 +35,14 @@ class NodloopHooks(RunHooks):
         self.withheld: list[Ref] = []
         # The run the final output was recorded as so a verdict can cite it
         self.run: str = ""
+        # When the instructions were built so the run records how long it took
+        self._started = time.monotonic()
 
     def instructions(self, base: str) -> Callable[[Any, Any], Any]:
         """Dynamic instructions: the base and the approved items under it"""
 
         async def build(context: Any, agent: Any) -> str:
+            self._started = time.monotonic()
             knowledge = await self.client.knowledge(self.producer, self.labels, self.holdout_key)
             self.applied, self.withheld = knowledge.items, knowledge.withheld
             return f"{base}\n\n{knowledge.text}" if knowledge.text else base
@@ -48,7 +52,13 @@ class NodloopHooks(RunHooks):
     async def on_agent_end(self, context: Any, agent: Any, output: Any) -> None:
         text = output if isinstance(output, str) else json.dumps(output, default=str)
         self.run = await self.client.record(
-            self.producer, text, labels=self.labels, applied=self.applied, withheld=self.withheld, holdout_key=self.holdout_key
+            self.producer,
+            text,
+            labels=self.labels,
+            applied=self.applied,
+            withheld=self.withheld,
+            holdout_key=self.holdout_key,
+            duration_ms=int((time.monotonic() - self._started) * 1000),
         )
 
 

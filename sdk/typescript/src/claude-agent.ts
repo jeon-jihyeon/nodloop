@@ -12,6 +12,8 @@ export class NodloopHooks {
   withheld: Ref[] = [];
   // The run the last answer was recorded as so a verdict can cite it
   run = "";
+  // When the prompt of the turn came so the run records how long the turn took
+  private started = performance.now();
 
   private readonly client: Client;
   private readonly producer: string;
@@ -37,6 +39,7 @@ export class NodloopHooks {
   }
 
   prompt: HookCallback = async () => {
+    this.started = performance.now();
     const knowledge = await this.client.knowledge(this.producer, this.labels, this.holdoutKey);
     this.applied = knowledge.items;
     this.withheld = knowledge.withheld ?? [];
@@ -47,7 +50,7 @@ export class NodloopHooks {
   // Claude Code sends the last answer under last_assistant_message and a turn without one records nothing
   stop: HookCallback = async (input) => {
     const answer = (input as { last_assistant_message?: string }).last_assistant_message ?? "";
-    if (answer.trim()) this.run = await this.client.record({ producer: this.producer, output: answer, labels: this.labels, applied: this.applied, withheld: this.withheld, holdoutKey: this.holdoutKey });
+    if (answer.trim()) this.run = await this.client.record({ producer: this.producer, output: answer, labels: this.labels, applied: this.applied, withheld: this.withheld, holdoutKey: this.holdoutKey, durationMs: performance.now() - this.started });
     return {};
   };
 

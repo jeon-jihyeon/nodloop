@@ -92,6 +92,9 @@ type Plan struct {
 	Runs []string
 	// Classify traces whose Ref is one of Runs whatever their age
 	Classify []string
+	// Turn traces older than the cutoff
+	// The run of a turn holds its duration once recorded and nothing cites a turn
+	Turns []string
 	// Run traces older than the cutoff that a citation or the first or last use of an approved version keeps
 	Kept int
 	// The run each classify trace of the plan judged
@@ -100,7 +103,7 @@ type Plan struct {
 
 // The plan without the runs cited and without the classify traces of those runs
 func (p Plan) without(cited map[string]bool) Plan {
-	out := Plan{Cutoff: p.Cutoff, Kept: p.Kept, judged: p.judged}
+	out := Plan{Cutoff: p.Cutoff, Kept: p.Kept, Turns: p.Turns, judged: p.judged}
 	for _, id := range p.Runs {
 		if cited[id] {
 			out.Kept++
@@ -122,8 +125,9 @@ func (p Plan) without(cited map[string]bool) Plan {
 // 3. the newest run that applied each approved version is kept so the health of the version still sees that use
 // 4. the first run that received each approved version applied or withheld is kept so the queue never takes a later run for the first
 // 5. a classify trace goes with the run it judged and with nothing else
-// 6. check and extract and replay traces are never planned
-// 7. any read error fails the plan since a verdict on a corrupt line would leave its run unprotected
+// 6. a turn trace older than the cutoff goes since its run holds the duration
+// 7. a trace of any other name such as check or refill is never planned
+// 8. any read error fails the plan since a verdict on a corrupt line would leave its run unprotected
 func (r *Retainer) Plan(ctx context.Context, cutoff time.Time) (Plan, error) {
 	plan := Plan{Cutoff: cutoff, judged: map[string]string{}}
 	if cutoff.IsZero() {
@@ -137,7 +141,7 @@ func (r *Retainer) Plan(ctx context.Context, cutoff time.Time) (Plan, error) {
 	if err != nil {
 		return Plan{}, err
 	}
-	found, err := r.traces.Heads(ctx, string(trace.NameRun), string(trace.NameClassify))
+	found, err := r.traces.Heads(ctx, string(trace.NameRun), string(trace.NameClassify), string(trace.NameTurn))
 	if err != nil {
 		return Plan{}, err
 	}
@@ -150,6 +154,7 @@ func (r *Retainer) Plan(ctx context.Context, cutoff time.Time) (Plan, error) {
 		keep[id] = true
 	}
 	removed := map[string]bool{}
+	plan.Turns = hs.turnsBefore(cutoff)
 	for _, t := range hs {
 		switch {
 		case t.Name != trace.NameRun || !t.Time.Before(cutoff):
@@ -198,7 +203,7 @@ func (r *Retainer) cited(ctx context.Context, items knowledge.Set) (map[string]b
 // 1. the store asks for the ids when its prune runs and the citations are read again then so a verdict recorded since the plan keeps its run
 // 2. a verdict writer takes no lock of the trace store so a verdict recorded while the store writes the lines it keeps can still lose its run
 func (r *Retainer) Apply(ctx context.Context, p Plan) (int, error) {
-	if len(p.Runs) == 0 {
+	if len(p.Runs) == 0 && len(p.Turns) == 0 {
 		return 0, nil
 	}
 	return r.traces.Prune(ctx, func(ctx context.Context) ([]string, error) {
@@ -211,7 +216,7 @@ func (r *Retainer) Apply(ctx context.Context, p Plan) (int, error) {
 			return nil, err
 		}
 		left := p.without(cited)
-		return slices.Concat(left.Runs, left.Classify), nil
+		return slices.Concat(left.Runs, left.Classify, left.Turns), nil
 	})
 }
 
@@ -224,8 +229,19 @@ func (r *Retainer) Prune(ctx context.Context, cutoff time.Time) (int, error) {
 	return r.Apply(ctx, plan)
 }
 
-// The run and classify traces newest first as a prune reads them
+// The run, classify and turn traces newest first as a prune reads them
 type heads trace.Traces
+
+// The turn traces older than the cutoff
+func (hs heads) turnsBefore(cutoff time.Time) []string {
+	var out []string
+	for _, t := range hs {
+		if t.Name == trace.NameTurn && t.Time.Before(cutoff) {
+			out = append(out, t.ID)
+		}
+	}
+	return out
+}
 
 // The runs that applied nothing as the reports count it are left out: a failed run and a run whose input does not read
 func (hs heads) inputs() iter.Seq2[trace.Trace, knowledge.RunInput] {
