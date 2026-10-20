@@ -1,6 +1,6 @@
 package main
 
-//go:generate go run . schema --write ../../schema
+//go:generate go run . schema --write ../../schema --sdk ../../sdk
 
 import (
 	"bytes"
@@ -425,6 +425,15 @@ func (c schemaCommand) write(dir string) error {
 	return c.writeFiles(dir, files)
 }
 
+// Writes the record types of both SDKs under their folder as the step of go generate
+func (c schemaCommand) writeSDK(dir string) error {
+	files, err := c.kinds.sdk()
+	if err != nil {
+		return err
+	}
+	return c.writeFiles(dir, files)
+}
+
 func (c schemaCommand) writeFiles(dir string, files map[string][]byte) error {
 	for _, name := range slices.Sorted(maps.Keys(files)) {
 		if err := os.WriteFile(filepath.Join(dir, name), files[name], 0o644); err != nil {
@@ -435,17 +444,31 @@ func (c schemaCommand) writeFiles(dir string, files map[string][]byte) error {
 	return nil
 }
 
+// The steps of go generate the flags name
+func (c schemaCommand) generate(dir, sdk string) error {
+	if dir != "" {
+		if err := c.write(dir); err != nil {
+			return err
+		}
+	}
+	if sdk != "" {
+		return c.writeSDK(sdk)
+	}
+	return nil
+}
+
 func runSchema(args []string, stdout, stderr io.Writer) int {
 	fs := newFlagSet("schema", stderr)
 	write := fs.String("write", "", "folder to write every published file into from the Go types of this build")
+	sdk := fs.String("sdk", "", "sdk folder to write the record types of the Python and TypeScript SDKs into from the Go types of this build")
 	kind, err := parseID(fs, args)
 	if err != nil {
 		return parseFailed(err)
 	}
 	cmd := schemaCommand{files: schema.Published, kinds: publishedKinds, out: stdout}
 	switch {
-	case *write != "":
-		err = cmd.write(*write)
+	case *write != "" || *sdk != "":
+		err = cmd.generate(*write, *sdk)
 	case kind != "":
 		err = cmd.show(kind)
 	default:
