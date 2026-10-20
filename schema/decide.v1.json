@@ -1,0 +1,325 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/jeon-jihyeon/nodloop/schema/decide.v1.json",
+  "title": "decide",
+  "description": "One change curate judged with the audit draw of the decision",
+  "type": "object",
+  "properties": {
+    "record_kind": {
+      "type": "string",
+      "const": "decide"
+    },
+    "record_id": {
+      "type": "string"
+    },
+    "id": {
+      "type": "string"
+    },
+    "name": {
+      "type": "string",
+      "const": "decide"
+    },
+    "session_id": {
+      "type": "string"
+    },
+    "subject": {
+      "type": "string"
+    },
+    "ref": {
+      "type": "string"
+    },
+    "time": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "model": {
+      "type": "string"
+    },
+    "input": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "add",
+            "update",
+            "join",
+            "drop",
+            "withdraw",
+            "compaction",
+            "reanchor",
+            "widen",
+            "activate"
+          ]
+        },
+        "id": {
+          "type": "string"
+        },
+        "version": {
+          "type": "integer"
+        },
+        "compaction": {
+          "type": "string"
+        },
+        "old": {
+          "type": [
+            "null",
+            "array"
+          ],
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "version": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "id",
+              "version"
+            ]
+          }
+        },
+        "extract": {
+          "type": "string"
+        },
+        "signal": {
+          "type": "string"
+        },
+        "anchor": {
+          "type": "integer"
+        },
+        "diff": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "anchor"
+      ]
+    },
+    "output": {
+      "type": "object",
+      "properties": {
+        "tier": {
+          "type": "integer"
+        },
+        "rule_code": {
+          "type": "string",
+          "enum": [
+            "same_as_item",
+            "same_as_candidate",
+            "no_evidence",
+            "temp_scope",
+            "person_item",
+            "scope_wider",
+            "veto",
+            "room",
+            "kind_closed",
+            "paused",
+            "proposal",
+            "drift",
+            "judge_against",
+            "judge_undecided",
+            "judge_split"
+          ]
+        },
+        "judge": {
+          "type": "string"
+        },
+        "outcome": {
+          "type": "string",
+          "enum": [
+            "conform",
+            "against",
+            "undecided",
+            "split"
+          ]
+        },
+        "vote": {
+          "type": [
+            "null",
+            "number"
+          ]
+        },
+        "bin": {
+          "type": "string",
+          "enum": [
+            "b1",
+            "b2",
+            "b3",
+            "b4"
+          ]
+        },
+        "action": {
+          "type": "string",
+          "enum": [
+            "apply",
+            "withdraw",
+            "drop",
+            "join",
+            "ask",
+            "shadow",
+            "retry"
+          ]
+        },
+        "reason": {
+          "type": "string",
+          "enum": [
+            "duplicate",
+            "no_evidence",
+            "temp_scope",
+            "conflict",
+            "words",
+            "compaction",
+            "person"
+          ]
+        },
+        "failure": {
+          "type": "string",
+          "enum": [
+            "hard",
+            "repairable",
+            "underexplored",
+            "unpromising"
+          ]
+        },
+        "reopen": {
+          "type": "string",
+          "enum": [
+            "other_session",
+            "permanent_place",
+            "next_pass",
+            "person_only"
+          ]
+        }
+      },
+      "required": [
+        "tier",
+        "action"
+      ]
+    },
+    "error": {
+      "type": "string"
+    },
+    "usage": {
+      "type": "object",
+      "properties": {
+        "input_tokens": {
+          "type": "integer"
+        },
+        "output_tokens": {
+          "type": "integer"
+        },
+        "thinking_tokens": {
+          "type": "integer"
+        },
+        "cache_read": {
+          "type": "integer"
+        },
+        "cache_create": {
+          "type": "integer"
+        },
+        "cost_usd": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "input_tokens",
+        "output_tokens",
+        "cache_read",
+        "cache_create",
+        "cost_usd"
+      ]
+    },
+    "duration_ms": {
+      "type": "integer"
+    },
+    "tags": {
+      "type": [
+        "null",
+        "array"
+      ],
+      "items": {
+        "type": "string"
+      }
+    },
+    "producer": {
+      "type": "string"
+    },
+    "labels": {
+      "type": "object",
+      "additionalProperties": {
+        "type": [
+          "null",
+          "array"
+        ],
+        "items": {
+          "type": "string"
+        }
+      }
+    },
+    "draw": {
+      "type": [
+        "null",
+        "object"
+      ],
+      "properties": {
+        "cycle_id": {
+          "type": "string"
+        },
+        "policy_version": {
+          "type": "string"
+        },
+        "unit": {
+          "type": "string"
+        },
+        "seed": {
+          "type": "string"
+        },
+        "draw_id": {
+          "type": "string"
+        },
+        "p": {
+          "type": [
+            "null",
+            "number"
+          ]
+        },
+        "drawn": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "cycle_id",
+        "policy_version",
+        "drawn"
+      ]
+    },
+    "source": {
+      "type": "string",
+      "enum": [
+        "push",
+        "manual",
+        "command"
+      ]
+    },
+    "schema_version": {
+      "type": "integer",
+      "const": 1
+    }
+  },
+  "required": [
+    "record_kind",
+    "record_id",
+    "id",
+    "name",
+    "time",
+    "input",
+    "usage",
+    "duration_ms",
+    "schema_version"
+  ]
+}

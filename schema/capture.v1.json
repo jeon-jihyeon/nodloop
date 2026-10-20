@@ -1,0 +1,182 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/jeon-jihyeon/nodloop/schema/capture.v1.json",
+  "title": "capture",
+  "description": "One pass of the capture over a transcript of a session with the records it wrote",
+  "type": "object",
+  "properties": {
+    "record_kind": {
+      "type": "string",
+      "const": "capture"
+    },
+    "record_id": {
+      "type": "string"
+    },
+    "id": {
+      "type": "string"
+    },
+    "name": {
+      "type": "string",
+      "const": "capture"
+    },
+    "session_id": {
+      "type": "string"
+    },
+    "subject": {
+      "type": "string"
+    },
+    "ref": {
+      "type": "string"
+    },
+    "time": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "model": {
+      "type": "string"
+    },
+    "input": {
+      "type": "object",
+      "properties": {
+        "from": {
+          "type": "integer"
+        },
+        "to": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "from",
+        "to"
+      ]
+    },
+    "output": {
+      "type": "object",
+      "properties": {
+        "messages": {
+          "type": "integer"
+        },
+        "verdicts": {
+          "type": "integer"
+        },
+        "answers": {
+          "type": "integer"
+        },
+        "signals": {
+          "type": "integer"
+        },
+        "runs": {
+          "type": [
+            "null",
+            "array"
+          ],
+          "items": {
+            "type": "string"
+          }
+        },
+        "records": {
+          "type": [
+            "null",
+            "array"
+          ],
+          "items": {
+            "type": "string"
+          }
+        },
+        "classify": {
+          "type": [
+            "null",
+            "array"
+          ],
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "messages",
+        "verdicts",
+        "answers",
+        "signals",
+        "runs",
+        "records",
+        "classify"
+      ]
+    },
+    "error": {
+      "type": "string"
+    },
+    "usage": {
+      "type": "object",
+      "properties": {
+        "input_tokens": {
+          "type": "integer"
+        },
+        "output_tokens": {
+          "type": "integer"
+        },
+        "thinking_tokens": {
+          "type": "integer"
+        },
+        "cache_read": {
+          "type": "integer"
+        },
+        "cache_create": {
+          "type": "integer"
+        },
+        "cost_usd": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "input_tokens",
+        "output_tokens",
+        "cache_read",
+        "cache_create",
+        "cost_usd"
+      ]
+    },
+    "duration_ms": {
+      "type": "integer"
+    },
+    "tags": {
+      "type": [
+        "null",
+        "array"
+      ],
+      "items": {
+        "type": "string"
+      }
+    },
+    "producer": {
+      "type": "string"
+    },
+    "labels": {
+      "type": "object",
+      "additionalProperties": {
+        "type": [
+          "null",
+          "array"
+        ],
+        "items": {
+          "type": "string"
+        }
+      }
+    },
+    "schema_version": {
+      "type": "integer",
+      "const": 1
+    }
+  },
+  "required": [
+    "record_kind",
+    "record_id",
+    "id",
+    "name",
+    "time",
+    "input",
+    "usage",
+    "duration_ms",
+    "schema_version"
+  ]
+}

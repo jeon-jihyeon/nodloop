@@ -64,6 +64,14 @@ const (
 	NameRefill      Name = "refill"      // the items a session start added again after the context of the session was emptied
 	NameTurn        Name = "turn"        // the start of a turn of a session that the stop reads for the duration of its run
 	NameCompact     Name = "compact"     // one drafting of a compaction through a model
+	// A rules file a session loaded with the HMAC of its content
+	NameInstructions Name = "instructions"
+	NameCapture      Name = "capture" // one pass of the capture over a transcript of a session
+	NameDecide       Name = "decide"  // one change curate judged with the audit draw of the decision
+	NameKnob         Name = "knob"    // the knobs and the seed of a cycle at its start or at a narrowing inside it
+	NameAnchor       Name = "anchor"  // one version of the person's judgment on record that curate reads
+	NameExpose       Name = "expose"  // a question or a notice shown to the person
+	NameAnswer       Name = "answer"  // the person's answer to a question or no answer after its second round
 	// One action of a person or an agent on what nodloop prepared or carried out with the proof of its caller
 	NameIntervention Name = "intervention"
 )
@@ -72,7 +80,7 @@ const (
 func Names() []Name {
 	return []Name{
 		NameRun, NameCheck, NameClassify, NameExtract, NameReplay, NameConsolidate, NameRefill, NameTurn, NameCompact,
-		NameIntervention,
+		NameInstructions, NameCapture, NameDecide, NameKnob, NameAnchor, NameExpose, NameAnswer, NameIntervention,
 	}
 }
 

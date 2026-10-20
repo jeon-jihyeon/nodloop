@@ -158,6 +158,141 @@
       "text": []
     },
     {
+      "kind": "instructions",
+      "version": 1,
+      "versions": [
+        1
+      ],
+      "store": "traces.jsonl",
+      "schema": "https://github.com/jeon-jihyeon/nodloop/schema/instructions.v1.json",
+      "description": "A rules file a session loaded with the HMAC of its content",
+      "links": [
+        "session_id"
+      ],
+      "text": [
+        "input.path"
+      ]
+    },
+    {
+      "kind": "capture",
+      "version": 1,
+      "versions": [
+        1
+      ],
+      "store": "traces.jsonl",
+      "schema": "https://github.com/jeon-jihyeon/nodloop/schema/capture.v1.json",
+      "description": "One pass of the capture over a transcript of a session with the records it wrote",
+      "links": [
+        "session_id",
+        "output.runs",
+        "output.records",
+        "output.classify"
+      ],
+      "text": []
+    },
+    {
+      "kind": "decide",
+      "version": 1,
+      "versions": [
+        1
+      ],
+      "store": "traces.jsonl",
+      "schema": "https://github.com/jeon-jihyeon/nodloop/schema/decide.v1.json",
+      "description": "One change curate judged with the audit draw of the decision",
+      "links": [
+        "ref",
+        "source",
+        "draw.cycle_id",
+        "input.id",
+        "input.version",
+        "input.compaction",
+        "input.old",
+        "input.extract",
+        "input.signal",
+        "input.anchor",
+        "output.judge"
+      ],
+      "text": []
+    },
+    {
+      "kind": "knob",
+      "version": 1,
+      "versions": [
+        1
+      ],
+      "store": "traces.jsonl",
+      "schema": "https://github.com/jeon-jihyeon/nodloop/schema/knob.v1.json",
+      "description": "The knobs, the seed and the judge of a cycle at its start or at a narrowing inside it",
+      "links": [
+        "subject",
+        "input.cycle_id",
+        "input.policy_version",
+        "input.before",
+        "input.judge.sets"
+      ],
+      "text": []
+    },
+    {
+      "kind": "anchor",
+      "version": 1,
+      "versions": [
+        1
+      ],
+      "store": "traces.jsonl",
+      "schema": "https://github.com/jeon-jihyeon/nodloop/schema/anchor.v1.json",
+      "description": "One version of the judgment of the person on record that curate reads",
+      "links": [
+        "input.version",
+        "input.refs",
+        "input.cause"
+      ],
+      "text": [
+        "input.files.path"
+      ]
+    },
+    {
+      "kind": "expose",
+      "version": 1,
+      "versions": [
+        1
+      ],
+      "store": "traces.jsonl",
+      "schema": "https://github.com/jeon-jihyeon/nodloop/schema/expose.v1.json",
+      "description": "A question or a notice shown to the person",
+      "links": [
+        "session_id",
+        "ref",
+        "source",
+        "draw.cycle_id",
+        "input.change",
+        "input.run"
+      ],
+      "text": []
+    },
+    {
+      "kind": "answer",
+      "version": 1,
+      "versions": [
+        1
+      ],
+      "store": "traces.jsonl",
+      "schema": "https://github.com/jeon-jihyeon/nodloop/schema/answer.v1.json",
+      "description": "The answer of the person to a question or no answer after its second round",
+      "links": [
+        "session_id",
+        "ref",
+        "source",
+        "draw.cycle_id",
+        "input.decide",
+        "input.change",
+        "input.overturn",
+        "input.authority",
+        "input.proof",
+        "output.records"
+      ],
+      "text": []
+    },
+    {
       "kind": "intervention",
       "version": 1,
       "versions": [
