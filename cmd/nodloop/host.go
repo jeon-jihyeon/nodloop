@@ -24,10 +24,11 @@ const (
 const hostHint = "Use claude-code, codex, cursor or copilot"
 
 // The hooks each host runs
-// The prompt hook of Cursor carries no context and Copilot drops the output of its prompt hook
+// 1. the prompt hook of Cursor carries no context and Copilot drops the output of its prompt hook
 // The session start of both adds the items instead
+// 2. only Claude Code reports the rules files it loads
 var hostActions = map[host][]string{
-	hostClaudeCode: {"start", "prompt", "stop", "subagent"},
+	hostClaudeCode: {"start", "prompt", "stop", "subagent", "instructions"},
 	hostCodex:      {"start", "prompt", "stop", "subagent"},
 	hostCursor:     {"start", "stop"},
 	hostCopilot:    {"start", "stop"},

@@ -22,7 +22,7 @@ commands:
                             Record one output of any producer as a run and print its id for feedback.
                             Output that is not JSON is kept as text. --withheld names the items knowledge for printed as
                             withheld and --holdout-key the key it drew with so report effect counts the run in its arm
-  hook start | hook prompt | hook stop | hook subagent [--host claude-code|codex|cursor|copilot]
+  hook start | hook prompt | hook stop | hook subagent | hook instructions [--host claude-code|codex|cursor|copilot]
                             The conversation hooks the plugin registers. prompt adds the approved items of
                             producer session for the repo and dir of the place that the context lacks, so each version is
                             added once per conversation. The place is cwd while it lies inside CLAUDE_PROJECT_DIR and that
@@ -31,7 +31,8 @@ commands:
                             after a compact or a clear and subagent adds them to a subagent. stop records the answer as a
                             run, marked continued when a stop hook continued the turn, and drafts the lesson of the newest
                             answer before it in the background when the conversation recorded a correction no record
-                            cites. All exit 0.
+                            cites. instructions records the path and an HMAC of the content of each CLAUDE.md and rules
+                            file Claude Code loads, leaving out approved.md and auto memory. All exit 0.
                             --host reads the input and writes the answer of that agent and labels the run host,
                             claude-code by default. codex runs every hook. cursor and copilot run start and stop alone:
                             start adds every item and stop records no run since their input holds no answer. Their hook
@@ -198,6 +199,12 @@ commands:
   config session_mode [<mode>]
                             Print or save how a conversation records the verdicts it infers: deferred, manual or off.
                             deferred by default and NODLOOP_SESSION overrides it
+  anchor [add <path> | remove <path>]
+                            List what nodloop reads as your judgment on record in every place: the lessons you approved,
+                            the files you designate and the CLAUDE.md and rules files your sessions there loaded, and
+                            record a new anchor version when one of them changed. add and remove save a file you keep as
+                            direction, such as a plan or a lessons file, in config.json, only at an interactive terminal
+                            outside an agent session. A file that cannot be read decides nothing
   classifier set <point> --url <u> [--model <m>] [--key-env <ENV>]
                             Ask an endpoint of the Jev wire format the README shows at a decision point before claude,
                             such as http://localhost:8000/v1/classify. claude answers when the endpoint fails or is less
@@ -305,6 +312,7 @@ func run(args []string, getenv func(string) string, stdin io.Reader, stdout io.W
 			return runMCP(args, getenv, detached(homeDir(getenv("HOME")).hookLog()), time.Now, stdin, stdout, stderr)
 		},
 		"config":     func(args []string) int { return runConfig(args, getenv, person, stdout, stderr) },
+		"anchor":     func(args []string) int { return runAnchor(args, getenv, time.Now, person, stdout, stderr) },
 		"classifier": func(args []string) int { return runClassifier(args, getenv, time.Now, stdout, stderr) },
 		"server":     func([]string) int { return fail(stderr, "server", errServerMoved) },
 		"doctor":     func(args []string) int { return runDoctor(args, getenv, time.Now, stdout, stderr) },

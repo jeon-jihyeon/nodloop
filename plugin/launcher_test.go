@@ -281,8 +281,9 @@ func TestLauncherStableLink(t *testing.T) {
 // 1. every hook runs synchronously with no async flag so a stop records its run before the next prompt reads it
 // The async flags and the timeout decode so a hook that sets one fails the comparison
 // 2. a subagent start adds the items since no prompt hook runs inside a subagent
-// 3. Codex reads the same events with its host named
+// 3. Codex reads the same events with its host named and no instructions hook since it never runs one
 // Codex moves none of the context nodloop adds into a file since contextRunes already bounds it
+// 4. a rules file Claude Code loads is recorded with no matcher so every load reason reaches the anchor
 func TestHooksJSON(t *testing.T) {
 	type hook struct {
 		Type         string `json:"type"`
@@ -304,11 +305,12 @@ func TestHooksJSON(t *testing.T) {
 		args string
 		want map[string][]group
 	}{
-		{"the Claude Code hooks run start, prompt, stop and subagent", "hooks.json", map[string][]group{
-			"SessionStart":     {{[]hook{{Type: "command", Command: launcher + "start"}}}},
-			"UserPromptSubmit": {{[]hook{{Type: "command", Command: launcher + "prompt"}}}},
-			"Stop":             {{[]hook{{Type: "command", Command: launcher + "stop"}}}},
-			"SubagentStart":    {{[]hook{{Type: "command", Command: launcher + "subagent"}}}},
+		{"the Claude Code hooks run start, prompt, stop, subagent and instructions", "hooks.json", map[string][]group{
+			"SessionStart":       {{[]hook{{Type: "command", Command: launcher + "start"}}}},
+			"UserPromptSubmit":   {{[]hook{{Type: "command", Command: launcher + "prompt"}}}},
+			"Stop":               {{[]hook{{Type: "command", Command: launcher + "stop"}}}},
+			"SubagentStart":      {{[]hook{{Type: "command", Command: launcher + "subagent"}}}},
+			"InstructionsLoaded": {{[]hook{{Type: "command", Command: launcher + "instructions"}}}},
 		}},
 		{"the Codex hooks name the host", "codex.json", map[string][]group{
 			"SessionStart":     {{[]hook{{Type: "command", Command: launcher + "start --host codex", ContextLimit: &spill}}}},
