@@ -17,6 +17,9 @@ type Feedback struct {
 	Reviewer   string          `json:"reviewer"`
 	Proof      string          `json:"proof,omitempty"`
 	Audit      bool            `json:"audit,omitempty"`
+	// The version of the published schema verdict
+	// A line of an earlier release lacks it and reads as version 1
+	SchemaVersion int `json:"schema_version,omitempty"`
 }
 
 // Empty fields mean all

@@ -19,6 +19,7 @@ import (
 
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge/file"
+	"github.com/jeon-jihyeon/nodloop/internal/schema"
 	"github.com/jeon-jihyeon/nodloop/internal/testkit"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
 	"github.com/jeon-jihyeon/nodloop/internal/veto"
@@ -2011,4 +2012,35 @@ func TestNewIDs(t *testing.T) {
 	got := ids("k-")
 
 	assert.Regexp(t, `^k-19a0b0c0d0e[0-9a-f]{4}$`, got)
+}
+
+// Every record the ledger appends through propose, approve and retire validates against the published schema knowledge
+func TestLedgerRecordsValidate(t *testing.T) {
+	ctx := context.Background()
+	store, err := file.New(t.TempDir())
+	require.NoError(t, err)
+	now := time.Date(2026, 9, 23, 0, 0, 0, 0, time.UTC)
+	l := knowledge.NewLedger(store, vetofile.NewApprovedFile(t.TempDir(), "records"), func() time.Time { return now }, knowledge.NewIDs(func() time.Time { return now }))
+	_, _, err = l.Propose(ctx, knowledge.Knowledge{
+		ID: "no-sed", Kind: knowledge.KindJudgment, Content: "never sed -i", Author: "ann", Run: repoRun(),
+		Evidence: knowledge.Evidence{FeedbackTraceIDs: []string{"t1"}},
+		Veto: &knowledge.Veto{
+			Tool: "Bash", When: []knowledge.VetoCondition{{Field: "command", Match: `sed\s+-i`}}, Example: map[string]any{"command": "sed -i s/a/b/ f"},
+		},
+	})
+	require.NoError(t, err)
+	require.NoError(t, testkit.Err(l.Approve(ctx, "no-sed", 1, "ann")))
+	require.NoError(t, testkit.Err(l.Retire(ctx, "no-sed", 1, "ann")))
+
+	written, err := store.List(ctx)
+	require.NoError(t, err)
+	var failures []error
+	for _, r := range written {
+		if err := schema.Validate("knowledge", r); err != nil {
+			failures = append(failures, err)
+		}
+	}
+
+	assert.Len(t, written, 3)
+	assert.Empty(t, failures)
 }

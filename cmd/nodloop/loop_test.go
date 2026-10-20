@@ -49,8 +49,8 @@ func TestRunReportRecords(t *testing.T) {
 		{"effect as JSON", args{[]string{"effect", "--json"}, false}, want{0, arms, ""}},
 		{"replay as JSON", args{[]string{"replay", "--json"}, false}, want{0, replays, ""}},
 		{"replay as text", args{[]string{"replay"}, false}, want{0, "replay\tgit-c\tv1\tpassed\tmissed 0 of 1\toverreach 0 of 0\t2026-10-07T12:00:00Z\n", ""}},
-		{"a report that cannot read its records fails", args{[]string{"replay", "--json"}, true}, want{1, "", "nodloop report: traces.jsonl has corrupt lines: byte 326: "}},
-		{"a text report that cannot read its records fails", args{[]string{"replay"}, true}, want{1, "", "nodloop report: traces.jsonl has corrupt lines: byte 326: "}},
+		{"a report that cannot read its records fails", args{[]string{"replay", "--json"}, true}, want{1, "", "nodloop report: traces.jsonl has corrupt lines: byte 345: "}},
+		{"a text report that cannot read its records fails", args{[]string{"replay"}, true}, want{1, "", "nodloop report: traces.jsonl has corrupt lines: byte 345: "}},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {

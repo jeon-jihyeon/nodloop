@@ -147,6 +147,9 @@ commands:
   trace list [--name <n>] [--session <id>] [--subject <s>] [--limit <n>]
                             List traces newest first
   trace show <id>           Print one trace as JSON
+  schema [<kind>]           Print the published JSON Schema of the newest version of a record kind, or every kind with
+                            its newest version and the file it is stored in. Every record carries schema_version, and a
+                            record of an earlier release without it is version 1
   records prune [--dry-run | --daily]
                             Remove the runs older than config retention that no verdict, outcome or knowledge version
                             cites, with the classify traces of those runs, whatever the daily marker says. The first
@@ -285,6 +288,7 @@ func run(args []string, getenv func(string) string, stdin io.Reader, stdout io.W
 		"help":    func(args []string) int { return runHelp(args, stdout) },
 		"trace":   func(args []string) int { return runTrace(args, getenv, time.Now, stdout, stderr) },
 		"records": func(args []string) int { return runRecords(args, getenv, time.Now, stdout, stderr) },
+		"schema":  func(args []string) int { return runSchema(args, stdout, stderr) },
 		"run":     func(args []string) int { return runRun(args, getenv, time.Now, stdout, stderr) },
 		"hook": func(args []string) int {
 			return runHook(args, getenv, detached(homeDir(getenv("HOME")).hookLog()), time.Now, stdin, stdout, stderr)

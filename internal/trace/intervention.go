@@ -15,6 +15,10 @@ const (
 	AuthorityAgent  Authority = "agent"  // no proof so the write is a proposal the person is asked about
 )
 
+func Authorities() []Authority {
+	return []Authority{AuthorityPerson, AuthorityAgent}
+}
+
 // What shows that the caller of a write is a person
 type Proof string
 
@@ -49,8 +53,12 @@ const (
 	ActionJudge Action = "judge" // keep, undo or scope one item version or a compaction
 )
 
+func Actions() []Action {
+	return []Action{ActionJudge}
+}
+
 func (a Action) valid() bool {
-	return a == ActionJudge
+	return slices.Contains(Actions(), a)
 }
 
 // What a judgment does to its target
@@ -62,8 +70,12 @@ const (
 	ChoiceScope Choice = "scope" // approves a candidate in the labels picked
 )
 
+func Choices() []Choice {
+	return []Choice{ChoiceKeep, ChoiceUndo, ChoiceScope}
+}
+
 func (c Choice) valid() bool {
-	return slices.Contains([]Choice{ChoiceKeep, ChoiceUndo, ChoiceScope}, c)
+	return slices.Contains(Choices(), c)
 }
 
 // The input of an intervention trace
@@ -94,7 +106,7 @@ type Written struct {
 }
 
 // What an intervention trace holds as its output
-type interventionOutput struct {
+type InterventionOutput struct {
 	Records []Written `json:"records"`
 }
 
@@ -111,7 +123,7 @@ func (in Intervention) Trace(wrote []Written, session string, now time.Time) (Tr
 	if err != nil {
 		return Trace{}, err
 	}
-	output, err := json.Marshal(interventionOutput{Records: append([]Written{}, wrote...)})
+	output, err := json.Marshal(InterventionOutput{Records: append([]Written{}, wrote...)})
 	if err != nil {
 		return Trace{}, err
 	}

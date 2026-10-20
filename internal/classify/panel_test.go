@@ -18,6 +18,7 @@ import (
 	"github.com/jeon-jihyeon/nodloop/internal/classify"
 	"github.com/jeon-jihyeon/nodloop/internal/classify/classifymock"
 	"github.com/jeon-jihyeon/nodloop/internal/record"
+	"github.com/jeon-jihyeon/nodloop/internal/schema"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
 	tracefile "github.com/jeon-jihyeon/nodloop/internal/trace/file"
 )
@@ -160,6 +161,7 @@ func TestPanelClassify(t *testing.T) {
 			require.NoError(t, err)
 			assert.NotContains(t, string(raw), "go vet", "no text of the change")
 			assert.NotContains(t, string(raw), "lint before tests", "no text of the anchor")
+			assert.NoError(t, schema.Validate(string(trace.NameClassify), recorded[0]))
 		})
 	}
 }

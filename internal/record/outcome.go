@@ -10,6 +10,9 @@ type Outcome struct {
 	ConfirmedCause string    `json:"confirmed_cause,omitempty"`
 	Note           string    `json:"note,omitempty"`
 	Reviewer       string    `json:"reviewer"`
+	// The version of the published schema outcome
+	// A line of an earlier release lacks it and reads as version 1
+	SchemaVersion int `json:"schema_version,omitempty"`
 }
 
 // An empty trace id means all

@@ -18,12 +18,12 @@ const (
 	KindJudgment Kind = "judgment" // when a cause applies with its check order and hold conditions and response
 )
 
+func Kinds() []Kind {
+	return []Kind{KindMeaning, KindJudgment}
+}
+
 func (k Kind) valid() bool {
-	switch k {
-	case KindMeaning, KindJudgment:
-		return true
-	}
-	return false
+	return slices.Contains(Kinds(), k)
 }
 
 type Status string
@@ -35,12 +35,12 @@ const (
 	StatusSuperseded Status = "superseded" // replaced by a newer approved version of the same id
 )
 
+func Statuses() []Status {
+	return []Status{StatusCandidate, StatusApproved, StatusRetired, StatusSuperseded}
+}
+
 func (s Status) valid() bool {
-	switch s {
-	case StatusCandidate, StatusApproved, StatusRetired, StatusSuperseded:
-		return true
-	}
-	return false
+	return slices.Contains(Statuses(), s)
 }
 
 // Whether a version in this status can be the current one of its id
@@ -62,12 +62,12 @@ const (
 	BasisVerified Basis = "verified" // an outcome confirmed it
 )
 
+func Bases() []Basis {
+	return []Basis{BasisStated, BasisVerified}
+}
+
 func (b Basis) valid() bool {
-	switch b {
-	case BasisStated, BasisVerified:
-		return true
-	}
-	return false
+	return slices.Contains(Bases(), b)
 }
 
 type Knowledge struct {

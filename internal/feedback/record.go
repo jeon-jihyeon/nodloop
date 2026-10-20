@@ -25,11 +25,17 @@ func RestoreAll(rs []record.Feedback) Records {
 	return out
 }
 
-// The line a store writes for the verdict
+// The versions of the published schemas verdict and outcome
+const (
+	VerdictVersion = 1
+	OutcomeVersion = 1
+)
+
+// The line a store writes for the verdict under the current version of its schema
 func (f Feedback) Record() record.Feedback {
 	return record.Feedback{
 		TraceID: f.TraceID, Time: f.Time, Verdict: string(f.Verdict), ReasonCode: string(f.ReasonCode), Reason: f.Reason,
-		Edited: f.Edited, Reviewer: f.Reviewer, Proof: string(f.Proof), Audit: f.Audit,
+		Edited: f.Edited, Reviewer: f.Reviewer, Proof: string(f.Proof), Audit: f.Audit, SchemaVersion: VerdictVersion,
 	}
 }
 
@@ -53,10 +59,10 @@ func RestoreOutcomes(rs []record.Outcome) Outcomes {
 	return out
 }
 
-// The line a store writes for the outcome
+// The line a store writes for the outcome under the current version of its schema
 func (o Outcome) Record() record.Outcome {
 	return record.Outcome{
 		TraceID: o.TraceID, Time: o.Time, Result: string(o.Result), ConfirmedCause: o.ConfirmedCause, Note: o.Note,
-		Reviewer: o.Reviewer,
+		Reviewer: o.Reviewer, SchemaVersion: OutcomeVersion,
 	}
 }

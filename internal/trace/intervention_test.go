@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeon-jihyeon/nodloop/internal/schema"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
 )
 
@@ -99,6 +100,7 @@ func TestInterventionTraceFields(t *testing.T) {
 	var back trace.Intervention
 	require.NoError(t, json.Unmarshal(got.Input, &back))
 	assert.Equal(t, trace.AuthorityAgent, back.Authority)
+	assert.NoError(t, schema.Validate(string(trace.NameIntervention), got.Record()))
 }
 
 func TestProofAuthority(t *testing.T) {

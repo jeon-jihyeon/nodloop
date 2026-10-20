@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/jeon-jihyeon/nodloop/schema/guard.v1.json",
+  "title": "guard",
+  "description": "A tool call the guard blocked or handed to the person",
+  "type": "object",
+  "properties": {
+    "record_kind": {
+      "type": "string",
+      "const": "guard"
+    },
+    "record_id": {
+      "type": "string"
+    },
+    "time": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "session_id": {
+      "type": "string"
+    },
+    "cwd": {
+      "type": "string"
+    },
+    "tool": {
+      "type": "string"
+    },
+    "veto": {
+      "type": "string"
+    },
+    "action": {
+      "type": "string",
+      "enum": [
+        "block",
+        "ask"
+      ]
+    },
+    "schema_version": {
+      "type": "integer",
+      "const": 1
+    }
+  },
+  "required": [
+    "record_kind",
+    "record_id",
+    "time",
+    "cwd",
+    "tool",
+    "veto",
+    "action",
+    "schema_version"
+  ]
+}

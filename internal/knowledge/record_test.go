@@ -2,6 +2,7 @@ package knowledge_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"testing"
 	"time"
 
@@ -53,11 +54,12 @@ func TestKnowledgeRecord(t *testing.T) {
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			want, err := json.Marshal(tc.args)
+			model, err := json.Marshal(tc.args)
 			require.NoError(t, err)
+			want := fmt.Sprintf(`%s,"schema_version":%d}`, model[:len(model)-1], knowledge.SchemaVersion)
 			got, err := json.Marshal(tc.args.Record())
 			require.NoError(t, err)
-			assert.Equal(t, string(want), string(got), "the line encodes to the bytes of the version")
+			assert.Equal(t, want, string(got), "the line encodes to the bytes of the version and the version of its schema")
 			assert.Equal(t, tc.args, knowledge.Restore(tc.args.Record()))
 		})
 	}

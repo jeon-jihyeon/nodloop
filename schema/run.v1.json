@@ -1,0 +1,183 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/jeon-jihyeon/nodloop/schema/run.v1.json",
+  "title": "run",
+  "description": "An output a producer recorded with the items it applied or a holdout withheld",
+  "type": "object",
+  "properties": {
+    "record_kind": {
+      "type": "string",
+      "const": "run"
+    },
+    "record_id": {
+      "type": "string"
+    },
+    "id": {
+      "type": "string"
+    },
+    "name": {
+      "type": "string",
+      "const": "run"
+    },
+    "session_id": {
+      "type": "string"
+    },
+    "subject": {
+      "type": "string"
+    },
+    "ref": {
+      "type": "string"
+    },
+    "time": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "model": {
+      "type": "string"
+    },
+    "input": {
+      "type": "object",
+      "properties": {
+        "applied": {
+          "type": [
+            "null",
+            "array"
+          ],
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "version": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "id",
+              "version"
+            ]
+          }
+        },
+        "plugin": {
+          "type": "string"
+        },
+        "withheld": {
+          "type": [
+            "null",
+            "array"
+          ],
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "version": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "id",
+              "version"
+            ]
+          }
+        },
+        "drawn": {
+          "type": "boolean"
+        },
+        "share": {
+          "type": "number"
+        },
+        "scheme": {
+          "type": "integer"
+        },
+        "unit": {
+          "type": "string"
+        },
+        "continued": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "applied"
+      ]
+    },
+    "output": true,
+    "error": {
+      "type": "string"
+    },
+    "usage": {
+      "type": "object",
+      "properties": {
+        "input_tokens": {
+          "type": "integer"
+        },
+        "output_tokens": {
+          "type": "integer"
+        },
+        "thinking_tokens": {
+          "type": "integer"
+        },
+        "cache_read": {
+          "type": "integer"
+        },
+        "cache_create": {
+          "type": "integer"
+        },
+        "cost_usd": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "input_tokens",
+        "output_tokens",
+        "cache_read",
+        "cache_create",
+        "cost_usd"
+      ]
+    },
+    "duration_ms": {
+      "type": "integer"
+    },
+    "tags": {
+      "type": [
+        "null",
+        "array"
+      ],
+      "items": {
+        "type": "string"
+      }
+    },
+    "producer": {
+      "type": "string"
+    },
+    "labels": {
+      "type": "object",
+      "additionalProperties": {
+        "type": [
+          "null",
+          "array"
+        ],
+        "items": {
+          "type": "string"
+        }
+      }
+    },
+    "schema_version": {
+      "type": "integer",
+      "const": 1
+    }
+  },
+  "required": [
+    "record_kind",
+    "record_id",
+    "id",
+    "name",
+    "time",
+    "input",
+    "usage",
+    "duration_ms",
+    "schema_version"
+  ]
+}

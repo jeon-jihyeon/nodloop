@@ -17,6 +17,7 @@ import (
 	"github.com/jeon-jihyeon/nodloop/internal/llm"
 	"github.com/jeon-jihyeon/nodloop/internal/llm/llmmock"
 	"github.com/jeon-jihyeon/nodloop/internal/record"
+	"github.com/jeon-jihyeon/nodloop/internal/schema"
 	"github.com/jeon-jihyeon/nodloop/internal/testkit"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
 )
@@ -193,6 +194,7 @@ func TestCompactRunsCheck(t *testing.T) {
 	assert.Equal(t, "claude-haiku-4-5", checks[0].Model)
 	assert.Equal(t, record.Usage{InputTokens: 12, OutputTokens: 3, CostUSD: 0.01}, checks[0].Usage)
 	assert.Equal(t, int64(2000), checks[0].DurationMS)
+	assert.NoError(t, schema.Validate(string(trace.NameCheck), checks[0]))
 }
 
 // Every draft that reaches the model leaves a compact trace with its usage, wall time and error
@@ -253,6 +255,7 @@ func TestCompactDraftTrace(t *testing.T) {
 			assert.Equal(t, tc.want.model, found[0].Model)
 			assert.Equal(t, tc.want.usage, found[0].Usage)
 			assert.Equal(t, tc.want.failed, found[0].Error != "")
+			assert.NoError(t, schema.Validate(string(trace.NameCompact), found[0]))
 		})
 	}
 }

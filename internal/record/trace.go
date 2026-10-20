@@ -23,6 +23,9 @@ type Trace struct {
 	Tags       []string            `json:"tags,omitempty"`
 	Producer   string              `json:"producer,omitempty"`
 	Labels     map[string][]string `json:"labels,omitempty"`
+	// The version of the published schema of the name
+	// A line of an earlier release lacks it and reads as version 1
+	SchemaVersion int `json:"schema_version,omitempty"`
 }
 
 type Usage struct {

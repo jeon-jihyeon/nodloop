@@ -38,13 +38,16 @@ func RestoreAll(rs []record.Knowledge) Set {
 	return out
 }
 
-// The line a store writes for the version
+// The version of the published schema knowledge
+const SchemaVersion = 1
+
+// The line a store writes for the version under the current version of its schema
 func (k Knowledge) Record() record.Knowledge {
 	r := record.Knowledge{
 		ID: k.ID, Version: k.Version, Kind: string(k.Kind), Content: k.Content, Basis: string(k.Basis),
 		Status: string(k.Status), Approver: k.Approver, ApprovedAt: k.ApprovedAt, ReviewedAt: k.ReviewedAt,
 		Supersedes: k.Supersedes, Base: k.Base, Time: k.Time, Author: k.Author, Drafted: k.Drafted, NewLabels: k.NewLabels,
-		Compaction: k.Compaction, CompactionSize: k.CompactionSize, DeferredIn: k.DeferredIn,
+		Compaction: k.Compaction, CompactionSize: k.CompactionSize, DeferredIn: k.DeferredIn, SchemaVersion: SchemaVersion,
 		Evidence: record.Evidence{
 			FeedbackTraceIDs: k.Evidence.FeedbackTraceIDs, OutcomeTraceIDs: k.Evidence.OutcomeTraceIDs,
 			ParagraphIDs: k.Evidence.ParagraphIDs, Knowledge: refRecords(k.Evidence.Knowledge),

@@ -29,6 +29,10 @@ const (
 	ActionAsk   Action = "ask"   // Claude Code asks the person and shows the reason
 )
 
+func Actions() []Action {
+	return []Action{ActionBlock, ActionAsk}
+}
+
 // Validate the required fields and split the tool list
 // 1. tool is one exact `tool_name` or a list such as `Edit|Write`
 // 2. an empty action blocks

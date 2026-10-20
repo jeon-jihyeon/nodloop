@@ -17,6 +17,7 @@ import (
 	"github.com/jeon-jihyeon/nodloop/internal/classify"
 	"github.com/jeon-jihyeon/nodloop/internal/classify/classifymock"
 	"github.com/jeon-jihyeon/nodloop/internal/record"
+	"github.com/jeon-jihyeon/nodloop/internal/schema"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
 	tracefile "github.com/jeon-jihyeon/nodloop/internal/trace/file"
 )
@@ -275,6 +276,7 @@ func TestPlanClassifyKeeps(t *testing.T) {
 			require.Len(t, recorded, 1)
 			assert.JSONEq(t, tc.want.input, string(recorded[0].Input))
 			assert.Equal(t, tc.want.model, recorded[0].Model)
+			require.NoError(t, schema.Validate(string(trace.NameClassify), recorded[0]))
 		})
 	}
 }

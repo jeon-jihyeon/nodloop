@@ -215,7 +215,7 @@ func TestRunDecision(t *testing.T) {
 	unreadable := fmt.Errorf("%w: broken", veto.ErrYAMLInvalid)
 	removal := `{"session_id":"s1","tool_name":"Bash","tool_input":{"command":"rm -rf build"},"cwd":"/repo"}`
 	entry := func(action veto.Action) *guard.Entry {
-		return &guard.Entry{Time: at.UTC(), Session: "s1", Cwd: "/repo", Tool: "Bash", Veto: "no-rm", Action: action}
+		return &guard.Entry{Time: at.UTC(), Session: "s1", Cwd: "/repo", Tool: "Bash", Veto: "no-rm", Action: action, SchemaVersion: guard.SchemaVersion}
 	}
 	type args struct {
 		stdin  string

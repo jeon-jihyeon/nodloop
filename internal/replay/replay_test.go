@@ -18,6 +18,7 @@ import (
 	"github.com/jeon-jihyeon/nodloop/internal/llm/llmmock"
 	"github.com/jeon-jihyeon/nodloop/internal/record"
 	"github.com/jeon-jihyeon/nodloop/internal/replay"
+	"github.com/jeon-jihyeon/nodloop/internal/schema"
 	"github.com/jeon-jihyeon/nodloop/internal/testkit"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
 )
@@ -133,6 +134,7 @@ func TestReplayerReplay(t *testing.T) {
 	var recorded replay.Result
 	require.NoError(t, json.Unmarshal(traces[0].Output, &recorded))
 	assert.Equal(t, got, recorded)
+	assert.NoError(t, schema.Validate(string(trace.NameReplay), traces[0]))
 }
 
 // A reaffirm writes a newer record of the version and never moves the time runs began to receive it

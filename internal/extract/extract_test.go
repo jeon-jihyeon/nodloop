@@ -22,6 +22,7 @@ import (
 	"github.com/jeon-jihyeon/nodloop/internal/llm"
 	"github.com/jeon-jihyeon/nodloop/internal/llm/llmmock"
 	"github.com/jeon-jihyeon/nodloop/internal/record"
+	"github.com/jeon-jihyeon/nodloop/internal/schema"
 	"github.com/jeon-jihyeon/nodloop/internal/testkit"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
 )
@@ -404,6 +405,7 @@ func recorded(t *testing.T, s testkit.Stores, path extract.Path, runID string) (
 	require.Len(t, traces, 1)
 	assert.Equal(t, string(path), traces[0].Subject)
 	assert.Equal(t, runID, traces[0].Ref)
+	require.NoError(t, schema.Validate(string(trace.NameExtract), traces[0]))
 	var rec extract.Record
 	require.NoError(t, json.Unmarshal(traces[0].Output, &rec))
 	return rec, traces[0]
