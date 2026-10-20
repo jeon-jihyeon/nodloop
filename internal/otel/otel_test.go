@@ -1,11 +1,13 @@
 package otel_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -16,12 +18,20 @@ import (
 	"github.com/jeon-jihyeon/nodloop/internal/otel"
 )
 
+var at = time.Date(2026, 10, 7, 9, 0, 0, 0, time.UTC)
+
+func nanos(t time.Time) string {
+	return strconv.FormatInt(t.UnixNano(), 10)
+}
+
 // The requests a collector received
 type collector struct {
-	mu      sync.Mutex
-	bodies  []map[string]any
-	headers []http.Header
-	status  int
+	mu     sync.Mutex
+	status map[string]int
+	paths  []string
+	types  []string
+	raw    [][]byte
+	bodies []map[string]any
 }
 
 func (c *collector) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -29,21 +39,52 @@ func (c *collector) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var decoded map[string]any
 	_ = json.Unmarshal(body, &decoded)
 	c.mu.Lock()
+	c.paths = append(c.paths, r.URL.Path)
+	c.types = append(c.types, r.Header.Get("Content-Type"))
+	c.raw = append(c.raw, body)
 	c.bodies = append(c.bodies, decoded)
-	c.headers = append(c.headers, r.Header.Clone())
+	status := c.status[r.URL.Path]
 	c.mu.Unlock()
-	w.WriteHeader(c.status)
-	_, _ = w.Write([]byte(`{"partialSuccess":{}}`))
+	if status == 0 {
+		status = http.StatusOK
+	}
+	w.WriteHeader(status)
 }
 
-// The spans of every request in order
-func (c *collector) spans() []map[string]any {
-	var out []map[string]any
+// One span with its plain attributes
+type gotSpan struct {
+	traceID, spanID, parent, name string
+	kind                          float64
+	start, end                    string
+	attrs                         map[string]any
+	links                         []string
+	status                        float64
+}
+
+// The spans of every request by name
+func (c *collector) spans() map[string]gotSpan {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	out := map[string]gotSpan{}
 	for _, b := range c.bodies {
-		for _, rs := range b["resourceSpans"].([]any) {
+		rss, _ := b["resourceSpans"].([]any)
+		for _, rs := range rss {
 			for _, ss := range rs.(map[string]any)["scopeSpans"].([]any) {
 				for _, s := range ss.(map[string]any)["spans"].([]any) {
-					out = append(out, s.(map[string]any))
+					m := s.(map[string]any)
+					g := gotSpan{
+						traceID: m["traceId"].(string), spanID: m["spanId"].(string), name: m["name"].(string), kind: m["kind"].(float64),
+						start: m["startTimeUnixNano"].(string), end: m["endTimeUnixNano"].(string), attrs: attrs(m),
+					}
+					g.parent, _ = m["parentSpanId"].(string)
+					links, _ := m["links"].([]any)
+					for _, l := range links {
+						g.links = append(g.links, l.(map[string]any)["spanId"].(string))
+					}
+					if st, ok := m["status"].(map[string]any); ok {
+						g.status = st["code"].(float64)
+					}
+					out[g.name] = g
 				}
 			}
 		}
@@ -51,202 +92,353 @@ func (c *collector) spans() []map[string]any {
 	return out
 }
 
-// The attributes of a span or an event by key with their plain values
+// The log records of every request in order
+func (c *collector) logs() []map[string]any {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	var out []map[string]any
+	for _, b := range c.bodies {
+		rls, _ := b["resourceLogs"].([]any)
+		for _, rl := range rls {
+			for _, sl := range rl.(map[string]any)["scopeLogs"].([]any) {
+				for _, l := range sl.(map[string]any)["logRecords"].([]any) {
+					out = append(out, l.(map[string]any))
+				}
+			}
+		}
+	}
+	return out
+}
+
+// The attributes of a span or a log record by key with their plain values
 func attrs(m map[string]any) map[string]any {
 	out := map[string]any{}
-	for _, a := range m["attributes"].([]any) {
+	list, _ := m["attributes"].([]any)
+	for _, a := range list {
 		kv := a.(map[string]any)
-		for _, v := range kv["value"].(map[string]any) {
+		for kind, v := range kv["value"].(map[string]any) {
+			if kind == "arrayValue" {
+				var values []any
+				for _, item := range v.(map[string]any)["values"].([]any) {
+					values = append(values, item.(map[string]any)["stringValue"])
+				}
+				v = values
+			}
 			out[kv["key"].(string)] = v
 		}
 	}
 	return out
 }
 
-func TestExporterExport(t *testing.T) {
-	at := time.Date(2026, 10, 7, 9, 0, 0, 0, time.UTC)
-	judged := otel.Run{
-		ID: "01a1", Producer: "support-bot", SessionID: "s1", Time: at,
-		Labels: map[string][]string{"tenant": {"acme"}}, Output: json.RawMessage(`"Here are the refund steps"`),
-		Verdict: &otel.Verdict{Time: at.Add(time.Minute), Verdict: "reject", ReasonCode: "scope", Reason: "the window was missing", Reviewer: "ann"},
+// One record of every kind
+func batch() otel.Batch {
+	return otel.Batch{
+		Runs: []otel.Run{{
+			ID: "r1", Time: at.Add(90 * time.Second), Duration: 90 * time.Second, Producer: "session", SessionID: "s1",
+			Labels: map[string][]string{"repo": {"nodloop"}}, Withheld: []otel.Ref{{ID: "git-c", Version: 2}}, Drawn: true, Unit: "u1", Share: 0.1,
+			Plugin: "0.9.0", Output: json.RawMessage(`"run git -C repo status"`),
+		}},
+		Evaluations: []otel.Evaluation{
+			{
+				Name: otel.EvaluationVerdict, Time: at.Add(time.Minute), SessionID: "s1", Label: "reject", Explanation: "wrong flag",
+				ReasonCode: "fact", Reviewer: "session", Span: otel.VerdictSpan("r1", at.Add(time.Minute)), Target: otel.RunSpan("r1"),
+			},
+			{
+				Name: otel.EvaluationOutcome, Time: at.Add(time.Hour), SessionID: "s1", Label: "inconclusive", Reviewer: "ann", Human: true,
+				Span: otel.OutcomeSpan("r1", at.Add(time.Hour)), Target: otel.RunSpan("r1"),
+			},
+		},
 	}
-	bare := judged
-	bare.Verdict = nil
-	c := &collector{status: http.StatusOK}
+}
+
+func exporter(srv *httptest.Server, logs bool, content bool) *otel.Exporter {
+	cfg := otel.Config{
+		Traces: srv.URL + "/v1/traces", Protocol: otel.ProtocolJSON, Version: "0.9.0", Client: srv.Client(), Content: content,
+		Headers: map[string]string{"Authorization": "Basic k"},
+	}
+	if logs {
+		cfg.Logs = srv.URL + "/v1/logs"
+	}
+	return otel.New(cfg)
+}
+
+// Every record becomes its spans with the timing, the nesting and the links of what it judged
+func TestExporterExportSpans(t *testing.T) {
+	c := &collector{}
 	srv := httptest.NewServer(c)
 	t.Cleanup(srv.Close)
-	e := otel.New(srv.URL+"/v1/traces", map[string]string{"Authorization": "Basic x"}, "0.6.7", srv.Client())
 
-	_, err := e.Export(context.Background(), []otel.Run{judged}, true)
-	require.NoError(t, err)
-	_, err = e.Export(context.Background(), []otel.Run{bare}, false)
-	require.NoError(t, err)
+	sent, err := exporter(srv, false, false).Export(context.Background(), batch())
 
-	require.Len(t, c.bodies, 2)
-	assert.Equal(t, "Basic x", c.headers[0].Get("Authorization"))
-	assert.Equal(t, "application/json", c.headers[0].Get("Content-Type"))
+	require.NoError(t, err)
+	assert.Equal(t, otel.Sent{Runs: 1, Verdicts: 1, Outcomes: 1}, sent)
 	spans := c.spans()
-	first, again := spans[0], spans[1]
-	assert.Equal(t, "invoke_agent support-bot", first["name"])
-	assert.Equal(t, first["traceId"], again["traceId"], "a run sent again keeps its ids")
-	assert.Equal(t, first["spanId"], again["spanId"])
-	assert.Len(t, first["traceId"], 32)
-	assert.Equal(t, "1791363600000000000", first["startTimeUnixNano"])
+	run := otel.RunSpan("r1")
+	turn := spans["invoke_agent session"]
+	assert.Equal(t, gotSpan{
+		traceID: run.TraceID, spanID: run.SpanID, name: "invoke_agent session", kind: 1, start: nanos(at), end: nanos(at.Add(90 * time.Second)),
+		attrs: map[string]any{
+			"gen_ai.operation.name": "invoke_agent", "gen_ai.agent.name": "session", "openinference.span.kind": "AGENT", "nodloop.run.id": "r1",
+			"session.id": "s1", "gen_ai.conversation.id": "s1", "nodloop.plugin.version": "0.9.0", "nodloop.label.repo": []any{"nodloop"},
+			"nodloop.knowledge.withheld": []any{"git-c:2"}, "nodloop.holdout.unit": "u1", "nodloop.holdout.share": 0.1, "nodloop.holdout.arm": "withheld",
+		},
+	}, turn, "the output stays home without content")
+	verdict := spans["evaluate nodloop.verdict"]
+	assert.Equal(t, []string{run.SpanID}, verdict.links)
 	assert.Equal(t, map[string]any{
-		"gen_ai.operation.name": "invoke_agent", "gen_ai.agent.name": "support-bot", "nodloop.run.id": "01a1", "session.id": "s1",
-		"nodloop.label.tenant": map[string]any{"values": []any{map[string]any{"stringValue": "acme"}}},
-		"output.value":         "Here are the refund steps",
-	}, attrs(first))
-	assert.NotContains(t, attrs(again), "output.value", "the output goes along only on request")
-	assert.NotContains(t, again, "events", "a run without a verdict has no event")
-	events := first["events"].([]any)
-	require.Len(t, events, 1, "the verdict of the run goes as one event")
-	event := events[0].(map[string]any)
-	assert.Equal(t, "gen_ai.evaluation.result", event["name"])
-	assert.Equal(t, map[string]any{
+		"openinference.span.kind": "EVALUATOR", "session.id": "s1", "gen_ai.conversation.id": "s1",
 		"gen_ai.evaluation.name": "nodloop.verdict", "gen_ai.evaluation.score.label": "reject", "gen_ai.evaluation.score.value": 0.0,
-		"gen_ai.evaluation.explanation": "the window was missing", "nodloop.reason_code": "scope", "nodloop.reviewer": "ann",
-	}, attrs(event))
+		"annotation.name": "nodloop.verdict", "annotation.label": "reject", "annotation.score": 0.0, "annotation.annotator_kind": "LLM",
+		"nodloop.reason_code": "fact", "nodloop.reviewer": "session",
+	}, verdict.attrs, "the reason stays home without content")
+	assert.NotContains(t, spans["evaluate nodloop.outcome"].attrs, "gen_ai.evaluation.score.value", "an inconclusive check has no score")
+	assert.Equal(t, "HUMAN", spans["evaluate nodloop.outcome"].attrs["annotation.annotator_kind"])
+	assert.Len(t, spans, 3)
+	assert.Equal(t, []string{"/v1/traces"}, c.paths)
 }
 
-func TestExporterExportBatchesAndFails(t *testing.T) {
-	runs := make([]otel.Run, 0, 450)
-	for i := range 450 {
-		runs = append(runs, otel.Run{ID: string(rune('a' + i%26)), Producer: "bot"})
+// Text goes along only with content
+func TestExporterExportContent(t *testing.T) {
+	c := &collector{}
+	srv := httptest.NewServer(c)
+	t.Cleanup(srv.Close)
+
+	_, err := exporter(srv, false, true).Export(context.Background(), batch())
+
+	require.NoError(t, err)
+	spans := c.spans()
+	assert.Equal(t, "run git -C repo status", spans["invoke_agent session"].attrs["output.value"])
+	assert.Equal(t, "text/plain", spans["invoke_agent session"].attrs["output.mime_type"])
+	assert.Equal(t, "wrong flag", spans["evaluate nodloop.verdict"].attrs["gen_ai.evaluation.explanation"])
+	assert.Equal(t, "wrong flag", spans["evaluate nodloop.verdict"].attrs["annotation.explanation"])
+}
+
+// Every evaluation goes as a log record of the GenAI conventions parented to what it evaluates after every span
+func TestExporterExportLogs(t *testing.T) {
+	c := &collector{}
+	srv := httptest.NewServer(c)
+	t.Cleanup(srv.Close)
+
+	sent, err := exporter(srv, true, false).Export(context.Background(), batch())
+
+	require.NoError(t, err)
+	assert.Equal(t, 2, sent.LogRecords)
+	assert.Equal(t, []string{"/v1/traces", "/v1/logs"}, c.paths)
+	logs := c.logs()
+	require.Len(t, logs, 2)
+	run := otel.RunSpan("r1")
+	verdict := logs[0]
+	assert.Equal(t, []any{"gen_ai.evaluation.result", 9.0, run.TraceID, run.SpanID, nanos(at.Add(time.Minute))},
+		[]any{verdict["eventName"], verdict["severityNumber"], verdict["traceId"], verdict["spanId"], verdict["timeUnixNano"]})
+	a := attrs(verdict)
+	assert.Equal(t, otel.VerdictSpan("r1", at.Add(time.Minute)).TraceID, a["log.record.uid"])
+	assert.Equal(t, "LLM", a["annotations.0.annotation.annotator_kind"])
+	assert.Equal(t, "reject", a["annotations.0.annotation.label"])
+	assert.Equal(t, "s1", a["session.id"])
+	assert.Equal(t, "HUMAN", attrs(logs[1])["annotations.0.annotation.annotator_kind"])
+}
+
+// Two exports of one batch send the same bytes so a collector keyed on ids never counts a record twice
+func TestExporterExportIsStable(t *testing.T) {
+	c := &collector{}
+	srv := httptest.NewServer(c)
+	t.Cleanup(srv.Close)
+	e := exporter(srv, true, true)
+
+	_, first := e.Export(context.Background(), batch())
+	_, second := e.Export(context.Background(), batch())
+
+	require.NoError(t, first)
+	require.NoError(t, second)
+	require.Len(t, c.raw, 4)
+	assert.Equal(t, c.raw[0], c.raw[2])
+	assert.Equal(t, c.raw[1], c.raw[3])
+}
+
+// A field of a protobuf message as the test reads it back
+type field struct {
+	num   int
+	value []byte
+	n     uint64
+}
+
+// The fields of one protobuf message in order
+func fields(t *testing.T, b []byte) []field {
+	t.Helper()
+	var out []field
+	for len(b) > 0 {
+		key, n := uvarint(b)
+		require.Positive(t, n)
+		b = b[n:]
+		f := field{num: int(key >> 3)}
+		switch key & 7 {
+		case 0:
+			v, n := uvarint(b)
+			f.n, b = v, b[n:]
+		case 1:
+			f.n, b = leUint64(b[:8]), b[8:]
+		case 2:
+			l, n := uvarint(b)
+			f.value, b = b[n:n+int(l)], b[n+int(l):]
+		default:
+			t.Fatalf("wire type %d", key&7)
+		}
+		out = append(out, f)
 	}
+	return out
+}
+
+func uvarint(b []byte) (uint64, int) {
+	var v uint64
+	for i, c := range b {
+		v |= uint64(c&0x7f) << (7 * i)
+		if c < 0x80 {
+			return v, i + 1
+		}
+	}
+	return 0, 0
+}
+
+func leUint64(b []byte) uint64 {
+	var v uint64
+	for i := 7; i >= 0; i-- {
+		v = v<<8 | uint64(b[i])
+	}
+	return v
+}
+
+// The first field of the number
+func first(t *testing.T, fs []field, num int) field {
+	t.Helper()
+	for _, f := range fs {
+		if f.num == num {
+			return f
+		}
+	}
+	t.Fatalf("no field %d", num)
+	return field{}
+}
+
+// The protobuf body holds the ids as bytes, the times as fixed64 and the attributes of the OTLP proto files
+func TestExporterExportProtobuf(t *testing.T) {
+	c := &collector{}
+	srv := httptest.NewServer(c)
+	t.Cleanup(srv.Close)
+	cfg := otel.Config{Traces: srv.URL + "/v1/traces", Logs: srv.URL + "/v1/logs", Protocol: otel.ProtocolProtobuf, Version: "0.9.0", Client: srv.Client()}
+	b := batch()
+	b.Evaluations = b.Evaluations[:1]
+
+	_, err := otel.New(cfg).Export(context.Background(), b)
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{"application/x-protobuf", "application/x-protobuf"}, c.types)
+	resourceSpans := fields(t, first(t, fields(t, c.raw[0]), 1).value)
+	resource := fields(t, first(t, resourceSpans, 1).value)
+	service := fields(t, first(t, resource, 1).value)
+	assert.Equal(t, "service.name", string(first(t, service, 1).value))
+	assert.Equal(t, "nodloop", string(first(t, fields(t, first(t, service, 2).value), 1).value))
+	scopeSpans := fields(t, first(t, resourceSpans, 2).value)
+	assert.Equal(t, "nodloop", string(first(t, fields(t, first(t, scopeSpans, 1).value), 1).value))
+	var names []string
+	var turn []field
+	for _, f := range scopeSpans {
+		if f.num == 2 {
+			s := fields(t, f.value)
+			names = append(names, string(first(t, s, 5).value))
+			if string(first(t, s, 5).value) == "invoke_agent session" {
+				turn = s
+			}
+		}
+	}
+	assert.Equal(t, []string{"invoke_agent session", "evaluate nodloop.verdict"}, names)
+	run := otel.RunSpan("r1")
+	assert.Equal(t, run.TraceID, hexOf(first(t, turn, 1).value))
+	assert.Equal(t, run.SpanID, hexOf(first(t, turn, 2).value))
+	assert.Equal(t, uint64(1), first(t, turn, 6).n)
+	assert.Equal(t, uint64(at.UnixNano()), first(t, turn, 7).n)
+	assert.Equal(t, uint64(at.Add(90*time.Second).UnixNano()), first(t, turn, 8).n)
+	resourceLogs := fields(t, first(t, fields(t, c.raw[1]), 1).value)
+	record := fields(t, first(t, fields(t, first(t, resourceLogs, 2).value), 2).value)
+	assert.Equal(t, uint64(9), first(t, record, 2).n)
+	assert.Equal(t, run.SpanID, hexOf(first(t, record, 10).value))
+	assert.Equal(t, "gen_ai.evaluation.result", string(first(t, record, 12).value))
+}
+
+func hexOf(b []byte) string {
+	const digits = "0123456789abcdef"
+	var out bytes.Buffer
+	for _, c := range b {
+		out.WriteByte(digits[c>>4])
+		out.WriteByte(digits[c&15])
+	}
+	return out.String()
+}
+
+// A refused request stops the export with the counts of what went out before it
+func TestExporterExportRefused(t *testing.T) {
 	type want struct {
-		requests int
-		err      error
+		sent  otel.Sent
+		paths []string
 	}
 	tcs := []struct {
 		name string
-		// The status the collector answers
-		args int
+		// The path the collector refuses
+		args string
 		want want
 	}{
-		{"runs go out in batches of 200", http.StatusOK, want{3, nil}},
-		{"a refusal stops the export with the status", http.StatusUnauthorized, want{1, otel.ErrStatus}},
+		{"a refused logs request fails after the spans went out", "/v1/logs",
+			want{otel.Sent{Runs: 1, Verdicts: 1, Outcomes: 1}, []string{"/v1/traces", "/v1/logs"}}},
+		{"refused spans fail before any log record", "/v1/traces", want{otel.Sent{}, []string{"/v1/traces"}}},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			c := &collector{status: tc.args}
+			c := &collector{status: map[string]int{tc.args: http.StatusBadRequest}}
 			srv := httptest.NewServer(c)
 			t.Cleanup(srv.Close)
 
-			_, err := otel.New(srv.URL, nil, "", srv.Client()).Export(context.Background(), runs, false)
+			sent, err := exporter(srv, true, false).Export(context.Background(), batch())
 
-			assert.ErrorIs(t, err, tc.want.err)
-			assert.Len(t, c.bodies, tc.want.requests)
-		})
-	}
-}
-
-func TestExporterExportSpan(t *testing.T) {
-	at := time.Date(2026, 10, 7, 9, 0, 0, 0, time.UTC)
-	type want struct {
-		// Attributes of the span checked by key
-		attrs map[string]any
-		// Score labels of the events in order
-		events []string
-		// The outcome events Export counts
-		sent int
-	}
-	gitC := []otel.Ref{{ID: "git-c", Version: 2}}
-	tcs := []struct {
-		name string
-		args otel.Run
-		want want
-	}{
-		{
-			"the subject goes along as an attribute",
-			otel.Run{ID: "r1", Producer: "bot", Subject: "ticket 7"},
-			want{attrs: map[string]any{"nodloop.subject": "ticket 7"}},
-		},
-		{
-			"an output that is no JSON string goes along as written",
-			otel.Run{ID: "r1", Producer: "bot", Output: json.RawMessage(`{"steps":2}`)},
-			want{attrs: map[string]any{"output.value": `{"steps":2}`}},
-		},
-		{
-			"a drawn run names its arm and its items",
-			otel.Run{ID: "r1", Producer: "bot", Applied: gitC, Drawn: true},
-			want{attrs: map[string]any{
-				"nodloop.holdout.arm":       "applied",
-				"nodloop.knowledge.applied": map[string]any{"values": []any{map[string]any{"stringValue": "git-c:2"}}},
-			}},
-		},
-		{
-			"a withheld run names the items the holdout kept",
-			otel.Run{ID: "r1", Producer: "bot", Withheld: gitC, Drawn: true},
-			want{attrs: map[string]any{
-				"nodloop.holdout.arm":        "withheld",
-				"nodloop.knowledge.withheld": map[string]any{"values": []any{map[string]any{"stringValue": "git-c:2"}}},
-			}},
-		},
-		{
-			"a run with items and no draw is undrawn",
-			otel.Run{ID: "r1", Producer: "bot", Applied: gitC},
-			want{attrs: map[string]any{"nodloop.holdout.arm": "undrawn"}},
-		},
-		{
-			"a run without items has no arm",
-			otel.Run{ID: "r1", Producer: "bot", Drawn: true},
-			want{attrs: map[string]any{"nodloop.holdout.arm": nil}},
-		},
-		{
-			"the outcome goes as an evaluation after the verdict",
-			otel.Run{
-				ID: "r1", Producer: "bot", Verdict: &otel.Verdict{Time: at, Verdict: "reject", Reviewer: "ann"},
-				Outcome: &otel.Outcome{Time: at.Add(time.Hour), Result: "confirmed", ConfirmedCause: "a slow consumer", Reviewer: "ann"},
-			},
-			want{attrs: map[string]any{"nodloop.run.id": "r1"}, events: []string{"reject", "confirmed"}, sent: 1},
-		},
-	}
-	for _, tc := range tcs {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			c := &collector{status: http.StatusOK}
-			srv := httptest.NewServer(c)
-			t.Cleanup(srv.Close)
-
-			sent, err := otel.New(srv.URL, nil, "", srv.Client()).Export(context.Background(), []otel.Run{tc.args}, true)
-
-			require.NoError(t, err)
+			require.ErrorIs(t, err, otel.ErrStatus)
 			assert.Equal(t, tc.want.sent, sent)
-			spans := c.spans()
-			require.Len(t, spans, 1)
-			got := attrs(spans[0])
-			for k, v := range tc.want.attrs {
-				assert.Equal(t, v, got[k], k)
-			}
-			var labels []string
-			events, _ := spans[0]["events"].([]any)
-			for _, e := range events {
-				labels = append(labels, attrs(e.(map[string]any))["gen_ai.evaluation.score.label"].(string))
-			}
-			assert.Equal(t, tc.want.events, labels)
+			assert.Equal(t, tc.want.paths, c.paths)
 		})
 	}
 }
 
+// The error of a failed send names the endpoint without the token a collector may take in its password or query
 func TestExporterExportFailsToSend(t *testing.T) {
 	closed := httptest.NewServer(http.NotFoundHandler())
 	closed.Close()
+	refusing := httptest.NewServer(&collector{status: map[string]int{"/v1/traces": http.StatusUnauthorized}})
+	t.Cleanup(refusing.Close)
+	type want struct {
+		contains string
+		// A secret of the endpoint the error must not repeat
+		hidden string
+	}
 	tcs := []struct {
 		name string
 		// The endpoint of the exporter
 		args string
-		want string
+		want want
 	}{
-		{"a URL no request can be built from fails", "http://bad host/v1/traces", "invalid character"},
-		{"a collector that is gone fails", closed.URL, "connection refused"},
+		{"a URL no request can be built from fails without the password or the query", "http://ann:secret@bad host/v1/traces?token=secret", want{"invalid character", "secret"}},
+		{"a collector that is gone fails without the password or the query", "http://ann:secret@" + closed.Listener.Addr().String() + "/v1/traces?token=secret",
+			want{"connection refused", "secret"}},
+		{"a refusal names the status without the password or the query", "http://ann:secret@" + refusing.Listener.Addr().String() + "/v1/traces?token=secret",
+			want{"answered 401", "secret"}},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			_, err := otel.New(tc.args, nil, "", http.DefaultClient).Export(context.Background(), []otel.Run{{ID: "r1"}}, false)
-			assert.ErrorContains(t, err, tc.want)
+			e := otel.New(otel.Config{Traces: tc.args, Protocol: otel.ProtocolJSON, Client: http.DefaultClient})
+
+			_, err := e.Export(context.Background(), otel.Batch{Runs: []otel.Run{{ID: "r1"}}})
+
+			require.Error(t, err)
+			assert.ErrorContains(t, err, tc.want.contains)
+			assert.NotContains(t, err.Error(), tc.want.hidden)
 		})
 	}
 }

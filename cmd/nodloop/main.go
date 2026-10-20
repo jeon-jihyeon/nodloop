@@ -195,11 +195,11 @@ commands:
   classifier list           Every point with its endpoint or claude alone
   classifier probe <point>  Ask the endpoint of the point one question and print its answer and time
   server                    Moved to its own binary nodloop-server in 0.7.0
-  export otel [--endpoint <url>] [--header <Name=value>] [--since <RFC3339>] [--with-output]
-                            Send every run as an OpenTelemetry GenAI span and its newest verdict as a gen_ai.evaluation.result
-                            event on it, and its newest outcome as a second event, in OTLP JSON over HTTP, so a collector, Langfuse or Phoenix shows them. A run whose
-                            newest verdict is withdraw gets no event. The ids derive from the run so sending again replaces. OTEL_EXPORTER_OTLP_TRACES_ENDPOINT, OTEL_EXPORTER_OTLP_ENDPOINT
-                            and OTEL_EXPORTER_OTLP_HEADERS fill what the flags leave out. The output goes only with --with-output
+  export otel [--endpoint <url>] [--protocol <p>] [--header <Name=value>] [--since <RFC3339>] [--with-content]
+                            Send the records as OTLP traces and logs of the OpenTelemetry GenAI and OpenInference conventions:
+                            a span per run, and verdicts and outcomes as evaluation spans with log records. Ids derive from
+                            the records so a record sent again is never counted twice. --endpoint is a traces URL and sends
+                            traces only. Without it OTEL_EXPORTER_OTLP_* of the environment name the target
   doctor [--repair]         Read every record file and the guard log, and name the lines that fail to decode.
                             A read skips such a line, and --repair moves them to <file>.corrupt. Run it while nothing writes
   version                   Print the build version
