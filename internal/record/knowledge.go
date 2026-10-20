@@ -25,6 +25,7 @@ type Knowledge struct {
 	Veto           *Veto     `json:"veto,omitempty"`
 	Compaction     string    `json:"compaction,omitempty"`
 	CompactionSize int       `json:"compaction_size,omitempty"`
+	DeferredIn     string    `json:"deferred_in,omitempty"`
 }
 
 type RunScope struct {

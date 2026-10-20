@@ -15,7 +15,7 @@ import (
 var criticQuestions = classify.Questions{
 	"states": "The draft lesson states what the edit changed or what the reject named and nothing the person did not correct.",
 	"holds":  "The draft lesson would apply to the next run in this place and not only to this one output.",
-	"fits": "The relation of the draft is right against the approved items shown: add only when no item says it, " +
+	"fits": "The relation of the draft is right against the approved items and waiting candidates shown: add only when none says it, " +
 		"duplicate only when one already does, conflict only when one says the opposite, update only when one says part of it.",
 }
 

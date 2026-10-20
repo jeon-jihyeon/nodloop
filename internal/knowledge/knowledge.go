@@ -110,6 +110,9 @@ type Knowledge struct {
 	// Drafts of the compaction proposal on each of its candidates
 	// Fewer candidates than this mean the proposal was cut between two appends
 	CompactionSize int `json:"compaction_size,omitempty"`
+	// The session of a deferral record an earlier release wrote when a stop asked the candidate
+	// Such a record reads as the candidate record it copied and no write carries it again
+	DeferredIn string `json:"deferred_in,omitempty"`
 }
 
 // Runes of approved knowledge one run carries
@@ -251,8 +254,9 @@ func (k Knowledge) transition(status Status, approver string, now time.Time) (Kn
 
 // The record of a status change without the transition checks
 // Only for a change the caller already knows is allowed
+// The newest record of a candidate may be a deferral record of an earlier release so the change clears the session it names
 func (k Knowledge) changed(status Status, approver string, now time.Time) Knowledge {
-	k.Status, k.Approver, k.Time = status, approver, now
+	k.Status, k.Approver, k.Time, k.DeferredIn = status, approver, now, ""
 	if status == StatusApproved {
 		k.ApprovedAt = now
 	}

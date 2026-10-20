@@ -27,11 +27,13 @@ func (f knowledgeFlags) runExtract(ctx context.Context, a app, client llm.Client
 	if err != nil {
 		return err
 	}
-	critic, err := a.critic(extract.NewClaudeCritic(client, f.model), getenv)
+	// One meter under the drafter and the claude critic so the extract trace sums both
+	meter := llm.NewMeter(client)
+	critic, err := a.critic(extract.NewClaudeCritic(meter, f.model), getenv)
 	if err != nil {
 		return err
 	}
-	res, err := extract.New(ledger, traces, verdicts, a.now).Extract(ctx, extract.NewClaudeDrafter(client, f.model), critic, f.from, f.author)
+	res, err := extract.New(ledger, traces, verdicts, a.now).Extract(ctx, extract.NewClaudeDrafter(meter, f.model), critic, f.from, f.author)
 	if err != nil {
 		return err
 	}
@@ -46,14 +48,23 @@ func (f knowledgeFlags) runExtract(ctx context.Context, a app, client llm.Client
 			fmt.Fprintf(stdout, "overlap\t%s\tv%d\t%s\n", o.ID, o.Version, o.Content)
 		}
 	}
-	fmt.Fprintf(stdout, "next\t%s\n", extractNext[res.Relation])
+	next := extractNext[res.Relation]
+	if res.Corroborated() {
+		next = extractCorroborated
+	}
+	fmt.Fprintf(stdout, "next\t%s\n", next)
 	return nil
 }
 
-// What the person decides after each relation
+// What happens after a duplicate of a waiting candidate
+const extractCorroborated = "nothing new proposed. The waiting candidate already says it and this run joined its evidence, so it waits for the person as before"
+
+// What happens after each relation
+// No line names a command that decides
+// A model that read one decided without asking in 4 headless runs
 var extractNext = map[extract.Relation]string{
-	extract.RelationAdd:       "nodloop knowledge approve <id> --version <n> --approver <name> once you agree",
-	extract.RelationUpdate:    "compare it with the related item, then nodloop knowledge approve <id> --version <n> --approver <name>",
-	extract.RelationDuplicate: "nothing proposed. The related item already says it. nodloop knowledge reaffirm <id> --approver <name> restarts its review deadline",
-	extract.RelationConflict:  "nothing proposed. The related item says the opposite. nodloop knowledge narrow or retire decide which stands",
+	extract.RelationAdd:       "the candidate waits for the person, who is asked about it once unless their earlier decisions settle it",
+	extract.RelationUpdate:    "compare it with the related item. The candidate waits for the person, who is asked about it once unless their earlier decisions settle it",
+	extract.RelationDuplicate: "nothing proposed. The related item already says it",
+	extract.RelationConflict:  "nothing proposed. The related item or candidate says the opposite, and the person decides which stands",
 }

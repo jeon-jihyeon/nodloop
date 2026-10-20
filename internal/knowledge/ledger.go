@@ -8,6 +8,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/jeon-jihyeon/nodloop/internal/feedback"
 	"github.com/jeon-jihyeon/nodloop/internal/record"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
 	"github.com/jeon-jihyeon/nodloop/internal/veto"
@@ -184,6 +185,24 @@ func (l *Ledger) appendCandidate(ctx context.Context, decide func(all Set, now t
 		return Knowledge{}, nil, err
 	}
 	return k, overlaps, nil
+}
+
+// Joins a corrected run to the teaching runs of the newest candidate version of id and returns the candidate as it waits
+// No status changes so nothing is exported
+func (l *Ledger) Corroborate(ctx context.Context, id string, version int, run trace.Trace, verdicts feedback.Records) (Knowledge, error) {
+	var k Knowledge
+	err := l.appendDecided(ctx, func(all Set) ([]Knowledge, error) {
+		records, err := all.corroborate(id, version, run, verdicts, l.now().UTC())
+		if err != nil {
+			return nil, err
+		}
+		k = slices.Concat(records, all).taught(Knowledge{ID: id, Version: version})
+		return records, nil
+	})
+	if err != nil {
+		return Knowledge{}, err
+	}
+	return k, nil
 }
 
 // The approved record and the superseded one land in one write

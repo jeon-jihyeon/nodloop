@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"time"
 
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
@@ -13,7 +14,7 @@ import (
 type Path string
 
 const (
-	PathModel        Path = "model"        // knowledge extract drafted through claude -p
+	PathModel        Path = "model"        // knowledge extract drafted through the configured backend
 	PathConversation Path = "conversation" // the conversation drafted it and proposed it over MCP
 )
 
@@ -21,11 +22,12 @@ const (
 type Conclusion string
 
 const (
-	ConclusionProposed  Conclusion = "proposed"  // an add or an update became a candidate
-	ConclusionDuplicate Conclusion = "duplicate" // an approved item already says it
-	ConclusionConflict  Conclusion = "conflict"  // an approved item says the opposite
-	ConclusionRefused   Conclusion = "refused"   // the code checks or the critic or the ledger refused the last draft
-	ConclusionFailed    Conclusion = "failed"    // a model call failed so no draft was judged
+	ConclusionProposed     Conclusion = "proposed"     // an add or an update became a candidate
+	ConclusionCorroborated Conclusion = "corroborated" // a waiting candidate already says it and the run joined its evidence
+	ConclusionDuplicate    Conclusion = "duplicate"    // an approved item already says it
+	ConclusionConflict     Conclusion = "conflict"     // an approved item or a waiting candidate says the opposite
+	ConclusionRefused      Conclusion = "refused"      // the code checks or the critic or the ledger refused the last draft
+	ConclusionFailed       Conclusion = "failed"       // a model call failed so no draft was judged
 )
 
 // What refused a draft
@@ -55,9 +57,20 @@ func (a Attempt) refused(r Refusal, err error) Attempt {
 
 // The output of an extract trace
 type Record struct {
-	Attempts   []Attempt      `json:"attempts"`
-	Conclusion Conclusion     `json:"conclusion"`
-	Candidate  *knowledge.Ref `json:"candidate,omitempty"`
+	Attempts   []Attempt  `json:"attempts"`
+	Conclusion Conclusion `json:"conclusion"`
+	// The proposed or corroborated candidate version
+	Candidate *knowledge.Ref `json:"candidate,omitempty"`
+	// What a duplicate or a conflict or an update names
+	// The status tells an item from a candidate so the next prompt can name a conflict
+	Related *Related `json:"related,omitempty"`
+}
+
+// The version an extraction named as it stood then
+type Related struct {
+	ID      string           `json:"id"`
+	Version int              `json:"version"`
+	Status  knowledge.Status `json:"status"`
 }
 
 func (rec *Record) add(a Attempt) {
@@ -80,13 +93,20 @@ func (rec Record) end(res Result, err error) Record {
 		rec.Conclusion = ConclusionFailed
 	case err != nil:
 		rec.Conclusion = ConclusionRefused
+	case res.Corroborated():
+		rec.Conclusion = ConclusionCorroborated
 	case res.Candidate != nil:
 		rec.Conclusion = ConclusionProposed
-		rec.Candidate = &knowledge.Ref{ID: res.Candidate.ID, Version: res.Candidate.Version}
 	case res.Relation == RelationConflict:
 		rec.Conclusion = ConclusionConflict
 	default:
 		rec.Conclusion = ConclusionDuplicate
+	}
+	if res.Candidate != nil {
+		rec.Candidate = &knowledge.Ref{ID: res.Candidate.ID, Version: res.Candidate.Version}
+	}
+	if res.Related != nil {
+		rec.Related = &Related{ID: res.Related.ID, Version: res.Related.Version, Status: res.Related.Status}
 	}
 	return rec
 }
@@ -99,8 +119,16 @@ type recordInput struct {
 	Reviewer   string `json:"reviewer,omitempty"`
 }
 
+// What the model calls of one extraction cost and when it started
+type cost struct {
+	usage trace.Usage
+	// The model the drafter answered with and empty when no model was called
+	model string
+	start time.Time
+}
+
 // Appends the extract trace of the reaction and returns the error of the extraction joined with any failure to record it
-func (e *Extractor) record(ctx context.Context, r Reaction, path Path, rec Record, failed error) error {
+func (e *Extractor) record(ctx context.Context, r Reaction, path Path, rec Record, spent cost, failed error) error {
 	input, err := json.Marshal(recordInput{Verdict: string(r.Verdict.Verdict), ReasonCode: string(r.Verdict.ReasonCode), Reviewer: r.Verdict.Reviewer})
 	if err != nil {
 		return errors.Join(failed, err)
@@ -111,7 +139,8 @@ func (e *Extractor) record(ctx context.Context, r Reaction, path Path, rec Recor
 	}
 	now := e.now()
 	tr := trace.Trace{
-		ID: trace.NewID(now), Name: trace.NameExtract, Subject: string(path), Ref: r.Run.ID, Time: now, Input: input, Output: output,
+		ID: trace.NewID(now), Name: trace.NameExtract, Subject: string(path), Ref: r.Run.ID, Time: now, Model: spent.model,
+		Input: input, Output: output, Usage: spent.usage, DurationMS: now.Sub(spent.start).Milliseconds(),
 	}
 	if failed != nil {
 		tr.Error = failed.Error()
