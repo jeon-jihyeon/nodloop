@@ -460,7 +460,7 @@ func TestRunsEffect(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			var got []want
-			for _, row := range loop.NewRuns(tc.args, verdicts).Effect(items, outcomes, since) {
+			for _, row := range loop.NewRuns(tc.args, verdicts).Effect(items, outcomes, nil, since) {
 				assert.Equal(t, since, row.Since)
 				got = append(got, want{
 					row.Producer, string(row.Arm), row.Runs, row.Judged, row.Named, row.Inferred, row.Corrected, row.SameReason, row.AuditJudged,
@@ -588,7 +588,7 @@ func TestRunsEffectStatistics(t *testing.T) {
 			t.Parallel()
 			traces, verdicts := effectRuns(tc.args.applied, tc.args.withheld, tc.args.firstShare, tc.args.perUnit)
 
-			rows := loop.NewRuns(traces, verdicts).Effect(nil, nil, time.Time{})
+			rows := loop.NewRuns(traces, verdicts).Effect(nil, nil, nil, time.Time{})
 
 			require.Len(t, rows, 2)
 			for i, row := range rows {

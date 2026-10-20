@@ -47,6 +47,7 @@ type Snapshot struct {
 	runs     Runs
 	items    knowledge.Set
 	outcomes feedback.Outcomes
+	rollups  Rollups
 	// The start of the window the runs were read in
 	since time.Time
 }
@@ -69,7 +70,7 @@ func (s Snapshot) Critics() CriticReport {
 }
 
 func (s Snapshot) Effect() []EffectRow {
-	return s.runs.Effect(s.items, s.outcomes, s.since)
+	return s.runs.Effect(s.items, s.outcomes, s.rollups, s.since)
 }
 
 // The start of the window the runs were read in and zero for every run
@@ -97,7 +98,7 @@ func (n ReportName) traces() []trace.Name {
 	case ReportCritic:
 		return []trace.Name{trace.NameExtract, trace.NameClassify}
 	case ReportEffect:
-		return []trace.Name{trace.NameRun}
+		return []trace.Name{trace.NameRun, trace.NameRollup}
 	case ReportReplay:
 		return []trace.Name{trace.NameReplay}
 	}
@@ -109,30 +110,55 @@ func (s Stores) Snapshot(ctx context.Context, name ReportName) (Snapshot, error)
 	if !name.Valid() {
 		return Snapshot{}, fmt.Errorf("%w: %q. Ask for one of %v", ErrReportUnknown, name, ReportNames())
 	}
-	snap, err := s.snapshot(ctx, name.traces())
-	if err != nil || name != ReportEffect {
-		return snap, err
+	if name != ReportEffect {
+		return s.snapshot(ctx, name.traces(), s.Since)
+	}
+	return s.effect(ctx)
+}
+
+// The snapshot of report effect with every cycle whole
+// 1. the runs before the first cycle are read in the window as every report reads them
+// 2. a cycle is read whole from its start since no prune removes a run of a cycle that has no rollup
+// 3. a closed cycle with a rollup reads from the rollup and the runs a prune left in it count nothing
+// So the counts of a closed cycle are the same before and after the prune of its runs
+func (s Stores) effect(ctx context.Context) (Snapshot, error) {
+	marks, err := s.list(ctx, trace.NameKnob, s.Since)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	since := s.Since
+	if first, ok := marks.FirstCycle(); ok && first.Start.Before(since) {
+		since = first.Start
+	}
+	snap, err := s.snapshot(ctx, ReportEffect.traces(), since)
+	if err != nil {
+		return Snapshot{}, err
 	}
 	outcomes, err := s.Outcomes.List(ctx, "")
-	snap.outcomes = feedback.RestoreOutcomes(outcomes)
+	snap.outcomes, snap.rollups = feedback.RestoreOutcomes(outcomes), NewRollups(snap.traces)
 	return snap, err
 }
 
+// The traces of the name in the newest first order of the store
+// Runs and classify traces are read from since on since a prune removes both and a count over all time would mix what survived
+func (s Stores) list(ctx context.Context, name trace.Name, since time.Time) (trace.Traces, error) {
+	f := record.TraceFilter{Name: string(name)}
+	if name == trace.NameRun || name == trace.NameClassify {
+		f.Since = since
+	}
+	found, err := s.Traces.List(ctx, f)
+	return trace.RestoreAll(found), err
+}
+
 // Reads the traces of each name in turn so no report reads a trace it never looks at
-// 1. each name keeps the newest first order of the store
-// 2. runs and classify traces are read in the window since a prune removes both and a count over all time would mix what survived
-func (s Stores) snapshot(ctx context.Context, names []trace.Name) (Snapshot, error) {
+func (s Stores) snapshot(ctx context.Context, names []trace.Name, since time.Time) (Snapshot, error) {
 	var all trace.Traces
 	for _, name := range names {
-		f := record.TraceFilter{Name: string(name)}
-		if name == trace.NameRun || name == trace.NameClassify {
-			f.Since = s.Since
-		}
-		found, err := s.Traces.List(ctx, f)
+		found, err := s.list(ctx, name, since)
 		if err != nil {
 			return Snapshot{}, err
 		}
-		all = append(all, trace.RestoreAll(found)...)
+		all = append(all, found...)
 	}
 	records, err := s.Verdicts.List(ctx, record.FeedbackFilter{})
 	if err != nil {
@@ -142,7 +168,7 @@ func (s Stores) snapshot(ctx context.Context, names []trace.Name) (Snapshot, err
 	if err != nil {
 		return Snapshot{}, err
 	}
-	return Snapshot{traces: all, runs: NewRuns(all, feedback.RestoreAll(records)), items: set, since: s.Since}, nil
+	return Snapshot{traces: all, runs: NewRuns(all, feedback.RestoreAll(records)), items: set, since: since}, nil
 }
 
 // The report of the name as JSON for a reader that picks it at run time

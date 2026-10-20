@@ -2,7 +2,9 @@ package retain_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -26,6 +28,13 @@ import (
 var now = time.Date(2026, 10, 12, 12, 0, 0, 0, time.UTC)
 
 var errStore = errors.New("store failed")
+
+func clock() time.Time { return now }
+
+// The count of a cycle as the rollup input names it
+func count(_ context.Context, c trace.Cycle) (json.RawMessage, error) {
+	return json.Marshal(map[string]any{"cycle_id": c.ID, "start": c.Start, "end": c.End})
+}
 
 // A trace of the name recorded days before now with the ref and the input
 func add(t *testing.T, st testkit.Stores, name trace.Name, days int, ref, input string) string {
@@ -78,6 +87,16 @@ func fixture(t *testing.T) (testkit.Stores, map[string]string) {
 		"compact":       add(t, st, trace.NameCompact, 40, "", none),
 		"old turn":      add(t, st, trace.NameTurn, 40, "", "{}"),
 		"young turn":    add(t, st, trace.NameTurn, 3, "", "{}"),
+		"old rules":     add(t, st, trace.NameInstructions, 40, "", "{}"),
+		"young rules":   add(t, st, trace.NameInstructions, 3, "", "{}"),
+		"old capture":   add(t, st, trace.NameCapture, 40, "", "{}"),
+		"young capture": add(t, st, trace.NameCapture, 3, "", "{}"),
+		"decide":        add(t, st, trace.NameDecide, 40, "", "{}"),
+		"anchor":        add(t, st, trace.NameAnchor, 40, "", "{}"),
+		"expose":        add(t, st, trace.NameExpose, 40, "", "{}"),
+		"answer":        add(t, st, trace.NameAnswer, 40, "", "{}"),
+		"intervention":  add(t, st, trace.NameIntervention, 40, "", "{}"),
+		"rollup":        add(t, st, trace.NameRollup, 40, "", "{}"),
 	}
 	failed := trace.Trace{
 		ID: trace.NewID(now.Add(-35 * 24 * time.Hour)), Name: trace.NameRun, Producer: "bot", Time: now.Add(-35 * 24 * time.Hour),
@@ -105,7 +124,7 @@ func fixture(t *testing.T) (testkit.Stores, map[string]string) {
 func TestRetainerPrune(t *testing.T) {
 	st, ids := fixture(t)
 	ctx := context.Background()
-	retainer := retain.New(st.Traces, st.Feedback, st.Outcomes, st.Ledger)
+	retainer := retain.New(st.Traces, st.Feedback, st.Outcomes, st.Ledger, count, clock)
 	plan, err := retainer.Plan(ctx, retain.Days(30).Cutoff(now))
 	require.NoError(t, err)
 	removed, err := retainer.Apply(ctx, plan)
@@ -144,6 +163,16 @@ func TestRetainerPrune(t *testing.T) {
 		{"a compact trace stays", "compact", true},
 		{"an old turn trace goes since its run holds the duration", "old turn", false},
 		{"a young turn trace stays for the stop of its turn", "young turn", true},
+		{"an old instructions trace goes since an anchor version holds the files it read", "old rules", false},
+		{"a young instructions trace stays", "young rules", true},
+		{"an old capture trace goes since only the newest capture holds an offset still read", "old capture", false},
+		{"a young capture trace stays", "young capture", true},
+		{"a decide trace stays", "decide", true},
+		{"an anchor trace stays", "anchor", true},
+		{"an expose trace stays", "expose", true},
+		{"an answer trace stays", "answer", true},
+		{"an intervention trace stays", "intervention", true},
+		{"a rollup trace stays", "rollup", true},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
@@ -153,9 +182,11 @@ func TestRetainerPrune(t *testing.T) {
 	}
 	assert.ElementsMatch(t, []string{ids["unjudged"], ids["earlier use"], ids["failed use"], ids["use appended late"]}, plan.Runs)
 	assert.ElementsMatch(t, []string{ids["classify of a removed run"], ids["young classify of a removed run"]}, plan.Classify)
-	assert.Equal(t, []string{ids["old turn"]}, plan.Turns)
+	assert.ElementsMatch(t, []string{ids["old turn"], ids["old rules"], ids["old capture"]}, plan.Session)
 	assert.Equal(t, 8, plan.Kept)
-	assert.Equal(t, 7, removed)
+	assert.Equal(t, 9, removed)
+	assert.Equal(t, retain.Days(30).Cutoff(now), plan.Cutoff, "no knob trace leaves the cutoff as asked")
+	assert.Empty(t, plan.Rollups)
 }
 
 // A verdict recorded between the plan and its removal keeps the run and its classify trace
@@ -164,7 +195,7 @@ func TestRetainerApplyReadsTheCitationsAgain(t *testing.T) {
 	ctx := context.Background()
 	run := add(t, st, trace.NameRun, 40, "", `{"applied":[]}`)
 	classify := add(t, st, trace.NameClassify, 40, run, `{}`)
-	retainer := retain.New(st.Traces, st.Feedback, st.Outcomes, st.Ledger)
+	retainer := retain.New(st.Traces, st.Feedback, st.Outcomes, st.Ledger, count, clock)
 	plan, err := retainer.Plan(ctx, retain.Days(30).Cutoff(now))
 	require.NoError(t, err)
 	require.Equal(t, []string{run}, plan.Runs)
@@ -197,7 +228,7 @@ func TestRetainerApplyReadsTheCitationsWhenTheStorePrunes(t *testing.T) {
 	ctx := context.Background()
 	run := add(t, st, trace.NameRun, 40, "", `{"applied":[]}`)
 	traces := judgingTraces{Store: st.Traces, judge: func() { judge(t, st, run, feedback.VerdictReject, "ann") }}
-	retainer := retain.New(traces, st.Feedback, st.Outcomes, st.Ledger)
+	retainer := retain.New(traces, st.Feedback, st.Outcomes, st.Ledger, count, clock)
 	plan, err := retainer.Plan(ctx, retain.Days(30).Cutoff(now))
 	require.NoError(t, err)
 	require.Equal(t, []string{run}, plan.Runs)
@@ -249,7 +280,7 @@ func TestRetainerPruneFailures(t *testing.T) {
 			ledger := knowledge.NewLedger(flaky, vetofile.NewApprovedFile(t.TempDir(), st.Dir), st.Clock.Now, knowledge.NewIDs(st.Clock.Now))
 			traces := &testkit.FlakyTraces{Store: st.Traces, Reads: testkit.Reads{Allowed: tc.args.traceCalls, Err: errStore}}
 
-			removed, err := retain.New(traces, verdicts, st.Outcomes, ledger).Prune(ctx, tc.args.days.Cutoff(now))
+			removed, err := retain.New(traces, verdicts, st.Outcomes, ledger, count, clock).Prune(ctx, tc.args.days.Cutoff(now))
 
 			assert.ErrorIs(t, err, tc.want.err)
 			assert.Equal(t, tc.want.removed, removed)
@@ -260,13 +291,186 @@ func TestRetainerPruneFailures(t *testing.T) {
 	}
 }
 
+// A knob trace of the cycle that starts on the date and lasts the weeks
+func knob(t *testing.T, st testkit.Stores, cycle string, weeks int) {
+	t.Helper()
+	start, err := time.Parse(trace.CycleDate, cycle)
+	require.NoError(t, err)
+	input := fmt.Sprintf(`{"cycle_id":%q,"start":%q,"knobs":{"cycle_weeks":%d}}`, cycle, start.Format(time.RFC3339), weeks)
+	tr := trace.Trace{ID: trace.NewID(start), Name: trace.NameKnob, Time: start, Input: json.RawMessage(input)}
+	require.NoError(t, st.Traces.Append(context.Background(), tr.Record()))
+}
+
+// The cycle id of every rollup trace in the store newest first
+func rollups(t *testing.T, st testkit.Stores) []string {
+	t.Helper()
+	found, err := st.Traces.List(context.Background(), record.TraceFilter{Name: string(trace.NameRollup)})
+	require.NoError(t, err)
+	var out []string
+	for _, tr := range found {
+		var r struct {
+			CycleID string `json:"cycle_id"`
+		}
+		require.NoError(t, json.Unmarshal(tr.Input, &r))
+		out = append(out, r.CycleID)
+	}
+	return out
+}
+
+// The prune keeps to the start of the open cycle and rolls up each closed cycle it reaches before any of its runs goes
+// Now is the Monday 2026-10-12 at noon
+func TestRetainerPruneCycles(t *testing.T) {
+	type knobbed struct {
+		cycle string
+		weeks int
+	}
+	type args struct {
+		knobs []knobbed
+		// The cycle of a rollup trace already recorded and none when empty
+		rolled string
+		days   retain.Days
+		// Days before now of an unjudged run each
+		runs []int
+	}
+	type want struct {
+		cutoff  time.Time
+		rollups []string
+		// Days before now of the runs left
+		left []int
+	}
+	tcs := []struct {
+		name string
+		args args
+		want want
+	}{
+		{
+			"no knob trace prunes by the retention alone",
+			args{days: 30, runs: []int{40, 3}},
+			want{now.Add(-30 * 24 * time.Hour), nil, []int{3}},
+		},
+		{
+			"a cycle closed by its length is rolled up first and its old runs go",
+			args{knobs: []knobbed{{"2026-08-31", 2}}, days: 30, runs: []int{40, 25}},
+			want{now.Add(-30 * 24 * time.Hour), []string{"2026-08-31"}, []int{25}},
+		},
+		{
+			"every closed cycle the cutoff reaches is rolled up in time order",
+			args{knobs: []knobbed{{"2026-08-31", 2}}, days: 7, runs: []int{40, 25, 10, 2}},
+			want{now.Add(-7 * 24 * time.Hour), []string{"2026-09-28", "2026-09-14", "2026-08-31"}, []int{2}},
+		},
+		{
+			"the cutoff moves back to the start of the open cycle so its runs stay",
+			args{knobs: []knobbed{{"2026-09-28", 4}}, days: 7, runs: []int{20, 11, 2}},
+			want{time.Date(2026, 9, 28, 0, 0, 0, 0, time.UTC), nil, []int{11, 2}},
+		},
+		{
+			"a cycle with a rollup gets no second one",
+			args{knobs: []knobbed{{"2026-08-31", 2}}, rolled: "2026-08-31", days: 30, runs: []int{40}},
+			want{now.Add(-30 * 24 * time.Hour), []string{"2026-08-31"}, nil},
+		},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			st := testkit.Open(t)
+			ctx := context.Background()
+			for _, k := range tc.args.knobs {
+				knob(t, st, k.cycle, k.weeks)
+			}
+			if tc.args.rolled != "" {
+				add(t, st, trace.NameRollup, 30, "", fmt.Sprintf(`{"cycle_id":%q}`, tc.args.rolled))
+			}
+			days := map[string]int{}
+			for _, d := range tc.args.runs {
+				days[add(t, st, trace.NameRun, d, "", `{"applied":[]}`)] = d
+			}
+			retainer := retain.New(st.Traces, st.Feedback, st.Outcomes, st.Ledger, count, clock)
+
+			plan, err := retainer.Plan(ctx, tc.args.days.Cutoff(now))
+			require.NoError(t, err)
+			_, err = retainer.Apply(ctx, plan)
+			require.NoError(t, err)
+
+			found, err := st.Traces.List(ctx, record.TraceFilter{Name: string(trace.NameRun)})
+			require.NoError(t, err)
+			var left []int
+			for _, tr := range found {
+				left = append([]int{days[tr.ID]}, left...)
+			}
+			assert.Equal(t, tc.want.cutoff, plan.Cutoff)
+			assert.Equal(t, tc.want.rollups, rollups(t, st))
+			assert.Equal(t, tc.want.left, left)
+		})
+	}
+}
+
+// A rollup another prune appended between the plan and its removal is the one of its cycle
+func TestRetainerApplyReadsTheRollupsAgain(t *testing.T) {
+	st := testkit.Open(t)
+	ctx := context.Background()
+	knob(t, st, "2026-08-31", 2)
+	run := add(t, st, trace.NameRun, 40, "", `{"applied":[]}`)
+	retainer := retain.New(st.Traces, st.Feedback, st.Outcomes, st.Ledger, count, clock)
+	plan, err := retainer.Plan(ctx, retain.Days(30).Cutoff(now))
+	require.NoError(t, err)
+	require.Len(t, plan.Rollups, 1)
+	add(t, st, trace.NameRollup, 0, "", `{"cycle_id":"2026-08-31"}`)
+
+	removed, err := retainer.Apply(ctx, plan)
+
+	require.NoError(t, err)
+	assert.Equal(t, 1, removed)
+	assert.Equal(t, []string{"2026-08-31"}, rollups(t, st))
+	_, err = st.Traces.Get(ctx, run)
+	assert.ErrorIs(t, err, record.ErrTraceNotFound)
+}
+
+// A count, an append or a read of the rollups that fails fails the prune before any run goes
+func TestRetainerRollupFailures(t *testing.T) {
+	failing := func(context.Context, trace.Cycle) (json.RawMessage, error) { return nil, errStore }
+	type args struct {
+		count retain.Count
+		// Heads and appends of the trace store that pass before the next fails
+		heads, appends int
+	}
+	tcs := []struct {
+		name string
+		args args
+	}{
+		{"a count that fails", args{failing, 9, 9}},
+		{"an append that fails", args{count, 9, 0}},
+		{"a read of the rollups that fails", args{count, 1, 9}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			st := testkit.Open(t)
+			ctx := context.Background()
+			knob(t, st, "2026-08-31", 2)
+			add(t, st, trace.NameRun, 40, "", `{"applied":[]}`)
+			traces := &testkit.FlakyTraces{
+				Store: st.Traces, Reads: testkit.Reads{Allowed: tc.args.heads, Err: errStore}, Appends: testkit.Reads{Allowed: tc.args.appends, Err: errStore},
+			}
+
+			removed, err := retain.New(traces, st.Feedback, st.Outcomes, st.Ledger, tc.args.count, clock).Prune(ctx, retain.Days(30).Cutoff(now))
+
+			assert.ErrorIs(t, err, errStore)
+			assert.Zero(t, removed)
+			left, err := st.Traces.List(ctx, record.TraceFilter{Name: string(trace.NameRun)})
+			require.NoError(t, err)
+			assert.Len(t, left, 1)
+			assert.Empty(t, rollups(t, st))
+		})
+	}
+}
+
 // A corrupt verdict line fails the plan since the verdict it held would leave its run unprotected
 func TestRetainerPlanFailsOnACorruptVerdict(t *testing.T) {
 	st := testkit.Open(t)
 	add(t, st, trace.NameRun, 40, "", `{"applied":[]}`)
 	require.NoError(t, os.WriteFile(filepath.Join(st.Dir, "feedback.jsonl"), []byte("not json\n"), 0o600))
 
-	_, err := retain.New(st.Traces, st.Feedback, st.Outcomes, st.Ledger).Plan(context.Background(), retain.Days(30).Cutoff(now))
+	_, err := retain.New(st.Traces, st.Feedback, st.Outcomes, st.Ledger, count, clock).Plan(context.Background(), retain.Days(30).Cutoff(now))
 
 	assert.ErrorIs(t, err, feedbackfile.ErrCorrupt)
 }
@@ -352,15 +556,16 @@ func TestDaily(t *testing.T) {
 			ctx := context.Background()
 			add(t, st, trace.NameRun, 40, "", `{"applied":[]}`)
 			require.NoError(t, os.WriteFile(filepath.Join(st.Dir, retain.MarkerFile), []byte(tc.args.marker), 0o600))
-			clock := now
-			retainer := retain.New(st.Traces, st.Feedback, st.Outcomes, st.Ledger)
+			at := now
+			tick := func() time.Time { return at }
+			retainer := retain.New(st.Traces, st.Feedback, st.Outcomes, st.Ledger, count, tick)
 			open := func() (*retain.Retainer, error) { return retainer, tc.args.openErr }
-			daily := retain.NewDaily(retain.NewMarker(filepath.Join(st.Dir, tc.args.sub)), tc.args.days, open, func() time.Time { return clock })
+			daily := retain.NewDaily(retain.NewMarker(filepath.Join(st.Dir, tc.args.sub)), tc.args.days, open, tick)
 
 			first, err := daily.Run(ctx)
 			// One more old run arrives as from a slow import so a second prune would remove it
 			add(t, st, trace.NameRun, 40, "", `{"applied":[]}`)
-			clock = clock.Add(tc.args.after)
+			at = at.Add(tc.args.after)
 			second, secondErr := daily.Run(ctx)
 
 			assert.ErrorIs(t, err, tc.want.firstErr)
@@ -378,7 +583,7 @@ func TestDaily(t *testing.T) {
 func TestDailyMarksTheCutoff(t *testing.T) {
 	st := testkit.Open(t)
 	ctx := context.Background()
-	retainer := retain.New(st.Traces, st.Feedback, st.Outcomes, st.Ledger)
+	retainer := retain.New(st.Traces, st.Feedback, st.Outcomes, st.Ledger, count, clock)
 	marks := retain.NewMarker(st.Dir)
 	daily := retain.NewDaily(marks, 30, func() (*retain.Retainer, error) { return retainer, nil }, func() time.Time { return now })
 

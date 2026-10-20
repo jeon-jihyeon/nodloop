@@ -96,7 +96,8 @@ func TestRunRecordsPrune(t *testing.T) {
 			0, "pruned 2 traces older than 2026-09-12T12:00:00Z\n", "^$", []string{"old-judged", "recent"}, true,
 		}},
 		{"a dry run removes nothing", args{"30", []string{"prune", "--dry-run"}, ""}, want{
-			0, "would prune 1 runs, 1 classify traces and 0 turn traces older than 2026-09-12T12:00:00Z, kept 1 judged, cited or first or last to use an item\n", "^$",
+			0, "would roll up 0 closed cycles and prune 1 runs, 1 classify traces and 0 turn, instructions and capture traces older than " +
+				"2026-09-12T12:00:00Z, kept 1 judged, cited or first or last to use an item\n", "^$",
 			every, false,
 		}},
 		{"a longer retention keeps the old runs", args{"60", []string{"prune"}, ""}, want{
@@ -315,7 +316,7 @@ func TestRecordsPruneSixtyDaysOfStream(t *testing.T) {
 
 	assert.Equal(t, before, run(runReport, "loop"))
 	assert.Len(t, traceIDs(t, records), window+judgedOld)
-	assert.Contains(t, planned, fmt.Sprintf("would prune %d runs, 0 classify traces and 0 turn traces", runs-window-judgedOld))
+	assert.Contains(t, planned, fmt.Sprintf("prune %d runs, 0 classify traces and 0 turn, instructions and capture traces", runs-window-judgedOld))
 	assert.Contains(t, planned, fmt.Sprintf("kept %d judged", judgedOld))
 	assert.Contains(t, pruned, fmt.Sprintf("pruned %d traces", runs-window-judgedOld))
 }

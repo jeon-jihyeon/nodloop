@@ -44,7 +44,7 @@ func TestDailySkipsAHeldMarker(t *testing.T) {
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = other.Close() })
 			require.NoError(t, syscall.Flock(int(other.Fd()), tc.args))
-			retainer := retain.New(st.Traces, st.Feedback, st.Outcomes, st.Ledger)
+			retainer := retain.New(st.Traces, st.Feedback, st.Outcomes, st.Ledger, count, clock)
 			open := func() (*retain.Retainer, error) { return retainer, nil }
 			daily := retain.NewDaily(retain.NewMarker(st.Dir), 30, open, func() time.Time { return now })
 			type result struct {

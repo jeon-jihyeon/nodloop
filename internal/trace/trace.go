@@ -74,13 +74,15 @@ const (
 	NameAnswer       Name = "answer"  // the person's answer to a question or no answer after its second round
 	// One action of a person or an agent on what nodloop prepared or carried out with the proof of its caller
 	NameIntervention Name = "intervention"
+	// The counts of a closed cycle the reports read once a prune may remove its runs
+	NameRollup Name = "rollup"
 )
 
 // Every name in a fixed order for messages
 func Names() []Name {
 	return []Name{
 		NameRun, NameCheck, NameClassify, NameExtract, NameReplay, NameConsolidate, NameRefill, NameTurn, NameCompact,
-		NameInstructions, NameCapture, NameDecide, NameKnob, NameAnchor, NameExpose, NameAnswer, NameIntervention,
+		NameInstructions, NameCapture, NameDecide, NameKnob, NameAnchor, NameExpose, NameAnswer, NameIntervention, NameRollup,
 	}
 }
 

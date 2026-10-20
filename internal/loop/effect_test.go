@@ -53,7 +53,7 @@ func simulatedEffect(rng *rand.Rand, rep, sessions int, share knowledge.Holdout)
 			verdicts = append(verdicts, feedback.Feedback{TraceID: id, Verdict: verdict, Reviewer: "ann"})
 		}
 	}
-	return loop.NewRuns(traces, verdicts).Effect(nil, nil, time.Time{})[0]
+	return loop.NewRuns(traces, verdicts).Effect(nil, nil, nil, time.Time{})[0]
 }
 
 // With 100 sessions of about 20 turns under a share of 0.1 and no real imbalance or effect

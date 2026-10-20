@@ -24,6 +24,7 @@ import (
 	"github.com/jeon-jihyeon/nodloop/internal/feedback"
 	"github.com/jeon-jihyeon/nodloop/internal/guard"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
+	"github.com/jeon-jihyeon/nodloop/internal/loop"
 	"github.com/jeon-jihyeon/nodloop/internal/replay"
 	"github.com/jeon-jihyeon/nodloop/internal/schema"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
@@ -129,6 +130,10 @@ var publishedKinds = kindTable{
 		reflect.TypeFor[trace.Intervention](), reflect.TypeFor[trace.InterventionOutput](),
 		[]string{"session_id", "source", "input.id", "input.version", "input.compaction", "input.authority", "input.proof", "output.records"},
 		[]string{}).withEnvelope("source"),
+	traceKind(trace.NameRollup, "The counts of a closed cycle the reports read once a prune may remove its runs",
+		reflect.TypeFor[loop.Rollup](), nil,
+		[]string{"subject", "input.cycle_id", "input.producers.units.unit", "input.items.id", "input.items.version", "input.items.units.unit"},
+		[]string{}),
 	{
 		name: "verdict", store: schema.StoreVerdicts, version: feedback.VerdictVersion,
 		description: "A verdict on a run: approve, edit, reject or withdraw", record: reflect.TypeFor[feedback.Feedback](),
@@ -184,6 +189,7 @@ func typeSchemas() map[reflect.Type]*jsonschema.Schema {
 		reflect.TypeFor[curate.Surface]():      enum(curate.Surfaces()),
 		reflect.TypeFor[curate.Choice]():       enum(curate.Choices()),
 		reflect.TypeFor[curate.KnobCause]():    enum(curate.KnobCauses()),
+		reflect.TypeFor[loop.Arm]():            enum(loop.Arms()),
 	}
 }
 

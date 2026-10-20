@@ -358,7 +358,8 @@ func (f fileTenants) retainer(tenant string, now func() time.Time) (*retain.Reta
 	if err != nil {
 		return nil, err
 	}
-	return retain.New(t.traces, t.verdicts, t.outcomes, t.ledger), nil
+	counter := loop.Stores{Traces: t.traces, Verdicts: t.verdicts, Outcomes: t.outcomes, Items: t.ledger}
+	return retain.New(t.traces, t.verdicts, t.outcomes, t.ledger, counter.Rollup, now), nil
 }
 
 // The rows of each tenant in one database
@@ -405,7 +406,9 @@ func (p pgTenants) marks(tenant string) (retain.Marks, error) {
 }
 
 func (p pgTenants) retainer(tenant string, now func() time.Time) (*retain.Retainer, error) {
-	return retain.New(p.db.Traces(tenant), p.db.Feedback(tenant), p.db.Outcomes(tenant), p.ledger(tenant, now)), nil
+	traces, verdicts, outcomes, ledger := p.db.Traces(tenant), p.db.Feedback(tenant), p.db.Outcomes(tenant), p.ledger(tenant, now)
+	counter := loop.Stores{Traces: traces, Verdicts: verdicts, Outcomes: outcomes, Items: ledger}
+	return retain.New(traces, verdicts, outcomes, ledger, counter.Rollup, now), nil
 }
 
 // The CLI a tool answer names for a check that runs a model such as knowledge check
