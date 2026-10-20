@@ -16,6 +16,9 @@ Every release tag publishes the plugin, the darwin and linux binaries of `nodloo
 - `report critic` adds a row per member of the reaction point: answers asked and sure, and how they matched the verdict the conversation recorded on the same run as agree, disagree, missed correction, missed approval and deferred. A run whose verdict the reaction point recorded itself counts only as asked
 - A session start after `/compact` or `/clear` adds every fitting item of the place again, since the context lost them, and records them as a `refill` trace so the next prompt adds none of them a second time, though `/clear` starts a new session id
 - The new `hook subagent` SubagentStart hook adds every fitting item of the place to a subagent, since no prompt hook runs inside one. A session the holdout withholds gives its subagents no item either
+- Codex runs the plugin through `plugin/.codex-plugin/plugin.json`: the same launcher, skills and MCP server, and the hooks of `plugin/hooks/codex.json`, which are those of Claude Code with `--host codex`. Add it with `codex plugin marketplace add jeon-jihyeon/nodloop` and `codex plugin add nodloop@nodloop`, then trust its hooks in `/hooks`, since Codex skips plugin hooks until you do
+- Cursor and Copilot CLI run the session start and the stop from the hook files in `examples/hooks`, copied into `.cursor/hooks.json` or `.github/hooks/`. The session start adds every fitting item, since neither host carries context on a prompt. Neither stop input holds the answer, so their stop records no run
+- `nodloop hook <action> --host claude-code|codex|cursor|copilot` reads the input and writes the answer of that agent, and every run of a session carries a `host` label, `claude-code` when the flag is absent. An item scoped without `host` still reaches every host, and `--label host=codex` scopes one to Codex. A host refuses a hook it never runs
 - Model call traces name the model the backend answered with, such as `claude-haiku-4-5-20251001` for `haiku`: extract, replay, consolidate and a coverage check through a model. A coverage check records its usage and duration, a replay its duration, and every compaction draft through a model records a `compact` trace with its usage, duration and error, which retention keeps
 
 ### Changed
@@ -28,6 +31,7 @@ Every release tag publishes the plugin, the darwin and linux binaries of `nodloo
 - The `next` line of `knowledge extract` and the `next` of the MCP `propose_extraction` name no command or tool that decides: a candidate waits for you and is asked once unless your earlier decisions settle it, since a model that read the approve command approved without asking
 
 ### Fixed
+- A propose from a corrected run without labels, and the keys of a background draft, no longer scope the lesson to the `host` of that run, so a lesson approved in Claude Code reaches the same place in Codex. Name `host` in the labels to keep one to a host
 - The classifier rows of `report critic` count only answers of the critic point, so a reaction endpoint no longer shows up as a critic
 
 ## 0.9.0 - 2026-10-15

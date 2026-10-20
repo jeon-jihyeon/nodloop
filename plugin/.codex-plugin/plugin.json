@@ -1,0 +1,23 @@
+{
+  "name": "nodloop",
+  "version": "0.9.0",
+  "description": "Your nods and corrections on AI output, recorded and carried to the next run in the same place once a named person approves them.",
+  "author": {
+    "name": "jeon-jihyeon"
+  },
+  "skills": "./skills/",
+  "mcpServers": {
+    "nodloop": {
+      "command": "./bin/nodloop",
+      "args": ["mcp"],
+      "cwd": "."
+    }
+  },
+  "hooks": "./hooks/codex.json",
+  "interface": {
+    "displayName": "nodloop",
+    "shortDescription": "Corrections you approve reach the next answer in the same place",
+    "developerName": "jeon-jihyeon",
+    "category": "Developer Tools"
+  }
+}

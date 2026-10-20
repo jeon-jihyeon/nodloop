@@ -47,15 +47,15 @@ const (
 	sessionWindow = retain.MinDays * 24 * time.Hour
 )
 
-// The hooks of a Claude Code conversation
+// The hooks of an agent conversation
 // 1. every failure goes to stderr and the exit code is 0 because a hook that fails must never block a prompt or a stop
-// 2. stdin is the hook input JSON of Claude Code
+// 2. stdin is the hook input JSON of the host --host names
 func runHook(args []string, getenv func(string) string, start starter, now func() time.Time, stdin io.Reader, stdout, stderr io.Writer) int {
-	if len(args) == 0 {
-		fmt.Fprintln(stderr, "nodloop hook:", errNoAction)
+	action, h, err := hookArgs(args, stderr)
+	if err != nil {
+		fmt.Fprintln(stderr, "nodloop hook:", err)
 		return 0
 	}
-	action := args[0]
 	a, err := recordFlags{}.app(getenv, now)
 	if err != nil {
 		fmt.Fprintln(stderr, "nodloop hook:", err)
@@ -69,13 +69,13 @@ func runHook(args []string, getenv func(string) string, start starter, now func(
 	if mode == sessionOff {
 		return 0
 	}
-	var in hookInput
-	if err := json.NewDecoder(stdin).Decode(&in); err != nil {
+	in, err := h.input(stdin)
+	if err != nil {
 		fmt.Fprintln(stderr, "nodloop hook:", err)
 		return 0
 	}
 	cmd := hookCommand{
-		app: a, detach: start, out: stdout, mode: mode,
+		app: a, detach: start, out: stdout, mode: mode, host: h,
 		plugin: cmp.Or(getenv(envPluginVersion), buildVersion()), holdout: a.cfg.holdout,
 	}
 	if action == "prompt" {
@@ -83,7 +83,7 @@ func runHook(args []string, getenv func(string) string, start starter, now func(
 			fmt.Fprintln(stderr, "nodloop hook:", err)
 		}
 	}
-	labels := workDir(in.Cwd).within(workDir(getenv(envProjectDir))).labels()
+	labels := h.labels(workDir(in.Cwd).within(workDir(getenv(envProjectDir))).labels())
 	if err := cmd.run(context.Background(), action, in, labels); err != nil {
 		fmt.Fprintln(stderr, "nodloop hook:", err)
 	}
@@ -106,6 +106,7 @@ func (c hookCommand) run(ctx context.Context, action string, in hookInput, label
 }
 
 // The fields of the Claude Code hook input the hooks read
+// Every host input is read into it
 type hookInput struct {
 	SessionID string `json:"session_id"`
 	Cwd       string `json:"cwd"`
@@ -114,6 +115,8 @@ type hookInput struct {
 	// Read only for the reaction point and never stored except as the reason of a reject it records
 	Prompt               string `json:"prompt"`
 	LastAssistantMessage string `json:"last_assistant_message"`
+	// True when the stop ends a turn a stop hook continued
+	StopHookActive bool `json:"stop_hook_active"`
 }
 
 type hookCommand struct {
@@ -121,6 +124,7 @@ type hookCommand struct {
 	detach starter
 	out    io.Writer
 	mode   sessionMode
+	host   host
 	// The version the launcher ran this binary for and else the build version
 	plugin  string
 	holdout knowledge.Holdout
@@ -160,12 +164,7 @@ func (c hookCommand) prompt(ctx context.Context, sessionID, message string, labe
 
 // The text as context the conversation receives on the hook event
 func (c hookCommand) addContext(event, text string) error {
-	enc := json.NewEncoder(c.out)
-	// Items quote commands such as a && b so the text stays as written
-	enc.SetEscapeHTML(false)
-	return enc.Encode(map[string]any{"hookSpecificOutput": map[string]any{
-		"hookEventName": event, "additionalContext": text,
-	}})
+	return c.host.context(c.out, event, text)
 }
 
 // The note on the previous run of the session
@@ -182,14 +181,15 @@ func (c hookCommand) note(sessionID string, run trace.Trace) sessionNote {
 var refillSources = []string{"compact", "clear"}
 
 // Every fitting item of the place again after a compaction or a clear emptied the context
-// The items added are recorded as a refill of the session so the next prompt adds none of them again
+// 1. a host without a prompt hook gets every fitting item from each session start since no other hook adds them
+// 2. on a host with a prompt hook the items added are recorded as a refill of the session so the next prompt adds none of them again
 // A clear starts a new session id with no run so without the refill that prompt would add every item a second time
 func (c hookCommand) start(ctx context.Context, sessionID, source string, labels trace.Labels) error {
-	if !slices.Contains(refillSources, source) {
+	if c.host.prompts() && !slices.Contains(refillSources, source) {
 		return nil
 	}
 	added, err := c.addItems(ctx, "SessionStart", sessionID, labels)
-	if sessionID == "" || len(added) == 0 {
+	if !c.host.prompts() || sessionID == "" || len(added) == 0 {
 		return err
 	}
 	return errors.Join(err, c.recordRefill(ctx, sessionID, added))
@@ -309,17 +309,18 @@ func (ts sessionTurns) inContext(items knowledge.Set, refill trace.Trace) []know
 	})
 }
 
-// The answer as a run of the conversation with the items its prompt received, then the lesson of the previous run
+// The answer as a run of the session and then the background work the turn left
 // 1. an empty answer such as an interrupted turn records nothing
-// 2. the previous run is the one the prompt hook named this turn, so each run is looked at for a lesson once
+// 2. the previous run is the one the prompt hook named this turn so each run is looked at for a lesson once
 // 3. a correction a knowledge record already cites is not drafted again in the background
 // The conversation usually drafted it in the same turn
 // 4. the holdout draws once per session so every turn of a conversation is in one arm
 // A lesson shown in one turn stays in the context of the next so a draw per turn would leak it into the withheld arm
-// 5. the daily retention prune starts in a process of its own when it is due since Claude Code may end an async hook when it exits
-// A failure to start it is printed like any other
+// 5. the extraction and the daily retention prune and the daily consolidate start in processes of their own so the turn never waits for them
+// A failure to start one is printed and the others still start
+// 6. a host whose stop input carries no answer records no run and still starts the background work
 func (c hookCommand) stop(ctx context.Context, sessionID string, labels trace.Labels, answer reply) error {
-	if strings.TrimSpace(string(answer)) == "" {
+	if c.host.answers() && strings.TrimSpace(string(answer)) == "" {
 		return nil
 	}
 	previous, runsErr := c.previousRun(ctx, sessionID)
@@ -331,6 +332,19 @@ func (c hookCommand) stop(ctx context.Context, sessionID string, labels trace.La
 		return allErr
 	}
 	corrupt := errors.Join(runsErr, allErr)
+	var failed error
+	if c.host.answers() {
+		failed = c.record(ctx, sessionID, labels, answer, all)
+	}
+	failed = errors.Join(failed, c.prune(ctx), c.consolidate(all))
+	if !all.Cites(previous.ID) {
+		failed = errors.Join(failed, c.extract(ctx, previous.ID, previous.Time))
+	}
+	return errors.Join(corrupt, failed)
+}
+
+// The answer as a run of the session with every fitting item of the place in its context
+func (c hookCommand) record(ctx context.Context, sessionID string, labels trace.Labels, answer reply, all knowledge.Set) error {
 	shown, _ := hookItems(all.For(sessionProducer, labels)).fitting()
 	applied := shown.Refs()
 	var withheld []knowledge.Ref
@@ -354,42 +368,38 @@ func (c hookCommand) stop(ctx context.Context, sessionID string, labels trace.La
 	if err != nil {
 		return err
 	}
-	if err := store.Append(ctx, tr.Record()); err != nil {
-		return err
-	}
-	pruneErr := errors.Join(c.prune(ctx), c.consolidate(all))
-	if all.Cites(previous.ID) {
-		return errors.Join(corrupt, pruneErr)
-	}
-	return errors.Join(corrupt, pruneErr, c.extract(ctx, previous.ID, previous.Time))
+	return store.Append(ctx, tr.Record())
 }
 
 // The extraction of the run started when the conversation alone judged it and its latest verdict corrects it
-// 1. a run with a verdict of a person is left to the nod skill even after a later inferred one because the person's verdict wins
-// A person's withdraw is such a verdict so a withdrawn run is never drafted
-// 2. it runs as `knowledge extract` in a process of its own because Claude Code may end an async hook when it exits
-// 3. the verdicts are read from the end of the records back to the run since none comes before it
+// It runs as `knowledge extract` in a process of its own so the stop never waits for a model
 func (c hookCommand) extract(ctx context.Context, runID string, at time.Time) error {
 	if !c.mode.infers() || runID == "" {
 		return nil
 	}
+	inferred, err := c.inferredCorrection(ctx, runID, at)
+	if err != nil || !inferred {
+		return err
+	}
+	return c.detach([]string{"knowledge", "extract", "--from", runID})
+}
+
+// Whether the conversation alone judged the run and its latest verdict corrects it
+// 1. a run with a verdict of a person is left to the nod skill even after a later inferred one because the person's verdict wins
+// A person's withdraw is such a verdict so a withdrawn run is never drafted
+// 2. the verdicts are read from the end of the records back to the run since none comes before it
+func (c hookCommand) inferredCorrection(ctx context.Context, runID string, at time.Time) (bool, error) {
 	verdicts, err := c.app.feedback()
 	if err != nil {
-		return err
+		return false, err
 	}
 	list, err := verdicts.List(ctx, record.FeedbackFilter{TraceID: runID, Since: at})
 	if err != nil {
-		return err
+		return false, err
 	}
 	records := feedback.RestoreAll(list)
-	if len(records.Human()) > 0 {
-		return nil
-	}
 	latest := records.Latest()
-	if len(latest) == 0 || !latest[0].Corrects() {
-		return nil
-	}
-	return c.detach([]string{"knowledge", "extract", "--from", runID})
+	return len(records.Human()) == 0 && len(latest) > 0 && latest[0].Corrects(), nil
 }
 
 // Starts records prune --daily in a process of its own when the daily prune is due

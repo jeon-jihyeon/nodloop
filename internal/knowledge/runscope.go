@@ -214,7 +214,8 @@ func (s Set) runCarried(id string, run RunScope) Set {
 	return out
 }
 
-// The approved run items other than id that the fullest run of run carries together, which the run caps hold
+// The approved run items other than id that the fullest run of run carries together
+// RunChars is held against this run
 // 1. items of two repositories never meet in one run so an item that reaches both counts the items of one of them
 // 2. each item starts one pass that adds every later item the labels gathered so far still admit
 // 3. the pass with the most runes wins and more items break a tie
@@ -259,7 +260,7 @@ func (k Knowledge) From(run trace.Trace, verdicts feedback.Records) (Knowledge, 
 	}
 	scope.Producer = cmp.Or(scope.Producer, run.Producer)
 	if len(scope.Labels) == 0 {
-		scope.Labels = run.Labels
+		scope.Labels = run.Labels.Place()
 	}
 	k.Run = &scope
 	if !slices.Contains(k.Evidence.FeedbackTraceIDs, run.ID) {

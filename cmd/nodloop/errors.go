@@ -37,6 +37,7 @@ var (
 	errRetentionInvalid   = errors.New("invalid retention")
 	errRetentionUnset     = errors.New("no retention set. Set one with nodloop config retention <days>")
 	errSessionModeUnknown = errors.New("unknown session mode")
+	errHostUnknown        = errors.New("unknown host")
 	errDeferred           = errors.New("deferred to the conversation")
 	errCallInput          = errors.New("call input is not a JSON object")
 	errRequired           = errors.New("is required")

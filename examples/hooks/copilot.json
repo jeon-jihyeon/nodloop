@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [
+      {
+        "type": "command",
+        "bash": "nodloop hook start --host copilot"
+      }
+    ],
+    "agentStop": [
+      {
+        "type": "command",
+        "bash": "nodloop hook stop --host copilot"
+      }
+    ]
+  }
+}

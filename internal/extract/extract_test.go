@@ -33,7 +33,7 @@ var pass = extract.Critique{States: true, Holds: true, Fits: true, Why: "ok"}
 // The text of the waiting candidate quote
 const quoted = "Quote a path with spaces in a shell command"
 
-// A session run of repo nodloop and dir cmd that a person edited
+// A session run of repo nodloop and dir cmd in host claude-code that a person edited
 // It reaches the approved item git-c and the waiting candidate quote
 // The waiting candidate far of another repository never reaches it
 func corrected(t *testing.T) (testkit.Stores, *extract.Extractor, string) {
@@ -42,7 +42,7 @@ func corrected(t *testing.T) (testkit.Stores, *extract.Extractor, string) {
 	s := testkit.Open(t)
 	output, err := json.Marshal("cd repo && git status\n" + longLine)
 	require.NoError(t, err)
-	run, err := trace.NewRun("session", "", trace.Labels{"repo": {"nodloop"}, "dir": {"cmd"}}, nil, output, s.Clock.Now())
+	run, err := trace.NewRun("session", "", trace.Labels{"repo": {"nodloop"}, "dir": {"cmd"}, "host": {"claude-code"}}, nil, output, s.Clock.Now())
 	require.NoError(t, err)
 	require.NoError(t, s.Traces.Append(ctx, run.Record()))
 	fb, err := feedback.New(run.ID, feedback.VerdictEdit, feedback.ReasonApproach, "use git -C", json.RawMessage(`"git -C repo status"`), "ann", s.Clock.Now())
@@ -123,6 +123,8 @@ func TestExtractorPropose(t *testing.T) {
 	}{
 		{"an add proposes a new item scoped to the keys it kept", args{draft: draft(extract.RelationAdd, "", lesson, "repo"), critique: pass},
 			want{result: waiting(result{candidate: "k-generated", version: 1, labels: nodloop, content: lesson})}},
+		{"an add that keeps the host is scoped without it", args{draft: draft(extract.RelationAdd, "", lesson, "repo", "host"), critique: pass},
+			want{result: waiting(result{candidate: "k-generated", version: 1, labels: nodloop, content: lesson})}},
 		{"an add without keys reaches every run of the producer", args{draft: draft(extract.RelationAdd, "", lesson), critique: pass},
 			want{result: waiting(result{candidate: "k-generated", version: 1, content: lesson})}},
 		{"an update proposes the next version with the scope of the item", args{draft: draft(extract.RelationUpdate, "git-c", lesson, "dir"), critique: pass},
@@ -176,7 +178,7 @@ func TestExtractorPropose(t *testing.T) {
 		{"a content that copies the output is refused", args{draft: draft(extract.RelationAdd, "", "Never say "+longLine), critique: pass},
 			want{err: extract.ErrNotLesson}},
 		{"a key the run does not carry is refused and names the keys it carries", args{draft: draft(extract.RelationAdd, "", lesson, "task"), critique: pass},
-			want{err: extract.ErrKeyUnknown, hint: "keys lists only dir or repo or nothing"}},
+			want{err: extract.ErrKeyUnknown, hint: "keys lists only dir or host or repo or nothing"}},
 		{
 			"a critique with a false answer is refused",
 			args{draft: draft(extract.RelationAdd, "", lesson), critique: extract.Critique{States: true, Holds: false, Fits: true, Why: "only this run"}},

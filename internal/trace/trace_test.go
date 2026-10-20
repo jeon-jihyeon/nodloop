@@ -231,6 +231,30 @@ func TestLabelsHas(t *testing.T) {
 	assert.False(t, labels.Has("path", "nodloop"))
 }
 
+func TestLabelsPlace(t *testing.T) {
+	tcs := []struct {
+		name string
+		args trace.Labels
+		want trace.Labels
+	}{
+		{"the host is left out", trace.Labels{"repo": {"o"}, "dir": {"."}, "host": {"codex"}}, trace.Labels{"repo": {"o"}, "dir": {"."}}},
+		{"labels without a host stay", trace.Labels{"repo": {"o"}}, trace.Labels{"repo": {"o"}}},
+		{"the host alone leaves none", trace.Labels{"host": {"cursor"}}, trace.Labels{}},
+		{"nil stays nil", nil, nil},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			had := len(tc.args)
+
+			got := tc.args.Place()
+
+			assert.Equal(t, tc.want, got)
+			assert.Len(t, tc.args, had, "the labels of the run keep their host")
+		})
+	}
+}
+
 func TestTracesVocabulary(t *testing.T) {
 	ts := trace.Traces{
 		{Name: trace.NameRun, Producer: "session", Labels: trace.Labels{"repo": {"nodloop"}, "task": {"commit"}}},

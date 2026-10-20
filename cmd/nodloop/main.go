@@ -22,17 +22,21 @@ commands:
                             Record one output of any producer as a run and print its id for feedback.
                             Output that is not JSON is kept as text. --withheld names the items knowledge for printed as
                             withheld and --holdout-key the key it drew with so report effect counts the run in its arm
-  hook start | hook prompt | hook stop | hook subagent
-                            The Claude Code conversation hooks the plugin registers. prompt adds the approved items of
+  hook start | hook prompt | hook stop | hook subagent [--host claude-code|codex|cursor|copilot]
+                            The conversation hooks the plugin registers. prompt adds the approved items of
                             producer session for the repo and dir of the place that the context lacks, so each version is
                             added once per conversation. The place is cwd while it lies inside CLAUDE_PROJECT_DIR and that
                             directory otherwise. It then names the previous run of the session so the conversation records
                             the user's verdict on it. start adds every item again after a compact or a clear and subagent
                             adds them to a subagent. stop records the answer as a run and drafts the lesson of the previous
                             run in the background when the conversation recorded a correction no record cites. All exit 0.
-                            The session mode is NODLOOP_SESSION, then config session_mode, then deferred: deferred records
-                            verdicts silently and drafts their lessons after the turn, manual leaves out the note and off
-                            records nothing. immediate of an earlier release reads as deferred
+                            --host reads the input and writes the answer of that agent and labels the run host,
+                            claude-code by default. codex runs every hook. cursor and copilot run start and stop alone:
+                            start adds every item and stop records no run since their input holds no answer. Their hook
+                            files are in examples/hooks. The session mode is NODLOOP_SESSION, then config session_mode,
+                            then deferred: deferred records verdicts silently and drafts their lessons after the turn,
+                            manual leaves out the note and off records nothing. immediate of an earlier release reads as
+                            deferred
   feedback list [--trace <id>] [--verdict <v>] [--reviewer <r>] [--limit <n>]
                             List feedback newest first with the reason code or a dash after the verdict
   feedback add --trace <id> --verdict <v> [--reason-code <c>] [--reason <r>] [--edited <file>] [--reviewer <r>] [--audit]

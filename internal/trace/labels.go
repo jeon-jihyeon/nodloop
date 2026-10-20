@@ -2,12 +2,29 @@ package trace
 
 import (
 	"fmt"
+	"maps"
 	"slices"
 )
 
 // Situation of a run as keys each holding values
 // A run holds one value per key and a knowledge scope may list several, any of which matches
 type Labels map[string][]string
+
+// The key of the agent host a session hook ran in such as claude-code or codex
+// It names the tool and not the place of the work
+const LabelHost = "host"
+
+// The labels of the place without the host
+// A scope filled from a run takes these so a lesson approved in one host reaches the same place in every host
+// Nil stays nil
+func (l Labels) Place() Labels {
+	if _, ok := l[LabelHost]; !ok {
+		return l
+	}
+	out := maps.Clone(l)
+	delete(out, LabelHost)
+	return out
+}
 
 // The same labels with each value list sorted and deduplicated
 // An empty key or value fails because a scope could never name it

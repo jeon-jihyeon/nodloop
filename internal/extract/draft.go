@@ -118,11 +118,15 @@ func (c Critique) failed() []string {
 }
 
 // The scope of an add: the producer of the run and the labels of the keys the draft kept
-// No key reaches every run of the producer
+// 1. no key reaches every run of the producer
+// 2. the host is left out as in a scope filled from the run so only a person narrows a lesson to one host
 func (d Draft) scope(run trace.Trace) knowledge.RunScope {
 	labels := trace.Labels{}
+	place := run.Labels.Place()
 	for _, key := range d.Keys {
-		labels[key] = run.Labels[key]
+		if values, ok := place[key]; ok {
+			labels[key] = values
+		}
 	}
 	return knowledge.RunScope{Producer: run.Producer, Labels: labels}
 }
