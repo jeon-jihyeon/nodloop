@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"io"
 	"maps"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -60,6 +61,8 @@ type gotSpan struct {
 	attrs                         map[string]any
 	links                         []string
 	status                        float64
+	// The status message of a failed span
+	message string
 }
 
 // The spans of every request by name
@@ -84,6 +87,7 @@ func (c *collector) spans() map[string]gotSpan {
 					}
 					if st, ok := m["status"].(map[string]any); ok {
 						g.status = st["code"].(float64)
+						g.message, _ = st["message"].(string)
 					}
 					out[g.name] = g
 				}
@@ -265,6 +269,7 @@ func TestExporterExportSpans(t *testing.T) {
 	assert.Equal(t, "critic", classify.attrs["nodloop.classify.point"])
 	assert.Equal(t, "nodloop.classify_failed", classify.attrs["error.type"])
 	assert.Equal(t, 2.0, classify.status)
+	assert.Empty(t, classify.message, "the error stays home without content since it may quote a model")
 	assert.NotContains(t, classify.attrs, "nodloop.judge.outcome", "a classify of another point carries nothing of the judge")
 	assert.NotContains(t, spans, "chat", "a step that called no model has no inference span")
 	assert.Len(t, spans, 9)
@@ -411,7 +416,8 @@ func TestExporterExportEvaluations(t *testing.T) {
 	}
 }
 
-// A judge classify carries the model and effort of every member and what they found, and its log record what the judge predicted
+// A judge classify carries the model and effort of every member and what they found
+// Its log record carries what the judge predicted
 func TestExporterExportJudge(t *testing.T) {
 	type want struct {
 		attrs map[string]any
@@ -489,6 +495,40 @@ func TestExporterExportContent(t *testing.T) {
 	assert.Equal(t, "wrong flag", spans["evaluate nodloop.verdict"].attrs["annotation.explanation"])
 	assert.Equal(t, "Use git -C", spans["nodloop.question direction"].attrs["nodloop.knowledge.content"])
 	assert.Equal(t, "Use git -C", spans["evaluate nodloop.decision"].attrs["nodloop.knowledge.content"])
+	assert.Equal(t, "endpoint down", spans["invoke_agent nodloop.classify"].message)
+}
+
+// A failed run is an ERROR span with its error type and its error as the message only with content
+func TestExporterExportFailedRun(t *testing.T) {
+	type want struct {
+		status    float64
+		errorType any
+		message   string
+	}
+	tcs := []struct {
+		name string
+		// Whether text goes along
+		args bool
+		want want
+	}{
+		{"without content the error stays home", false, want{2, "nodloop.run_failed", ""}},
+		{"with content the error is the status message", true, want{2, "nodloop.run_failed", "claude: exit status 1"}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			c := &collector{}
+			srv := httptest.NewServer(c)
+			t.Cleanup(srv.Close)
+			b := otel.Batch{Runs: []otel.Run{{ID: "r1", Time: at, Producer: "session", Error: "claude: exit status 1"}}}
+
+			_, err := exporter(srv, false, tc.args).Export(context.Background(), b)
+
+			require.NoError(t, err)
+			run := c.spans()["invoke_agent session"]
+			assert.Equal(t, tc.want, want{run.status, run.attrs["error.type"], run.message})
+		})
+	}
 }
 
 // A question lies in the trace of the run it followed and else is the root of a trace of its own
@@ -546,6 +586,85 @@ func TestExporterExportQuestion(t *testing.T) {
 			assert.Equal(t, tc.want.attrs, got.attrs)
 		})
 	}
+}
+
+// A run is the span of its turn with the holdout arm of report effect
+// 1. a run without a duration has a span of no length
+// 2. the model goes only when the run recorded one and the output only with content
+func TestExporterExportRun(t *testing.T) {
+	gitC := []otel.Ref{{ID: "git-c", Version: 1}}
+	turn := func(id string, keys map[string]any) map[string]any {
+		out := map[string]any{
+			"gen_ai.operation.name": "invoke_agent", "gen_ai.agent.name": "bot", "openinference.span.kind": "AGENT", "nodloop.run.id": id,
+		}
+		maps.Copy(out, keys)
+		return out
+	}
+	type args struct {
+		run     otel.Run
+		content bool
+	}
+	type want struct {
+		start, end string
+		attrs      map[string]any
+	}
+	tcs := []struct {
+		name string
+		args args
+		want want
+	}{
+		{
+			"a drawn run that applied items names the applied arm and the model it ran",
+			args{otel.Run{
+				ID: "r3", Time: at, Duration: 10 * time.Second, Producer: "bot", Model: "claude-haiku-4-5", Applied: gitC, Drawn: true, Unit: "u2", Share: 0.2,
+			}, false},
+			want{nanos(at.Add(-10 * time.Second)), nanos(at), turn("r3", map[string]any{
+				"gen_ai.request.model": "claude-haiku-4-5", "nodloop.knowledge.applied": []any{"git-c:1"}, "nodloop.holdout.unit": "u2",
+				"nodloop.holdout.share": 0.2, "nodloop.holdout.arm": "applied",
+			})},
+		},
+		{
+			"a run with items and no draw is undrawn",
+			args{otel.Run{ID: "r4", Time: at, Producer: "bot", Applied: gitC}, false},
+			want{nanos(at), nanos(at), turn("r4", map[string]any{"nodloop.knowledge.applied": []any{"git-c:1"}, "nodloop.holdout.arm": "undrawn"})},
+		},
+		{
+			"a run with no item to receive has no arm and its JSON output goes as written with content",
+			args{otel.Run{ID: "r5", Time: at, Producer: "bot", Output: json.RawMessage(`{"files":2}`)}, true},
+			want{nanos(at), nanos(at), turn("r5", map[string]any{"output.value": `{"files":2}`, "output.mime_type": "text/plain"})},
+		},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			c := &collector{}
+			srv := httptest.NewServer(c)
+			t.Cleanup(srv.Close)
+
+			sent, err := exporter(srv, false, tc.args.content).Export(context.Background(), otel.Batch{Runs: []otel.Run{tc.args.run}})
+
+			require.NoError(t, err)
+			assert.Equal(t, otel.Sent{Runs: 1}, sent)
+			got := c.spans()["invoke_agent bot"]
+			assert.Equal(t, tc.want, want{got.start, got.end, got.attrs})
+		})
+	}
+}
+
+// A value JSON cannot hold fails the export before any request goes out
+func TestExporterExportFailsToEncode(t *testing.T) {
+	c := &collector{}
+	srv := httptest.NewServer(c)
+	t.Cleanup(srv.Close)
+
+	sent, err := exporter(srv, true, false).Export(context.Background(), otel.Batch{Runs: []otel.Run{{
+		ID: "r1", Time: at, Producer: "bot", Withheld: []otel.Ref{{ID: "git-c", Version: 1}}, Drawn: true, Share: math.NaN(),
+	}}})
+
+	var unsupported *json.UnsupportedValueError
+	assert.ErrorAs(t, err, &unsupported)
+	assert.Equal(t, otel.Sent{}, sent)
+	assert.Empty(t, c.paths)
 }
 
 // Every evaluation goes as a log record of the GenAI conventions parented to what it evaluates after every span

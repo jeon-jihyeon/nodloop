@@ -264,6 +264,7 @@ func TestRetainerPruneFailures(t *testing.T) {
 		{"a failed read of the knowledge fails the plan", args{9, 0, 9, 30}, want{0, errStore, 2}},
 		{"a failed read of the traces fails the plan", args{9, 9, 0, 30}, want{0, errStore, 2}},
 		{"a failed second read of the citations fails the removal", args{1, 9, 9, 30}, want{0, errStore, 2}},
+		{"a failed second read of the knowledge fails the removal", args{9, 1, 9, 30}, want{0, errStore, 2}},
 		{"a failed removal fails the prune", args{9, 9, 1, 30}, want{0, errStore, 2}},
 	}
 	for _, tc := range tcs {
@@ -601,6 +602,8 @@ func TestDailyDue(t *testing.T) {
 		days retain.Days
 		// The content of each marker written by name
 		markers map[string]string
+		// The names made directories in place of a marker
+		dirs []string
 	}
 	type want struct {
 		due bool
@@ -611,12 +614,13 @@ func TestDailyDue(t *testing.T) {
 		args args
 		want want
 	}{
-		{"no retention is never due", args{0, nil}, want{false, nil}},
-		{"days Check refuses fail", args{3, nil}, want{false, retain.ErrDaysTooShort}},
-		{"no marker is due", args{30, nil}, want{true, nil}},
-		{"a fresh marker is not due", args{30, map[string]string{retain.MarkerFile: `{"at":"2026-10-12T06:00:00Z"}`}}, want{false, nil}},
-		{"a marker a day old is due", args{30, map[string]string{retain.MarkerFile: `{"at":"2026-10-11T12:00:00Z"}`}}, want{true, nil}},
-		{"a marker that does not decode is due", args{30, map[string]string{retain.MarkerFile: "not json"}}, want{true, nil}},
+		{"no retention is never due", args{0, nil, nil}, want{false, nil}},
+		{"days Check refuses fail", args{3, nil, nil}, want{false, retain.ErrDaysTooShort}},
+		{"no marker is due", args{30, nil, nil}, want{true, nil}},
+		{"a fresh marker is not due", args{30, map[string]string{retain.MarkerFile: `{"at":"2026-10-12T06:00:00Z"}`}, nil}, want{false, nil}},
+		{"a marker a day old is due", args{30, map[string]string{retain.MarkerFile: `{"at":"2026-10-11T12:00:00Z"}`}, nil}, want{true, nil}},
+		{"a marker that does not decode is due", args{30, map[string]string{retain.MarkerFile: "not json"}, nil}, want{true, nil}},
+		{"a marker that cannot be read fails", args{30, nil, []string{retain.MarkerFile}}, want{false, retain.ErrMarker}},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
@@ -624,6 +628,9 @@ func TestDailyDue(t *testing.T) {
 			dir := t.TempDir()
 			for name, content := range tc.args.markers {
 				require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte(content), 0o600))
+			}
+			for _, name := range tc.args.dirs {
+				require.NoError(t, os.Mkdir(filepath.Join(dir, name), 0o755))
 			}
 			daily := retain.NewDaily(retain.NewMarker(dir), tc.args.days, nil, func() time.Time { return now })
 

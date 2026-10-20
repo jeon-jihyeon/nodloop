@@ -3,6 +3,7 @@ package trace_test
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"testing"
 	"time"
 
@@ -88,6 +89,7 @@ func TestDrawCheck(t *testing.T) {
 		{"a pushed record without a probability is refused", args{manual, trace.SourcePush}, trace.ErrDrawInvalid},
 		{"a probability above 1 is refused", args{with(func(d *trace.Draw) { *d.P = 1.5 }), trace.SourcePush}, trace.ErrDrawInvalid},
 		{"a probability below 0 is refused", args{with(func(d *trace.Draw) { *d.P = -0.1 }), trace.SourcePush}, trace.ErrDrawInvalid},
+		{"a probability that is no number is refused", args{with(func(d *trace.Draw) { *d.P = math.NaN() }), trace.SourcePush}, trace.ErrDrawInvalid},
 		{"a draw at p 0 is refused", args{with(func(d *trace.Draw) { *d.P, d.Drawn = 0, true }), trace.SourcePush}, trace.ErrDrawInvalid},
 		{"a pushed record without a unit is refused", args{with(func(d *trace.Draw) { d.Unit = "" }), trace.SourcePush}, trace.ErrDrawInvalid},
 		{"a draw id of another shape is refused", args{with(func(d *trace.Draw) { d.DrawID = "1D87ED65A2835E3C" }), trace.SourcePush}, trace.ErrDrawInvalid},

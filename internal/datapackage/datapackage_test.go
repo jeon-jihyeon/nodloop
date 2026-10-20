@@ -98,6 +98,7 @@ func TestCreateRefuses(t *testing.T) {
 		want error
 	}{
 		{"a link to an empty folder", link, datapackage.ErrFolderLink},
+		{"a link named with a trailing slash", link + string(filepath.Separator), datapackage.ErrFolderLink},
 		{"a folder with a file", full, datapackage.ErrFolderNotEmpty},
 		{"a file", file, datapackage.ErrNotFolder},
 		{"a folder below a file", filepath.Join(file, "out"), syscall.ENOTDIR},

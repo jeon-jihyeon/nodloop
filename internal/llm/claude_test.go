@@ -109,6 +109,39 @@ func TestClaudeCLIComplete(t *testing.T) {
 	}
 }
 
+// The model that wrote the most output tokens answered since claude may run a small model beside the one asked
+func TestClaudeCLICompleteModel(t *testing.T) {
+	t.Parallel()
+	tcs := []struct {
+		name string
+		// The fields of the result JSON after its structured output
+		args string
+		want string
+	}{
+		{"the model that wrote the most output answered",
+			`,"modelUsage":{"claude-haiku-4-5":{"outputTokens":3},"claude-opus-5-5":{"outputTokens":40}}`, "claude-opus-5-5"},
+		{"a tie goes to the lower id", `,"modelUsage":{"m-b":{"outputTokens":5},"m-a":{"outputTokens":5}}`, "m-a"},
+		{"a result without model usage names none", "", ""},
+	}
+	ctx := context.Background()
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			result := `{"type":"result","subtype":"success","structured_output":{"answer":42}` + tc.args + "}"
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "result.json"), []byte(result), 0o600))
+			bin := filepath.Join(dir, "claude")
+			script := "#!/bin/sh\n/bin/cat > /dev/null\n/bin/cat \"" + dir + "/result.json\"\n"
+			require.NoError(t, os.WriteFile(bin, []byte(script), 0o755))
+
+			got, err := llm.NewClaudeCLI(bin, "sonnet", dir, 0).Complete(ctx, llm.Request{Prompt: "x", Schema: json.RawMessage(`{}`)})
+
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, got.Model)
+		})
+	}
+}
+
 func TestClaudeCLICompleteFailure(t *testing.T) {
 	t.Parallel()
 	type args struct {

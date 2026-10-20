@@ -1,4 +1,4 @@
-// Package atomicfile replaces a whole file in one rename and keeps a symlink that points at it
+// Package atomicfile replaces a whole file in one rename that keeps a symlink pointing at it and reads a whole regular file within a size limit
 package atomicfile
 
 import (

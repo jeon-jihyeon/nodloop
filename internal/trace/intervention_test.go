@@ -2,6 +2,7 @@ package trace_test
 
 import (
 	"encoding/json"
+	"math"
 	"testing"
 	"time"
 
@@ -19,7 +20,7 @@ func TestInterventionTrace(t *testing.T) {
 		in.Proof, in.Person = proof, person
 		return in
 	}
-	value, before := 0.3, 0.15
+	value, before, nan, inf := 0.3, 0.15, math.NaN(), math.Inf(1)
 	approved := trace.InterventionOutput{Records: []trace.Written{{ID: "k-1", Version: 2, Status: "approved"}}}
 	type args struct {
 		in     trace.Intervention
@@ -95,8 +96,49 @@ func TestInterventionTrace(t *testing.T) {
 			args{trace.Intervention{Action: trace.ActionDigest, Proof: trace.ProofNone}, trace.InterventionOutput{Since: "c1"}, trace.SourceManual},
 			want{`{"action":"digest","authority":"agent","proof":"none"}`, `{"records":[],"since":"c1"}`, nil},
 		},
+		{
+			"a dismiss names the question it closes",
+			args{with(trace.Intervention{Action: trace.ActionDismiss, Decide: "d1"}, trace.ProofNone, ""), trace.InterventionOutput{}, trace.SourceManual},
+			want{`{"action":"dismiss","decide":"d1","authority":"agent","proof":"none"}`, `{"records":[]}`, nil},
+		},
+		{
+			"a pause names its scope",
+			args{
+				with(trace.Intervention{Action: trace.ActionPause, Labels: trace.Labels{"repo": {"acme"}}}, trace.ProofNone, ""),
+				trace.InterventionOutput{}, trace.SourceManual,
+			},
+			want{`{"action":"pause","labels":{"repo":["acme"]},"authority":"agent","proof":"none"}`, `{"records":[]}`, nil},
+		},
+		{
+			"a resume names the pause it ends",
+			args{with(trace.Intervention{Action: trace.ActionResume, Reverses: "i1"}, trace.ProofNone, ""), trace.InterventionOutput{}, trace.SourceManual},
+			want{`{"action":"resume","reverses":"i1","authority":"agent","proof":"none"}`, `{"records":[]}`, nil},
+		},
+		{
+			"a reanchor names its place",
+			args{with(trace.Intervention{Action: trace.ActionReanchor, Target: "session"}, trace.ProofNone, ""), trace.InterventionOutput{}, trace.SourceManual},
+			want{`{"action":"reanchor","target":"session","authority":"agent","proof":"none"}`, `{"records":[]}`, nil},
+		},
 		{"an unknown action is refused", args{with(trace.Intervention{Action: "approve"}, trace.ProofNone, ""), trace.InterventionOutput{}, trace.SourceManual},
 			want{err: trace.ErrInterventionInvalid}},
+		{"a proof the caller forgot to set is refused", args{with(keep, "", "ann"), approved, trace.SourceManual}, want{err: trace.ErrInterventionInvalid}},
+		{
+			"a knob value that is no number is refused",
+			args{with(trace.Intervention{Action: trace.ActionKnob, Knob: "audit_tier1", Value: &nan}, trace.ProofKey, "ann"), trace.InterventionOutput{}, trace.SourceManual},
+			want{err: trace.ErrInterventionInvalid},
+		},
+		{
+			"a knob value it had that is infinite is refused",
+			args{
+				with(trace.Intervention{Action: trace.ActionKnob, Knob: "audit_tier1", Value: &value, Before: &inf}, trace.ProofKey, "ann"),
+				trace.InterventionOutput{}, trace.SourceManual,
+			},
+			want{err: trace.ErrInterventionInvalid},
+		},
+		{"a dismiss naming no question is refused", args{with(trace.Intervention{Action: trace.ActionDismiss}, trace.ProofNone, ""), trace.InterventionOutput{},
+			trace.SourceManual}, want{err: trace.ErrInterventionInvalid}},
+		{"an answer without a choice is refused", args{with(trace.Intervention{Action: trace.ActionAnswer, Decide: "d1"}, trace.ProofNone, ""),
+			trace.InterventionOutput{}, trace.SourceManual}, want{err: trace.ErrInterventionInvalid}},
 		{"an unknown choice is refused", args{with(trace.Intervention{Action: trace.ActionJudge, ID: "k-1", Version: 1, Choice: "approve"}, trace.ProofNone, ""),
 			trace.InterventionOutput{}, trace.SourceManual}, want{err: trace.ErrInterventionInvalid}},
 		{"an unknown proof is refused", args{with(keep, "model", ""), trace.InterventionOutput{}, trace.SourceManual}, want{err: trace.ErrInterventionInvalid}},
@@ -186,6 +228,8 @@ func TestProofAuthority(t *testing.T) {
 		{"an accepted form proves a person", trace.ProofElicitation, trace.AuthorityPerson},
 		{"a reply word proves a person", trace.ProofReply, trace.AuthorityPerson},
 		{"no proof is an agent", trace.ProofNone, trace.AuthorityAgent},
+		{"a proof a caller forgot to set is an agent", "", trace.AuthorityAgent},
+		{"an unknown proof is an agent", "badge", trace.AuthorityAgent},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {

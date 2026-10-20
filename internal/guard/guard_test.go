@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeon-jihyeon/nodloop/internal/guard"
+	"github.com/jeon-jihyeon/nodloop/internal/schema"
 	"github.com/jeon-jihyeon/nodloop/internal/veto"
 	vetofile "github.com/jeon-jihyeon/nodloop/internal/veto/file"
 )
@@ -263,6 +264,34 @@ func TestRunDecision(t *testing.T) {
 			load := func(string) (veto.Vetoes, error) { return tc.args.vetoes, tc.args.err }
 			got := guard.Run(strings.NewReader(tc.args.stdin), &stdout, io.Discard, load, "", at)
 			assert.Equal(t, tc.want, want{got, stdout.String()})
+		})
+	}
+}
+
+// The log line of a block and of an ask validates against the published schema guard
+func TestEntryValidates(t *testing.T) {
+	condition, err := veto.NewCondition("command", "rm -rf", "")
+	require.NoError(t, err)
+	tcs := []struct {
+		name string
+		args veto.Action
+	}{
+		{"a block", veto.ActionBlock},
+		{"an ask", veto.ActionAsk},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			v, err := veto.New("no-rm", "Bash", []veto.Condition{condition}, "Ask before deleting", tc.args, true)
+			require.NoError(t, err)
+			load := func(string) (veto.Vetoes, error) { return veto.Vetoes{v}, nil }
+			stdin := `{"session_id":"s1","tool_name":"Bash","tool_input":{"command":"rm -rf build"},"cwd":"/repo"}`
+			got := guard.Run(strings.NewReader(stdin), io.Discard, io.Discard, load, "", time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC))
+			require.NotNil(t, got.Entry)
+
+			err = schema.Validate("guard", got.Entry)
+
+			assert.NoError(t, err)
 		})
 	}
 }
