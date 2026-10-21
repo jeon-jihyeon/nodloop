@@ -211,7 +211,7 @@ func (c exportCommand) since(ctx context.Context, since time.Time) error {
 
 // Sends the records each store appended after the mark and then moves the mark
 // 1. another export holding the mark ends this one at once since it sends the same records
-// 2. a failure leaves the mark where it was so the next export sends them again under the same ids
+// 2. a retryable failure keeps the cursors and terminal receipts exclude records the collector must not receive again
 // 3. the mark keeps the position each store read up to so a stop reads only what was appended since
 // A record a slower process appends later with an earlier time still goes next time
 func (c exportCommand) pending(ctx context.Context) (err error) {
@@ -225,10 +225,16 @@ func (c exportCommand) pending(ctx context.Context) (err error) {
 		return err
 	}
 	fresh := read.records.sent()
-	if err := c.send(ctx, fresh); err != nil {
+	c.exporter = c.exporter.Checkpoint(held.Completed, func(done []string) error {
+		mark := held.Mark
+		mark.Completed = done
+		return held.Move(mark)
+	})
+	err = c.send(ctx, fresh)
+	if err != nil && (!errors.Is(err, otel.ErrRejected) || errors.Is(err, otel.ErrRetryable)) {
 		return err
 	}
-	return held.Move(otel.Mark{At: fresh.newest(held.At), After: read.positions})
+	return errors.Join(err, held.Move(otel.Mark{At: fresh.newest(held.At), After: read.positions}))
 }
 
 // Sends the records with what they name of earlier records and prints what went out

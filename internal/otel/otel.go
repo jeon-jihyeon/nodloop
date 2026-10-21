@@ -7,11 +7,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	neturl "net/url"
 	"slices"
-	"strings"
 )
 
 // Spans or log records in one request
@@ -55,14 +53,17 @@ type Config struct {
 
 // A collector that takes OTLP traces and logs over HTTP such as an OpenTelemetry Collector, Langfuse or Phoenix
 type Exporter struct {
-	cfg Config
+	cfg  Config
+	done map[string]bool
+	save func([]string) error
 }
 
 func New(cfg Config) *Exporter {
 	return &Exporter{cfg: cfg}
 }
 
-// How many records of each kind reached the collector
+// Record counts cover fully accepted span requests
+// Partial responses identify only the rejected span count
 type Sent struct {
 	Runs      int
 	Questions int
@@ -70,9 +71,11 @@ type Sent struct {
 	Outcomes  int
 	Decisions int
 	// The answers, the interventions and the decides
-	Judgments  int
-	Calls      int
-	LogRecords int
+	Judgments          int
+	Calls              int
+	LogRecords         int
+	RejectedSpans      int
+	RejectedLogRecords int
 }
 
 // One span with the kind of record it came from
@@ -86,17 +89,42 @@ type item struct {
 // Sends every record of the batch as its spans and then every evaluation and judge classify as a log record
 // 1. the ids derive from the records so sending a batch again sends the same spans
 // 2. the log records go after every span so a refused logs request fails the export with the traces sent
-// Returns what was sent until the first failure
+// Returns accepted counts and known rejection counts
 func (e *Exporter) Export(ctx context.Context, b Batch) (Sent, error) {
+	sent, err := e.exportSpans(ctx, b.items(e.cfg.Content))
+	if errors.Is(err, ErrRetryable) || e.cfg.Logs == "" {
+		return sent, err
+	}
+	err = errors.Join(err, e.exportLogs(ctx, b, &sent))
+	return sent, err
+}
+
+func (e *Exporter) exportSpans(ctx context.Context, items []item) (Sent, error) {
 	var sent Sent
-	items := b.items(e.cfg.Content)
+	items = slices.DeleteFunc(items, func(it item) bool { return e.done[e.spanKey(it.span)] })
+	var dropped error
 	for chunk := range slices.Chunk(items, batch) {
 		spans := make([]span, 0, len(chunk))
 		for _, it := range chunk {
 			spans = append(spans, it.span)
 		}
-		if err := e.send(ctx, e.cfg.Traces, e.spans(spans)); err != nil {
-			return sent, err
+		r, err := e.send(ctx, e.cfg.Traces, e.spans(spans), false, len(chunk))
+		if err != nil && !r.terminal {
+			return sent, errors.Join(dropped, ErrRetryable, err)
+		}
+		if r.terminal {
+			keys := make([]string, 0, len(chunk))
+			for _, it := range chunk {
+				keys = append(keys, e.spanKey(it.span))
+			}
+			if saveErr := e.complete(keys); saveErr != nil {
+				return sent, errors.Join(dropped, err, ErrRetryable, saveErr)
+			}
+		}
+		sent.RejectedSpans += r.rejected
+		dropped = errors.Join(dropped, err)
+		if r.rejected > 0 {
+			continue
 		}
 		for _, it := range chunk {
 			if it.last {
@@ -104,25 +132,39 @@ func (e *Exporter) Export(ctx context.Context, b Batch) (Sent, error) {
 			}
 		}
 	}
-	if e.cfg.Logs == "" {
-		return sent, nil
-	}
-	records := make([]logRecord, 0, len(b.Evaluations))
-	for _, ev := range b.Evaluations {
-		records = append(records, ev.record(e.cfg.Content))
-	}
+	return sent, dropped
+}
+
+func (e *Exporter) exportLogs(ctx context.Context, b Batch, sent *Sent) error {
+	var dropped error
+	evals := slices.Clone(b.Evaluations)
 	for _, c := range b.Calls {
 		if c.Judge != nil {
-			records = append(records, c.judged().record(e.cfg.Content))
+			evals = append(evals, c.judged())
 		}
 	}
-	for chunk := range slices.Chunk(records, batch) {
-		if err := e.send(ctx, e.cfg.Logs, e.logs(chunk)); err != nil {
-			return sent, err
+	evals = slices.DeleteFunc(evals, func(ev Evaluation) bool { return e.done[e.logKey(ev)] })
+	for chunk := range slices.Chunk(evals, batch) {
+		records := make([]logRecord, 0, len(chunk))
+		keys := make([]string, 0, len(chunk))
+		for _, ev := range chunk {
+			records = append(records, ev.record(e.cfg.Content))
+			keys = append(keys, e.logKey(ev))
 		}
-		sent.LogRecords += len(chunk)
+		r, err := e.send(ctx, e.cfg.Logs, e.logs(records), true, len(chunk))
+		if err != nil && !r.terminal {
+			return errors.Join(dropped, ErrRetryable, err)
+		}
+		if r.terminal {
+			if saveErr := e.complete(keys); saveErr != nil {
+				return errors.Join(dropped, err, ErrRetryable, saveErr)
+			}
+		}
+		sent.RejectedLogRecords += r.rejected
+		sent.LogRecords += len(chunk) - r.rejected
+		dropped = errors.Join(dropped, err)
 	}
-	return sent, nil
+	return dropped
 }
 
 // Every span of the batch in the order runs, questions, evaluations, model steps
@@ -191,17 +233,17 @@ type payload interface {
 }
 
 // Posts the payload to the endpoint in the encoding of the protocol
-func (e *Exporter) send(ctx context.Context, url string, p payload) error {
+func (e *Exporter) send(ctx context.Context, url string, p payload, logs bool, count int) (delivery, error) {
 	body := p.proto()
 	if e.cfg.Protocol == ProtocolJSON {
 		var err error
 		if body, err = json.Marshal(p); err != nil {
-			return err
+			return delivery{}, err
 		}
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
-		return redactedErr(err, url)
+		return delivery{}, redactedErr(err, url)
 	}
 	req.Header.Set("Content-Type", e.cfg.Protocol.contentType())
 	for k, v := range e.cfg.Headers {
@@ -209,14 +251,19 @@ func (e *Exporter) send(ctx context.Context, url string, p payload) error {
 	}
 	res, err := e.cfg.Client.Do(req)
 	if err != nil {
-		return redactedErr(err, url)
+		return delivery{}, redactedErr(err, url)
 	}
 	defer func() { _ = res.Body.Close() }()
-	if res.StatusCode/100 != 2 {
-		snippet, _ := io.ReadAll(io.LimitReader(res.Body, 200))
-		return fmt.Errorf("%w: %s answered %d: %s", ErrStatus, redacted(url), res.StatusCode, strings.TrimSpace(string(snippet)))
+	if res.StatusCode != http.StatusOK {
+		err := fmt.Errorf("%w: %s answered %d", ErrStatus, redacted(url), res.StatusCode)
+		switch res.StatusCode {
+		case 429, 502, 503, 504:
+			return delivery{}, err
+		default:
+			return delivery{terminal: true, rejected: count}, errors.Join(ErrRejected, err)
+		}
 	}
-	return nil
+	return response(res.Body, e.cfg.Protocol, logs, count)
 }
 
 // The endpoint without its password and query as hook.log keeps it

@@ -869,7 +869,7 @@ func TestExporterExportRefused(t *testing.T) {
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			c := &collector{status: map[string]int{tc.args: http.StatusBadRequest}}
+			c := &collector{status: map[string]int{tc.args: http.StatusServiceUnavailable}}
 			srv := httptest.NewServer(c)
 			t.Cleanup(srv.Close)
 

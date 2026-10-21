@@ -14,8 +14,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"github.com/jeon-jihyeon/nodloop/internal/otel"
 )
 
 // A pending export that finds the mark held by another ends at once and sends nothing
@@ -36,7 +34,7 @@ func TestRunExportOtelPendingSkipsAHeldMark(t *testing.T) {
 			t.Cleanup(srv.Close)
 			records := exportFixture(t)
 			getenv := func(k string) string { return map[string]string{envRecordDir: records, envOTLPEndpoint: srv.URL}[k] }
-			held, err := os.OpenFile(filepath.Join(records, otel.MarkFile), os.O_CREATE|os.O_RDWR, 0o600)
+			held, err := os.OpenFile(filepath.Join(records, "export.lock"), os.O_CREATE|os.O_RDWR, 0o600)
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = held.Close() })
 			require.NoError(t, syscall.Flock(int(held.Fd()), tc.args))
