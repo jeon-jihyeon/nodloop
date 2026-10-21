@@ -20,7 +20,6 @@ type userConfig struct {
 	// Whole days of unjudged and uncited runs a prune keeps and 0 for every run
 	Retention int `json:"retention,omitempty"`
 	// How a conversation records the verdicts it infers
-	// NODLOOP_SESSION overrides it per process
 	SessionMode string `json:"session_mode,omitempty"`
 	// The backend every command that calls a model builds its client from
 	LLM llm.Config `json:"llm"`

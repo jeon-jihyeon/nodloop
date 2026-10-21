@@ -203,12 +203,12 @@ type classifierCommand struct {
 	out   io.Writer
 }
 
-// The points whose answers stand for the person: the judge predicts their decision and the reaction reads their words
-var personPoints = []classify.Point{classify.PointJudge, classify.PointReaction}
-
-// A point that stands for the person changes only with the terminal proof so an agent never swaps who answers for them
+// A point changes only with the terminal proof so an agent never swaps who judges for the person
+// 1. the judge predicts their decision
+// 2. the reaction reads their words
+// 3. the critic passes the lessons drafted from them
 func (c classifierCommand) changeable(point classify.Point) error {
-	if c.proof == trace.ProofNone && slices.Contains(personPoints, point) {
+	if c.proof == trace.ProofNone {
 		return fmt.Errorf("%s: %w", point, errPersonOnly)
 	}
 	return nil

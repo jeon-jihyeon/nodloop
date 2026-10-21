@@ -230,7 +230,7 @@ func exportCurate(t *testing.T) (string, curateIDs) {
 	at = at.Add(time.Minute)
 	ids.asked = expose(ids.ask, curate.Exposure{
 		Kind: curate.QuestionDirection, Key: "ab12", Change: kept, Surface: curate.SurfaceContext, Rules: curate.QuestionRules,
-		Choices: []curate.Choice{curate.ChoiceKeep, curate.ChoiceDrop}, Text: text, Round: 1, Run: run.ID, Runes: 120,
+		Choices: []curate.Choice{curate.ChoiceKeep, curate.ChoiceDrop}, Text: text, Lines: []string{text}, Round: 1, Run: run.ID, Runes: 120,
 	}).ID
 	at = at.Add(time.Minute)
 	ids.answer = answer(ids.asked, curate.Answer{Choice: curate.ChoiceKeep, Decide: ids.ask, Change: kept, Proof: trace.ProofReply, Person: "ann"},
@@ -255,7 +255,7 @@ func exportCurate(t *testing.T) (string, curateIDs) {
 	at = at.Add(time.Minute)
 	ids.audited = expose(ids.drop, curate.Exposure{
 		Kind: curate.QuestionAudit, Key: "cd34", Change: dropped, Surface: curate.SurfaceContext, Rules: curate.QuestionRules,
-		Choices: []curate.Choice{curate.ChoiceSame, curate.ChoiceUndo}, Text: text, Round: 2, Run: run.ID, Runes: 90,
+		Choices: []curate.Choice{curate.ChoiceSame, curate.ChoiceUndo}, Text: text, Lines: []string{text}, Round: 2, Run: run.ID, Runes: 90,
 	}).ID
 	at = at.Add(time.Minute)
 	ids.unanswered = answer(ids.audited, curate.Answer{Choice: curate.ChoiceNoAnswer, Decide: ids.drop, Change: dropped, Proof: trace.ProofNone}, nil).ID
@@ -297,7 +297,7 @@ func exportCurate(t *testing.T) (string, curateIDs) {
 	at = at.Add(time.Minute)
 	manualAsk, err := curate.Event{Session: "s1", Ref: proposal.ID, Source: trace.SourceManual, Draw: chosen}.Expose(curate.Exposure{
 		Kind: curate.QuestionDirection, Key: "ef56", Change: judged, Surface: curate.SurfaceContext, Rules: curate.QuestionRules,
-		Choices: []curate.Choice{curate.ChoiceKeep, curate.ChoiceDrop}, Text: text, Round: 1, Run: run.ID, Runes: 80,
+		Choices: []curate.Choice{curate.ChoiceKeep, curate.ChoiceDrop}, Text: text, Lines: []string{text}, Round: 1, Run: run.ID, Runes: 80,
 	}, at)
 	require.NoError(t, err)
 	at = at.Add(time.Minute)

@@ -163,7 +163,7 @@ func runSession(args []string, getenv func(string) string, client llm.Client, no
 			return fail(stderr, "session", err)
 		}
 	}
-	mode, err := sessionModeOf(getenv(envSession), a.cfg.sessionMode)
+	mode, err := sessionModeOf(a.cfg.sessionMode)
 	if err != nil {
 		return fail(stderr, "session", err)
 	}
@@ -228,13 +228,12 @@ func (c captureCommand) read(ctx context.Context, session string, t transcript, 
 	if err != nil {
 		return captureOutput{}, err
 	}
-	from, first, offsetErr := c.offset(ctx, store, session)
-	runs, runsErr := c.runs(ctx, store, session)
-	shown, shownErr := c.app.exposes(ctx, session, c.app.now().Add(-sessionWindow))
-	corrupt := errors.Join(offsetErr, runsErr, shownErr)
+	window, corrupt := c.window(ctx, store, session, trace.NameCapture, trace.NameRun, trace.NameExpose)
 	if corrupt != nil && !errors.Is(corrupt, tracefile.ErrCorrupt) {
 		return captureOutput{}, corrupt
 	}
+	from, first := window.offset()
+	runs := window.runs()
 	part, err := t.read(from)
 	if err != nil {
 		return captureOutput{}, errors.Join(corrupt, err)
@@ -243,7 +242,7 @@ func (c captureCommand) read(ctx context.Context, session string, t transcript, 
 	if err != nil {
 		return captureOutput{}, errors.Join(corrupt, err)
 	}
-	reader.shown = shown
+	reader.shown = sessionExposes(window.of(trace.NameExpose))
 	out, failed := reader.judge(ctx, part.messages.after(runs.started(first)), runs)
 	tr, err := part.input.trace(session, out, c.app.now())
 	if err == nil {
@@ -266,40 +265,39 @@ func (c captureCommand) followTurn(ctx context.Context, mode sessionMode, sessio
 	if err != nil {
 		return err
 	}
-	since := c.app.now().Add(-sessionWindow)
-	turns, turnsErr := store.List(ctx, record.TraceFilter{Name: string(trace.NameTurn), SessionID: session, Since: since, Limit: 1})
-	runs, runsErr := c.runs(ctx, store, session)
-	corrupt := errors.Join(turnsErr, runsErr)
+	window, corrupt := c.window(ctx, store, session, trace.NameTurn, trace.NameRun)
 	if corrupt != nil && !errors.Is(corrupt, tracefile.ErrCorrupt) {
 		return corrupt
 	}
-	followed := runs.before(trace.Traces(trace.RestoreAll(turns)).Newest().Time)
+	followed := window.runs().before(window.newest(trace.NameTurn, time.Time{}).Time)
 	if followed.ID == "" {
 		return corrupt
 	}
 	return errors.Join(corrupt, c.follow(ctx, []string{followed.ID}, 0))
 }
 
-// The offset where the previous capture of the session ended and whether this capture is its first
-// 1. an input that does not decode reads as no capture so the session starts over as a first one
-// 2. so does a capture older than sessionWindow, so the read of a new session stops there and never scans the records of every session
-func (c captureCommand) offset(ctx context.Context, store *tracefile.Store, session string) (int64, bool, error) {
-	since := c.app.now().Add(-sessionWindow)
-	found, err := store.List(ctx, record.TraceFilter{Name: string(trace.NameCapture), SessionID: session, Since: since, Limit: 1})
-	newest := trace.Traces(trace.RestoreAll(found)).Newest()
-	var in captureInput
-	if newest.ID == "" || json.Unmarshal(newest.Input, &in) != nil {
-		return 0, true, err
+// The traces of the names of the session within sessionWindow newest first in one read
+// 1. a window older than sessionWindow is never read so a new session never scans the records of every session
+// 2. a corrupt line returns the traces found with the error
+func (c captureCommand) window(ctx context.Context, store *tracefile.Store, session string, names ...trace.Name) (sessionTraces, error) {
+	f := record.TraceFilter{SessionID: session, Since: c.app.now().Add(-sessionWindow)}
+	for _, name := range names {
+		f.Names = append(f.Names, string(name))
 	}
-	return in.To, false, err
+	found, err := store.List(ctx, f)
+	return sessionTraces(trace.RestoreAll(found)), err
 }
 
-// The runs of the session within sessionWindow newest first
-// A corrupt line returns the runs found with the error
-func (c captureCommand) runs(ctx context.Context, store *tracefile.Store, session string) (sessionTurns, error) {
-	since := c.app.now().Add(-sessionWindow)
-	found, err := store.List(ctx, record.TraceFilter{Name: string(trace.NameRun), SessionID: session, Since: since})
-	return sessionTurns(trace.RestoreAll(found)), err
+// The offset where the previous capture of the session ended and whether this capture is its first
+// 1. an input that does not decode reads as no capture so the session starts over as a first one
+// 2. so does a session whose window holds no capture
+func (ts sessionTraces) offset() (int64, bool) {
+	newest := ts.newest(trace.NameCapture, time.Time{})
+	var in captureInput
+	if newest.ID == "" || json.Unmarshal(newest.Input, &in) != nil {
+		return 0, true
+	}
+	return in.To, false
 }
 
 // Who reads the messages of one capture of the session: the answers it records, the reaction plan, the items it asks about and the verdicts it writes
@@ -410,7 +408,7 @@ func (r messageReader) answer(ctx context.Context, m personMessage, run trace.Tr
 		return curate.Replied{}, nil
 	}
 	return r.replies.Reply(ctx, curate.Reply{
-		Session: r.session, Key: m.key, Question: m.question, Seal: r.seal, Run: run.ID, Word: m.firstWord(), Person: r.person,
+		Session: r.session, Key: m.key, Question: m.question, Options: m.options, Seal: r.seal, Run: run.ID, Word: m.firstWord(), Person: r.person,
 	})
 }
 
@@ -660,17 +658,30 @@ type transcriptEntry struct {
 	ToolUseResult json.RawMessage `json:"toolUseResult"`
 }
 
-// The start of the AskUserQuestion header that names a question of the stop by its key
-const askHeaderPrefix = "nodloop "
-
 // One AskUserQuestion question as its call names it
 type askQuestion struct {
-	Header   string `json:"header"`
-	Question string `json:"question"`
+	Header   string      `json:"header"`
+	Question string      `json:"question"`
+	Options  []askOption `json:"options"`
 }
 
-// The headers of the AskUserQuestion questions by the id of their call and the text of each question
-type askedQuestions map[string]map[string]string
+// One option of an AskUserQuestion question
+type askOption struct {
+	Label       string `json:"label"`
+	Description string `json:"description"`
+}
+
+// The options of the question as curate checks a click with
+func (q askQuestion) options() []curate.Option {
+	out := make([]curate.Option, 0, len(q.Options))
+	for _, o := range q.Options {
+		out = append(out, curate.Option{Label: o.Label, Description: o.Description})
+	}
+	return out
+}
+
+// The AskUserQuestion questions by the id of their call and the text of each question
+type askedQuestions map[string]map[string]askQuestion
 
 // The questions of the AskUserQuestion calls on an assistant line
 func (e transcriptEntry) calls() askedQuestions {
@@ -688,9 +699,9 @@ func (e transcriptEntry) calls() askedQuestions {
 	calls := askedQuestions{}
 	for _, b := range blocks {
 		if b.Type == "tool_use" && b.Name == "AskUserQuestion" {
-			calls[b.ID] = map[string]string{}
+			calls[b.ID] = map[string]askQuestion{}
 			for _, q := range b.Input.Questions {
-				calls[b.ID][q.Question] = q.Header
+				calls[b.ID][q.Question] = q
 			}
 		}
 	}
@@ -699,8 +710,8 @@ func (e transcriptEntry) calls() askedQuestions {
 
 // Whether the call asks a question of the stop under a header nodloop <key>
 func (a askedQuestions) stops(id string) bool {
-	for _, header := range a[id] {
-		if strings.HasPrefix(header, askHeaderPrefix) {
+	for _, q := range a[id] {
+		if strings.HasPrefix(q.Header, curate.AskHeader) {
 			return true
 		}
 	}
@@ -736,14 +747,15 @@ func (e transcriptEntry) clicks(asked askedQuestions) personMessages {
 	if len(ids) == 0 || json.Unmarshal(e.ToolUseResult, &result) != nil {
 		return nil
 	}
-	headers := map[string]string{}
+	questions := map[string]askQuestion{}
 	for _, id := range ids {
-		maps.Copy(headers, asked[id])
+		maps.Copy(questions, asked[id])
 	}
 	var out personMessages
 	for _, question := range slices.Sorted(maps.Keys(result.Answers)) {
-		if key, ok := strings.CutPrefix(headers[question], askHeaderPrefix); ok {
-			out = append(out, personMessage{text: result.Answers[question], at: e.Timestamp, key: key, question: question})
+		if key, ok := strings.CutPrefix(questions[question].Header, curate.AskHeader); ok {
+			m := personMessage{text: result.Answers[question], at: e.Timestamp, key: key, question: question, options: questions[question].options()}
+			out = append(out, m)
 		}
 	}
 	return out
@@ -806,8 +818,9 @@ type personMessage struct {
 	at   time.Time
 	// The key of the question of the stop a picked label answers and empty for a typed message
 	key string
-	// The question of the AskUserQuestion call a picked label answers as the call wrote it
+	// The question of the AskUserQuestion call a picked label answers and its options as the call wrote them
 	question string
+	options  []curate.Option
 }
 
 // The label picked or the first word typed

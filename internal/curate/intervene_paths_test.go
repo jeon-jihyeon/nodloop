@@ -166,7 +166,7 @@ func TestIntervenerDigest(t *testing.T) {
 		{"a digest after a reply of the person starts after the answer it recorded", args{person, func(t *testing.T, d desk) string {
 			_ = kept(t, d)
 			d.expose(t, d.decideOf(t, "k-ask"))
-			// The expose holds the HMAC of zero bytes as the text the click checks
+			// The expose holds the HMAC of zero bytes as every line the click checks
 			shown := func(string) string { return hex.EncodeToString(make([]byte, 32)) }
 			replied, err := d.iv.Reply(ctx, curate.Reply{Session: "s-1", Key: "ab12", Seal: shown, Word: "drop", Person: "ann"})
 			require.NoError(t, err)
@@ -247,6 +247,11 @@ func TestIntervenerRefused(t *testing.T) {
 		{"an answer the question does not offer", args{func(t *testing.T, d desk) curate.Request {
 			return curate.Request{Action: trace.ActionAnswer, Target: d.decideOf(t, "k-ask"), Choice: trace.ChoiceYes}
 		}, person}, curate.ErrTargetInvalid},
+		{"a retry by another person of an answer whose intervention failed to append", args{func(t *testing.T, d desk) curate.Request {
+			r := curate.Request{Action: trace.ActionAnswer, Target: d.decideOf(t, "k-ask"), Choice: trace.ChoiceKeep}
+			require.ErrorIs(t, testkit.Err(d.failingAt(t, -1, 1).Intervene(ctx, r, person)), assert.AnError)
+			return r
+		}, curate.Submitter{Proof: trace.ProofKey, Person: "person", Source: trace.SourceManual}}, curate.ErrTargetInvalid},
 		{"a dismiss of a question with a choice", args{func(t *testing.T, d desk) curate.Request {
 			return curate.Request{Action: trace.ActionDismiss, Target: d.decideOf(t, "k-ask"), Choice: trace.ChoiceKeep}
 		}, person}, trace.ErrInterventionInvalid},
@@ -395,6 +400,7 @@ func TestIntervenerManualAddsNoQuestion(t *testing.T) {
 }
 
 // The prepared compaction a merge answer approves before the change that needed its room
+// A compaction that leaves no room for the change is refused before the first write so no compaction stands without its answer
 func TestIntervenerMerge(t *testing.T) {
 	ctx := context.Background()
 	candidate, approved := knowledge.StatusCandidate, knowledge.StatusApproved
@@ -402,28 +408,54 @@ func TestIntervenerMerge(t *testing.T) {
 	for len(big) < 4200 {
 		big += big
 	}
-	b := newBench(t, answer(0.9, 0.02), []knowledge.Knowledge{
-		lesson("k-big1", 1, "first "+big, acme("big"), approved, "ann"), lesson("k-big2", 1, "second "+big, acme("big"), approved, "ann"),
-		lesson("k-more", 1, "third "+big, acme("big"), candidate, ""),
-	}, nil)
-	first, err := b.curator().Pass(ctx, b.setting(t))
-	require.NoError(t, err)
-	require.Equal(t, []string{"add k-more v1 ask room 2"}, decisionsOf(first.Decided))
-	iv := b.intervener(nil)
-	merge := curate.Request{Action: trace.ActionAnswer, Target: first.Decided[0].ID, Choice: trace.ChoiceMerge}
-	_, err = iv.Intervene(ctx, merge, person)
-	require.ErrorIs(t, err, curate.ErrTargetInvalid, "no compaction was prepared yet")
-	_, err = b.stores.Ledger.ProposeCompaction(ctx, "k-big1", []knowledge.Knowledge{{
-		Kind: knowledge.KindMeaning, Content: "first and second " + big[:200], Run: acme("big"), Author: "claude",
-		Evidence: knowledge.Evidence{Knowledge: []knowledge.Ref{{ID: "k-big1", Version: 1}, {ID: "k-big2", Version: 1}}},
-	}})
-	require.NoError(t, err)
+	type want struct {
+		err error
+		// The records the merge wrote and the status of the change after it
+		wrote  int
+		change string
+	}
+	tcs := []struct {
+		name string
+		// The text the prepared compaction merges the two old items into
+		content string
+		want    want
+	}{
+		{"a compaction that makes room approves the change after it", "first and second " + big[:200], want{nil, 4, "k-more v1 approved ann"}},
+		{"a compaction that leaves the folder full writes nothing", "first and second " + big, want{knowledge.ErrFolderFull, 0, "k-more v1 candidate"}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			b := newBench(t, answer(0.9, 0.02), []knowledge.Knowledge{
+				lesson("k-big1", 1, "first "+big, acme("big"), approved, "ann"), lesson("k-big2", 1, "second "+big, acme("big"), approved, "ann"),
+				lesson("k-more", 1, "third "+big, acme("big"), candidate, ""),
+			}, nil)
+			first, err := b.curator().Pass(ctx, b.setting(t))
+			require.NoError(t, err)
+			require.Equal(t, []string{"add k-more v1 ask room 2"}, decisionsOf(first.Decided))
+			iv := b.intervener(nil)
+			merge := curate.Request{Action: trace.ActionAnswer, Target: first.Decided[0].ID, Choice: trace.ChoiceMerge}
+			_, err = iv.Intervene(ctx, merge, person)
+			require.ErrorIs(t, err, curate.ErrTargetInvalid, "no compaction was prepared yet")
+			_, err = b.stores.Ledger.ProposeCompaction(ctx, "k-big1", []knowledge.Knowledge{{
+				Kind: knowledge.KindMeaning, Content: tc.content, Run: acme("big"), Author: "claude",
+				Evidence: knowledge.Evidence{Knowledge: []knowledge.Ref{{ID: "k-big1", Version: 1}, {ID: "k-big2", Version: 1}}},
+			}})
+			require.NoError(t, err)
+			before, err := b.stores.Ledger.All(ctx)
+			require.NoError(t, err)
 
-	got, err := iv.Intervene(ctx, merge, person)
+			got, err := iv.Intervene(ctx, merge, person)
 
-	require.NoError(t, err)
-	assert.Contains(t, statuses(t, b), "k-more v1 approved ann")
-	assert.Len(t, got.Wrote, 4, "the new item, the two old ones it retires and the change")
+			assert.ErrorIs(t, err, tc.want.err)
+			after, aerr := b.stores.Ledger.All(ctx)
+			require.NoError(t, aerr)
+			assert.Equal(t, tc.want.wrote, len(got.Wrote))
+			assert.Equal(t, tc.want.wrote, len(after)-len(before))
+			assert.Contains(t, statuses(t, b), tc.want.change)
+			assert.Empty(t, b.orphans(t))
+		})
+	}
 }
 
 // A compaction judged keep through its id approves it with the coverage compact keeps and needs that check at hand

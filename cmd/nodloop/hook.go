@@ -28,8 +28,6 @@ import (
 const (
 	// The producer of the runs a Claude Code conversation records
 	sessionProducer = "session"
-	// The session mode of the process over session_mode of config.json
-	envSession = "NODLOOP_SESSION"
 	// The directory Claude Code started in
 	// It stays put when a Bash call runs cd
 	envProjectDir = "CLAUDE_PROJECT_DIR"
@@ -62,7 +60,7 @@ func runHook(args []string, getenv func(string) string, start starter, now func(
 		fmt.Fprintln(stderr, "nodloop hook:", err)
 		return 0
 	}
-	mode, err := sessionModeOf(getenv(envSession), a.cfg.sessionMode)
+	mode, err := sessionModeOf(a.cfg.sessionMode)
 	if err != nil {
 		fmt.Fprintln(stderr, "nodloop hook:", err)
 		return 0
@@ -82,7 +80,7 @@ func runHook(args []string, getenv func(string) string, start starter, now func(
 	cmd := hookCommand{
 		app: a, detach: start, out: stdout, mode: mode, host: h,
 		plugin: cmp.Or(getenv(envPluginVersion), buildVersion()), holdout: a.cfg.holdout, hold: mark.Knobs.Hold(), mark: mark, marked: markErr == nil,
-		unconfirmed: newUnconfirmed(a.cfg.recordDir, a.cfg.home, getenv(envClaudeConfigDir)),
+		rules: newRulesFiles(a.cfg.recordDir, a.cfg.home, getenv(envClaudeConfigDir), cmp.Or(getenv(envProjectDir), in.Cwd)),
 	}
 	if a.cfg.otel != nil {
 		cmd.export = start
@@ -133,6 +131,8 @@ type hookInput struct {
 	FilePath   string `json:"file_path"`
 	MemoryType string `json:"memory_type"`
 	LoadReason string `json:"load_reason"`
+	// The instructions file whose @path imports the file when the load reason is include
+	ParentFilePath string `json:"parent_file_path"`
 }
 
 type hookCommand struct {
@@ -156,8 +156,8 @@ type hookCommand struct {
 	reaction *classify.Plan
 	// Starts the OTLP export after every recorded run and nil when config.json holds no otel target
 	export starter
-	// The rules files whose lines no person confirmed
-	unconfirmed unconfirmed
+	// The rules files the host loads as the person's instructions and those whose lines no person confirmed
+	rules rulesFiles
 }
 
 // The approved items of this place the context lacks and the session note as context of the prompt
@@ -340,7 +340,12 @@ func (c hookCommand) recent(ctx context.Context, sessionID string, others ...tra
 type sessionTraces trace.Traces
 
 func (ts sessionTraces) runs() sessionTurns {
-	return sessionTurns(slices.DeleteFunc(slices.Clone(ts), func(t trace.Trace) bool { return t.Name != trace.NameRun }))
+	return sessionTurns(ts.of(trace.NameRun))
+}
+
+// The traces of the name newest first
+func (ts sessionTraces) of(name trace.Name) trace.Traces {
+	return slices.DeleteFunc(slices.Clone(trace.Traces(ts)), func(t trace.Trace) bool { return t.Name != name })
 }
 
 // The newest trace of the name at the time or later and the zero trace when none is
@@ -632,7 +637,7 @@ func (m sessionMode) valid() bool {
 	return slices.Contains(sessionModes, m)
 }
 
-// The mode a value of the env or config.json reads as
+// The mode a value of config.json reads as
 func (m sessionMode) read() sessionMode {
 	if m == sessionImmediate {
 		return sessionDeferred
@@ -645,21 +650,18 @@ func (m sessionMode) infers() bool {
 	return m == sessionDeferred
 }
 
-// The mode of the process
-// 1. NODLOOP_SESSION wins, then session_mode in config.json, then deferred
-// 2. a value outside the set is refused with where it came from so the hooks record nothing the user did not choose
-func sessionModeOf(env, configured string) (sessionMode, error) {
-	switch fromEnv, fromConfig := sessionMode(env).read(), sessionMode(configured).read(); {
-	case env != "" && !fromEnv.valid():
-		return "", fmt.Errorf("%w: %s is %q. %s", errSessionModeUnknown, envSession, env, sessionModeHint)
-	case env != "":
-		return fromEnv, nil
-	case configured != "" && !fromConfig.valid():
+// The mode session_mode of config.json saves and deferred when it saves none
+// 1. no variable overrides it since the env of a project settings file reaches the hooks and an agent may write that file
+// 2. a value outside the set is refused so the hooks record nothing the person did not choose
+func sessionModeOf(configured string) (sessionMode, error) {
+	mode := sessionMode(configured).read()
+	switch {
+	case configured == "":
+		return sessionDeferred, nil
+	case !mode.valid():
 		return "", fmt.Errorf("%w: session_mode in %s is %q. %s", errSessionModeUnknown, configFile, configured, sessionModeHint)
-	case configured != "":
-		return fromConfig, nil
 	}
-	return sessionDeferred, nil
+	return mode, nil
 }
 
 // The last answer of a turn

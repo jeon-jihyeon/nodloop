@@ -119,13 +119,11 @@ type captureBench struct {
 	runs []string
 }
 
-func newCaptureBench(t *testing.T, stops []captureStop, env map[string]string) captureBench {
+func newCaptureBench(t *testing.T, stops []captureStop, mode string) captureBench {
 	t.Helper()
 	home, records := t.TempDir(), t.TempDir()
+	saveMode(t, home, mode)
 	vars := map[string]string{"HOME": home, envRecordDir: records}
-	for k, v := range env {
-		vars[k] = v
-	}
 	b := captureBench{getenv: func(k string) string { return vars[k] }, records: records}
 	before := func() time.Time { return captureDay.Add(-time.Hour) }
 	out := filepath.Join(home, "out.txt")
@@ -381,7 +379,7 @@ func TestRunSessionCapture(t *testing.T) {
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			b := newCaptureBench(t, tc.args.stops, map[string]string{envSession: tc.args.mode})
+			b := newCaptureBench(t, tc.args.stops, tc.args.mode)
 			client, calls := captureClient(t, tc.args.reaction, nil)
 
 			code, stdout, stderr := b.capture(t, client, b.transcript(t, tc.args.transcript), captureDay.Add(80*time.Second))
@@ -424,7 +422,7 @@ func TestRunSessionCaptureManual(t *testing.T) {
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			b := newCaptureBench(t, twoStops, map[string]string{envSession: tc.args})
+			b := newCaptureBench(t, twoStops, tc.args)
 			client, calls := captureClient(t, sureReject, nil)
 
 			code, stdout, stderr := b.capture(t, client, b.transcript(t, "correction.jsonl"), captureDay.Add(80*time.Second))
@@ -445,7 +443,7 @@ func TestRunSessionCaptureOffset(t *testing.T) {
 	lines := strings.SplitAfter(string(full), "\n")
 	firstTurn := strings.Join(lines[:7], "")
 	rest := strings.Join(lines[7:], "")
-	b := newCaptureBench(t, twoStops, nil)
+	b := newCaptureBench(t, twoStops, "")
 	client, calls := captureClient(t, sureReject, nil)
 	path := b.transcriptPath(t)
 	write := func(content string) {
@@ -501,7 +499,7 @@ func TestRunSessionCaptureFirst(t *testing.T) {
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			b := newCaptureBench(t, early, nil)
+			b := newCaptureBench(t, early, "")
 			if tc.args.before != "" {
 				store, err := tracefile.New(b.records)
 				require.NoError(t, err)
@@ -561,7 +559,7 @@ func TestRunSessionCaptureExtracts(t *testing.T) {
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			b := newCaptureBench(t, twoStops, nil)
+			b := newCaptureBench(t, twoStops, "")
 			at := func() time.Time { return captureDay.Add(75 * time.Second) }
 			for _, flags := range tc.args.verdicts {
 				var stderr bytes.Buffer
@@ -625,7 +623,7 @@ func TestRunSessionCaptureWithoutTranscript(t *testing.T) {
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			b := newCaptureBench(t, twoStops, map[string]string{envSession: tc.args.mode})
+			b := newCaptureBench(t, twoStops, tc.args.mode)
 			at := func() time.Time { return captureDay.Add(75 * time.Second) }
 			var stderr bytes.Buffer
 			flags := []string{"add", "--trace", b.runs[0], "--verdict", tc.args.verdict, "--reason", "too long", "--reviewer", "session"}
@@ -665,7 +663,7 @@ func TestRunSessionCaptureWithoutTranscript(t *testing.T) {
 
 // An extraction that fails prints why and leaves the curate pass out since it proposed nothing
 func TestRunSessionCaptureExtractFails(t *testing.T) {
-	b := newCaptureBench(t, twoStops, nil)
+	b := newCaptureBench(t, twoStops, "")
 	client, calls := draftingClient(t, sureReject, nil, `"no draft"`)
 
 	code, stdout, stderr := b.capture(t, client, b.transcript(t, "correction.jsonl"), captureDay.Add(80*time.Second))
@@ -679,7 +677,7 @@ func TestRunSessionCaptureExtractFails(t *testing.T) {
 
 // Words asking to stop following a lesson a person approved run the curate pass, which asks the person
 func TestRunSessionCaptureSignal(t *testing.T) {
-	b := newCaptureBench(t, twoStops, nil)
+	b := newCaptureBench(t, twoStops, "")
 	client, calls := captureClient(t, `{"corrects":0.1,"approves":0.05,"stops_git-c_v1":0.97}`, nil)
 
 	code, stdout, stderr := b.capture(t, client, b.transcript(t, "stops.jsonl"), captureDay.Add(80*time.Second))
@@ -699,7 +697,7 @@ func TestRunSessionCaptureSignal(t *testing.T) {
 // The reason a captured correction keeps is the person's message redacted and cut at reasonRunes
 // and the judge reads the same words back through the reasons of the capture
 func TestRunSessionCaptureWords(t *testing.T) {
-	b := newCaptureBench(t, twoStops, nil)
+	b := newCaptureBench(t, twoStops, "")
 	words := "No, never print the password=hunter2secret in a log. " + strings.Repeat("Keep it out. ", 60)
 	content, err := json.Marshal(words)
 	require.NoError(t, err)
@@ -735,7 +733,6 @@ func TestRunSessionCaptureFails(t *testing.T) {
 	type args struct {
 		// The arguments after session and none means capture over correction.jsonl
 		args []string
-		env  map[string]string
 		// The record files that are directories
 		dirs []string
 		// A line of the traces that does not decode
@@ -766,7 +763,7 @@ func TestRunSessionCaptureFails(t *testing.T) {
 		{"an unknown action fails with the usage", args{args: []string{"replay"}}, want{1, "unknown action \"replay\"", false}},
 		{"no session fails", args{args: []string{"capture", "--transcript", "x"}}, want{1, "--session is required", false}},
 		{"an unknown flag fails", args{args: []string{"capture", "--nope"}}, want{1, "flag provided but not defined", false}},
-		{"an unknown session mode fails", args{env: map[string]string{envSession: "always"}}, want{1, "unknown session mode", false}},
+		{"an unknown session mode fails", args{config: `{"session_mode":"always"}`}, want{1, "unknown session mode", false}},
 		{"a transcript that does not exist fails", args{args: []string{"capture", "--session", "s1", "--transcript", "missing.jsonl"}}, want{1, "missing.jsonl", false}},
 		{"a failing reaction member is printed and the offset moves on", args{failing: true}, want{1, "no model", true}},
 		{"verdicts that cannot be written fail and the offset moves on", args{dirs: []string{"feedback.jsonl"}}, want{1, "feedback", true}},
@@ -783,7 +780,7 @@ func TestRunSessionCaptureFails(t *testing.T) {
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			b := newCaptureBench(t, twoStops, tc.args.env)
+			b := newCaptureBench(t, twoStops, "")
 			for _, dir := range tc.args.dirs {
 				require.NoError(t, os.RemoveAll(filepath.Join(b.records, dir)))
 				require.NoError(t, os.Mkdir(filepath.Join(b.records, dir), 0o755))
@@ -880,7 +877,7 @@ func TestRunSessionCaptureTranscript(t *testing.T) {
 			if tc.args.link != "" && runtime.GOOS == "windows" {
 				t.Skip("a link needs a privilege on windows")
 			}
-			b := newCaptureBench(t, twoStops, nil)
+			b := newCaptureBench(t, twoStops, "")
 			home := b.getenv("HOME")
 			if tc.args.config != "" {
 				env[envClaudeConfigDir] = filepath.Join(home, tc.args.config)
@@ -934,7 +931,7 @@ func TestRunSessionCaptureEndpoint(t *testing.T) {
 				_, _ = w.Write([]byte(`{"answers":` + tc.args + `}`))
 			}))
 			t.Cleanup(srv.Close)
-			b := newCaptureBench(t, twoStops, nil)
+			b := newCaptureBench(t, twoStops, "")
 			var stderr bytes.Buffer
 			require.Equal(t, 0, runClassifier([]string{"set", "reaction", "--url", srv.URL}, b.getenv, time.Now, atTerminal, &bytes.Buffer{}, &stderr), stderr.String())
 			client, calls := captureClient(t, sureReject, nil)
@@ -1220,10 +1217,11 @@ func TestSessionTurnsBefore(t *testing.T) {
 }
 
 // The text the stop shows for the question askuser.jsonl clicks with its reply line after the lines the call copies
-const askuserShown = "Keep the lesson to deploy with the script?\nReply keep or drop"
+const askuserShown = "Keep the lesson to deploy with the script?"
 
 // Asks the question of a waiting lesson in session s1 after the first stop of the bench under the key of askuser.jsonl
-// with the HMAC of the text shown under the key of the record directory and returns the decide it asks about
+// with the HMAC under the key of the record directory of each line a click must hold and returns the decide it asks about
+// The lines are the question shown, its header and the options as the block names them
 func (b captureBench) asked(t *testing.T, shown string) string {
 	t.Helper()
 	key, err := textkey.Load(b.records)
@@ -1245,6 +1243,7 @@ func (b captureBench) asked(t *testing.T, shown string) string {
 		Expose(curate.Exposure{
 			Kind: curate.QuestionDirection, Key: "k3x9", Change: &knowledge.Ref{ID: "c-new", Version: 1}, Surface: curate.SurfaceContext, Rules: curate.QuestionRules,
 			Choices: []curate.Choice{curate.ChoiceKeep, curate.ChoiceDrop}, Text: key.Sum(shown), Round: 1, Run: b.runs[0], Runes: 120,
+			Lines: []string{key.Sum(shown), key.Sum("nodloop k3x9"), key.Sum("keep: Apply the change"), key.Sum("drop: Leave the change out")},
 		}, at)
 	require.NoError(t, err)
 	require.NoError(t, errors.Join(store.Append(ctx, decide.Record()), store.Append(ctx, expose.Record())))
@@ -1275,7 +1274,7 @@ func TestRunSessionCaptureAnswers(t *testing.T) {
 		stops      []captureStop
 		// Whether an answer of the write side closed the question before the capture
 		answered bool
-		// The text the stop showed as its expose seals it
+		// The question the stop showed as its expose seals it
 		shown string
 	}
 	type want struct {
@@ -1292,7 +1291,7 @@ func TestRunSessionCaptureAnswers(t *testing.T) {
 		{"a click on the question keeps the lesson under the person", args{"askuser.jsonl", clicked, false, askuserShown}, want{1, 1, 0, "approved person"}},
 		{
 			"a click on a question other than the one the stop showed records nothing",
-			args{"askuser.jsonl", clicked, false, "Keep the lesson to deploy with make?\nReply keep or drop"},
+			args{"askuser.jsonl", clicked, false, "Keep the lesson to deploy with make?"},
 			want{1, 0, 0, "candidate"},
 		},
 		{"a reply word typed after the answer the question followed keeps it", args{"reply.jsonl", typed, false, askuserShown}, want{1, 1, 0, "approved person"}},
@@ -1302,7 +1301,7 @@ func TestRunSessionCaptureAnswers(t *testing.T) {
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			b := newCaptureBench(t, tc.args.stops, nil)
+			b := newCaptureBench(t, tc.args.stops, "")
 			b.asked(t, tc.args.shown)
 			if tc.args.answered {
 				iv, err := (app{cfg: config{recordDir: b.records}, now: func() time.Time { return captureDay.Add(31 * time.Second) }}).intervener()
@@ -1373,11 +1372,13 @@ func TestMessageReaderReplyFails(t *testing.T) {
 
 // The labels the person picked on questions of the stop as an AskUserQuestion result names them
 func TestTranscriptEntryClicks(t *testing.T) {
-	asked := askedQuestions{"t1": {"Keep it?": "nodloop k3x9"}, "t2": {"Which env?": "Env"}}
+	kept := []askOption{{Label: "keep", Description: "Apply the change"}}
+	asked := askedQuestions{"t1": {"Keep it?": {Header: "nodloop k3x9", Options: kept}}, "t2": {"Which env?": {Header: "Env"}}}
 	type want struct {
 		texts, keys, questions []string
+		options                [][]curate.Option
 	}
-	none := want{[]string{}, []string{}, []string{}}
+	none := want{[]string{}, []string{}, []string{}, [][]curate.Option{}}
 	tcs := []struct {
 		name string
 		args string
@@ -1386,7 +1387,7 @@ func TestTranscriptEntryClicks(t *testing.T) {
 		{
 			"the header of the call of the same id names the key",
 			`{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1"}]},"toolUseResult":{"answers":{"Keep it?":"Keep"}}}`,
-			want{[]string{"Keep"}, []string{"k3x9"}, []string{"Keep it?"}},
+			want{[]string{"Keep"}, []string{"k3x9"}, []string{"Keep it?"}, [][]curate.Option{{{Label: "keep", Description: "Apply the change"}}}},
 		},
 		{
 			"a result of a call the read does not hold is no click whatever its questions name",
@@ -1413,11 +1414,11 @@ func TestTranscriptEntryClicks(t *testing.T) {
 
 			got := e.clicks(asked)
 
-			texts, keys, questions := []string{}, []string{}, []string{}
+			texts, keys, questions, options := []string{}, []string{}, []string{}, [][]curate.Option{}
 			for _, m := range got {
-				texts, keys, questions = append(texts, m.text), append(keys, m.key), append(questions, m.question)
+				texts, keys, questions, options = append(texts, m.text), append(keys, m.key), append(questions, m.question), append(options, m.options)
 			}
-			assert.Equal(t, tc.want, want{texts, keys, questions})
+			assert.Equal(t, tc.want, want{texts, keys, questions, options})
 		})
 	}
 }

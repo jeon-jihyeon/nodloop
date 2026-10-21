@@ -13,21 +13,14 @@ import (
 )
 
 // The knowledge of one tenant
-// A decision runs under a transaction advisory lock of the tenant so two approvals of one candidate never both land
+// A decision holds the lock every append of the knowledge of the tenant takes so two approvals of one candidate never both land
 type KnowledgeStore struct {
 	pool   *pgxpool.Pool
 	tenant string
 }
 
 func (s *KnowledgeStore) Append(ctx context.Context, k record.Knowledge) error {
-	data, err := json.Marshal(k)
-	if err != nil {
-		return fmt.Errorf("%w: %w", ErrAppend, err)
-	}
-	if _, err := s.pool.Exec(ctx, `INSERT INTO nodloop_knowledge (tenant, data) VALUES ($1, $2)`, s.tenant, data); err != nil {
-		return fmt.Errorf("%w: %w", ErrAppend, err)
-	}
-	return nil
+	return insert(ctx, s.pool, "knowledge", s.tenant, `INSERT INTO nodloop_knowledge (tenant, data) VALUES ($1, $2)`, k)
 }
 
 func (s *KnowledgeStore) List(ctx context.Context) ([]record.Knowledge, error) {
@@ -38,7 +31,7 @@ func (s *KnowledgeStore) List(ctx context.Context) ([]record.Knowledge, error) {
 // Its refusal comes back as it is and only a database failure becomes ErrAppend so a caller can tell the two apart
 func (s *KnowledgeStore) AppendDecided(ctx context.Context, decide func(all []record.Knowledge) ([]record.Knowledge, error)) error {
 	var refused error
-	err := s.locked(ctx, func(tx pgx.Tx) error {
+	err := locked(ctx, s.pool, "knowledge", s.tenant, func(tx pgx.Tx) error {
 		all, err := s.list(ctx, tx)
 		if err != nil {
 			return err
@@ -71,7 +64,7 @@ func (s *KnowledgeStore) AppendDecided(ctx context.Context, decide func(all []re
 // Stores the rules render returns as the approved.md text of the tenant
 // An empty render while the tenant has no rules writes nothing
 func (s *KnowledgeStore) ReplaceRules(ctx context.Context, render func(all []record.Knowledge) string) error {
-	err := s.locked(ctx, func(tx pgx.Tx) error {
+	err := locked(ctx, s.pool, "knowledge", s.tenant, func(tx pgx.Tx) error {
 		all, err := s.list(ctx, tx)
 		if err != nil {
 			return err
@@ -101,16 +94,6 @@ func (s *KnowledgeStore) Rules(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("%w: %w", ErrRead, err)
 	}
 	return body, nil
-}
-
-// Runs fn in a transaction that holds the advisory lock of the tenant until it ends
-func (s *KnowledgeStore) locked(ctx context.Context, fn func(pgx.Tx) error) error {
-	return pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
-		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext('nodloop:knowledge:' || $1))`, s.tenant); err != nil {
-			return err
-		}
-		return fn(tx)
-	})
 }
 
 // What both a pool and a transaction query through

@@ -143,6 +143,6 @@ func (a app) intervener() (*curate.Intervener, error) {
 	}
 	return curate.NewIntervener(ledger, traces, curate.InterveneSetting{
 		Build: buildVersion(), Coverage: compactor.Coverage, Marks: curate.NewMarker(dir),
-		Cursor: schema.CursorAt, KnowledgeCursor: schema.KnowledgeCursor,
+		Cursor: schema.CursorAt, KnowledgeCursor: schema.KnowledgeCursor, Turn: curate.FileTurn(dir),
 	}, a.now), nil
 }

@@ -73,7 +73,7 @@ func TestRunOTel(t *testing.T) {
 			}
 			var stdout, stderr bytes.Buffer
 
-			code := runOTel(tc.args.args, envOf(env), &stdout, &stderr)
+			code := runOTel(tc.args.args, envOf(env), atTerminal, &stdout, &stderr)
 
 			// A missing config.json reads as none
 			saved, _ := os.ReadFile(homeDir(home).config().ConfigPath())

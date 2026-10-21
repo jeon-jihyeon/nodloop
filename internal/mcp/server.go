@@ -109,6 +109,9 @@ type Policy struct {
 	Curate curate.Marks
 	// The build a knob event the person raises at once names in its policy version
 	Build string
+	// The turn the interventions of the records take so two writes of one person never interleave
+	// Nil takes none
+	Turn func() (func(), error)
 }
 
 func New(
@@ -117,7 +120,7 @@ func New(
 ) *Server {
 	intervener := curate.NewIntervener(ledger, traces, curate.InterveneSetting{
 		Build: policy.Build, Coverage: compactor.Coverage, Marks: policy.Curate,
-		Cursor: schema.CursorAt, KnowledgeCursor: schema.KnowledgeCursor,
+		Cursor: schema.CursorAt, KnowledgeCursor: schema.KnowledgeCursor, Turn: policy.Turn,
 	}, now)
 	return &Server{
 		traces: traces, verdicts: verdicts, outcomes: outcomes, ledger: ledger, source: source, compactor: compactor, extractor: extractor,
@@ -344,7 +347,7 @@ var tools = []tool{
 		"Reads only", (*Server).records),
 	newTool("intervene", "Submit what the person named on what nodloop prepared or carried out: judge a lesson keep, undo or scope, answer or dismiss a question, "+
 		"pause or resume curate for a kind or a scope, set a knob within its range, reanchor a place, or reverse an earlier intervention. "+
-		"digest answers the cursor since the person's last judgment and changes nothing, so page records of answer, intervention, decide, expose and knowledge from it. "+
+		"digest answers the cursor since the person's last decision and changes nothing, so page records of answer, intervention, decide, expose and knowledge from it. "+
 		"Where the client shows forms the person confirms it in one form and it is the person's decision at once, and a declined form records nothing. "+
 		"Any other call records an agent proposal that is asked of the person at the end of this turn, so pass the session id the prompt note names. "+
 		"Never call it for anything the person did not name", (*Server).intervene),

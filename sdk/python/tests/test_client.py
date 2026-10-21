@@ -311,7 +311,7 @@ def seed_records(records: Path) -> None:
 
 
 async def test_records_page_across_a_cursor(binary: str, records: str) -> None:
-    """The records of a kind page oldest first across a cursor in their published schema with the text left out unless asked"""
+    """Records page across a cursor in the order their store appended them, in their published schema, text left out unless asked"""
     seed_records(Path(records))
     async with Client(records, binary) as c:
         first = await c.records("run", limit=1)

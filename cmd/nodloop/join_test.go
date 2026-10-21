@@ -106,7 +106,7 @@ func joinedAnswer(t *testing.T, records string, at time.Time, run string, k know
 	asked := curate.Event{Session: "s1", Ref: decide.ID, Source: trace.SourcePush, Draw: trace.NewDraw(cycle, policy, "seed", "s1", "direction", 1)}
 	expose, err := asked.Expose(curate.Exposure{
 		Kind: curate.QuestionDirection, Key: "ab12", Change: change, Surface: curate.SurfaceContext, Rules: curate.QuestionRules,
-		Choices: []curate.Choice{curate.ChoiceKeep, curate.ChoiceDrop}, Text: strings.Repeat("0", 64), Round: 1, Run: run,
+		Choices: []curate.Choice{curate.ChoiceKeep, curate.ChoiceDrop}, Text: strings.Repeat("0", 64), Lines: []string{strings.Repeat("0", 64)}, Round: 1, Run: run,
 	}, at)
 	require.NoError(t, err)
 	answered := asked

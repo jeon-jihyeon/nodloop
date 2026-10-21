@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/jeon-jihyeon/nodloop/internal/otel"
+	"github.com/jeon-jihyeon/nodloop/internal/trace"
 )
 
 const (
@@ -65,12 +66,13 @@ func (c otelConfig) endpoints() (string, string) {
 
 // otel prints the saved export target
 // set saves one and unset removes it
-func runOTel(args []string, getenv func(string) string, stdout, stderr io.Writer) int {
+// The proof is the terminal proof of the process since the target decides where the records of the person are sent
+func runOTel(args []string, getenv func(string) string, proof trace.Proof, stdout, stderr io.Writer) int {
 	h := homeDir(getenv("HOME"))
 	if h == "" {
 		return fail(stderr, "otel", errHomeUnknown)
 	}
-	cmd := otelCommand{home: h, out: stdout}
+	cmd := otelCommand{home: h, proof: proof, out: stdout}
 	if len(args) == 0 {
 		if err := cmd.show(); err != nil {
 			return fail(stderr, "otel", err)
@@ -105,11 +107,17 @@ func runOTel(args []string, getenv func(string) string, stdout, stderr io.Writer
 
 type otelCommand struct {
 	home homeDir
-	out  io.Writer
+	// The terminal proof of the process
+	proof trace.Proof
+	out   io.Writer
 }
 
 // Saves the target so every later stop, verdict and model call exports on its own
+// Only the person saves one since content would send every output and lesson to the endpoint it names
 func (c otelCommand) set(cfg otelConfig) error {
+	if c.proof == trace.ProofNone {
+		return fmt.Errorf("set: %w", errPersonOnly)
+	}
 	if cfg.Endpoint == "" {
 		return fmt.Errorf("--endpoint %w", errRequired)
 	}
@@ -123,7 +131,11 @@ func (c otelCommand) set(cfg otelConfig) error {
 }
 
 // Nothing is exported on its own again
+// Only the person removes the target since an export the person set up stops with it
 func (c otelCommand) unset() error {
+	if c.proof == trace.ProofNone {
+		return fmt.Errorf("unset: %w", errPersonOnly)
+	}
 	if err := c.home.config().Save(map[string]any{"otel": nil}); err != nil {
 		return err
 	}

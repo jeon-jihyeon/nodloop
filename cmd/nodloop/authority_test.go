@@ -177,10 +177,12 @@ func TestRunConfigApproverProof(t *testing.T) {
 	}
 }
 
-// Who answers for the person and whether their reactions are recorded change only with the terminal proof
+// What is recorded, kept or sent and who judges for the person change only with the terminal proof
 // 1. llm set and unset pick the backend the judge of curate runs on
-// 2. classifier set and unset of the judge and the reaction point pick who predicts the person, while the critic point stays open
-// 3. config session_mode saves whether the reactions of the person are recorded and prints from anywhere
+// 2. classifier set and unset of every point pick who judges for the person
+// 3. config session_mode, holdout and retention save what is recorded, which sessions get lessons and what is kept
+// 4. otel set and unset pick where the records go, with content every output and lesson
+// 5. each prints from anywhere
 func TestRunPersonSettingsProof(t *testing.T) {
 	type args struct {
 		proof trace.Proof
@@ -197,6 +199,7 @@ func TestRunPersonSettingsProof(t *testing.T) {
 	refused := want{1, errPersonOnly.Error(), start}
 	chat := []string{"llm", "set", "chat", "--base-url", "http://192.0.2.1/v1", "--model", "acme-model"}
 	judge := []string{"classifier", "set", "judge", "--url", "http://192.0.2.1/v1/classify"}
+	content := []string{"otel", "set", "--endpoint", "http://192.0.2.1:4318", "--content"}
 	tcs := []struct {
 		name string
 		args args
@@ -213,12 +216,26 @@ func TestRunPersonSettingsProof(t *testing.T) {
 		{"classifier unset reaction from a script is refused", args{trace.ProofNone, []string{"classifier", "unset", "reaction"}}, refused},
 		{"classifier set judge at the terminal is saved", args{atTerminal, judge}, want{0, "",
 			"{\n  \"approver\": \"ann\",\n  \"decision_points\": {\n    \"judge\": {\n      \"url\": \"http://192.0.2.1/v1/classify\"\n    }\n  }\n}\n"}},
-		{"classifier set critic from a script is saved", args{trace.ProofNone, []string{"classifier", "set", "critic", "--url", "http://192.0.2.1/v1/classify"}}, want{0, "",
+		{"classifier set critic from a script is refused", args{trace.ProofNone, []string{"classifier", "set", "critic", "--url", "http://192.0.2.1/v1/classify"}}, refused},
+		{"classifier unset critic from a script is refused", args{trace.ProofNone, []string{"classifier", "unset", "critic"}}, refused},
+		{"classifier set critic at the terminal is saved", args{atTerminal, []string{"classifier", "set", "critic", "--url", "http://192.0.2.1/v1/classify"}}, want{0, "",
 			"{\n  \"approver\": \"ann\",\n  \"decision_points\": {\n    \"critic\": {\n      \"url\": \"http://192.0.2.1/v1/classify\"\n    }\n  }\n}\n"}},
+		{"classifier list from a script prints", args{trace.ProofNone, []string{"classifier", "list"}}, want{0, "", start}},
 		{"config session_mode from a script is refused", args{trace.ProofNone, []string{"config", "session_mode", "off"}}, refused},
 		{"config session_mode at the terminal is saved", args{atTerminal, []string{"config", "session_mode", "off"}}, want{0, "",
 			"{\n  \"approver\": \"ann\",\n  \"session_mode\": \"off\"\n}\n"}},
 		{"config session_mode from a script prints", args{trace.ProofNone, []string{"config", "session_mode"}}, want{0, "", start}},
+		{"config holdout from a script is refused", args{trace.ProofNone, []string{"config", "holdout", "0.5"}}, refused},
+		{"config holdout at the terminal is saved", args{atTerminal, []string{"config", "holdout", "0.5"}}, want{0, "", "{\n  \"approver\": \"ann\",\n  \"holdout\": 0.5\n}\n"}},
+		{"config holdout from a script prints", args{trace.ProofNone, []string{"config", "holdout"}}, want{0, "", start}},
+		{"config retention from a script is refused", args{trace.ProofNone, []string{"config", "retention", "7"}}, refused},
+		{"config retention at the terminal is saved", args{atTerminal, []string{"config", "retention", "7"}}, want{0, "", "{\n  \"approver\": \"ann\",\n  \"retention\": 7\n}\n"}},
+		{"config retention from a script prints", args{trace.ProofNone, []string{"config", "retention"}}, want{0, "", start}},
+		{"otel set with content from a script is refused", args{trace.ProofNone, content}, refused},
+		{"otel unset from a script is refused", args{trace.ProofNone, []string{"otel", "unset"}}, refused},
+		{"otel set at the terminal is saved", args{atTerminal, content}, want{0, "",
+			"{\n  \"approver\": \"ann\",\n  \"otel\": {\n    \"endpoint\": \"http://192.0.2.1:4318\",\n    \"content\": true\n  }\n}\n"}},
+		{"otel from a script prints", args{trace.ProofNone, []string{"otel"}}, want{0, "", start}},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
@@ -233,6 +250,7 @@ func TestRunPersonSettingsProof(t *testing.T) {
 					return runClassifier(a, getenv, time.Now, tc.args.proof, &bytes.Buffer{}, &stderr)
 				},
 				"config": func(a []string) int { return runConfig(a, getenv, tc.args.proof, &bytes.Buffer{}, &stderr) },
+				"otel":   func(a []string) int { return runOTel(a, getenv, tc.args.proof, &bytes.Buffer{}, &stderr) },
 			}
 
 			code := commands[tc.args.command[0]](tc.args.command[1:])

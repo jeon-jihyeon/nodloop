@@ -305,7 +305,7 @@ test("an outcome is recorded on a run and a report reads by name with its window
   }
 });
 
-test("the records of a kind page oldest first across a cursor in their published schema with the text left out unless asked", async () => {
+test("records page across a cursor in the order their store appended them, in their published schema, text left out unless asked", async () => {
   const c = await open();
   seedRecords(c.recordDir);
   try {

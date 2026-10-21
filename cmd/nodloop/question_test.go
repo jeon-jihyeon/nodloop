@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -41,7 +40,7 @@ func gitRepo(t *testing.T, name string) string {
 	return repo
 }
 
-func newQuestionBench(t *testing.T, env map[string]string) questionBench {
+func newQuestionBench(t *testing.T, mode string) questionBench {
 	t.Helper()
 	getenv, records := curateHome(t, [][3]string{
 		{"k-add", "Name the failing test first", "repo=acme"},
@@ -50,8 +49,8 @@ func newQuestionBench(t *testing.T, env map[string]string) questionBench {
 	var stderr bytes.Buffer
 	require.Equal(t, 0, runKnowledge([]string{"curate"}, getenv, curateClient(t), func() time.Time { return curateNow }, trace.ProofNone, &bytes.Buffer{}, &stderr),
 		stderr.String())
+	saveMode(t, getenv("HOME"), mode)
 	vars := map[string]string{"HOME": getenv("HOME"), envRecordDir: records}
-	maps.Copy(vars, env)
 	at := curateNow.Add(time.Hour)
 	now := func() time.Time {
 		at = at.Add(time.Second)
@@ -117,7 +116,7 @@ const wideQuestion = "nodloop question for you\nOne decision for you: add the le
 // Claude Code asks the one question due for the place at the end of the first answer of a session
 // It continues the turn on Stop additionalContext with no decision
 func TestRunHookStopQuestion(t *testing.T) {
-	b := newQuestionBench(t, nil)
+	b := newQuestionBench(t, "")
 
 	first, firstErr := b.hook(t, "stop", "claude-code", questionStop, b.svc, noStart)
 	second, secondErr := b.hook(t, "stop", "claude-code", questionStop, b.svc, noStart)
@@ -128,7 +127,7 @@ func TestRunHookStopQuestion(t *testing.T) {
 	assert.Empty(t, second, "one question per session")
 	assert.Empty(t, decision)
 	assert.True(t, strings.HasPrefix(text, wideQuestion), text)
-	assert.Contains(t, text, `AskUserQuestion call with header "nodloop `+x.Key+`", the two choices keep and drop`)
+	assert.Contains(t, text, `AskUserQuestion call with header "nodloop `+x.Key+`", the two options keep with the description "Apply the change"`)
 	assert.LessOrEqual(t, len("nodloop "+x.Key), 12, "the header AskUserQuestion allows")
 	assert.Len(t, b.traces(t, trace.NameExpose), 1)
 	assert.Equal(t, []any{"s1", curate.QuestionDirection, trace.SourcePush}, []any{expose.SessionID, x.Kind, expose.Source})
@@ -151,7 +150,7 @@ func (w *exposeWitness) Write(p []byte) (int, error) {
 
 // The expose is on record before the stop prints the question with the run the question followed and the runes of its text
 func TestRunHookStopQuestionExpose(t *testing.T) {
-	b := newQuestionBench(t, nil)
+	b := newQuestionBench(t, "")
 	w := &exposeWitness{t: t, b: b}
 	var stderr bytes.Buffer
 
@@ -175,8 +174,9 @@ func TestRunHookStopQuestionExpose(t *testing.T) {
 func TestRunHookStopQuestionRules(t *testing.T) {
 	type args struct {
 		stop, repo string
-		env        map[string]string
-		start      starter
+		// session_mode of config.json and none when empty
+		mode  string
+		start starter
 		// Records written before the stop
 		setup func(t *testing.T, b questionBench)
 	}
@@ -208,20 +208,20 @@ func TestRunHookStopQuestionRules(t *testing.T) {
 		args args
 		want want
 	}{
-		{"a turn a stop hook continued asks nothing", args{`{"session_id":"s1","cwd":"{repo}","last_assistant_message":"done","stop_hook_active":true}`, "svc", nil, noStart, nil},
+		{"a turn a stop hook continued asks nothing", args{`{"session_id":"s1","cwd":"{repo}","last_assistant_message":"done","stop_hook_active":true}`, "svc", "", noStart, nil},
 			want{"", ""}},
-		{"a place no question reaches asks nothing", args{questionStop, "work", nil, noStart, nil}, want{"", ""}},
-		{"manual mode pushes nothing", args{questionStop, "svc", map[string]string{envSession: "manual"}, noStart, nil}, want{"", ""}},
-		{"a failed start asks nothing", args{questionStop, "svc", nil, func([]string) error { return errors.New("no process") }, nil}, want{"", "no process"}},
-		{"manual mode asks the proposal the session made", args{questionStop, "acme", map[string]string{envSession: "manual"}, noStart, propose},
+		{"a place no question reaches asks nothing", args{questionStop, "work", "", noStart, nil}, want{"", ""}},
+		{"manual mode pushes nothing", args{questionStop, "svc", "manual", noStart, nil}, want{"", ""}},
+		{"a failed start asks nothing", args{questionStop, "svc", "", func([]string) error { return errors.New("no process") }, nil}, want{"", "no process"}},
+		{"manual mode asks the proposal the session made", args{questionStop, "acme", "manual", noStart, propose},
 			want{"nodloop question for you\nOne decision for you: keep the lesson \"Name the failing test first\"\n", ""}},
-		{"a question another session answered asks nothing", args{questionStop, "svc", nil, noStart, answered}, want{"", ""}},
-		{"exposes that cannot be read ask nothing and say why", args{questionStop, "svc", nil, noStart, corrupt}, want{"", "corrupt"}},
+		{"a question another session answered asks nothing", args{questionStop, "svc", "", noStart, answered}, want{"", ""}},
+		{"exposes that cannot be read ask nothing and say why", args{questionStop, "svc", "", noStart, corrupt}, want{"", "corrupt"}},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			b := newQuestionBench(t, tc.args.env)
+			b := newQuestionBench(t, tc.args.mode)
 			if tc.args.setup != nil {
 				tc.args.setup(t, b)
 			}
@@ -264,7 +264,7 @@ func TestRunHookPromptReply(t *testing.T) {
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			b := newQuestionBench(t, nil)
+			b := newQuestionBench(t, "")
 			stdout, _ := b.hook(t, "stop", "claude-code", questionStop, b.svc, noStart)
 			require.NotEmpty(t, stdout)
 			if tc.args.between {
@@ -299,7 +299,7 @@ func questionAnswers(t *testing.T, b questionBench) []string {
 // The reply word the person typed is recorded by the capture of the turn from the transcript Claude Code keeps
 // The answer names the expose it answers and the ledger record names the answer under the person
 func TestRunHookReplyCaptured(t *testing.T) {
-	b := newQuestionBench(t, map[string]string{})
+	b := newQuestionBench(t, "")
 	b.hook(t, "stop", "claude-code", questionStop, b.svc, noStart)
 	expose, _ := b.exposed(t)
 	b.hook(t, "prompt", "claude-code", `{"session_id":"s1","cwd":"{repo}","prompt":"keep, and show the cluster list"}`, b.svc, noStart)
@@ -329,7 +329,7 @@ func TestRunHookReplyCaptured(t *testing.T) {
 
 // A notice names what curate carried out in the place through systemMessage alone once per session and never beside a question
 func TestRunHookStopNotice(t *testing.T) {
-	b := newQuestionBench(t, nil)
+	b := newQuestionBench(t, "")
 	store, err := tracefile.New(b.records)
 	require.NoError(t, err)
 	knobs, err := store.List(context.Background(), record.TraceFilter{Name: string(trace.NameKnob)})
@@ -374,7 +374,7 @@ func TestRunHookStopQuestionFails(t *testing.T) {
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			b := newQuestionBench(t, nil)
+			b := newQuestionBench(t, "")
 			path := filepath.Join(b.records, tc.args.file)
 			require.NoError(t, os.RemoveAll(path))
 			require.NoError(t, os.Mkdir(path, 0o700))
@@ -394,7 +394,8 @@ func TestRunHookStopQuestionFails(t *testing.T) {
 func TestRunHookStopAsksCurateOnlyWhenDue(t *testing.T) {
 	type args struct {
 		repo string
-		env  map[string]string
+		// session_mode of config.json and none when empty
+		mode string
 		// The session asked its question at a stop before
 		asked bool
 	}
@@ -403,15 +404,15 @@ func TestRunHookStopAsksCurateOnlyWhenDue(t *testing.T) {
 		args args
 		want string
 	}{
-		{"the first stop of a session reaches curate", args{"svc", nil, false}, "nodloop hook: "},
-		{"a session that was asked its question does not", args{"svc", nil, true}, ""},
-		{"a place no question reaches does not", args{"work", nil, false}, ""},
-		{"a mode that pushes nothing does not", args{"svc", map[string]string{envSession: "manual"}, false}, ""},
+		{"the first stop of a session reaches curate", args{"svc", "", false}, "nodloop hook: "},
+		{"a session that was asked its question does not", args{"svc", "", true}, ""},
+		{"a place no question reaches does not", args{"work", "", false}, ""},
+		{"a mode that pushes nothing does not", args{"svc", "manual", false}, ""},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			b := newQuestionBench(t, tc.args.env)
+			b := newQuestionBench(t, tc.args.mode)
 			repo := map[string]string{"svc": b.svc, "work": b.work}[tc.args.repo]
 			if tc.args.asked {
 				stdout, _ := b.hook(t, "stop", "claude-code", questionStop, repo, noStart)

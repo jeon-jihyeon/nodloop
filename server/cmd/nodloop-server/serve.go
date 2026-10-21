@@ -70,7 +70,7 @@ func runServe(args []string, getenv func(string) string, now func() time.Time, s
 			return fail(stderr, "serve", err)
 		}
 		defer db.Close()
-		stores, where = pgTenants{db: db, policy: policy}, "records in PostgreSQL"
+		stores, where = pgTenants{db: db, policy: policy, turns: &tenantTurns{}}, "records in PostgreSQL"
 	} else {
 		dir, err := h.RecordDir(*recordDir, getenv(envRecordDir), uc.RecordDir)
 		if err != nil {
@@ -430,9 +430,11 @@ func (f fileTenants) files(tenant string, now func() time.Time) (tenantFiles, er
 }
 
 // The policy of the server with the marks of the tenant
+// The interventions of every key of the tenant take turns on the lock in its directory as local writers do
 func (f fileTenants) policyOf(tenant string) mcp.Policy {
 	p := f.policy
 	p.Marks = retain.NewMarker(f.dir(tenant))
+	p.Turn = curate.FileTurn(f.dir(tenant))
 	return p
 }
 
@@ -509,6 +511,31 @@ func (f fileTenants) retainer(tenant string, now func() time.Time) (*retain.Reta
 type pgTenants struct {
 	db     *pg.DB
 	policy mcp.Policy
+	turns  *tenantTurns
+}
+
+// The turn of the interventions of each tenant in this process
+// Keys of one person submit to one tenant so the turn is the tenant's and never the key's
+type tenantTurns struct {
+	mu    sync.Mutex
+	turns map[string]*sync.Mutex
+}
+
+func (t *tenantTurns) of(tenant string) func() (func(), error) {
+	return func() (func(), error) {
+		t.mu.Lock()
+		if t.turns == nil {
+			t.turns = map[string]*sync.Mutex{}
+		}
+		turn, ok := t.turns[tenant]
+		if !ok {
+			turn = &sync.Mutex{}
+			t.turns[tenant] = turn
+		}
+		t.mu.Unlock()
+		turn.Lock()
+		return turn.Unlock, nil
+	}
 }
 
 // No veto file is written since the tool calls of a server's producers are checked through check_call
@@ -541,6 +568,7 @@ func (p pgTenants) records(key serverKey, _ func() time.Time) (schema.Source, er
 func (p pgTenants) policyOf(tenant string) mcp.Policy {
 	policy := p.policy
 	policy.Marks = p.db.Prunes(tenant)
+	policy.Turn = p.turns.of(tenant)
 	return policy
 }
 

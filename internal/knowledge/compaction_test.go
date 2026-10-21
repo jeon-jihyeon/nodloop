@@ -1,6 +1,7 @@
 package knowledge_test
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -1279,6 +1280,62 @@ func TestLedgerCandidateOfCompactedVersion(t *testing.T) {
 				approved = fmt.Sprintf("%s v%d", id, version)
 			}
 			assert.Equal(t, tc.want.approved, approved)
+		})
+	}
+}
+
+// The approval of a candidate checked over the records the approval of a compaction would write and with no write
+// It refuses as Approve would once the compaction stands
+func TestSetCheckApprovalAfter(t *testing.T) {
+	at := time.Date(2026, 9, 28, 0, 0, 0, 0, time.UTC)
+	repo := trace.Labels{"repo": {"nodloop"}}
+	seed := func(id, content string) knowledge.Knowledge {
+		return knowledge.Knowledge{
+			ID: id, Version: 1, Kind: knowledge.KindMeaning, Content: content, Run: &knowledge.RunScope{Producer: "session", Labels: repo},
+			Evidence: knowledge.Evidence{FeedbackTraceIDs: []string{"t-" + id}}, Basis: knowledge.BasisStated,
+			Status: knowledge.StatusApproved, Approver: "ann", ApprovedAt: at, Author: "author", Time: at,
+		}
+	}
+	type args struct {
+		// The text the compaction of the two old items holds and the compaction the check names when it is not that one
+		merged, named string
+	}
+	tcs := []struct {
+		name string
+		args args
+		want error
+	}{
+		{"a compaction that makes room", args{"a and b", ""}, nil},
+		{"a compaction that leaves the folder full", args{strings.Repeat("b", 5000), ""}, knowledge.ErrFolderFull},
+		{"a compaction never proposed", args{"a and b", "c-missing"}, knowledge.ErrNotFound},
+	}
+	ctx := context.Background()
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			l, _ := newTestLedger(t, t.TempDir(), at)
+			require.NoError(t, testkit.Err(l.Import(ctx, []knowledge.Knowledge{
+				seed("k-a", "a "+strings.Repeat("a", 4000)), seed("k-b", "b "+strings.Repeat("b", 4000)),
+			})))
+			_, _, err := l.Propose(ctx, knowledge.Knowledge{
+				ID: "k-next", Kind: knowledge.KindMeaning, Content: strings.Repeat("n", 5000), Author: "author",
+				Run: &knowledge.RunScope{Producer: "session", Labels: repo}, Evidence: knowledge.Evidence{FeedbackTraceIDs: []string{"t-next"}},
+			})
+			require.NoError(t, err)
+			c, err := l.ProposeCompaction(ctx, "k-a", []knowledge.Knowledge{{
+				Kind: knowledge.KindMeaning, Content: tc.args.merged, Author: "claude", Run: &knowledge.RunScope{Producer: "session", Labels: repo},
+				Evidence: knowledge.Evidence{Knowledge: []knowledge.Ref{{ID: "k-a", Version: 1}, {ID: "k-b", Version: 1}}},
+			}})
+			require.NoError(t, err)
+			all, err := l.All(ctx)
+			require.NoError(t, err)
+
+			err = all.CheckApprovalAfter(cmp.Or(tc.args.named, c.ID), "k-next", 1, "sam", coverage(c), at)
+
+			assert.ErrorIs(t, err, tc.want)
+			unchanged, aerr := l.All(ctx)
+			require.NoError(t, aerr)
+			assert.Equal(t, all, unchanged)
 		})
 	}
 }

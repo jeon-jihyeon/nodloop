@@ -14,7 +14,21 @@ const (
 	MarkFile = "curate.json"
 	// At most one daily pass per interval whatever stops the conversations make
 	Interval = 24 * time.Hour
+	// The lock the writes of interventions over the record directory take turns on
+	TurnFile = "intervene.lock"
 )
+
+// The turn every local writer over the record directory waits for
+// The CLI and MCP stdio and the hooks and the capture of one person write the same records from processes of their own
+func FileTurn(dir string) func() (func(), error) {
+	return func() (func(), error) {
+		held, err := markfile.Wait[struct{}](filepath.Join(dir, TurnFile))
+		if err != nil {
+			return nil, err
+		}
+		return func() { _ = held.Release() }, nil
+	}
+}
 
 // The last pass as curate.json keeps it for the hooks
 // Every fact a consumer needs beyond the hooks is in a record since a mark is state a writer replaces

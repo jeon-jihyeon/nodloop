@@ -11,9 +11,6 @@ import (
 // Every record is a JSON row of its tenant so the record types stay the ones the file stores keep
 // 1. json and not jsonb so a record reads back byte for byte as written since jsonb reorders keys and spacing
 // 2. seq orders the rows of a table so newest first is seq descending as in a jsonl file
-// 3. xid is the transaction that wrote the row so a read in append order pages by xid then seq
-// A row a transaction still open will commit gets a seq below the rows read before it commits
-// No transaction below the oldest one still open writes a row later so a read up to it never skips one
 const schema = `
 CREATE TABLE IF NOT EXISTS nodloop_traces (
 	seq bigserial PRIMARY KEY, tenant text NOT NULL, id text NOT NULL, name text NOT NULL, session_id text NOT NULL, data json NOT NULL
@@ -38,14 +35,6 @@ CREATE TABLE IF NOT EXISTS nodloop_rules (
 CREATE TABLE IF NOT EXISTS nodloop_prunes (
 	tenant text PRIMARY KEY, at timestamptz NOT NULL, cutoff timestamptz NOT NULL
 );
-ALTER TABLE nodloop_traces ADD COLUMN IF NOT EXISTS xid xid8 NOT NULL DEFAULT pg_current_xact_id();
-ALTER TABLE nodloop_feedback ADD COLUMN IF NOT EXISTS xid xid8 NOT NULL DEFAULT pg_current_xact_id();
-ALTER TABLE nodloop_outcomes ADD COLUMN IF NOT EXISTS xid xid8 NOT NULL DEFAULT pg_current_xact_id();
-ALTER TABLE nodloop_knowledge ADD COLUMN IF NOT EXISTS xid xid8 NOT NULL DEFAULT pg_current_xact_id();
-CREATE INDEX IF NOT EXISTS nodloop_traces_appended ON nodloop_traces (tenant, xid, seq);
-CREATE INDEX IF NOT EXISTS nodloop_feedback_appended ON nodloop_feedback (tenant, xid, seq);
-CREATE INDEX IF NOT EXISTS nodloop_outcomes_appended ON nodloop_outcomes (tenant, xid, seq);
-CREATE INDEX IF NOT EXISTS nodloop_knowledge_appended ON nodloop_knowledge (tenant, xid, seq);
 `
 
 // The advisory lock key that serializes the schema of every process opening one database

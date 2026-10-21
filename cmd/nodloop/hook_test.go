@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -201,13 +202,12 @@ func TestRunHookPrompt(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			home, records, repo := hookHome(t, tc.args.content)
+			saveMode(t, home, tc.args.session)
 			other := filepath.Join(t.TempDir(), "other")
 			require.NoError(t, os.MkdirAll(filepath.Join(other, ".git"), 0o755))
 			place := strings.NewReplacer("{repo}", repo, "{other}", other)
 			getenv := func(k string) string {
-				return map[string]string{
-					"HOME": home, envRecordDir: records, envSession: tc.args.session, envProjectDir: place.Replace(tc.args.project),
-				}[k]
+				return map[string]string{"HOME": home, envRecordDir: records, envProjectDir: place.Replace(tc.args.project)}[k]
 			}
 			now := hookClock()
 			run := hookPromptSetup(t, getenv, now, repo, tc.args.answered, tc.args.waiting, tc.args.drafted)
@@ -378,12 +378,11 @@ func TestRunHookPromptModes(t *testing.T) {
 			now := hookClock()
 			points[tc.args.turn](t, getenv, now)
 			run := hookPromptSetup(t, getenv, now, repo, tc.args.turn != first, true, tc.args.turn == later)
-			// The env names the mode since config session_mode saves no mode of an earlier release
-			inMode := envOf(map[string]string{"HOME": home, envRecordDir: records, envSession: tc.args.mode})
+			saveMode(t, home, tc.args.mode)
 			stdin := `{"session_id":"s1","cwd":"` + repo + `","prompt":"that was wrong"}`
 			var stdout, stderr bytes.Buffer
 
-			code := runHook([]string{"prompt"}, inMode, noStart, now, strings.NewReader(stdin), &stdout, &stderr)
+			code := runHook([]string{"prompt"}, getenv, noStart, now, strings.NewReader(stdin), &stdout, &stderr)
 
 			event, added := hookOutput(t, stdout.Bytes())
 			assert.Equal(t, 0, code)
@@ -394,10 +393,12 @@ func TestRunHookPromptModes(t *testing.T) {
 	}
 }
 
-// The mode comes from NODLOOP_SESSION, then session_mode in config.json, then deferred, and an unknown one records nothing
+// The mode comes from session_mode in config.json, then deferred, and an unknown one records nothing
+// No variable sets it since the env of a project settings file an agent may write reaches the hooks
 func TestRunHookSessionMode(t *testing.T) {
 	type args struct {
-		env string
+		// The env of the hook beside the home and the record directory
+		env map[string]string
 		// config.json and none when empty
 		saved string
 	}
@@ -411,22 +412,20 @@ func TestRunHookSessionMode(t *testing.T) {
 		args args
 		want want
 	}{
-		{"nothing set is deferred", args{"", ""}, want{note: true}},
-		{"the config sets the mode", args{"", `{"session_mode":"manual"}`}, want{}},
-		{"the env wins over the config", args{"deferred", `{"session_mode":"manual"}`}, want{note: true}},
-		{"immediate of an earlier release in the env runs as deferred", args{"immediate", `{"session_mode":"manual"}`}, want{note: true}},
-		{"immediate of an earlier release in the config runs as deferred", args{"", `{"session_mode":"immediate"}`}, want{note: true}},
-		{"an unknown mode in the config names config.json", args{"", `{"session_mode":"later"}`},
+		{"nothing set is deferred", args{nil, ""}, want{note: true}},
+		{"the config sets the mode", args{nil, `{"session_mode":"manual"}`}, want{}},
+		{"the variable of an earlier release turns nothing off", args{map[string]string{"NODLOOP_SESSION": "off"}, ""}, want{note: true}},
+		{"immediate of an earlier release in the config runs as deferred", args{nil, `{"session_mode":"immediate"}`}, want{note: true}},
+		{"an unknown mode in the config names config.json", args{nil, `{"session_mode":"later"}`},
 			want{stderr: `nodloop hook: unknown session mode: session_mode in config.json is "later"`}},
-		{"an unknown mode in the env names the env", args{"on", ""}, want{stderr: `nodloop hook: unknown session mode: NODLOOP_SESSION is "on"`}},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			home, records, repo := hookHome(t, "use git -C")
-			getenv := func(k string) string {
-				return map[string]string{"HOME": home, envRecordDir: records, envSession: tc.args.env}[k]
-			}
+			vars := map[string]string{"HOME": home, envRecordDir: records}
+			maps.Copy(vars, tc.args.env)
+			getenv := envOf(vars)
 			now := hookClock()
 			hookPromptSetup(t, func(k string) string { return map[string]string{"HOME": home, envRecordDir: records}[k] }, now, repo, true, false, false)
 			hookSaveConfig(t, home, tc.args.saved)
@@ -492,9 +491,8 @@ func TestRunHookStart(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			home, records, repo := hookHome(t, "use git -C")
-			getenv := func(k string) string {
-				return map[string]string{"HOME": home, envRecordDir: records, envSession: tc.args.mode}[k]
-			}
+			saveMode(t, home, tc.args.mode)
+			getenv := func(k string) string { return map[string]string{"HOME": home, envRecordDir: records}[k] }
 			now := hookClock()
 			hookPromptSetup(t, getenv, now, repo, false, true, false)
 			// A share of 0 withholds no session like no holdout at all
@@ -534,7 +532,8 @@ func TestRunHookPromptAfterStart(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			home, records, repo := hookHome(t, "use git -C")
-			getenv := envOf(map[string]string{"HOME": home, envRecordDir: records, envSession: "manual"})
+			saveMode(t, home, "manual")
+			getenv := envOf(map[string]string{"HOME": home, envRecordDir: records})
 			now := hookClock()
 			start := `{"session_id":"s2","cwd":"` + repo + `","source":"` + tc.args + `"}`
 			require.Equal(t, 0, runHook([]string{"start"}, getenv, noStart, now, strings.NewReader(start), &bytes.Buffer{}, &bytes.Buffer{}))
@@ -628,6 +627,15 @@ func hookSaveConfig(t *testing.T, home, saved string) {
 	require.NoError(t, os.WriteFile(homeDir(home).config().ConfigPath(), []byte(saved), 0o600))
 }
 
+// Saves the session mode in config.json under home and saves nothing for an empty mode
+// It writes the file directly as a person at a terminal would since a mode of an earlier release is never saved by config
+func saveMode(t testing.TB, home, mode string) {
+	t.Helper()
+	if mode != "" {
+		require.NoError(t, homeDir(home).config().Save(map[string]any{"session_mode": mode}))
+	}
+}
+
 // Appends the line to a record file and an empty line leaves it as it is
 func hookAppend(t *testing.T, path, line string) {
 	t.Helper()
@@ -705,8 +713,9 @@ func TestRunHookStop(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			home, records, repo := hookHome(t, "use git -C")
+			saveMode(t, home, tc.args.session)
 			getenv := func(k string) string {
-				return map[string]string{"HOME": home, envRecordDir: records, envSession: tc.args.session, envPluginVersion: "0.7.0"}[k]
+				return map[string]string{"HOME": home, envRecordDir: records, envPluginVersion: "0.7.0"}[k]
 			}
 			stdin := hookFixture(t, tc.args.stdin, repo)
 			var stdout, stderr bytes.Buffer
@@ -803,9 +812,8 @@ func TestRunHookStopCapture(t *testing.T) {
 				t.Skip("a read only file stops no write on windows or as root")
 			}
 			home, records, repo := hookHome(t, "use git -C")
-			getenv := func(k string) string {
-				return map[string]string{"HOME": home, envRecordDir: records, envSession: tc.args.session}[k]
-			}
+			saveMode(t, home, tc.args.session)
+			getenv := func(k string) string { return map[string]string{"HOME": home, envRecordDir: records}[k] }
 			var captures [][]string
 			start := func(args []string) error {
 				if args[0] == "session" {
@@ -1371,7 +1379,8 @@ func TestRunHookItemHold(t *testing.T) {
 			home, records, repo := hookHome(t, "use git -C")
 			hookAppend(t, filepath.Join(records, "knowledge.jsonl"), nodloopItem)
 			hookMark(t, records, tc.args.mark)
-			getenv := envOf(map[string]string{"HOME": home, envRecordDir: records, envSession: "manual", envPluginVersion: "0.7.0"})
+			saveMode(t, home, "manual")
+			getenv := envOf(map[string]string{"HOME": home, envRecordDir: records, envPluginVersion: "0.7.0"})
 			require.Equal(t, 0, runConfig([]string{"holdout", tc.args.holdout}, getenv, atTerminal, &bytes.Buffer{}, &bytes.Buffer{}))
 			now := hookClock()
 			in := `{"session_id":"` + tc.args.session + `","cwd":"` + repo + `","source":"compact","last_assistant_message":"done"}`

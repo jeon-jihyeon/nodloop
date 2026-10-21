@@ -64,18 +64,22 @@ func TestInstructionsTrace(t *testing.T) {
 	assert.NoError(t, schema.Validate(string(trace.NameInstructions), got.Record()))
 }
 
-// A home, a record directory with approved.md and a repository with a CLAUDE.md and an auto memory file under each config
+// A home, a record directory with approved.md, a repository with the rules files of a project and an auto memory file under each config
 // The first replacer fills the placeholders and the second puts them back
 func instructionsHome(t *testing.T) (place, named *strings.Replacer) {
 	t.Helper()
-	home, records, config := t.TempDir(), t.TempDir(), t.TempDir()
+	home, records, config, other := t.TempDir(), t.TempDir(), t.TempDir(), t.TempDir()
 	repo := filepath.Join(t.TempDir(), "acme")
 	link := filepath.Join(t.TempDir(), "records")
 	require.NoError(t, os.Symlink(records, link))
+	require.NoError(t, os.MkdirAll(filepath.Join(repo, "folder", "CLAUDE.md"), 0o755))
 	for path, content := range map[string]string{
 		filepath.Join(repo, "CLAUDE.md"):                                           "use git -C\n",
 		filepath.Join(repo, "notes.md"):                                            "a note\n",
+		filepath.Join(repo, ".claude", "rules", "go.md"):                           "run gofmt\n",
+		filepath.Join(other, "CLAUDE.md"):                                          "written elsewhere\n",
 		filepath.Join(records, "approved.md"):                                      "- use git -C\n",
+		filepath.Join(home, ".claude", "CLAUDE.md"):                                "answer short\n",
 		filepath.Join(home, ".claude", "projects", "-acme", "memory", "MEMORY.md"): "remembered\n",
 		filepath.Join(home, ".claude", "projects", "-acme", "CLAUDE.md"):           "kept by the person\n",
 		filepath.Join(config, "projects", "-acme", "memory", "notes.md"):           "remembered\n",
@@ -83,7 +87,7 @@ func instructionsHome(t *testing.T) (place, named *strings.Replacer) {
 		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
 		require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
 	}
-	dirs := []string{"{home}", home, "{records}", records, "{config}", config, "{repo}", repo, "{link}", link}
+	dirs := []string{"{home}", home, "{records}", records, "{config}", config, "{repo}", repo, "{link}", link, "{other}", other}
 	back := make([]string, 0, len(dirs))
 	for i := 0; i < len(dirs); i += 2 {
 		back = append(back, dirs[i+1], dirs[i])
@@ -108,11 +112,14 @@ func instructionsIn(t *testing.T, records string, named *strings.Replacer) []str
 }
 
 // The instructions hook records every rules file of the person a session loads and none whose lines no person confirmed
+// A file the host never loads as the person's instructions is refused so no CLI call sets a file as their direction
 func TestRunHookInstructions(t *testing.T) {
 	type args struct {
 		stdin string
 		flags []string
 		env   map[string]string
+		// session_mode of config.json and none when empty
+		mode string
 	}
 	type want struct {
 		recorded []string
@@ -130,16 +137,13 @@ func TestRunHookInstructions(t *testing.T) {
 	}{
 		{
 			"a CLAUDE.md the session loads is recorded with what the host reported",
-			args{stdin: load("{repo}/CLAUDE.md", "instructions")},
-			want{[]string{"s1 {repo}/CLAUDE.md instructions session_start"}, ""},
+			args{stdin: load("{repo}/CLAUDE.md", "Project")},
+			want{[]string{"s1 {repo}/CLAUDE.md Project session_start"}, ""},
 		},
-		{
-			"a file of the projects directory outside a memory folder is recorded",
-			args{stdin: load("{home}/.claude/projects/-acme/CLAUDE.md", "instructions")},
-			want{[]string{"s1 {home}/.claude/projects/-acme/CLAUDE.md instructions session_start"}, ""},
-		},
-		{"approved.md of the record directory is left out", args{stdin: load("{records}/approved.md", "instructions")}, want{none, ""}},
-		{"approved.md reported through a link is left out", args{stdin: load("{link}/approved.md", "instructions")}, want{none, ""}},
+		{"a rules file of the project is recorded", args{stdin: load("{repo}/.claude/rules/go.md", "Project")}, want{[]string{"s1 {repo}/.claude/rules/go.md Project session_start"}, ""}},
+		{"a CLAUDE.md of the user is recorded", args{stdin: load("{home}/.claude/CLAUDE.md", "User")}, want{[]string{"s1 {home}/.claude/CLAUDE.md User session_start"}, ""}},
+		{"approved.md of the record directory is left out", args{stdin: load("{records}/approved.md", "Project")}, want{none, ""}},
+		{"approved.md reported through a link is left out", args{stdin: load("{link}/approved.md", "Project")}, want{none, ""}},
 		{"an auto memory file under home is left out", args{stdin: load("{home}/.claude/projects/-acme/memory/MEMORY.md", "")}, want{none, ""}},
 		{
 			"an auto memory file under the Claude Code config directory is left out",
@@ -147,20 +151,29 @@ func TestRunHookInstructions(t *testing.T) {
 			want{none, ""},
 		},
 		{"a file the host reports as auto memory is left out", args{stdin: load("{repo}/notes.md", autoMemoryType)}, want{none, ""}},
-		{"a file that cannot be read records nothing", args{stdin: load("{repo}/gone.md", "instructions")}, want{none, "no such file"}},
-		{"a path that names no regular file records nothing and never waits", args{stdin: load(os.DevNull, "instructions")}, want{none, atomicfile.ErrNotRegular.Error()}},
+		{"a file of another name is refused", args{stdin: load("{repo}/notes.md", "Project")}, want{none, errInstructionsForeign.Error()}},
+		{"a CLAUDE.md outside the project and the user folder is refused", args{stdin: load("{other}/CLAUDE.md", "Project")}, want{none, errInstructionsForeign.Error()}},
+		{
+			"a CLAUDE.md of the projects directory is refused",
+			args{stdin: load("{home}/.claude/projects/-acme/CLAUDE.md", "Project")},
+			want{none, errInstructionsForeign.Error()},
+		},
+		{"a memory type of no person is refused", args{stdin: load("{repo}/CLAUDE.md", "Managed")}, want{none, errInstructionsForeign.Error()}},
+		{"a file that cannot be read records nothing", args{stdin: load("{repo}/sub/CLAUDE.md", "Project")}, want{none, "no such file"}},
+		{"a path that names no regular file records nothing and never waits", args{stdin: load("{repo}/folder/CLAUDE.md", "Project")}, want{none, atomicfile.ErrNotRegular.Error()}},
 		{
 			"a load of no session records nothing",
-			args{stdin: `{"cwd":"{repo}","file_path":"{repo}/CLAUDE.md","memory_type":"instructions"}`},
+			args{stdin: `{"cwd":"{repo}","file_path":"{repo}/CLAUDE.md","memory_type":"Project"}`},
 			want{none, errSessionTrace.Error()},
 		},
-		{"off records nothing", args{stdin: load("{repo}/CLAUDE.md", "instructions"), env: map[string]string{envSession: "off"}}, want{none, ""}},
+		{"off records nothing", args{stdin: load("{repo}/CLAUDE.md", "Project"), mode: "off"}, want{none, ""}},
 		{"Codex runs no instructions hook", args{stdin: load("{repo}/CLAUDE.md", ""), flags: []string{"--host", "codex"}}, want{none, "codex runs no hook instructions"}},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			place, named := instructionsHome(t)
+			saveMode(t, place.Replace("{home}"), tc.args.mode)
 			env := map[string]string{"HOME": place.Replace("{home}"), envRecordDir: place.Replace("{records}")}
 			for k, v := range tc.args.env {
 				env[k] = place.Replace(v)
@@ -182,7 +195,7 @@ func TestRunHookInstructionsHMAC(t *testing.T) {
 	place, _ := instructionsHome(t)
 	records := place.Replace("{records}")
 	env := envOf(map[string]string{"HOME": place.Replace("{home}"), envRecordDir: records})
-	stdin := place.Replace(`{"session_id":"s1","file_path":"{repo}/CLAUDE.md","memory_type":"instructions","load_reason":"include"}`)
+	stdin := place.Replace(`{"session_id":"s1","cwd":"{repo}","file_path":"{repo}/CLAUDE.md","memory_type":"Project","load_reason":"include"}`)
 	var stderr bytes.Buffer
 
 	require.Equal(t, 0, runHook([]string{"instructions"}, env, noStart, hookClock(), strings.NewReader(stdin), &bytes.Buffer{}, &stderr))
@@ -202,7 +215,7 @@ func TestRunHookInstructionsHMAC(t *testing.T) {
 	assert.NoError(t, schema.Validate(string(trace.NameInstructions), found[0]))
 }
 
-func TestUnconfirmedHolds(t *testing.T) {
+func TestRulesFilesUnconfirmed(t *testing.T) {
 	type args struct {
 		home, configDir, path, memoryType string
 	}
@@ -223,8 +236,122 @@ func TestUnconfirmedHolds(t *testing.T) {
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			u := newUnconfirmed("/records", homeDir(tc.args.home), tc.args.configDir)
-			assert.Equal(t, tc.want, u.holds(tc.args.path, tc.args.memoryType))
+			r := newRulesFiles("/records", homeDir(tc.args.home), tc.args.configDir, "/work/acme")
+			assert.Equal(t, tc.want, r.unconfirmed(tc.args.path, tc.args.memoryType))
+		})
+	}
+}
+
+// The projects directory is under CLAUDE_CONFIG_DIR, else under .claude of home, and none without either
+func TestClaudeProjects(t *testing.T) {
+	type args struct {
+		home, configDir string
+	}
+	tcs := []struct {
+		name string
+		args args
+		want filePath
+	}{
+		{"home alone", args{"/home/ann", ""}, "/home/ann/.claude/projects"},
+		{"the config directory wins over home", args{"/home/ann", "/cfg"}, "/cfg/projects"},
+		{"neither names none", args{"", ""}, ""},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.want, claudeProjects(homeDir(tc.args.home), tc.args.configDir))
+		})
+	}
+}
+
+// The files Claude Code loads as instructions: CLAUDE.md and CLAUDE.local.md of the project tree and the user and their rules folders
+// and a file one of them imports through an @path
+func TestRulesFilesLoads(t *testing.T) {
+	type args struct {
+		home, configDir, project, path, memoryType string
+	}
+	// What the host reported of an import with the text of its parent written before the check
+	// {tmp} is a folder of the test
+	type include struct {
+		reason, parent, text string
+	}
+	none := include{}
+	imported := func(text string) include { return include{includeReason, "{tmp}/acme/CLAUDE.md", text} }
+	tcs := []struct {
+		name    string
+		args    args
+		include include
+		want    bool
+	}{
+		{"a CLAUDE.md of the project", args{"/home/ann", "", "/work/acme", "/work/acme/CLAUDE.md", "Project"}, none, true},
+		{"a CLAUDE.local.md of the project", args{"/home/ann", "", "/work/acme", "/work/acme/CLAUDE.local.md", "Local"}, none, true},
+		{"a CLAUDE.md of a folder above", args{"/home/ann", "", "/work/acme", "/work/CLAUDE.md", "Project"}, none, true},
+		{"a CLAUDE.md of a folder below", args{"/home/ann", "", "/work/acme", "/work/acme/svc/.claude/CLAUDE.md", "Project"}, none, true},
+		{"a CLAUDE.md of a folder beside", args{"/home/ann", "", "/work/acme", "/work/other/CLAUDE.md", "Project"}, none, false},
+		{"a CLAUDE.md of the user", args{"/home/ann", "", "/work/acme", "/home/ann/.claude/CLAUDE.md", "User"}, none, true},
+		{"a CLAUDE.md of the config directory", args{"/home/ann", "/cfg", "/work/acme", "/cfg/CLAUDE.md", "User"}, none, true},
+		{"a CLAUDE.md of home without a config", args{"", "", "/work/acme", "/home/ann/.claude/CLAUDE.md", "User"}, none, false},
+		{"a rules file of the project", args{"/home/ann", "", "/work/acme", "/work/acme/.claude/rules/go.md", "Project"}, none, true},
+		{"a rules file in a folder of the rules", args{"/home/ann", "", "/work/acme", "/work/acme/.claude/rules/lang/go.md", "Project"}, none, true},
+		{"a rules file of the user", args{"/home/ann", "", "/work/acme", "/home/ann/.claude/rules/go.md", "User"}, none, true},
+		{"a rules file of the config directory", args{"/home/ann", "/cfg", "/tmp/acme", "/cfg/rules/go.md", "User"}, none, true},
+		{"a rules folder of no .claude folder", args{"/home/ann", "", "/work/acme", "/work/acme/rules/go.md", "Project"}, none, false},
+		{"a rules folder beside the project", args{"/home/ann", "", "/work/acme", "/work/other/.claude/rules/go.md", "Project"}, none, false},
+		{"a file of another name", args{"/home/ann", "", "/work/acme", "/work/acme/AGENTS.md", "Project"}, none, false},
+		{"a file of no project", args{"/home/ann", "", "", "/work/acme/CLAUDE.md", "Project"}, none, false},
+		{"managed instructions", args{"/home/ann", "", "/work/acme", "/work/acme/CLAUDE.md", "Managed"}, none, false},
+		{"no memory type", args{"/home/ann", "", "/work/acme", "/work/acme/CLAUDE.md", ""}, none, false},
+		{"an AGENTS.md a CLAUDE.md imports", args{"/home/ann", "", "{tmp}/acme", "{tmp}/acme/AGENTS.md", "Project"}, imported("See @AGENTS.md\n"), true},
+		{
+			"an index file a CLAUDE.md imports from a folder",
+			args{"/home/ann", "", "{tmp}/acme", "{tmp}/acme/docs/index.md", "Project"}, imported("- @docs/index.md\n"), true,
+		},
+		{"an import from home", args{"{tmp}/home", "", "{tmp}/acme", "{tmp}/home/notes.md", "Project"}, imported("@~/notes.md\n"), true},
+		{
+			"an import with an escaped space", args{"/home/ann", "", "{tmp}/acme", "{tmp}/acme/Design Docs/api.md", "Project"},
+			imported(`@Design\ Docs/api.md` + "\n"), true,
+		},
+		{
+			"an import in a code span", args{"/home/ann", "", "{tmp}/acme", "{tmp}/acme/AGENTS.md", "Project"},
+			imported("keep `@AGENTS.md` literal\n"), false,
+		},
+		{
+			"an import in a fenced code block", args{"/home/ann", "", "{tmp}/acme", "{tmp}/acme/AGENTS.md", "Project"},
+			imported("```\n@AGENTS.md\n```\n"), false,
+		},
+		{"an address that ends in the name", args{"/home/ann", "", "{tmp}/acme", "{tmp}/acme/AGENTS.md", "Project"}, imported("ann@AGENTS.md\n"), false},
+		{"a parent that imports another file", args{"/home/ann", "", "{tmp}/acme", "{tmp}/acme/AGENTS.md", "Project"}, imported("@README.md\n"), false},
+		{
+			"a parent that is no instructions file", args{"/home/ann", "", "{tmp}/acme", "{tmp}/acme/more.md", "Project"},
+			include{includeReason, "{tmp}/acme/AGENTS.md", "@more.md\n"}, false,
+		},
+		{
+			"a parent that is not there", args{"/home/ann", "", "{tmp}/acme", "{tmp}/acme/AGENTS.md", "Project"},
+			include{includeReason, "{tmp}/acme/CLAUDE.md", ""}, false,
+		},
+		{
+			"a parent of another load reason", args{"/home/ann", "", "{tmp}/acme", "{tmp}/acme/AGENTS.md", "Project"},
+			include{"session_start", "{tmp}/acme/CLAUDE.md", "@AGENTS.md\n"}, false,
+		},
+		{
+			"an import of managed instructions", args{"/home/ann", "", "{tmp}/acme", "{tmp}/acme/AGENTS.md", "Managed"},
+			imported("@AGENTS.md\n"), false,
+		},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			tmp := strings.NewReplacer("{tmp}", t.TempDir())
+			parent := tmp.Replace(tc.include.parent)
+			if tc.include.text != "" {
+				require.NoError(t, os.MkdirAll(filepath.Dir(parent), 0o700))
+				require.NoError(t, os.WriteFile(parent, []byte(tc.include.text), 0o600))
+			}
+			r := newRulesFiles("/records", homeDir(tmp.Replace(tc.args.home)), tc.args.configDir, tmp.Replace(tc.args.project))
+
+			got := r.loads(tmp.Replace(tc.args.path), tc.args.memoryType, tc.include.reason, parent)
+
+			assert.Equal(t, tc.want, got)
 		})
 	}
 }
@@ -232,7 +359,7 @@ func TestUnconfirmedHolds(t *testing.T) {
 func TestInstructionsTracesLoaded(t *testing.T) {
 	at := time.Date(2026, 9, 23, 9, 0, 0, 0, time.UTC)
 	hmac := strings.Repeat("ab", 32)
-	kept, err := instructionsInput{Path: "/acme/CLAUDE.md", HMAC: hmac, MemoryType: "instructions"}.trace("s1", at)
+	kept, err := instructionsInput{Path: "/acme/CLAUDE.md", HMAC: hmac, MemoryType: "Project"}.trace("s1", at)
 	require.NoError(t, err)
 	type want struct {
 		loaded []curate.Loaded
@@ -246,7 +373,7 @@ func TestInstructionsTracesLoaded(t *testing.T) {
 		{
 			"a trace gives the file with its session",
 			instructionsTraces{kept},
-			want{[]curate.Loaded{{Session: "s1", File: curate.AnchorFile{Path: "/acme/CLAUDE.md", HMAC: hmac, MemoryType: "instructions"}}}, nil},
+			want{[]curate.Loaded{{Session: "s1", File: curate.AnchorFile{Path: "/acme/CLAUDE.md", HMAC: hmac, MemoryType: "Project"}}}, nil},
 		},
 		{"an input that does not decode fails", instructionsTraces{{ID: "t-1", Input: []byte(`[]`)}}, want{nil, errSessionTrace}},
 	}
@@ -285,7 +412,7 @@ func TestRunHookInstructionsFailures(t *testing.T) {
 			records := place.Replace("{records}")
 			require.NoError(t, os.WriteFile(filepath.Join(records, tc.args.file), []byte(tc.args.text), 0o600))
 			env := envOf(map[string]string{"HOME": place.Replace("{home}"), envRecordDir: place.Replace(tc.args.records)})
-			stdin := place.Replace(`{"session_id":"s1","file_path":"{repo}/CLAUDE.md","memory_type":"instructions"}`)
+			stdin := place.Replace(`{"session_id":"s1","cwd":"{repo}","file_path":"{repo}/CLAUDE.md","memory_type":"Project"}`)
 			var stderr bytes.Buffer
 
 			code := runHook([]string{"instructions"}, env, noStart, hookClock(), strings.NewReader(stdin), &bytes.Buffer{}, &stderr)

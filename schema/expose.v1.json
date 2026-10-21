@@ -103,6 +103,15 @@
         "text": {
           "type": "string"
         },
+        "lines": {
+          "type": [
+            "null",
+            "array"
+          ],
+          "items": {
+            "type": "string"
+          }
+        },
         "round": {
           "type": "integer"
         },

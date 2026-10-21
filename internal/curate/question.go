@@ -124,7 +124,25 @@ func (d Decided) asks() (QuestionKind, bool) {
 
 // The version of the question rules and wording an expose records
 // A changed wording is measured again before it ships so each one gets a version
-const QuestionRules = "1"
+const QuestionRules = "2"
+
+// The start of the AskUserQuestion header that names a question of the stop by its key
+const AskHeader = "nodloop "
+
+// The description nodloop names for the option of each choice
+// A click is checked against it like the lines of the question so no model words what a choice does
+var choiceDescriptions = map[Choice]string{
+	ChoiceKeep:     "Apply the change",
+	ChoiceDrop:     "Leave the change out",
+	ChoiceMerge:    "Merge the lessons and then apply the change",
+	ChoiceSeparate: "Leave the lessons and the change as they are",
+	ChoiceMine:     "Take what nodloop approved here as your own",
+	ChoiceReview:   "See what nodloop prepared first",
+	ChoiceYes:      "Go ahead",
+	ChoiceNotYet:   "Leave everything as it is",
+	ChoiceSame:     "Keep what nodloop did",
+	ChoiceUndo:     "Reverse what nodloop did",
+}
 
 // A question or a notice shown as its expose event records it
 type Exposure struct {
@@ -139,6 +157,9 @@ type Exposure struct {
 	Choices []Choice       `json:"choices,omitempty"`
 	// HMAC-SHA256 of the text shown under the key of the record directory
 	Text string `json:"text"`
+	// HMAC-SHA256 of each line an AskUserQuestion click must hold with its space normalized
+	// Empty on a notice
+	Lines []string `json:"lines,omitempty"`
 	// 1 when first asked and 2 when a later session asks it again
 	Round int `json:"round"`
 	// The run of the answer the question followed
@@ -157,12 +178,63 @@ func (x Exposure) Names(word string) (Choice, bool) {
 	return c, slices.Contains(x.Choices, c)
 }
 
-// Whether the question of an AskUserQuestion call is the text the expose sealed
-// 1. the call holds the lines up to Prepared and the expose sealed them with the reply line after them
-// So a question a model worded itself under the header of the key shows nothing the stop asked
-// 2. a check with no seal finds nothing
-func (x Exposure) shows(question string, seal func(string) string) bool {
-	return seal != nil && len(x.Choices) == 2 && seal(question+replyLine(x.Choices[0], x.Choices[1])) == x.Text
+// Whether an AskUserQuestion click holds every line the expose sealed
+// 1. a line counts once its space is normalized and lines the click adds are allowed
+// So a click counts however the model wrapped or added to the question it copied
+// 2. a question or an option description a model worded itself under the header of the key shows nothing the stop asked
+// 3. a check with no seal or of an expose that sealed no line finds nothing
+func (x Exposure) shows(r Reply) bool {
+	if r.Seal == nil || len(x.Lines) == 0 {
+		return false
+	}
+	held := map[string]bool{}
+	for _, l := range r.lines() {
+		held[r.Seal(l)] = true
+	}
+	return !slices.ContainsFunc(x.Lines, func(l string) bool { return !held[l] })
+}
+
+// One option of an AskUserQuestion question as the call names it
+type Option struct {
+	Label       string
+	Description string
+}
+
+// The lines of a click: its header, the lines of its question and one line per option
+func (r Reply) lines() clickLines {
+	lines := append(clickLines{AskHeader + r.Key}, strings.Split(r.Question, "\n")...)
+	for _, o := range r.Options {
+		lines = append(lines, optionLine(o.Label, o.Description))
+	}
+	return lines.normalized()
+}
+
+// The line of an option with its label in lower case since a reply ignores the case of a label
+func optionLine(label, description string) string {
+	return strings.ToLower(label) + ": " + description
+}
+
+// The lines of a question a click holds or must hold
+type clickLines []string
+
+// The lines with each run of space folded to one and empty lines left out
+func (ls clickLines) normalized() clickLines {
+	out := make(clickLines, 0, len(ls))
+	for _, l := range ls {
+		if l = strings.Join(strings.Fields(l), " "); l != "" {
+			out = append(out, l)
+		}
+	}
+	return out
+}
+
+// The HMAC of each line under the seal
+func (ls clickLines) sealed(seal func(string) string) []string {
+	out := make([]string, 0, len(ls))
+	for _, l := range ls {
+		out = append(out, seal(l))
+	}
+	return out
 }
 
 // The last line of a question with its two reply keys
@@ -240,15 +312,31 @@ func quoted(text string, limit int) string {
 	return `"` + string(r) + `"`
 }
 
+// The lines a click on the question must hold
+// 1. the lines from One decision to Prepared as the stop showed them
+// 2. the header that names the key
+// 3. one line per option of its choice and the description nodloop named
+func (q Question) lines() clickLines {
+	body := strings.TrimSuffix(q.Text(), replyLine(q.Choices[0], q.Choices[1]))
+	lines := append(clickLines(strings.Split(body, "\n")), AskHeader+q.Key)
+	for _, c := range q.Choices {
+		lines = append(lines, optionLine(string(c), choiceDescriptions[c]))
+	}
+	return lines.normalized()
+}
+
 // The question between its heading and the instruction to ask it as Stop additionalContext carries it
-// The lines up to Prepared go into the AskUserQuestion call word for word
+// 1. the lines up to Prepared go into the AskUserQuestion call word for word
 // A model that worded the question itself left out the person's words on 10 of 10 Haiku and 3 of 10 Sonnet runs
+// 2. nodloop names the description of each option so the person reads what a choice does in its words
 func (q Question) Block() string {
 	first, second := q.Choices[0], q.Choices[1]
-	return fmt.Sprintf("%s\n%s\nAsk this in one AskUserQuestion call with header \"nodloop %s\", the two choices %s and %s, "+
+	return fmt.Sprintf("%s\n%s\nAsk this in one AskUserQuestion call with header \"%s%s\", "+
+		"the two options %s with the description \"%s\" and %s with the description \"%s\", "+
 		"and as its question the lines from One decision to Prepared copied word for word, keeping every quote. "+
 		"Where that tool does not exist, end your answer with those lines and the reply keys %s or %s. "+
-		"Record nothing and decide nothing yourself.", questionHeading, q.Text(), q.Key, first, second, first, second)
+		"Record nothing and decide nothing yourself.",
+		questionHeading, q.Text(), AskHeader, q.Key, first, choiceDescriptions[first], second, choiceDescriptions[second], first, second)
 }
 
 // The characters of a question key
@@ -270,17 +358,16 @@ func questionKey(decide string, taken []string) string {
 	}
 }
 
-// A notice asks nothing and a question names its key, its two choices and what it asks about
+// A notice asks nothing and a question names its key, its two choices, the lines a click holds and what it asks about
 func (x Exposure) check(asks string) error {
-	b, err := hex.DecodeString(x.Text)
 	switch {
 	case !slices.Contains(QuestionKinds(), x.Kind) || !slices.Contains(Surfaces(), x.Surface):
 		return fmt.Errorf("%w: kind %q on surface %q", ErrExposeInvalid, x.Kind, x.Surface)
-	case x.Rules == "" || x.Round < 1 || x.Round > 2 || err != nil || len(b) != 32:
+	case x.Rules == "" || x.Round < 1 || x.Round > 2 || !sealed(x.Text):
 		return fmt.Errorf("%w: rules %q, round %d and the HMAC of the text", ErrExposeInvalid, x.Rules, x.Round)
 	case x.Runes < 0 || x.Runes > MaxRunes:
 		return fmt.Errorf("%w: a text of %d runes", ErrExposeInvalid, x.Runes)
-	case x.Kind == QuestionNotice && (x.Surface != SurfaceMessage || x.Key != "" || len(x.Choices) > 0):
+	case x.Kind == QuestionNotice && (x.Surface != SurfaceMessage || x.Key != "" || len(x.Choices) > 0 || len(x.Lines) > 0):
 		return fmt.Errorf("%w: a notice is one line that asks nothing", ErrExposeInvalid)
 	case x.Kind == QuestionNotice:
 		return nil
@@ -297,8 +384,16 @@ func (x Exposure) question(asks string) error {
 		return fmt.Errorf("%w: a question names its key %q and what it asks about", ErrExposeInvalid, x.Key)
 	case len(x.Choices) != 2 || !x.Choices[0].offered() || !x.Choices[1].offered() || x.Choices[0] == x.Choices[1]:
 		return fmt.Errorf("%w: a question offers two choices and not %v", ErrExposeInvalid, x.Choices)
+	case len(x.Lines) == 0 || slices.ContainsFunc(x.Lines, func(l string) bool { return !sealed(l) }):
+		return fmt.Errorf("%w: a question names the HMAC of each line a click holds", ErrExposeInvalid)
 	}
 	return nil
+}
+
+// Whether the text is the 64 hex of an HMAC-SHA256
+func sealed(text string) bool {
+	b, err := hex.DecodeString(text)
+	return err == nil && len(b) == 32
 }
 
 // The expose event of a question or a notice shown in the session of the event

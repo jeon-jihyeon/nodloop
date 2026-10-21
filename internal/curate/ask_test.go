@@ -191,10 +191,15 @@ func TestIntervenerAskExpose(t *testing.T) {
 		"Prepared: your words \"words on r-k-ask\"\n"+
 		"Reply keep or drop", text)
 	assert.Regexp(t, regexp.MustCompile(`^[a-z0-9]{4}$`), got.Question.Key)
+	lines := []string{
+		hexSeal("One decision for you: add the lesson \"Use the staging cluster\" in repo svc"), hexSeal("Why you: it reaches a place you have not decided on"),
+		hexSeal("Prepared: your words \"words on r-k-ask\""), hexSeal("nodloop " + got.Question.Key), hexSeal("keep: Apply the change"),
+		hexSeal("drop: Leave the change out"),
+	}
 	assert.Equal(t, curate.Exposure{
 		Kind: curate.QuestionDirection, Key: got.Question.Key, Change: &knowledge.Ref{ID: "k-ask", Version: 1}, Surface: curate.SurfaceContext,
-		Rules: curate.QuestionRules, Choices: []curate.Choice{curate.ChoiceKeep, curate.ChoiceDrop}, Text: hexSeal(text), Round: 1, Run: "run-s-new",
-		Runes: utf8.RuneCountInString(text),
+		Rules: curate.QuestionRules, Choices: []curate.Choice{curate.ChoiceKeep, curate.ChoiceDrop}, Text: hexSeal(text), Lines: lines, Round: 1,
+		Run: "run-s-new", Runes: utf8.RuneCountInString(text),
 	}, x)
 	assert.Equal(t, []any{"s-new", d.decideOf(t, "k-ask"), trace.SourcePush}, []any{got.Expose.SessionID, got.Expose.Ref, got.Expose.Source})
 	assert.Equal(t, got.Question.Key, again.Question.Key, "a question asked again keeps its key")
@@ -307,7 +312,8 @@ func (b bench) flakyIntervener(lists, appends int) *curate.Intervener {
 // 2. the answer names the expose with its source and draw and proof reply
 // The ledger record names the answer
 // 3. an input that names no choice of a question shown after that answer matches nothing
-// So does a click on a question other than the text the stop showed
+// So does a click that misses a line the stop showed or an option description nodloop named
+// A click whose lines hold more text or more space still answers
 // 4. a question closed already matches and records nothing
 func TestIntervenerReply(t *testing.T) {
 	ctx := context.Background()
@@ -334,13 +340,29 @@ func TestIntervenerReply(t *testing.T) {
 		before, _, _ := strings.Cut(q.Text(), "\nReply ")
 		return before
 	}
-	clickOn := func(question func(curate.Question) string, seal func(string) string, label string) func(curate.Question) curate.Reply {
+	// The options as the block names them
+	named := []curate.Option{{Label: "keep", Description: "Apply the change"}, {Label: "drop", Description: "Leave the change out"}}
+	type click struct {
+		question func(curate.Question) string
+		options  []curate.Option
+		seal     func(string) string
+	}
+	clickOn := func(c click, label string) func(curate.Question) curate.Reply {
 		return func(q curate.Question) curate.Reply {
-			return curate.Reply{Session: "s-new", Key: q.Key, Question: question(q), Seal: seal, Word: label, Person: "ann"}
+			return curate.Reply{Session: "s-new", Key: q.Key, Question: c.question(q), Options: c.options, Seal: c.seal, Word: label, Person: "ann"}
 		}
 	}
-	click := func(label string) func(curate.Question) curate.Reply { return clickOn(lines, hexSeal, label) }
+	copied := click{lines, named, hexSeal}
 	worded := func(curate.Question) string { return "Drop the lesson?" }
+	// The lines with their space doubled and a line of the model after them
+	wrapped := func(q curate.Question) string {
+		return "  " + strings.ReplaceAll(lines(q), " ", "  ") + "\n\nShould this lesson be kept or dropped?"
+	}
+	// The lines joined into one with periods as Haiku joined them
+	joined := func(q curate.Question) string { return strings.ReplaceAll(lines(q), "\n", ". ") }
+	capitals := []curate.Option{{Label: "Keep", Description: "Apply  the change"}, {Label: "Drop", Description: "Leave the change out"}}
+	described := []curate.Option{{Label: "keep", Description: "Keep the lesson"}, {Label: "drop", Description: "Leave the change out"}}
+	swapped := []curate.Option{{Label: "keep", Description: "Leave the change out"}, {Label: "drop", Description: "Apply the change"}}
 	waiting := []string{"k-add v1 candidate", "k-ask v1 candidate", "k-carried v1 approved nodloop", "k-dup v1 retired nodloop duplicate"}
 	tcs := []struct {
 		name string
@@ -355,19 +377,29 @@ func TestIntervenerReply(t *testing.T) {
 		},
 		{
 			"a click under the key of its header drops it under the person",
-			args{click("Drop"), nil},
+			args{clickOn(copied, "Drop"), nil},
 			want{true, curate.ChoiceDrop, true, []string{"drop reply push ann"},
 				[]string{"k-add v1 candidate", "k-ask v1 retired ann person", "k-carried v1 approved nodloop", "k-dup v1 retired nodloop duplicate"}, nil},
 		},
 		{"a word after another answer answers nothing", args{word("run-other", "keep"), nil}, want{false, "", false, []string{}, waiting, nil}},
 		{"a word that is no choice answers nothing", args{word("run-s-new", "maybe"), nil}, want{false, "", false, []string{}, waiting, nil}},
-		{"a label that is no choice answers nothing", args{click("Other"), nil}, want{false, "", false, []string{}, waiting, nil}},
+		{
+			"a click whose lines hold more space and a line of the model drops it under the person",
+			args{clickOn(click{wrapped, capitals, hexSeal}, "drop"), nil},
+			want{true, curate.ChoiceDrop, true, []string{"drop reply push ann"},
+				[]string{"k-add v1 candidate", "k-ask v1 retired ann person", "k-carried v1 approved nodloop", "k-dup v1 retired nodloop duplicate"}, nil},
+		},
+		{"a label that is no choice answers nothing", args{clickOn(copied, "Other"), nil}, want{false, "", false, []string{}, waiting, nil}},
 		{
 			"a click on a question a model worded itself under the key of the header answers nothing",
-			args{clickOn(worded, hexSeal, "drop"), nil},
+			args{clickOn(click{worded, named, hexSeal}, "drop"), nil},
 			want{false, "", false, []string{}, waiting, nil},
 		},
-		{"a click checked with no seal answers nothing", args{clickOn(lines, nil, "drop"), nil}, want{false, "", false, []string{}, waiting, nil}},
+		{"a click whose lines a model joined into one answers nothing", args{clickOn(click{joined, named, hexSeal}, "drop"), nil}, want{false, "", false, []string{}, waiting, nil}},
+		{"a click whose option a model described itself answers nothing", args{clickOn(click{lines, described, hexSeal}, "drop"), nil}, want{false, "", false, []string{}, waiting, nil}},
+		{"a click whose descriptions are swapped answers nothing", args{clickOn(click{lines, swapped, hexSeal}, "drop"), nil}, want{false, "", false, []string{}, waiting, nil}},
+		{"a click with no option answers nothing", args{clickOn(click{lines, nil, hexSeal}, "drop"), nil}, want{false, "", false, []string{}, waiting, nil}},
+		{"a click checked with no seal answers nothing", args{clickOn(click{lines, named, nil}, "drop"), nil}, want{false, "", false, []string{}, waiting, nil}},
 		{
 			"a question answered already matches and records nothing more",
 			args{word("run-s-new", "drop"), func(t *testing.T, d desk) {

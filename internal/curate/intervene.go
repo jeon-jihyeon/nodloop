@@ -53,6 +53,12 @@ type InterveneSetting struct {
 	Cursor func(at time.Time, id string) string
 	// The cursor of the record pages that starts after a ledger record
 	KnowledgeCursor func(k record.Knowledge) string
+	// Takes the turn of one write over the records and answers what gives it back
+	// A retry takes over what an earlier try of the person left so it must never see a write still in progress
+	// 1. a local writer waits on intervene.lock of the record directory through FileTurn
+	// 2. nodloop-server takes one turn per tenant whatever key submits
+	// Nil takes no turn
+	Turn func() (func(), error)
 }
 
 // Carries out the interventions of the write side
@@ -87,6 +93,11 @@ type Intervened struct {
 // Records one intervention and carries out a person's
 // A failed export of the approved items rides on the error with ErrExport after the intervention is recorded
 func (iv *Intervener) Intervene(ctx context.Context, r Request, by Submitter) (Intervened, error) {
+	release, err := iv.turn()
+	if err != nil {
+		return Intervened{}, err
+	}
+	defer release()
 	s, err := iv.read(ctx)
 	if err != nil {
 		return Intervened{}, err
@@ -109,6 +120,14 @@ func (iv *Intervener) Intervene(ctx context.Context, r Request, by Submitter) (I
 		return iv.propose(ctx, in, r.Session, by, s)
 	}
 	return iv.carry(ctx, in, r.Session, by, s)
+}
+
+// Takes the turn of a write and answers what gives it back
+func (iv *Intervener) turn() (func(), error) {
+	if iv.s.Turn == nil {
+		return func() {}, nil
+	}
+	return iv.s.Turn()
 }
 
 // The records an intervention reads
@@ -247,6 +266,7 @@ func (iv *Intervener) judgeTarget(ctx context.Context, in *trace.Intervention, s
 
 // The open question an answer or a dismiss closes as its decide or an expose of it names it
 // 1. a question an answer that holds settled or a dismiss closed is no longer open
+// The retry of an answer whose intervention failed to append finds it open
 // 2. an answer takes one of the two choices of the question
 func (s state) question(in *trace.Intervention) error {
 	id := in.Target
@@ -256,11 +276,12 @@ func (s state) question(in *trace.Intervention) error {
 	d, ok := s.decides[id]
 	_, asks := d.asks()
 	_, dismissed := s.ints.Dismissed(id)
+	_, retried := s.unrecorded(id, in.Choice)
 	choices := d.Choices()
 	switch {
 	case !ok || !asks:
 		return fmt.Errorf("%w: %q names no question", ErrTargetInvalid, in.Target)
-	case s.answered(id) || dismissed:
+	case s.answered(id) && !retried || dismissed:
 		return fmt.Errorf("%w: the question %q is closed", ErrTargetInvalid, in.Target)
 	case in.Action == trace.ActionAnswer && !slices.Contains(choices[:], Choice(in.Choice)):
 		return fmt.Errorf("%w: the question offers %s and %s and not %q", ErrTargetInvalid, choices[0], choices[1], in.Choice)

@@ -67,7 +67,7 @@ const (
 	InterventionResume   = trace.ActionResume   // end a pause
 	InterventionKnob     = trace.ActionKnob     // set one knob within its range
 	InterventionReanchor = trace.ActionReanchor // take the versions nodloop approved in a place as the person's own
-	InterventionDigest   = trace.ActionDigest   // the cursor since the person's last judgment
+	InterventionDigest   = trace.ActionDigest   // the cursor since the person's last decision
 	InterventionReverse  = trace.ActionReverse  // take back an earlier intervention
 
 	ChoiceKeep     = trace.ChoiceKeep     // approve a candidate, reaffirm an approved version or restore a retired one
@@ -506,7 +506,7 @@ type Intervention struct {
 }
 
 // Records any action of the write side as an agent proposal the person is asked about by the next curate pass over the directory
-// 1. a digest needs no proof and answers the cursor since the person's last judgment in Since
+// 1. a digest needs no proof and answers the cursor since the person's last decision in Since
 // 2. a target the records do not hold or a knob value outside its range fails and records nothing
 func (c *Client) Intervene(ctx context.Context, in Intervention) (Intervention, error) {
 	r := curate.Request{Action: in.Action, Target: in.Target, Choice: in.Choice, Labels: in.Labels, Value: in.Value, Session: in.Session}

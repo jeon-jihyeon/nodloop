@@ -122,7 +122,7 @@ func (o mcpOpen) open(context.Context) (*mcp.Server, error) {
 	dir := a.cfg.recordDir
 	policy := mcp.Policy{
 		Holdout: a.cfg.holdout, Retention: a.cfg.retention, Marks: retain.NewMarker(dir), AfterRun: a.afterRun(o.log),
-		Approver: a.cfg.approver, Curate: curate.NewMarker(dir), Build: buildVersion(),
+		Approver: a.cfg.approver, Curate: curate.NewMarker(dir), Build: buildVersion(), Turn: curate.FileTurn(dir),
 	}
 	if o.export != nil && a.cfg.otel != nil {
 		policy.AfterRun = a.afterRunExport(o.export, o.log)

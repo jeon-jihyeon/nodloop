@@ -693,6 +693,7 @@ export interface ExposeRecord {
     rules: string;
     choices?: ("keep" | "drop" | "merge" | "separate" | "mine" | "review" | "yes" | "notyet" | "same" | "undo" | "no_answer")[] | null;
     text: string;
+    lines?: string[] | null;
     round: number;
     run?: string;
     runes?: number;

@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"slices"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -23,15 +22,8 @@ type TraceStore struct {
 }
 
 func (s *TraceStore) Append(ctx context.Context, t record.Trace) error {
-	data, err := json.Marshal(t)
-	if err != nil {
-		return fmt.Errorf("%w: %w", ErrAppend, err)
-	}
-	if _, err := s.pool.Exec(ctx, `INSERT INTO nodloop_traces (tenant, id, name, session_id, data) VALUES ($1, $2, $3, $4, $5)`,
-		s.tenant, t.ID, t.Name, t.SessionID, data); err != nil {
-		return fmt.Errorf("%w: %w", ErrAppend, err)
-	}
-	return nil
+	return insert(ctx, s.pool, "traces", s.tenant, `INSERT INTO nodloop_traces (tenant, id, name, session_id, data) VALUES ($1, $2, $3, $4, $5)`,
+		t, t.ID, t.Name, t.SessionID)
 }
 
 // The newest trace of the id
@@ -51,11 +43,6 @@ func (s *TraceStore) Get(ctx context.Context, id string) (record.Trace, error) {
 const traceNarrowed = ` AND ($2 = '' OR id = $2) AND ($3 = '' OR name = $3) AND ($4 = '' OR session_id = $4)
 	AND (coalesce(cardinality($5::text[]), 0) = 0 OR name = ANY($5))`
 
-// The rows after a position in append order
-// 1. xid then seq is the order since a row an open transaction commits later takes a seq below the rows committed before it
-// 2. only rows of transactions older than every one still open so no row lands before a position once it was read
-const appendedOrder = ` AND xid < pg_snapshot_xmin(pg_current_snapshot()) ORDER BY xid, seq`
-
 // Newest first
 // Output is left out after the decode since json has no operator that drops a key and jsonb rewrites the bytes of the input
 func (s *TraceStore) List(ctx context.Context, f record.TraceFilter) ([]record.Trace, error) {
@@ -74,15 +61,15 @@ func (s *TraceStore) List(ctx context.Context, f record.TraceFilter) ([]record.T
 }
 
 // The traces the filter keeps after the position oldest first with the position after the last row read
-// A position no read answered fails with record.ErrPositionGone
+// 1. a position no read answered fails with record.ErrPositionGone
+// 2. Limit counts the rows the indexed fields keep so a filter of other fields may answer fewer and the next read goes on
 func (s *TraceStore) After(ctx context.Context, f record.TraceFilter, from string) ([]record.Trace, string, error) {
 	at, err := parsePosition(from)
 	if err != nil {
 		return nil, from, err
 	}
-	rows, err := s.pool.Query(ctx, `SELECT xid::text, seq, data FROM nodloop_traces WHERE tenant = $1`+traceNarrowed+`
-		AND (xid, seq) > ($6::xid8, $7::bigint)`+appendedOrder+` LIMIT $8`,
-		s.tenant, f.ID, f.Name, f.SessionID, f.Names, at.xid, at.seq, limitOf(f.Limit))
+	rows, err := s.pool.Query(ctx, `SELECT seq, data FROM nodloop_traces WHERE tenant = $1`+traceNarrowed+` AND seq > $6 ORDER BY seq LIMIT $7`,
+		planEach, s.tenant, f.ID, f.Name, f.SessionID, f.Names, at, limitOf(f.Limit))
 	if err != nil {
 		return nil, from, fmt.Errorf("%w: %w", ErrRead, err)
 	}
@@ -163,7 +150,7 @@ type FeedbackStore struct {
 }
 
 func (s *FeedbackStore) Append(ctx context.Context, fb record.Feedback) error {
-	return insert(ctx, s.pool, `INSERT INTO nodloop_feedback (tenant, trace_id, data) VALUES ($1, $2, $3)`, s.tenant, fb.TraceID, fb)
+	return insert(ctx, s.pool, "feedback", s.tenant, `INSERT INTO nodloop_feedback (tenant, trace_id, data) VALUES ($1, $2, $3)`, fb, fb.TraceID)
 }
 
 // Newest first
@@ -183,7 +170,7 @@ type OutcomeStore struct {
 }
 
 func (s *OutcomeStore) Append(ctx context.Context, o record.Outcome) error {
-	return insert(ctx, s.pool, `INSERT INTO nodloop_outcomes (tenant, trace_id, data) VALUES ($1, $2, $3)`, s.tenant, o.TraceID, o)
+	return insert(ctx, s.pool, "outcomes", s.tenant, `INSERT INTO nodloop_outcomes (tenant, trace_id, data) VALUES ($1, $2, $3)`, o, o.TraceID)
 }
 
 // Newest first and every outcome for an empty trace id
@@ -208,26 +195,22 @@ func (s *OutcomeStore) After(ctx context.Context, from string, limit int) ([]rec
 	return after[record.Outcome](ctx, s.pool, "nodloop_outcomes", s.tenant, from, limit)
 }
 
-// Where a read in append order ended: the transaction that wrote the last row read and its seq
-// The zero position is before every row
-type position struct {
-	xid string
-	seq int64
+// The seq of the last row a read in append order took and zero before every row
+// A form no read answered fails with record.ErrPositionGone
+func parsePosition(s string) (int64, error) {
+	if s == "" {
+		return 0, nil
+	}
+	seq, err := strconv.ParseInt(s, 10, 64)
+	if err != nil || seq <= 0 {
+		return 0, fmt.Errorf("%w: %q", record.ErrPositionGone, s)
+	}
+	return seq, nil
 }
 
-// A form no read answered fails with record.ErrPositionGone
-func parsePosition(s string) (position, error) {
-	if s == "" {
-		return position{xid: "0"}, nil
-	}
-	xid, at, ok := strings.Cut(s, ":")
-	_, xidErr := strconv.ParseUint(xid, 10, 64)
-	seq, err := strconv.ParseInt(at, 10, 64)
-	if !ok || xidErr != nil || err != nil {
-		return position{}, fmt.Errorf("%w: %q", record.ErrPositionGone, s)
-	}
-	return position{xid: xid, seq: seq}, nil
-}
+// A read in append order is planned with its values every time
+// A cached generic plan walks seq through the rows of every tenant to find the few of a small tenant
+const planEach = pgx.QueryExecModeCacheDescribe
 
 // The limit of a query with null for every row
 func limitOf(n int) any {
@@ -243,8 +226,8 @@ func after[T any](ctx context.Context, pool *pgxpool.Pool, table, tenant, from s
 	if err != nil {
 		return nil, from, err
 	}
-	rows, err := pool.Query(ctx, `SELECT xid::text, seq, data FROM `+table+` WHERE tenant = $1
-		AND (xid, seq) > ($2::xid8, $3::bigint)`+appendedOrder+` LIMIT $4`, tenant, at.xid, at.seq, limitOf(limit))
+	rows, err := pool.Query(ctx, `SELECT seq, data FROM `+table+` WHERE tenant = $1 AND seq > $2 ORDER BY seq LIMIT $3`,
+		planEach, tenant, at, limitOf(limit))
 	if err != nil {
 		return nil, from, fmt.Errorf("%w: %w", ErrRead, err)
 	}
@@ -257,9 +240,9 @@ func appended[T any](rows pgx.Rows, from string, keep func(T) bool) ([]T, string
 	var out []T
 	next := from
 	for rows.Next() {
-		var at position
+		var seq int64
 		var data []byte
-		if err := rows.Scan(&at.xid, &at.seq, &data); err != nil {
+		if err := rows.Scan(&seq, &data); err != nil {
 			return nil, from, fmt.Errorf("%w: %w", ErrRead, err)
 		}
 		var r T
@@ -269,7 +252,7 @@ func appended[T any](rows pgx.Rows, from string, keep func(T) bool) ([]T, string
 		if keep(r) {
 			out = append(out, r)
 		}
-		next = at.xid + ":" + strconv.FormatInt(at.seq, 10)
+		next = strconv.FormatInt(seq, 10)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, from, fmt.Errorf("%w: %w", ErrRead, err)
@@ -277,15 +260,35 @@ func appended[T any](rows pgx.Rows, from string, keep func(T) bool) ([]T, string
 	return out, next, nil
 }
 
-func insert(ctx context.Context, pool *pgxpool.Pool, sql, tenant, traceID string, record any) error {
+// Appends the record as the data of one row of the tenant under the lock of its kind
+// The sql takes the tenant first then the fields and the data last
+func insert(ctx context.Context, pool *pgxpool.Pool, kind, tenant, sql string, record any, fields ...any) error {
 	data, err := json.Marshal(record)
 	if err != nil {
 		return fmt.Errorf("%w: %w", ErrAppend, err)
 	}
-	if _, err := pool.Exec(ctx, sql, tenant, traceID, data); err != nil {
+	err = locked(ctx, pool, kind, tenant, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, sql, slices.Concat([]any{tenant}, fields, []any{data})...)
+		return err
+	})
+	if err != nil {
 		return fmt.Errorf("%w: %w", ErrAppend, err)
 	}
 	return nil
+}
+
+// Runs fn in a transaction that holds the advisory lock of the records of one kind of the tenant until it ends
+// 1. every append takes it before its row draws a seq so seq order is commit order within the tenant
+// So a read in append order pages by seq alone and never passes a row that commits later
+// 2. other tenants never wait and a hash collision only makes two tenants take turns
+// 3. the key of knowledge is the one its decisions took in earlier releases so a server of one still takes turns
+func locked(ctx context.Context, pool *pgxpool.Pool, kind, tenant string, fn func(pgx.Tx) error) error {
+	return pgx.BeginFunc(ctx, pool, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext('nodloop:' || $1 || ':' || $2))`, kind, tenant); err != nil {
+			return err
+		}
+		return fn(tx)
+	})
 }
 
 // The decoded rows that keep matches up to limit with zero for all

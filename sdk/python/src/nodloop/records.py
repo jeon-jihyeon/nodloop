@@ -1029,6 +1029,7 @@ class ExposeRecordInput(_ExposeRecordInputRequired, total=False):
     key: str
     change: ExposeRecordInputChange | None
     choices: list[Literal["keep", "drop", "merge", "separate", "mine", "review", "yes", "notyet", "same", "undo", "no_answer"]] | None
+    lines: list[str] | None
     run: str
     runes: int
 

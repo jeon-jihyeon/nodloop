@@ -528,3 +528,18 @@ func (s Set) compactionApproval(id, approver string, check Coverage, now time.Ti
 	}
 	return records, nil
 }
+
+// Refuses the approval of the version as Approve would once the approver approved the compaction
+// A merge writes both so it asks this before its first write and leaves no compaction approved for a change that cannot follow
+func (s Set) CheckApprovalAfter(compaction, id string, version int, approver string, check Coverage, now time.Time) error {
+	records, err := s.compactionApproval(compaction, approver, check, now)
+	if err != nil {
+		return err
+	}
+	after := slices.Clone(s)
+	for _, k := range records {
+		after = append(Set{k}, after...)
+	}
+	_, err = after.approval(id, version, approver, now)
+	return err
+}

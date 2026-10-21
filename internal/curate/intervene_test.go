@@ -121,7 +121,8 @@ func (d desk) expose(t *testing.T, decide string) string {
 	shown := curate.Event{Session: "s-1", Ref: decide, Source: trace.SourcePush, Draw: d.first.Event.AuditDraw("s-1", 1)}
 	x, err := shown.Expose(curate.Exposure{
 		Kind: curate.QuestionDirection, Key: "ab12", Surface: curate.SurfaceContext, Rules: curate.QuestionRules,
-		Choices: []curate.Choice{curate.ChoiceKeep, curate.ChoiceDrop}, Text: hex.EncodeToString(make([]byte, 32)), Round: 1,
+		Choices: []curate.Choice{curate.ChoiceKeep, curate.ChoiceDrop}, Text: hex.EncodeToString(make([]byte, 32)),
+		Lines: []string{hex.EncodeToString(make([]byte, 32))}, Round: 1,
 	}, d.stores.Clock.Now())
 	require.NoError(t, err)
 	require.NoError(t, d.stores.Traces.Append(context.Background(), x.Record()))

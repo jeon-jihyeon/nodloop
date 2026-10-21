@@ -27,7 +27,7 @@ func TestEventExpose(t *testing.T) {
 	change := &knowledge.Ref{ID: "k-1", Version: 1}
 	audit := curate.Exposure{
 		Kind: curate.QuestionAudit, Key: "a7k2", Change: change, Surface: curate.SurfaceContext, Rules: curate.QuestionRules,
-		Choices: []curate.Choice{curate.ChoiceSame, curate.ChoiceUndo}, Text: hmac, Round: 1, Run: "run-1",
+		Choices: []curate.Choice{curate.ChoiceSame, curate.ChoiceUndo}, Text: hmac, Lines: []string{hmac, hmac}, Round: 1, Run: "run-1",
 	}
 	notice := curate.Exposure{Kind: curate.QuestionNotice, Surface: curate.SurfaceMessage, Rules: curate.QuestionRules, Text: hmac, Round: 1}
 	with := func(x curate.Exposure, change func(*curate.Exposure)) curate.Exposure {
@@ -52,27 +52,27 @@ func TestEventExpose(t *testing.T) {
 		{
 			"an audit question names its key, the change, its choices and the run it followed",
 			args{pushed(), audit},
-			want{`{"kind":"audit","key":"a7k2","change":{"id":"k-1","version":1},"surface":"additional_context","rules":"1",` +
-				`"choices":["same","undo"],"text":"` + hmac + `","round":1,"run":"run-1"}`, nil},
+			want{`{"kind":"audit","key":"a7k2","change":{"id":"k-1","version":1},"surface":"additional_context","rules":"2",` +
+				`"choices":["same","undo"],"text":"` + hmac + `","lines":["` + hmac + `","` + hmac + `"],"round":1,"run":"run-1"}`, nil},
 		},
 		{
 			"a notice asks nothing",
 			args{pushed(), notice},
-			want{`{"kind":"notice","surface":"system_message","rules":"1","text":"` + hmac + `","round":1}`, nil},
+			want{`{"kind":"notice","surface":"system_message","rules":"2","text":"` + hmac + `","round":1}`, nil},
 		},
 		{
 			"a proposal the person asked for carries no probability",
 			args{manual, with(audit, func(x *curate.Exposure) {
 				x.Kind, x.Choices = curate.QuestionDirection, []curate.Choice{"keep", "drop"}
 			})},
-			want{`{"kind":"direction","key":"a7k2","change":{"id":"k-1","version":1},"surface":"additional_context","rules":"1",` +
-				`"choices":["keep","drop"],"text":"` + hmac + `","round":1,"run":"run-1"}`, nil},
+			want{`{"kind":"direction","key":"a7k2","change":{"id":"k-1","version":1},"surface":"additional_context","rules":"2",` +
+				`"choices":["keep","drop"],"text":"` + hmac + `","lines":["` + hmac + `","` + hmac + `"],"round":1,"run":"run-1"}`, nil},
 		},
 		{
 			"a question records the runes of its text at the most it may show",
 			args{pushed(), with(audit, func(x *curate.Exposure) { x.Runes = curate.MaxRunes })},
-			want{`{"kind":"audit","key":"a7k2","change":{"id":"k-1","version":1},"surface":"additional_context","rules":"1",` +
-				`"choices":["same","undo"],"text":"` + hmac + `","round":1,"run":"run-1","runes":600}`, nil},
+			want{`{"kind":"audit","key":"a7k2","change":{"id":"k-1","version":1},"surface":"additional_context","rules":"2",` +
+				`"choices":["same","undo"],"text":"` + hmac + `","lines":["` + hmac + `","` + hmac + `"],"round":1,"run":"run-1","runes":600}`, nil},
 		},
 		{"a text past the runes a question may show is refused", args{pushed(), with(audit, func(x *curate.Exposure) { x.Runes = curate.MaxRunes + 1 })}, want{err: curate.ErrExposeInvalid}},
 		{"a negative count of runes is refused", args{pushed(), with(notice, func(x *curate.Exposure) { x.Runes = -1 })}, want{err: curate.ErrExposeInvalid}},
@@ -82,6 +82,9 @@ func TestEventExpose(t *testing.T) {
 		{"no rules version is refused", args{pushed(), with(audit, func(x *curate.Exposure) { x.Rules = "" })}, want{err: curate.ErrExposeInvalid}},
 		{"a text kept as itself is refused", args{pushed(), with(audit, func(x *curate.Exposure) { x.Text = "keep it?" })}, want{err: curate.ErrExposeInvalid}},
 		{"a notice with choices is refused", args{pushed(), with(notice, func(x *curate.Exposure) { x.Choices = []curate.Choice{"same"} })}, want{err: curate.ErrExposeInvalid}},
+		{"a notice with lines a click holds is refused", args{pushed(), with(notice, func(x *curate.Exposure) { x.Lines = []string{hmac} })}, want{err: curate.ErrExposeInvalid}},
+		{"a question with no line a click holds is refused", args{pushed(), with(audit, func(x *curate.Exposure) { x.Lines = nil })}, want{err: curate.ErrExposeInvalid}},
+		{"a line kept as itself is refused", args{pushed(), with(audit, func(x *curate.Exposure) { x.Lines = []string{hmac, "Why you"} })}, want{err: curate.ErrExposeInvalid}},
 		{"a notice in the answer is refused", args{pushed(), with(notice, func(x *curate.Exposure) { x.Surface = curate.SurfaceContext })}, want{err: curate.ErrExposeInvalid}},
 		{"a key of 5 characters is refused", args{pushed(), with(audit, func(x *curate.Exposure) { x.Key = "a7k2x" })}, want{err: curate.ErrExposeInvalid}},
 		{"a key of capitals is refused", args{pushed(), with(audit, func(x *curate.Exposure) { x.Key = "A7K2" })}, want{err: curate.ErrExposeInvalid}},
@@ -311,6 +314,7 @@ func TestQuestionText(t *testing.T) {
 }
 
 // The block puts the heading before the question and the instruction to copy its lines into one AskUserQuestion call after it
+// with the description nodloop names for each option
 func TestQuestionBlock(t *testing.T) {
 	q := curate.Question{
 		Key: "k7q2", Choices: [2]curate.Choice{curate.ChoiceKeep, curate.ChoiceDrop}, Change: "add the lesson %s in repo acme", Lessons: []string{"Name the failing test first"},
@@ -320,7 +324,8 @@ func TestQuestionBlock(t *testing.T) {
 	got := q.Block()
 
 	assert.Equal(t, "nodloop question for you\n"+q.Text()+"\n"+
-		`Ask this in one AskUserQuestion call with header "nodloop k7q2", the two choices keep and drop, `+
+		`Ask this in one AskUserQuestion call with header "nodloop k7q2", `+
+		`the two options keep with the description "Apply the change" and drop with the description "Leave the change out", `+
 		"and as its question the lines from One decision to Prepared copied word for word, keeping every quote. "+
 		"Where that tool does not exist, end your answer with those lines and the reply keys keep or drop. "+
 		"Record nothing and decide nothing yourself.", got)

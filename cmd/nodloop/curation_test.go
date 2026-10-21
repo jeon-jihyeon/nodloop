@@ -105,7 +105,7 @@ func (r *curationRecords) audit(week int, p float64, choice curate.Choice) {
 	change := &knowledge.Ref{ID: "k-1", Version: 1}
 	expose := r.append(asked.Expose(curate.Exposure{
 		Kind: curate.QuestionAudit, Key: "a7k2", Change: change, Surface: curate.SurfaceContext, Rules: curate.QuestionRules,
-		Choices: []curate.Choice{curate.ChoiceSame, curate.ChoiceUndo}, Text: shownText, Round: 1, Run: "run-1", Runes: 180,
+		Choices: []curate.Choice{curate.ChoiceSame, curate.ChoiceUndo}, Text: shownText, Lines: []string{shownText}, Round: 1, Run: "run-1", Runes: 180,
 	}, r.next(week)))
 	answered := curate.Event{Session: "s1", Ref: expose.ID, Source: trace.SourcePush, Draw: event.Draw}
 	r.append(answered.Answer(curate.Answer{
@@ -123,7 +123,7 @@ func (r *curationRecords) manual(week int) {
 	asked := curate.Event{Session: "s2", Ref: decide.ID, Source: trace.SourceManual, Draw: trace.Draw{CycleID: cycle, PolicyVersion: r.policies[cycle]}}
 	expose := r.append(asked.Expose(curate.Exposure{
 		Kind: curate.QuestionDirection, Key: "m3n4", Change: &knowledge.Ref{ID: "k-1", Version: 1}, Surface: curate.SurfaceContext,
-		Rules: curate.QuestionRules, Choices: []curate.Choice{curate.ChoiceKeep, curate.ChoiceDrop}, Text: shownText, Round: 1, Runes: 240,
+		Rules: curate.QuestionRules, Choices: []curate.Choice{curate.ChoiceKeep, curate.ChoiceDrop}, Text: shownText, Lines: []string{shownText}, Round: 1, Runes: 240,
 	}, r.next(week)))
 	answered := asked
 	answered.Ref = expose.ID
@@ -152,7 +152,7 @@ func (r *curationRecords) shadow(week int, pSelect float64) {
 	}
 	expose := r.append(asked.Expose(curate.Exposure{
 		Kind: curate.QuestionShadow, Key: "s5t6", Change: &knowledge.Ref{ID: "k-1", Version: 1}, Surface: curate.SurfaceContext,
-		Rules: curate.QuestionRules, Choices: []curate.Choice{curate.ChoiceKeep, curate.ChoiceDrop}, Text: shownText, Round: 1, Runes: 210,
+		Rules: curate.QuestionRules, Choices: []curate.Choice{curate.ChoiceKeep, curate.ChoiceDrop}, Text: shownText, Lines: []string{shownText}, Round: 1, Runes: 210,
 	}, r.next(week)))
 	answered := asked
 	answered.Ref = expose.ID
@@ -173,7 +173,7 @@ func (r *curationRecords) direction(week int, bin curate.Bin, choice curate.Choi
 	}
 	expose := r.append(asked.Expose(curate.Exposure{
 		Kind: curate.QuestionDirection, Key: "d7e8", Change: &knowledge.Ref{ID: "k-1", Version: 1}, Surface: curate.SurfaceContext,
-		Rules: curate.QuestionRules, Choices: []curate.Choice{curate.ChoiceKeep, curate.ChoiceDrop}, Text: shownText, Round: 1, Runes: 220,
+		Rules: curate.QuestionRules, Choices: []curate.Choice{curate.ChoiceKeep, curate.ChoiceDrop}, Text: shownText, Lines: []string{shownText}, Round: 1, Runes: 220,
 	}, r.next(week)))
 	answered := asked
 	answered.Ref = expose.ID

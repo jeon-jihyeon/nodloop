@@ -151,18 +151,22 @@ type lookup struct {
 	ledger knowledge.Set
 	// The newest trace of each id read so far with the traces the export sends
 	byID map[string]trace.Trace
-	// The verdicts of each run an extraction judged newest first
+	// The verdicts of each run newest first and nil until an extraction needs them
 	judged map[string]feedback.Records
-	// The newest extract trace whose candidate is each version
+	// The newest extract trace whose candidate is each version among the extract traces read so far
 	drafts map[knowledge.Ref]trace.Trace
-	err    error
+	// How many extract traces the reads took newest first
+	extracts int
+	// Whether those reach the oldest extract trace
+	allExtracts bool
+	err         error
 }
 
 func newLookup(ctx context.Context, s recordStores, recs exportRecords) *lookup {
 	ledger, err := s.items.List(ctx)
 	l := &lookup{
-		ctx: ctx, stores: s, ledger: knowledge.RestoreAll(ledger), byID: map[string]trace.Trace{},
-		judged: map[string]feedback.Records{}, drafts: map[knowledge.Ref]trace.Trace{}, err: err,
+		ctx: ctx, stores: s, ledger: knowledge.RestoreAll(ledger),
+		byID: map[string]trace.Trace{}, drafts: map[knowledge.Ref]trace.Trace{}, err: err,
 	}
 	for _, t := range recs.traces {
 		if _, ok := l.byID[t.ID]; !ok {
@@ -194,15 +198,17 @@ func (l *lookup) trace(id string) trace.Trace {
 }
 
 // The verdicts of the run newest first
+// Every verdict is read once at the first call since a read of the verdicts of one run reads the whole store too
 func (l *lookup) verdictsOf(run string) feedback.Records {
-	if v, ok := l.judged[run]; ok {
-		return v
+	if l.judged == nil {
+		found, err := l.stores.verdicts.List(l.ctx, record.FeedbackFilter{})
+		l.err = cmp.Or(l.err, err)
+		l.judged = map[string]feedback.Records{}
+		for _, v := range feedback.RestoreAll(found) {
+			l.judged[v.TraceID] = append(l.judged[v.TraceID], v)
+		}
 	}
-	found, err := l.stores.verdicts.List(l.ctx, record.FeedbackFilter{TraceID: run})
-	l.err = cmp.Or(l.err, err)
-	v := feedback.RestoreAll(found)
-	l.judged[run] = v
-	return v
+	return l.judged[run]
 }
 
 func (l *lookup) batch(recs exportRecords) (otel.Batch, error) {
@@ -237,29 +243,23 @@ func (l *lookup) add(b *otel.Batch, t trace.Trace) {
 }
 
 // The newest extract trace whose candidate is the version
-// The extract traces are read newest first in reads that double so a recent draft leaves the old traces unread
+// 1. the extract traces are read newest first in reads that double so a recent draft leaves the old traces unread
+// 2. each read keeps every draft it holds so a version no extraction drafted reads the store once per export
 func (l *lookup) drafted(id string, version int) trace.Trace {
 	ref := knowledge.Ref{ID: id, Version: version}
-	if t, ok := l.drafts[ref]; ok {
-		return t
-	}
-	var drafted trace.Trace
-	for limit := 8; ; limit *= 2 {
+	for limit := max(8, 2*l.extracts); ; limit *= 2 {
+		if t, ok := l.drafts[ref]; ok || l.allExtracts {
+			return t
+		}
 		found, err := l.stores.traces.List(l.ctx, record.TraceFilter{Name: string(trace.NameExtract), Limit: limit})
 		l.err = cmp.Or(l.err, err)
-		i := slices.IndexFunc(found, func(t record.Trace) bool {
-			out := extractOutput(t.Output)
-			return out.Candidate != nil && *out.Candidate == ref
-		})
-		if i >= 0 {
-			drafted = trace.Restore(found[i])
-		}
-		if i >= 0 || err != nil || len(found) < limit {
-			break
+		l.extracts, l.allExtracts = len(found), err != nil || len(found) < limit
+		for _, t := range slices.Backward(found) {
+			if out := extractOutput(t.Output); out.Candidate != nil {
+				l.drafts[*out.Candidate] = trace.Restore(t)
+			}
 		}
 	}
-	l.drafts[ref] = drafted
-	return drafted
 }
 
 // The model step of a trace with the run it judged and the correction that caused it

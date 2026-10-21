@@ -102,12 +102,7 @@ func (l *Ledger) Reverse(ctx context.Context, decision, approver string) (Set, e
 // The records of a reverse of the decision in the order they are appended
 // Every retire comes before every restore so a folder never carries the old and the new items at once
 func (s Set) reversal(decision, approver string, now time.Time) (Set, error) {
-	var ids []string
-	for _, k := range s {
-		if decision != "" && k.Decision == decision && !slices.Contains(ids, k.ID) {
-			ids = append(ids, k.ID)
-		}
-	}
+	ids := s.idsUnder(decision)
 	if len(ids) == 0 {
 		return nil, fmt.Errorf("%w: no record names the decision %q", ErrNotFound, decision)
 	}
@@ -129,6 +124,37 @@ func (s Set) reversal(decision, approver string, now time.Time) (Set, error) {
 		}
 	}
 	return r.out, nil
+}
+
+// Whether the records of the decision took back the write of the stamp
+// 1. they are the records a reverse of the stamp under the approver writes over the records without them
+// The same ids, versions and statuses in the order they were appended
+// 2. a decision that wrote no record on an id of the stamp took nothing back
+// So a retry of a reverse whose event failed to append goes on after what it took back
+// and another write of the same ids never passes for it
+func (s Set) TakenBack(stamp, decision, approver string) bool {
+	before := slices.DeleteFunc(slices.Clone(s), func(k Knowledge) bool { return k.Decision == decision })
+	plan, err := before.reversal(stamp, approver, time.Time{})
+	if decision == "" || err != nil {
+		return false
+	}
+	ids := before.idsUnder(stamp)
+	took := slices.DeleteFunc(slices.Clone(s), func(k Knowledge) bool { return k.Decision != decision || !slices.Contains(ids, k.ID) })
+	slices.Reverse(took)
+	return len(took) > 0 && slices.EqualFunc(took, plan, func(a, b Knowledge) bool {
+		return a.ID == b.ID && a.Version == b.Version && a.Status == b.Status
+	})
+}
+
+// The ids of the records that name the decision and none for no decision
+func (s Set) idsUnder(decision string) []string {
+	var ids []string
+	for _, k := range s {
+		if decision != "" && k.Decision == decision && !slices.Contains(ids, k.ID) {
+			ids = append(ids, k.ID)
+		}
+	}
+	return ids
 }
 
 // The approved version and the waiting candidate one id has now and had before a write
