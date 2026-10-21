@@ -10,14 +10,14 @@ import (
 	"time"
 )
 
-// One AI run
+// One AI run or one event the loop recorded about runs
 // Field names follow Langfuse and LangSmith traces so readers need no glossary
 type Trace struct {
 	// Time sortable id built by NewID
 	ID   string `json:"id"`
 	Name Name   `json:"name"`
 	// Groups traces
-	// The session of a host or of the MCP server or the compaction a check belongs to
+	// The session of a host or of the MCP server or the compaction a drafting or a check belongs to
 	SessionID string `json:"session_id,omitempty"`
 	// What the run was about in a few words
 	Subject string `json:"subject,omitempty"`

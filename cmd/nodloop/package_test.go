@@ -18,6 +18,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeon-jihyeon/nodloop/internal/atomicfile"
 	"github.com/jeon-jihyeon/nodloop/internal/datapackage"
 	"github.com/jeon-jihyeon/nodloop/internal/schema"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
@@ -198,7 +199,7 @@ func TestExportPackage(t *testing.T) {
 	assert.Contains(t, string(nextRuns), second)
 	assert.NotContains(t, string(nextRuns), first)
 	assert.NotEqual(t, d.Nodloop.Cursors["run"], n.Nodloop.Cursors["run"])
-	assert.Equal(t, d.Nodloop.Cursors["refill"], n.Nodloop.Cursors["refill"], "a kind with nothing new keeps its cursor")
+	assert.NotEmpty(t, n.Nodloop.Cursors["refill"], "a kind with nothing new keeps a cursor past what it read")
 }
 
 // The resources name their published schema and the foreign keys of the kinds they name
@@ -247,6 +248,7 @@ func TestExportPackageRefuses(t *testing.T) {
 		{"an unknown kind", []string{"--out", filepath.Join(base, "a"), "--kind", "session"}, schema.ErrKindUnknown.Error()},
 		{"a descriptor that is missing", []string{"--out", filepath.Join(base, "b"), "--since", filepath.Join(base, "missing.json")}, "no such file"},
 		{"a descriptor that is no JSON", []string{"--out", filepath.Join(base, "c"), "--since", notJSON}, errSinceInvalid.Error()},
+		{"a descriptor that names no regular file", []string{"--out", filepath.Join(base, "f"), "--since", full}, atomicfile.ErrNotRegular.Error()},
 		{"a descriptor with a cursor no page answered", []string{"--out", filepath.Join(base, "d"), "--since", badCursor}, schema.ErrCursorInvalid.Error()},
 		{"a folder that is not empty", []string{"--out", full}, datapackage.ErrFolderNotEmpty.Error()},
 		{"a flag it does not know", []string{"--nope"}, "flag provided but not defined"},
@@ -263,6 +265,7 @@ func TestExportPackageRefuses(t *testing.T) {
 	assert.NoDirExists(t, filepath.Join(base, "a"))
 	assert.NoDirExists(t, filepath.Join(base, "d"))
 	assert.NoDirExists(t, filepath.Join(base, "e"))
+	assert.NoDirExists(t, filepath.Join(base, "f"))
 }
 
 // A config.json that does not decode fails the export before it makes the folder
@@ -309,8 +312,9 @@ func TestPackageCommandFiles(t *testing.T) {
 	r.write(t, at, "cd repo && git status")
 	a, err := recordFlags{}.app(r.getenv, func() time.Time { return at })
 	require.NoError(t, err)
-	source, err := a.source()
+	s, err := a.stores()
 	require.NoError(t, err)
+	source := s.source(a.cfg.home)
 	index := fstest.MapFS{schema.IndexFile: {Data: []byte(`{"kinds":[{"kind":"verdict","version":1,"versions":[1],"store":"feedback.jsonl"}]}`)}}
 	base := t.TempDir()
 	command := func(files fstest.MapFS) packageCommand {

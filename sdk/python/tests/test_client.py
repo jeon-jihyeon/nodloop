@@ -24,7 +24,7 @@ async def test_loop(binary: str, records: str, approve: Approve) -> None:
     """An SDK call proposes the approval and the next run receives the item once the person approved it at their terminal"""
     async with Client(records, binary) as c:
         run = await c.record("support-bot", "Here are the refund steps", labels=ACME)
-        await c.judge(run, "reject", "ann", reason="the refund window was missing", reason_code="scope")
+        await c.judge(run, "reject", reviewer="ann", reason="the refund window was missing", reason_code="scope")
         proposed = await c.propose("judgment", "Quote the refund window before the steps", from_run=run, item_id="refund-window")
         proposal = await c.approve(proposed.id, proposed.version, "ann")
         before = await c.knowledge("support-bot", ACME)
@@ -51,13 +51,20 @@ async def test_refusal_is_a_tool_error(binary: str, records: str) -> None:
 
 
 async def test_judge_names_its_reviewer(binary: str, records: str) -> None:
-    """A verdict without a reviewer is refused over stdio, where no key names one"""
+    """A verdict without a reviewer is refused over stdio, where no key names one
+
+    A call of an earlier release that passed the reason third fails before anything is recorded
+    """
     async with Client(records, binary) as c:
         run = await c.record("support-bot", "answer", labels=ACME)
         with pytest.raises(ToolError, match="a reviewer is required"):
-            await c.judge(run, "approve", "")
+            await c.judge(run, "approve", reviewer="")
         with pytest.raises(TypeError):
             await c.judge(run, "approve")  # type: ignore[call-arg]
+        with pytest.raises(TypeError):
+            await c.judge(run, "reject", "the refund window was missing")  # type: ignore[misc]
+    written = [p.name for p in Path(records).glob("*.jsonl") if p.read_text()]
+    assert "feedback.jsonl" not in written
 
 
 async def test_judge_refuses_the_name_of_the_capture(binary: str, records: str) -> None:
@@ -65,7 +72,7 @@ async def test_judge_refuses_the_name_of_the_capture(binary: str, records: str) 
     async with Client(records, binary) as c:
         run = await c.record("support-bot", "answer", labels=ACME)
         with pytest.raises(ToolError, match="reserved for what the capture reads"):
-            await c.judge(run, "reject", "nodloop", reason="wrong")
+            await c.judge(run, "reject", reviewer="nodloop", reason="wrong")
         with pytest.raises(ToolError, match="reserved for what the capture reads"):
             await c.outcome(run, "confirmed", reviewer="nodloop")
     written = [p.name for p in Path(records).glob("*.jsonl") if p.read_text()]
@@ -83,7 +90,7 @@ async def test_judge_refuses_the_name_of_the_capture(binary: str, records: str) 
 async def test_check_call(binary: str, records: str, approve: Approve, tool: str, arguments: dict, action: str) -> None:
     async with Client(records, binary) as c:
         run = await c.record("ops-bot", "ran rm -rf /data", labels={"env": ["prod"]})
-        await c.judge(run, "reject", "ann", reason="never delete data")
+        await c.judge(run, "reject", reviewer="ann", reason="never delete data")
         proposed = await c.propose("judgment", "Never delete under /data", from_run=run, item_id="no-rm-data", veto=NO_RM)
         proposal = await c.approve(proposed.id, proposed.version, "ann")
         approve(proposed.id, proposed.version)
@@ -100,14 +107,14 @@ async def test_server(server: tuple[str, str, str]) -> None:
     url, key, service = server
     async with Client(url=url, key=service) as c:
         run = await c.record("support-bot", "Here are the refund steps", labels=ACME)
-        await c.judge(run, "reject", "ci", reason="the refund window was missing")
+        await c.judge(run, "reject", reviewer="ci", reason="the refund window was missing")
         proposed = await c.propose("judgment", "Quote the refund window", from_run=run, item_id="refund-window")
         proposal = await c.approve(proposed.id, proposed.version, "mallory")
     async with Client(url=url, key=key) as c:
         approved = await c.approve(proposed.id, proposed.version, "mallory")
         acme = await c.knowledge("support-bot", ACME)
         with pytest.raises(ToolError, match="reserved for what the capture reads"):
-            await c.judge(run, "approve", "nodloop")
+            await c.judge(run, "approve", reviewer="nodloop")
 
     assert (proposal.status, bool(proposal.proposal)) == ("candidate", True)
     assert (approved.id, approved.version, approved.status, approved.approver) == ("refund-window", 1, "approved", "ann")
@@ -121,7 +128,7 @@ async def test_intervene_under_a_person_key(server: tuple[str, str, str]) -> Non
     url, key, service = server
     async with Client(url=url, key=service) as c:
         run = await c.record("support-bot", "Here are the refund steps", labels=ACME)
-        await c.judge(run, "reject", "ci", reason="the refund window was missing")
+        await c.judge(run, "reject", reviewer="ci", reason="the refund window was missing")
         proposed = await c.propose("judgment", "Quote the refund window", from_run=run, item_id="refund-window")
         proposal = await c.intervene("judge", f"{proposed.id}:{proposed.version}", choice="keep")
     async with Client(url=url, key=key) as c:
@@ -143,7 +150,7 @@ async def test_intervene_over_stdio(binary: str, records: str) -> None:
     """Over stdio an intervention is a proposal, a digest answers its cursor and a knob outside its range is a ToolError"""
     async with Client(record_dir=records, binary_path=binary) as c:
         run = await c.record("support-bot", "Here are the refund steps", labels=ACME)
-        await c.judge(run, "reject", "ann", reason="the refund window was missing")
+        await c.judge(run, "reject", reviewer="ann", reason="the refund window was missing")
         proposed = await c.propose("judgment", "Quote the refund window", from_run=run, item_id="refund-window")
         proposal = await c.intervene("judge", f"{proposed.id}:{proposed.version}", choice="keep", session="s-1")
         digest = await c.intervene("digest", "support-bot", labels=ACME)
@@ -171,7 +178,7 @@ async def test_record_takes_keywords_after_output() -> None:
 async def test_eleventh_item_under_the_run_chars_approves(binary: str, records: str, approve: Approve) -> None:
     async with Client(records, binary) as c:
         run = await c.record("support-bot", "Here are the refund steps", labels=ACME)
-        await c.judge(run, "reject", "ann", reason="the refund window was missing")
+        await c.judge(run, "reject", reviewer="ann", reason="the refund window was missing")
         for n in range(11):
             proposed = await c.propose("judgment", f"Refund rule number {n}", from_run=run, item_id=f"rule-{n}")
             approve(proposed.id, proposed.version)
@@ -184,7 +191,7 @@ async def test_approve_in_picked_labels(binary: str, records: str, approve: Appr
     async with Client(records, binary) as c:
         run = await c.record("support-bot", "Here are the refund steps", labels=ACME)
         await c.record("support-bot", "ok", labels={"tenant": ["globex"]})
-        await c.judge(run, "reject", "ann", reason="too long", reason_code="form")
+        await c.judge(run, "reject", reviewer="ann", reason="too long", reason_code="form")
         proposed = await c.propose("judgment", "Answer in three lines", from_run=run)
         proposal = await c.approve(proposed.id, proposed.version, "ann", labels={})
         with pytest.raises(ToolError, match="no run of support-bot carries tenant=initech"):
@@ -201,7 +208,7 @@ async def test_holdout_key_withholds_and_record_joins_the_withheld_arm(binary: s
     (home / ".nodloop" / "config.json").write_text('{"holdout": 0.5}')
     async with Client(records, binary) as c:
         run = await c.record("stream-bot", "lag rose", labels=ACME)
-        await c.judge(run, "reject", "ann", reason="name the partition")
+        await c.judge(run, "reject", reviewer="ann", reason="name the partition")
         proposed = await c.propose("judgment", "Name the partition", from_run=run, item_id="partition")
         approve(proposed.id, proposed.version)
         drawn = [await c.knowledge("stream-bot", ACME, holdout_key=f"window-{n}") for n in range(200)]
@@ -222,7 +229,7 @@ async def test_record_takes_items_as_withheld(binary: str, records: str, approve
     """Items a producer passes as withheld are recorded by id and version like applied ones"""
     async with Client(records, binary) as c:
         run = await c.record("stream-bot", "lag rose", labels=ACME)
-        await c.judge(run, "reject", "ann", reason="name the partition")
+        await c.judge(run, "reject", reviewer="ann", reason="name the partition")
         proposed = await c.propose("judgment", "Name the partition", from_run=run, item_id="partition")
         approve(proposed.id, proposed.version)
         items = (await c.knowledge("stream-bot", ACME)).items

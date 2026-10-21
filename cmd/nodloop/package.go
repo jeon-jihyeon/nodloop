@@ -7,11 +7,11 @@ import (
 	"fmt"
 	"io"
 	"maps"
-	"os"
 	"slices"
 	"strconv"
 	"time"
 
+	"github.com/jeon-jihyeon/nodloop/internal/atomicfile"
 	"github.com/jeon-jihyeon/nodloop/internal/datapackage"
 	"github.com/jeon-jihyeon/nodloop/internal/schema"
 )
@@ -39,11 +39,11 @@ func runPackage(args []string, getenv func(string) string, now func() time.Time,
 	if err != nil {
 		return fail(stderr, "export package", err)
 	}
-	source, err := a.source()
+	s, err := a.stores()
 	if err != nil {
 		return fail(stderr, "export package", err)
 	}
-	c := packageCommand{source: source, files: schema.Published, kinds: publishedKinds, now: now, version: buildVersion(), out: stdout}
+	c := packageCommand{source: s.source(a.cfg.home), files: schema.Published, kinds: publishedKinds, now: now, version: buildVersion(), out: stdout}
 	if err := c.export(context.Background(), e); err != nil {
 		return fail(stderr, "export package", err)
 	}
@@ -81,7 +81,7 @@ func (e packageExport) cursors() (map[string]string, error) {
 	if e.since == "" {
 		return out, nil
 	}
-	b, err := os.ReadFile(e.since)
+	b, err := atomicfile.Read(e.since, inputLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -128,7 +128,7 @@ type packageCommand struct {
 	out     io.Writer
 }
 
-// Writes every settled record of the kinds after their cursors as one table per kind and schema version
+// Writes every record of the kinds after their cursors as one table per kind and schema version
 // 1. the descriptor says complete false until every table is written and then names the cursor each kind ended at
 // 2. a failure keeps the tables written so far with complete false, the error and the cursors of the kinds they hold
 func (c packageCommand) export(ctx context.Context, e packageExport) error {
@@ -172,11 +172,10 @@ func (c packageCommand) write(ctx context.Context, pkg *datapackage.Package, kin
 	for _, k := range kinds {
 		// The cursors were checked when they were read
 		after, _ := schema.ParseCursor(cursors[k.Name])
-		all, err := c.source.Records(ctx, k, after)
+		page, next, err := c.source.Read(ctx, k, after, 0)
 		if err != nil {
 			return written, err
 		}
-		page, next := all.Page(after, 0, c.now())
 		tables, err := c.tables(k, page, content, newest)
 		if err != nil {
 			return written, err

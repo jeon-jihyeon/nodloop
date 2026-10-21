@@ -1,9 +1,11 @@
 package curate
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"slices"
 	"time"
 
@@ -16,6 +18,7 @@ import (
 // 1. the ledger write comes first and names in decision the intervention or the answer an answer writes
 // 2. the intervention follows since it names the records the write made
 // 3. a judgment whose earlier try wrote the ledger and failed to record its intervention takes that write so both stand once
+// A reverse or a judgment of a compaction goes on under the decision of its earlier try and writes only what that try left
 // 4. a knob raised above the knobs of the open cycle takes effect at once in a knob event of the cycle
 // A failed export rides on the error after the intervention is recorded
 func (iv *Intervener) carry(ctx context.Context, in trace.Intervention, session string, by Submitter, s state) (Intervened, error) {
@@ -25,6 +28,7 @@ func (iv *Intervener) carry(ctx context.Context, in trace.Intervention, session 
 	if earlier, wrote, ok := s.earlier(in.ID, judgmentStatus(in), by.Person); ok {
 		id, res = earlier, Intervened{Wrote: wrote}
 	} else {
+		id = cmp.Or(s.untraced(s.touched(in), by.Person), id)
 		res, err = iv.effect(ctx, id, in, session, by, s)
 	}
 	if err != nil && !errors.Is(err, knowledge.ErrExport) {
@@ -48,10 +52,22 @@ func (iv *Intervener) effect(ctx context.Context, id string, in trace.Interventi
 	case trace.ActionAnswer:
 		return iv.answer(ctx, in, session, by, s)
 	case trace.ActionReverse:
-		wrote, err := iv.reverse(ctx, iv.ledger.Under(id), in, s)
+		wrote, err := iv.reverse(ctx, id, in, s)
 		return Intervened{Wrote: wrote}, err
 	}
 	return Intervened{}, nil
+}
+
+// The ids a reverse or a judgment of a compaction writes several records on
+func (s state) touched(in trace.Intervention) []string {
+	switch in.Action {
+	case trace.ActionReverse:
+		x, _ := s.holds(in.Reverses)
+		return s.idsUnder(s.stamps(x)...)
+	case trace.ActionJudge:
+		return s.compacted(in.Compaction)
+	}
+	return nil
 }
 
 // The ledger write of a judgment under the person's name
@@ -141,7 +157,9 @@ func (iv *Intervener) answer(ctx context.Context, in trace.Intervention, session
 // 1. the answer is checked before the ledger write so a refused answer writes nothing
 // 2. the ledger write comes next and names the answer in decision
 // 3. a choice whose earlier try wrote the ledger and failed to append its answer takes that write so both stand once
+// A merge or an undo of a compaction goes on under the decision of its earlier try and writes only what that try left
 // 4. the answer names the expose that showed the question when one did with the delay since it
+// 5. the question leaves the questions due once its answer is recorded
 func (iv *Intervener) answered(
 	ctx context.Context, d Decided, choice Choice, ev Event, x trace.Trace, shown bool, by Submitter, s state,
 ) (Intervened, error) {
@@ -168,6 +186,7 @@ func (iv *Intervener) answered(
 	if earlier, wrote, ok := s.earlier(d.Change.ID, d.leaves(choice), by.Person); ok {
 		ev.ID, res = earlier, Intervened{Wrote: wrote}
 	} else {
+		ev.ID = cmp.Or(s.untraced(s.writes(d, choice), by.Person), ev.ID)
 		res, err = iv.chosen(ctx, ev.ID, d, choice, ev.Session, by, s)
 	}
 	if err != nil && !errors.Is(err, knowledge.ErrExport) {
@@ -178,7 +197,27 @@ func (iv *Intervener) answered(
 	if terr := iv.traces.Append(ctx, tr.Record()); terr != nil {
 		return Intervened{}, terr
 	}
-	return Intervened{Wrote: res.Wrote, Answer: ev.ID}, err
+	return Intervened{Wrote: res.Wrote, Answer: ev.ID}, errors.Join(err, iv.settled(d.ID))
+}
+
+// The ids a merge or an undo of a compaction writes several records on
+// 1. a merge: the items of its compaction and the change with the items of the folder it needs room in
+// The folder holds the items the compaction approved once it is approved
+// 2. an undo of a compaction curate applied: the ids the decide wrote
+func (s state) writes(d Decided, choice Choice) []string {
+	switch {
+	case choice == ChoiceMerge:
+		ids := append(s.compacted(d.Change.Compaction), d.Change.ID)
+		// A compaction names no version so it has no folder
+		f, _, _ := s.all.Fits(d.Change.ID, d.Change.Version)
+		for _, k := range f.Carried {
+			ids = append(ids, k.ID)
+		}
+		return ids
+	case choice == ChoiceUndo && d.Change.Kind == ChangeCompaction:
+		return s.idsUnder(d.ID)
+	}
+	return nil
 }
 
 // What the choice writes under the answer
@@ -198,6 +237,8 @@ func (iv *Intervener) chosen(
 		to, err = ledger.Approve(ctx, c.ID, c.Version, by.Person)
 	case choice == ChoiceDrop:
 		to, err = ledger.Retire(ctx, c.ID, c.Version, by.Person)
+	case choice == ChoiceUndo && c.Kind == ChangeCompaction && s.takenBack(d.ID, id):
+		return Intervened{Wrote: s.under(id)}, nil
 	case choice == ChoiceUndo && c.Kind == ChangeCompaction:
 		wrote, err := ledger.Reverse(ctx, d.ID, by.Person)
 		return Intervened{Wrote: wrote}, err
@@ -209,7 +250,7 @@ func (iv *Intervener) chosen(
 		wrote, err := iv.merged(ctx, id, d, by.Person, s)
 		return Intervened{Wrote: wrote}, err
 	case choice == ChoiceYes && c.Kind == ChangeIntervention:
-		return iv.accepted(ctx, c.Proposal, session, by, s)
+		return iv.accepted(ctx, d.ID, c.Proposal, session, by, s)
 	default:
 		return Intervened{}, nil
 	}
@@ -261,6 +302,64 @@ func (s state) earlier(id string, status knowledge.Status, person string) (strin
 	return k.Decision, knowledge.Set{k}, true
 }
 
+// The decision an earlier try of the person's write left on the ids with no event that names it and empty for none
+// 1. a try whose event failed to append leaves the newest record of an id it wrote under a decision no trace holds
+// 2. a record of that decision names the person as approver
+// A candidate a reverse restates names no approver so the decision is read over all its records
+// So a retry of a write of several records goes on under that decision and the write and its event each stand once
+func (s state) untraced(ids []string, person string) string {
+	for _, id := range ids {
+		k, ok := s.all.Find(id)
+		if !ok || k.Decision == "" || s.traced(k.Decision) {
+			continue
+		}
+		if slices.ContainsFunc(s.all, func(r knowledge.Knowledge) bool { return r.Decision == k.Decision && r.Approver == person }) {
+			return k.Decision
+		}
+	}
+	return ""
+}
+
+// The ids of the records the decisions wrote
+func (s state) idsUnder(decisions ...string) []string {
+	var out []string
+	for _, k := range s.all {
+		if k.Decision != "" && slices.Contains(decisions, k.Decision) && !slices.Contains(out, k.ID) {
+			out = append(out, k.ID)
+		}
+	}
+	return out
+}
+
+// The ids of the items of the compaction and none for no compaction
+func (s state) compacted(compaction string) []string {
+	var out []string
+	for _, k := range s.all {
+		if compaction != "" && k.Compaction == compaction && !slices.Contains(out, k.ID) {
+			out = append(out, k.ID)
+		}
+	}
+	return out
+}
+
+// The records of the decision in the order they were appended
+func (s state) under(decision string) knowledge.Set {
+	var out knowledge.Set
+	for _, k := range slices.Backward(s.all) {
+		if k.Decision == decision {
+			out = append(out, k)
+		}
+	}
+	return out
+}
+
+// Whether a reverse under the decision took back what the stamp wrote
+// One ledger write takes back every record of a stamp so one record of the decision on an id the stamp wrote shows it
+func (s state) takenBack(stamp, decision string) bool {
+	ids := s.idsUnder(stamp)
+	return slices.ContainsFunc(s.all, func(k knowledge.Knowledge) bool { return k.Decision == decision && slices.Contains(ids, k.ID) })
+}
+
 // Whether a decide, an answer or a person's intervention of the records has the id
 func (s state) traced(id string) bool {
 	_, decided := s.decides[id]
@@ -269,40 +368,76 @@ func (s state) traced(id string) bool {
 }
 
 // The prepared compaction approved and then the change of the question
-// A change that needs room names the pending compaction of its folder and a compaction names itself
+// 1. a compaction approved already under the decision gets only the records still missing
+// 2. a change an earlier try approved under the decision is taken as it is
 func (iv *Intervener) merged(ctx context.Context, decision string, d Decided, person string, s state) (knowledge.Set, error) {
-	id := d.Change.Compaction
-	if d.Change.Kind != ChangeCompaction {
-		room, err := s.all.Room(d.Change.ID, d.Change.Version)
-		if err != nil {
-			return nil, err
-		}
-		if room.Pending == "" {
-			return nil, fmt.Errorf("%w: no compaction was prepared for %s v%d", ErrTargetInvalid, d.Change.ID, d.Change.Version)
-		}
-		id = room.Pending
+	id, err := s.mergeOf(d, decision)
+	if err != nil {
+		return nil, err
 	}
 	merged, err := iv.compaction(ctx, decision, id, person)
 	if err != nil && !errors.Is(err, knowledge.ErrExport) || d.Change.Kind == ChangeCompaction {
 		return merged, err
+	}
+	if k, ok := s.all.Find(d.Change.ID); ok && k.Decision == decision {
+		return slices.Concat(merged, knowledge.Set{k}), err
 	}
 	to, aerr := iv.ledger.Under(decision).Approve(ctx, d.Change.ID, d.Change.Version, person)
 	wrote, aerr := written(to, aerr)
 	return slices.Concat(merged, wrote), errors.Join(err, aerr)
 }
 
-// The proposal of the agent carried out as the person's intervention
-func (iv *Intervener) accepted(ctx context.Context, proposal, session string, by Submitter, s state) (Intervened, error) {
+// The compaction a merge approves
+// 1. a compaction names itself and an earlier try under the decision names the one it approved
+// Its approval made the room so the folder names no pending compaction any more
+// 2. a change that needs room names the pending compaction of its folder
+func (s state) mergeOf(d Decided, decision string) (string, error) {
+	if d.Change.Kind == ChangeCompaction {
+		return d.Change.Compaction, nil
+	}
+	if i := slices.IndexFunc(s.all, func(k knowledge.Knowledge) bool { return k.Decision == decision && k.Compaction != "" }); i >= 0 {
+		return s.all[i].Compaction, nil
+	}
+	room, err := s.all.Room(d.Change.ID, d.Change.Version)
+	if err != nil {
+		return "", err
+	}
+	if room.Pending == "" {
+		return "", fmt.Errorf("%w: no compaction was prepared for %s v%d", ErrTargetInvalid, d.Change.ID, d.Change.Version)
+	}
+	return room.Pending, nil
+}
+
+// The proposal of the agent carried out as the person's intervention that names the decide of the question in decide
+// An earlier try that carried it out and failed to append its answer left that intervention so the answer names it
+func (iv *Intervener) accepted(ctx context.Context, decide, proposal, session string, by Submitter, s state) (Intervened, error) {
 	p, ok := s.proposalOf(proposal)
 	if !ok {
 		return Intervened{}, fmt.Errorf("%w: the proposal %s is no longer recorded", ErrTargetInvalid, proposal)
+	}
+	if y, ok := s.carriedBefore(decide, p, by.Person); ok {
+		found, err := iv.traces.Get(ctx, y.ID)
+		return Intervened{Trace: trace.Restore(found), Wrote: s.under(y.ID)}, err
 	}
 	in, err := iv.resolve(ctx, p.request(session), s)
 	if err != nil {
 		return Intervened{}, err
 	}
-	in.Proof, in.Person = by.Proof, by.Person
+	// An answer or a dismiss keeps the decide of the question it closes
+	in.Proof, in.Person, in.Decide = by.Proof, by.Person, cmp.Or(in.Decide, decide)
 	return iv.carry(ctx, in, session, by, s)
+}
+
+// The person's intervention a yes to the question of the decide carried out that no answer names in carried
+// It carries the payload of the proposal and still holds
+func (s state) carriedBefore(decide string, p intervention, person string) (intervention, bool) {
+	for _, y := range s.ints.person {
+		named := slices.ContainsFunc(s.ints.answers, func(a answered) bool { return a.Out.Carried == y.ID })
+		if y.In.Decide == decide && y.In.Person == person && !named && !s.ints.Reversed(y.ID) && reflect.DeepEqual(y.request(""), p.request("")) {
+			return y, true
+		}
+	}
+	return intervention{}, false
 }
 
 // The versions nodloop approved that reach a run of the place of the run the decide cites
@@ -334,13 +469,15 @@ func (s state) exposeOf(target, decide string) (trace.Trace, bool) {
 	return newest, newest.ID != ""
 }
 
-// The records a reverse writes to return every id the reversed intervention wrote to where it was
-// The intervention, the answer it wrote and the intervention that answer carried out each name their records
-func (iv *Intervener) reverse(ctx context.Context, ledger *knowledge.Ledger, in trace.Intervention, s state) (knowledge.Set, error) {
+// The records a reverse writes under the decision to return every id the reversed intervention wrote to where it was
+// 1. the intervention, the answer it wrote and the intervention that answer carried out each name their records
+// 2. what an earlier try under the decision took back is not taken back again and its records count as written
+func (iv *Intervener) reverse(ctx context.Context, decision string, in trace.Intervention, s state) (knowledge.Set, error) {
 	x, _ := s.holds(in.Reverses)
-	var wrote knowledge.Set
+	ledger := iv.ledger.Under(decision)
+	wrote := s.under(decision)
 	for _, id := range s.stamps(x) {
-		if !s.all.HasDecision(id) {
+		if !s.all.HasDecision(id) || s.takenBack(id, decision) {
 			continue
 		}
 		w, err := ledger.Reverse(ctx, id, in.Person)

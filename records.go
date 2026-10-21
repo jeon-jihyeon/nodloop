@@ -248,16 +248,15 @@ func (c *Client) Outcome(ctx context.Context, o Outcome) error {
 // Content keeps the free text of the kind such as outputs, reasons and lesson content
 type Query = schema.Query
 
-// One page of raw records of one kind oldest first in the published schema of the kind
+// One page of raw records of one kind in the order the records were appended in the published schema of the kind
 // Pass Next back as Since for the following page
-// It stays the same while no newer record is at least 10 s old
 type Page = schema.Page
 
 // One page of the raw records of a kind as the MCP tool records pages them
-// 1. a record younger than 10 s waits for a later page so a record another process appends late is never skipped
+// 1. a record another process appends late with an earlier time still comes on a later page once
 // 2. an unknown kind fails with ErrKindUnknown, a Since no page answered with ErrCursorInvalid and the guard log with ErrNotServed since the package reads one record directory
 func (c *Client) Records(ctx context.Context, q Query) (Page, error) {
-	return c.source.Page(ctx, q, c.now())
+	return c.source.Page(ctx, q)
 }
 
 // One report of the records as JSON in the shape the MCP tool report and nodloop report --json answer
@@ -408,7 +407,7 @@ func (c *Client) Propose(ctx context.Context, p Proposal) (Item, error) {
 		}
 	}
 	draft := knowledge.Knowledge{
-		ID: p.ID, Kind: p.Kind, Content: p.Content, Author: cmp.Or(p.Author, feedback.ReviewerAuthor), NewLabels: p.NewLabels, Veto: p.Veto,
+		ID: p.ID, Kind: p.Kind, Content: p.Content, Author: cmp.Or(p.Author, knowledge.DefaultAuthor), NewLabels: p.NewLabels, Veto: p.Veto,
 		Run:      &knowledge.RunScope{Producer: p.Producer, Labels: p.Labels, Except: p.Except},
 		Evidence: knowledge.Evidence{FeedbackTraceIDs: p.Runs},
 	}

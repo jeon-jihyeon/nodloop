@@ -5,75 +5,108 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	knowledgefile "github.com/jeon-jihyeon/nodloop/internal/knowledge/file"
 	"github.com/jeon-jihyeon/nodloop/internal/record"
 	"github.com/jeon-jihyeon/nodloop/internal/schema"
 )
 
-// Traces a store lists through its filter
-type traces []record.Trace
+// Records a store appended in order whose position is how many records a read went past
+type appended[T any] []T
 
-func (ts traces) List(_ context.Context, f record.TraceFilter) ([]record.Trace, error) {
-	var out []record.Trace
-	for _, t := range ts {
-		if f.Matches(t) {
-			out = append(out, t)
+func (a appended[T]) after(from string, keep func(T) bool, limit int) ([]T, string, error) {
+	start := 0
+	if from != "" {
+		n, err := strconv.Atoi(from)
+		if err != nil || n > len(a) {
+			return nil, from, fmt.Errorf("%w: %q", record.ErrPositionGone, from)
+		}
+		start = n
+	}
+	var out []T
+	end := start
+	for _, r := range a[start:] {
+		if limit > 0 && len(out) == limit {
+			break
+		}
+		end++
+		if keep(r) {
+			out = append(out, r)
 		}
 	}
-	return out, nil
-}
-
-type verdicts []record.Feedback
-
-func (vs verdicts) List(_ context.Context, f record.FeedbackFilter) ([]record.Feedback, error) {
-	var out []record.Feedback
-	for _, v := range vs {
-		if f.Matches(v) {
-			out = append(out, v)
-		}
+	if end == 0 {
+		return out, "", nil
 	}
-	return out, nil
+	return out, strconv.Itoa(end), nil
 }
 
-type outcomes []record.Outcome
+func all[T any](T) bool { return true }
 
-func (os outcomes) List(context.Context, string) ([]record.Outcome, error) { return os, nil }
+type traces appended[record.Trace]
 
-type items []record.Knowledge
+func (ts traces) After(_ context.Context, f record.TraceFilter, from string) ([]record.Trace, string, error) {
+	return appended[record.Trace](ts).after(from, f.Matches, f.Limit)
+}
 
-func (is items) List(context.Context) ([]record.Knowledge, error) { return is, nil }
+type verdicts appended[record.Feedback]
 
-type guardLog []json.RawMessage
+func (vs verdicts) After(_ context.Context, from string, limit int) ([]record.Feedback, string, error) {
+	return appended[record.Feedback](vs).after(from, all, limit)
+}
 
-func (g guardLog) List(context.Context) ([]json.RawMessage, error) { return g, nil }
+type outcomes appended[record.Outcome]
 
-// A store that cannot be read
-type unreadable struct{}
+func (os outcomes) After(_ context.Context, from string, limit int) ([]record.Outcome, string, error) {
+	return appended[record.Outcome](os).after(from, all, limit)
+}
+
+type items appended[record.Knowledge]
+
+func (is items) After(_ context.Context, from string, limit int) ([]record.Knowledge, string, error) {
+	return appended[record.Knowledge](is).after(from, all, limit)
+}
+
+type guardLog appended[json.RawMessage]
+
+func (g guardLog) After(_ context.Context, from string, limit int) ([]json.RawMessage, string, error) {
+	return appended[json.RawMessage](g).after(from, all, limit)
+}
+
+// A store that cannot be read after the reads it allows
+type unreadable struct {
+	traces
+	allowed int
+	reads   *int
+}
 
 var errUnreadable = errors.New("traces.jsonl: permission denied")
 
-func (unreadable) List(context.Context, record.TraceFilter) ([]record.Trace, error) {
-	return nil, errUnreadable
+func (u unreadable) After(ctx context.Context, f record.TraceFilter, from string) ([]record.Trace, string, error) {
+	*u.reads++
+	if *u.reads > u.allowed {
+		return nil, from, errUnreadable
+	}
+	return u.traces.After(ctx, f, from)
 }
 
-var (
-	settled = time.Date(2026, 10, 6, 9, 0, 0, 0, time.UTC)
-	now     = settled.Add(time.Minute)
-)
+var settled = time.Date(2026, 10, 6, 9, 0, 0, 0, time.UTC)
 
-// One record of every store a minute old and a run younger than the settle time, each with text a page leaves out
+// One record of every store and runs appended out of time order
+// Each record holds text a page leaves out
+// The last run was appended after the others with an earlier time as a slower process appends one
 func source() schema.Source {
 	return schema.Source{
 		Traces: traces{
-			{ID: "t2", Name: "run", Time: settled, Input: json.RawMessage(`{"applied":[]}`), Output: json.RawMessage(`"steps two"`), Producer: "bot", SchemaVersion: 1},
-			{ID: "t1", Name: "run", Time: settled, Input: json.RawMessage(`{"applied":[]}`), Output: json.RawMessage(`"steps one"`), Producer: "bot", SchemaVersion: 1},
 			{ID: "t0", Name: "turn", Time: settled, Input: json.RawMessage(`{}`), SchemaVersion: 1},
-			{ID: "t3", Name: "run", Time: now.Add(-time.Second), Input: json.RawMessage(`{"applied":[]}`), Producer: "bot", SchemaVersion: 1},
+			{ID: "t1", Name: "run", Time: settled, Input: json.RawMessage(`{"applied":[]}`), Output: json.RawMessage(`"steps one"`), Producer: "bot", SchemaVersion: 1},
+			{ID: "t2", Name: "run", Time: settled, Input: json.RawMessage(`{"applied":[]}`), Output: json.RawMessage(`"steps two"`), Producer: "bot", SchemaVersion: 1},
+			{ID: "t3", Name: "run", Time: settled.Add(-time.Hour), Input: json.RawMessage(`{"applied":[]}`), Producer: "bot", SchemaVersion: 1},
 		},
 		Verdicts:  verdicts{{TraceID: "t1", Time: settled, Verdict: "reject", Reason: "missing the window", Reviewer: "ann", Proof: "none", SchemaVersion: 1}},
 		Outcomes:  outcomes{{TraceID: "t1", Time: settled, Result: "confirmed", Note: "checked the broker", Reviewer: "ann", SchemaVersion: 1}},
@@ -82,22 +115,22 @@ func source() schema.Source {
 	}
 }
 
+// The opaque form of the position of the fake stores after n records
+func past(n int) string {
+	return schema.Cursor{Position: strconv.Itoa(n)}.String()
+}
+
 const (
 	runOne      = `{"record_kind":"run","record_id":"t1","id":"t1","name":"run","time":"2026-10-06T09:00:00Z","input":{"applied":[]},"usage":{"input_tokens":0,"output_tokens":0,"cache_read":0,"cache_create":0,"cost_usd":0},"duration_ms":0,"producer":"bot","schema_version":1}`
 	runTwo      = `{"record_kind":"run","record_id":"t2","id":"t2","name":"run","time":"2026-10-06T09:00:00Z","input":{"applied":[]},"usage":{"input_tokens":0,"output_tokens":0,"cache_read":0,"cache_create":0,"cost_usd":0},"duration_ms":0,"producer":"bot","schema_version":1}`
+	runLate     = `{"record_kind":"run","record_id":"t3","id":"t3","name":"run","time":"2026-10-06T08:00:00Z","input":{"applied":[]},"usage":{"input_tokens":0,"output_tokens":0,"cache_read":0,"cache_create":0,"cost_usd":0},"duration_ms":0,"producer":"bot","schema_version":1}`
 	runOneShown = `{"record_kind":"run","record_id":"t1","id":"t1","name":"run","time":"2026-10-06T09:00:00Z","input":{"applied":[]},"output":"steps one","usage":{"input_tokens":0,"output_tokens":0,"cache_read":0,"cache_create":0,"cost_usd":0},"duration_ms":0,"producer":"bot","schema_version":1}`
 )
 
-// A page holds the settled records of one kind after its cursor in their published schema and leaves the text out unless asked
+// A page holds the records of one kind after its cursor in the order their store appended them in their published schema
+// and leaves the text out unless asked
 func TestSourcePage(t *testing.T) {
-	ix, err := schema.Published.Index()
-	require.NoError(t, err)
-	verdict, err := ix.Kind("verdict")
-	require.NoError(t, err)
-	verdictID, err := verdict.Record(source().Verdicts.(verdicts)[0])
-	require.NoError(t, err)
-	t1 := schema.Cursor{Time: settled, RecordID: "t1"}.String()
-	t2 := schema.Cursor{Time: settled, RecordID: "t2"}.String()
+	verdictID := recordID(t, "verdict", source().Verdicts.(verdicts)[0])
 	guardID := recordID(t, "guard", source().Guard.(guardLog)[0])
 	type want struct {
 		records []string
@@ -108,32 +141,51 @@ func TestSourcePage(t *testing.T) {
 		args schema.Query
 		want want
 	}{
-		{"the first page starts at the oldest run and leaves its output out", schema.Query{Kind: "run", Limit: 1}, want{[]string{runOne}, t1}},
-		{"a cursor goes on after its run and holds back a run younger than the settle time", schema.Query{Kind: "run", Since: t1}, want{[]string{runTwo}, t2}},
-		{"content keeps the output", schema.Query{Kind: "run", Limit: 1, Content: true}, want{[]string{runOneShown}, t1}},
-		{"a page past the settled records keeps the cursor it was given", schema.Query{Kind: "run", Since: t2}, want{[]string{}, t2}},
-		{"a kind with no record answers an empty page and an empty cursor", schema.Query{Kind: "answer"}, want{[]string{}, ""}},
+		{"the first page starts at the first run appended and leaves its output out", schema.Query{Kind: "run", Limit: 1}, want{[]string{runOne}, past(2)}},
+		{"a cursor goes on after its run and takes a run appended late with an earlier time", schema.Query{Kind: "run", Since: past(2)},
+			want{[]string{runTwo, runLate}, past(4)}},
+		{"content keeps the output", schema.Query{Kind: "run", Limit: 1, Content: true}, want{[]string{runOneShown}, past(2)}},
+		{"a page past the last record answers the cursor it was given", schema.Query{Kind: "run", Since: past(4)}, want{[]string{}, past(4)}},
+		{"a kind with no record answers an empty page and the cursor past what it read", schema.Query{Kind: "answer"}, want{[]string{}, past(4)}},
+		{"a cursor of a time keeps the records after it by time and answers a position", schema.Query{Kind: "run", Since: schema.CursorAt(settled, "t1")},
+			want{[]string{runTwo}, past(4)}},
+		{"a cursor of a time with more records than the limit answers the position after the last of the page",
+			schema.Query{Kind: "run", Since: schema.CursorAt(settled.Add(-2*time.Hour), "t0"), Limit: 1}, want{[]string{runOne}, past(2)}},
 		{"a verdict leaves its reason out", schema.Query{Kind: "verdict"}, want{[]string{
-			`{"record_kind":"verdict","record_id":"` + verdictID.ID + `","trace_id":"t1","time":"2026-10-06T09:00:00Z","verdict":"reject","reviewer":"ann","proof":"none","schema_version":1}`,
-		}, verdictID.Cursor().String()}},
+			`{"record_kind":"verdict","record_id":"` + verdictID + `","trace_id":"t1","time":"2026-10-06T09:00:00Z","verdict":"reject","reviewer":"ann","proof":"none","schema_version":1}`,
+		}, past(1)}},
 		{"a knowledge record leaves its content out", schema.Query{Kind: "knowledge", Limit: 5000}, want{[]string{
 			`{"record_kind":"knowledge","record_id":"` + recordID(t, "knowledge", source().Knowledge.(items)[0]) + `","id":"k1","version":1,"kind":"judgment","evidence":{},"basis":"stated","status":"candidate","time":"2026-10-06T09:00:00Z","author":"ann","schema_version":1}`,
-		}, schema.Cursor{Time: settled, RecordID: recordID(t, "knowledge", source().Knowledge.(items)[0])}.String()}},
+		}, past(1)}},
 		{"a guard entry leaves its cwd out", schema.Query{Kind: "guard"}, want{[]string{
 			`{"record_kind":"guard","record_id":"` + guardID + `","time":"2026-10-06T09:00:00Z","session_id":"s1","tool":"Bash","veto":"no-rm","action":"block","schema_version":1}`,
-		}, schema.Cursor{Time: settled, RecordID: guardID}.String()}},
+		}, past(1)}},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			page, err := source().Page(context.Background(), tc.args, now)
+			page, err := source().Page(context.Background(), tc.args)
 
 			require.NoError(t, err)
 			assert.Equal(t, tc.want.records, texts(page.Records))
 			assert.Equal(t, tc.want.next, page.Next)
 		})
 	}
+}
+
+// Paging one record at a time takes each run once and in the order the store appended them
+func TestSourcePageWalk(t *testing.T) {
+	var walked []string
+	since := ""
+	for range 5 {
+		page, err := source().Page(context.Background(), schema.Query{Kind: "run", Since: since, Limit: 1})
+		require.NoError(t, err)
+		walked = append(walked, ids(t, page.Records)...)
+		since = page.Next
+	}
+
+	assert.Equal(t, []string{"t1", "t2", "t3"}, walked)
 }
 
 // An outcome leaves its note out and every page validates against the published schema of its kind
@@ -144,7 +196,7 @@ func TestSourcePageValidates(t *testing.T) {
 			t.Parallel()
 			k := kind(t, name)
 
-			page, err := source().Page(context.Background(), schema.Query{Kind: name, Limit: 1}, now)
+			page, err := source().Page(context.Background(), schema.Query{Kind: name, Limit: 1})
 
 			require.NoError(t, err)
 			require.Len(t, page.Records, 1)
@@ -157,26 +209,34 @@ func TestSourcePageValidates(t *testing.T) {
 // A page fails on an unknown kind, a cursor that names no record, a store the source lacks, a store that cannot be read and a record of no shape of its store
 func TestSourcePageRefuses(t *testing.T) {
 	bare := schema.Source{Traces: traces{{Name: "run", Time: settled}}}
+	failing := func(allowed int) schema.Source {
+		return schema.Source{Traces: unreadable{traces: source().Traces.(traces), allowed: allowed, reads: new(int)}}
+	}
+	early := schema.CursorAt(settled.Add(-2*time.Hour), "t0")
 	tcs := []struct {
 		name string
 		args pageArgs
 		want error
 	}{
 		{"an unknown kind", pageArgs{source(), schema.Query{Kind: "session"}}, schema.ErrKindUnknown},
-		{"a cursor that names no record", pageArgs{source(), schema.Query{Kind: "run", Since: "%%%"}}, schema.ErrCursorInvalid},
+		{"a cursor that is no form of one", pageArgs{source(), schema.Query{Kind: "run", Since: "%%%"}}, schema.ErrCursorInvalid},
+		{"a position the store no longer holds", pageArgs{source(), schema.Query{Kind: "run", Since: past(9)}}, schema.ErrCursorInvalid},
 		{"the guard of a source without a guard log", pageArgs{schema.Source{}, schema.Query{Kind: "guard"}}, schema.ErrNotServed},
 		{"the runs of a source without traces", pageArgs{schema.Source{}, schema.Query{Kind: "run"}}, schema.ErrNotServed},
 		{"the verdicts of a source without verdicts", pageArgs{schema.Source{}, schema.Query{Kind: "verdict"}}, schema.ErrNotServed},
 		{"the outcomes of a source without outcomes", pageArgs{schema.Source{}, schema.Query{Kind: "outcome"}}, schema.ErrNotServed},
 		{"the knowledge of a source without knowledge", pageArgs{schema.Source{}, schema.Query{Kind: "knowledge"}}, schema.ErrNotServed},
-		{"a store that cannot be read", pageArgs{schema.Source{Traces: unreadable{}}, schema.Query{Kind: "run"}}, errUnreadable},
+		{"a store that cannot be read", pageArgs{failing(0), schema.Query{Kind: "run"}}, errUnreadable},
+		{"a store that cannot be read after a cursor of a time", pageArgs{failing(0), schema.Query{Kind: "run", Since: early}}, errUnreadable},
+		{"a store that fails the read of the position after a page of a cursor of a time", pageArgs{failing(1), schema.Query{Kind: "run", Since: early, Limit: 1}},
+			errUnreadable},
 		{"a trace without an id", pageArgs{bare, schema.Query{Kind: "run"}}, schema.ErrRecordInvalid},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			_, err := tc.args.source.Page(context.Background(), tc.args.query, now)
+			_, err := tc.args.source.Page(context.Background(), tc.args.query)
 
 			assert.ErrorIs(t, err, tc.want)
 		})
@@ -184,8 +244,8 @@ func TestSourcePageRefuses(t *testing.T) {
 }
 
 // A store of no known kind serves nothing
-func TestSourceRecordsRefuses(t *testing.T) {
-	_, err := source().Records(context.Background(), schema.Kind{Name: "run", Store: "runs.csv"}, schema.Cursor{})
+func TestSourceReadRefuses(t *testing.T) {
+	_, _, err := source().Read(context.Background(), schema.Kind{Name: "run", Store: "runs.csv"}, schema.Cursor{}, 0)
 
 	assert.ErrorIs(t, err, schema.ErrStoreUnknown)
 }
@@ -210,7 +270,7 @@ func TestSourcePageLimit(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			page, err := schema.Source{Traces: many}.Page(context.Background(), schema.Query{Kind: "turn", Limit: tc.args}, now)
+			page, err := schema.Source{Traces: many}.Page(context.Background(), schema.Query{Kind: "turn", Limit: tc.args})
 
 			require.NoError(t, err)
 			assert.Len(t, page.Records, tc.want)
@@ -235,6 +295,43 @@ func texts(rs []json.RawMessage) []string {
 	out := []string{}
 	for _, r := range rs {
 		out = append(out, string(r))
+	}
+	return out
+}
+
+// A knowledge record appended after a page with a time before that page still comes on the next page once
+// An import of a ledger of another directory keeps the times its records had there
+func TestSourcePageAfterImport(t *testing.T) {
+	ctx := context.Background()
+	store, err := knowledgefile.New(t.TempDir())
+	require.NoError(t, err)
+	source := schema.Source{Knowledge: store}
+	recent := record.Knowledge{ID: "k1", Version: 1, Kind: "judgment", Basis: "stated", Status: "candidate", Time: settled, Author: "ann"}
+	imported := record.Knowledge{ID: "k0", Version: 1, Kind: "judgment", Basis: "stated", Status: "candidate", Time: settled.AddDate(-1, 0, 0), Author: "ann"}
+	require.NoError(t, store.Append(ctx, recent))
+	first, err := source.Page(ctx, schema.Query{Kind: "knowledge"})
+	require.NoError(t, err)
+	require.NoError(t, store.Append(ctx, imported))
+
+	next, err := source.Page(ctx, schema.Query{Kind: "knowledge", Since: first.Next})
+	require.NoError(t, err)
+	again, err := source.Page(ctx, schema.Query{Kind: "knowledge", Since: next.Next})
+	require.NoError(t, err)
+
+	assert.Equal(t, []string{recordID(t, "knowledge", recent)}, ids(t, first.Records))
+	assert.Equal(t, []string{recordID(t, "knowledge", imported)}, ids(t, next.Records))
+	assert.Empty(t, again.Records)
+}
+
+func ids(t *testing.T, rs []json.RawMessage) []string {
+	t.Helper()
+	var out []string
+	for _, r := range rs {
+		var head struct {
+			ID string `json:"record_id"`
+		}
+		require.NoError(t, json.Unmarshal(r, &head))
+		out = append(out, head.ID)
 	}
 	return out
 }

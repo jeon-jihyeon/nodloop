@@ -15,6 +15,7 @@ import (
 
 	"github.com/jeon-jihyeon/nodloop/internal/guard"
 	"github.com/jeon-jihyeon/nodloop/internal/jsonl"
+	"github.com/jeon-jihyeon/nodloop/internal/record"
 	"github.com/jeon-jihyeon/nodloop/internal/settings"
 	settingsfile "github.com/jeon-jihyeon/nodloop/internal/settings/file"
 	"github.com/jeon-jihyeon/nodloop/internal/veto"
@@ -102,20 +103,25 @@ type guardLog struct {
 	home homeDir
 }
 
-// Every logged decision as it was written
-// No home or no log yet lists nothing
-func (g guardLog) List(context.Context) ([]json.RawMessage, error) {
+// The logged decisions after the position in the order they were written with the position after the last line read
+// 1. no home or no log yet reads nothing
+// 2. a position the log no longer holds fails with record.ErrPositionGone
+func (g guardLog) After(_ context.Context, from string, limit int) ([]json.RawMessage, string, error) {
 	if g.home == "" {
-		return nil, nil
+		return nil, from, nil
 	}
 	log, err := jsonl.Open[json.RawMessage](g.home.dir(), decisionLog)
 	if errors.Is(err, os.ErrNotExist) {
-		return nil, nil
+		return nil, from, nil
 	}
 	if err != nil {
-		return nil, err
+		return nil, from, err
 	}
-	return log.Newest(func(json.RawMessage) bool { return true }, nil, 0)
+	found, next, err := log.After(from, func(json.RawMessage) bool { return true }, limit)
+	if errors.Is(err, jsonl.ErrPositionGone) {
+		return nil, from, fmt.Errorf("%w: %w", record.ErrPositionGone, err)
+	}
+	return found, next, err
 }
 
 // Decisions guard log prints without a limit flag

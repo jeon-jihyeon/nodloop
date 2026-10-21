@@ -206,7 +206,7 @@ func (h *serveHandler) records(w http.ResponseWriter, r *http.Request) {
 		h.internal(w, key, err)
 		return
 	}
-	page, err := source.Page(r.Context(), q, h.now())
+	page, err := source.Page(r.Context(), q)
 	switch {
 	case errors.Is(err, schema.ErrKindUnknown), errors.Is(err, schema.ErrNotServed):
 		http.Error(w, err.Error(), http.StatusNotFound)

@@ -57,10 +57,12 @@ func newDesk(t *testing.T) desk {
 	return desk{bench: b, iv: b.intervener(marker), first: first}
 }
 
-// The intervener of the bench with curate.json at hand and a cursor that is the id of the record it starts after
+// The intervener of the bench with curate.json at hand and a cursor that is the id of the trace it starts after
+// or the id and the status of the ledger record
 func (b bench) intervener(marks curate.Marks) *curate.Intervener {
 	return curate.NewIntervener(b.stores.Ledger, b.stores.Traces, curate.InterveneSetting{
 		Build: "0.10.0", Coverage: b.coverage, Marks: marks, Cursor: func(_ time.Time, id string) string { return id },
+		KnowledgeCursor: func(k record.Knowledge) string { return k.ID + " " + k.Status },
 	}, b.stores.Clock.Now)
 }
 

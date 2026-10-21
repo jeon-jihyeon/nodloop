@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeon-jihyeon/nodloop/internal/atomicfile"
 	"github.com/jeon-jihyeon/nodloop/internal/veto"
 	"github.com/jeon-jihyeon/nodloop/internal/veto/file"
 )
@@ -20,6 +21,9 @@ func TestLoad(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "broken.yaml"), []byte("vetoes: ["), 0o644))
 	partial := content + "  - id: bad\n    tool: Bash\n    when: [{field: command, match: '('}]\n    reason: bad\n"
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "partial.yaml"), []byte(partial), 0o644))
+	require.NoError(t, os.Symlink(os.DevNull, filepath.Join(dir, "device.yaml")))
+	require.NoError(t, os.Mkdir(filepath.Join(dir, "folder.yaml"), 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "large.yaml"), make([]byte, 1<<20+1), 0o644))
 	vetoes, err := veto.Parse([]byte(content))
 	require.NoError(t, err)
 	missingPath := filepath.Join(dir, "missing.yaml")
@@ -40,8 +44,24 @@ func TestLoad(t *testing.T) {
 			want{
 				nil,
 				os.ErrNotExist,
-				fmt.Sprintf("%[1]s: failed to read veto file: open %[1]s: no such file or directory", missingPath),
+				fmt.Sprintf("%[1]s: failed to read veto file: stat %[1]s: no such file or directory", missingPath),
 			},
+		},
+		{
+			"a link to a device is refused before it is read",
+			"device.yaml",
+			want{nil, atomicfile.ErrNotRegular, fmt.Sprintf("%[1]s: failed to read veto file: not a regular file: %[1]s", filepath.Join(dir, "device.yaml"))},
+		},
+		{
+			"a folder cannot be read as a whole",
+			"folder.yaml",
+			want{nil, file.ErrRead, fmt.Sprintf("%[1]s: failed to read veto file: not a regular file: %[1]s", filepath.Join(dir, "folder.yaml"))},
+		},
+		{
+			"a file past the size limit is refused",
+			"large.yaml",
+			want{nil, atomicfile.ErrTooLarge,
+				fmt.Sprintf("%[1]s: failed to read veto file: file past its size limit: %[1]s holds more than 1048576 bytes", filepath.Join(dir, "large.yaml"))},
 		},
 		{
 			"broken file names the path",

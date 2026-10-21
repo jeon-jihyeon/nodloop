@@ -98,6 +98,21 @@ func (s *Store) List(_ context.Context) ([]record.Knowledge, error) {
 	return newestFirst(records), nil
 }
 
+// The records the file holds after the position oldest first with the position after the last line read
+// 1. the empty position starts at the first record and a limit of zero reads every one
+// 2. a position whose record a rewrite removed fails with record.ErrPositionGone
+// A corrupt line returns the records of the other lines with the error as List does
+func (s *Store) After(_ context.Context, from string, limit int) ([]record.Knowledge, string, error) {
+	found, next, err := s.file.After(from, func(record.Knowledge) bool { return true }, limit)
+	switch {
+	case errors.Is(err, jsonl.ErrPositionGone):
+		return nil, from, fmt.Errorf("%w: %w", record.ErrPositionGone, err)
+	case err != nil:
+		return found, next, readFailed(err)
+	}
+	return found, next, nil
+}
+
 // How many records the file holds and the error naming its corrupt lines
 func (s *Store) Check() (int, error) {
 	n, err := s.file.Check()

@@ -49,8 +49,10 @@ type InterveneSetting struct {
 	Coverage func(ctx context.Context, compaction string) (knowledge.Coverage, error)
 	// curate.json so a proposal is due at once and nil where no pass runs such as nodloop-server
 	Marks Marks
-	// The cursor of the record pages that starts after a record
+	// The cursor of the record pages that starts after a trace
 	Cursor func(at time.Time, id string) string
+	// The cursor of the record pages that starts after a ledger record
+	KnowledgeCursor func(k record.Knowledge) string
 }
 
 // Carries out the interventions of the write side
@@ -126,25 +128,26 @@ type state struct {
 }
 
 // The traces every intervention reads
-// No run is among them since the prompt hook replies on every prompt and a record directory holds thousands
+// No run is among them since the capture records every reply through them and a record directory holds thousands
 // The scope of a judgment and the place of a mine read the runs they need
 var interveneNames = []trace.Name{
 	trace.NameIntervention, trace.NameAnswer, trace.NameDecide, trace.NameExpose, trace.NameKnob, trace.NameAnchor,
 }
 
+// The state of a write over the ledger as it stands now
 func (iv *Intervener) read(ctx context.Context) (state, error) {
-	return iv.readOf(ctx, interveneNames)
-}
-
-// The state of the traces of the names
-func (iv *Intervener) readOf(ctx context.Context, names []trace.Name) (state, error) {
 	all, err := iv.ledger.All(ctx)
 	if err != nil {
 		return state{}, err
 	}
+	return iv.readOver(ctx, all)
+}
+
+// The state of the traces every intervention reads over the ledger the caller read
+func (iv *Intervener) readOver(ctx context.Context, all knowledge.Set) (state, error) {
 	s := state{all: all, decides: map[string]Decided{}, exposes: map[string]trace.Trace{}, draws: map[string]trace.Draw{}}
 	var folded trace.Traces
-	for _, name := range names {
+	for _, name := range interveneNames {
 		found, err := iv.traces.List(ctx, record.TraceFilter{Name: string(name)})
 		if err != nil {
 			return state{}, err
@@ -398,10 +401,20 @@ func (s state) selfDraw() (trace.Draw, error) {
 	return trace.Draw{CycleID: ev.CycleID, PolicyVersion: ev.PolicyVersion}, nil
 }
 
-// The cursor since the person's last judgment and empty before the first
+// Records the digest with the cursor after the person's last decision
 func (iv *Intervener) digest(ctx context.Context, in trace.Intervention, session string, by Submitter, s state) (Intervened, error) {
-	var at time.Time
-	var id string
+	out := trace.InterventionOutput{Since: iv.since(s)}
+	tr, err := iv.record(ctx, "", in, session, by, out)
+	return Intervened{Trace: tr, Since: out.Since}, err
+}
+
+// The cursor after the person's last decision on record and empty before the first
+// 1. a decision is a person's intervention but a digest, a person's answer or a ledger record a person wrote
+// So an approval at a terminal that no trace names counts too
+// 2. a trace and a ledger record of one time give the trace since the trace names the records its write made
+func (iv *Intervener) since(s state) string {
+	last := s.decidedLast()
+	at, id := last.Time, ""
 	for _, x := range s.ints.person {
 		if x.In.Action != trace.ActionDigest && !x.Time.Before(at) {
 			at, id = x.Time, x.ID
@@ -412,12 +425,25 @@ func (iv *Intervener) digest(ctx context.Context, in trace.Intervention, session
 			at, id = a.Time, a.ID
 		}
 	}
-	out := trace.InterventionOutput{}
-	if id != "" && iv.s.Cursor != nil {
-		out.Since = iv.s.Cursor(at, id)
+	switch {
+	case id != "" && iv.s.Cursor != nil:
+		return iv.s.Cursor(at, id)
+	case id == "" && last.ID != "" && iv.s.KnowledgeCursor != nil:
+		return iv.s.KnowledgeCursor(last.Record())
 	}
-	tr, err := iv.record(ctx, "", in, session, by, out)
-	return Intervened{Trace: tr, Since: out.Since}, err
+	return ""
+}
+
+// The newest ledger record a person wrote and the zero record for none
+// Every status but a candidate names who decided it
+func (s state) decidedLast() knowledge.Knowledge {
+	var last knowledge.Knowledge
+	for _, k := range s.all {
+		if k.Status != knowledge.StatusCandidate && k.Approver != knowledge.ApproverNodloop && k.Time.After(last.Time) {
+			last = k
+		}
+	}
+	return last
 }
 
 // Records an agent's proposal and makes its question due at once where curate.json is at hand
@@ -457,6 +483,27 @@ func (iv *Intervener) due(ctx context.Context, p intervention, s state) (string,
 	}
 	m.Due = append(m.Due, due)
 	return tr.ID, held.Write(m)
+}
+
+// Takes the question of the decide off the questions due once its answer is recorded
+// So a stop whose session has no question left due reads no record of curate
+// Where curate.json is not at hand or another pass holds it the next pass leaves the question out
+func (iv *Intervener) settled(decide string) error {
+	if iv.s.Marks == nil {
+		return nil
+	}
+	held, err := iv.s.Marks.Hold()
+	if err != nil || held == nil {
+		return err
+	}
+	defer func() { _ = held.Release() }()
+	m := held.Mark
+	open := slices.DeleteFunc(slices.Clone(m.Due), func(d Due) bool { return d.Decide == decide })
+	if len(open) == len(m.Due) {
+		return nil
+	}
+	m.Due = open
+	return held.Write(m)
 }
 
 // The decide that asks the person about an agent's proposal and the question it leaves due

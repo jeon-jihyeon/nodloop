@@ -15,9 +15,9 @@ const MarkFile = "export.json"
 type Mark struct {
 	// The newest record time the export sent and zero before the first
 	At time.Time `json:"at"`
-	// Per store the key of the newest record the export read in the order the store appended them
-	// So a record appended after the export with an older time still goes next time
-	// Absent in a mark of a release that kept the time alone
+	// Per store the position the export read up to in the order the store appended its records
+	// So the next export reads only what was appended since and a record with an older time still goes once
+	// Absent in a mark that kept the time alone
 	After map[string]string `json:"after,omitempty"`
 }
 

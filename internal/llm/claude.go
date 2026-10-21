@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -24,6 +25,8 @@ const (
 	// A model call that drafts or checks a compaction with sonnet may take two minutes so 120 seconds would cut some
 	defaultTimeout = 240 * time.Second
 	stderrLimit    = 200
+	// The file of the private work dir that holds the system prompt of one call
+	systemFile = "system.md"
 )
 
 type ClaudeCLI struct {
@@ -47,6 +50,7 @@ func NewClaudeCLI(bin, model, workParent string, timeout time.Duration) *ClaudeC
 // Each call runs claude in a new empty directory so no project `CLAUDE.md` or settings load
 // 1. MkdirTemp creates it with mode 0700 under a random name and never reuses a directory another user planted in a shared temp dir
 // 2. it is removed after the call so concurrent calls never share one
+// 3. the system prompt goes in a file of mode 0600 inside it since it may quote a lesson and any process can read argv
 func (c *ClaudeCLI) Complete(ctx context.Context, req Request) (Response, error) {
 	if len(req.Schema) == 0 {
 		return Response{}, ErrSchemaRequired
@@ -55,11 +59,19 @@ func (c *ClaudeCLI) Complete(ctx context.Context, req Request) (Response, error)
 	if err != nil {
 		return Response{}, fmt.Errorf("%w: %w", ErrWorkDir, err)
 	}
-	// A directory left behind holds nothing and is private so a failed removal never fails the call
+	// A directory left behind is private so a failed removal never fails the call
 	defer func() { _ = os.RemoveAll(dir) }()
+	argv := c.args(req)
+	if req.System != "" {
+		system := filepath.Join(dir, systemFile)
+		if err := os.WriteFile(system, []byte(req.System), 0o600); err != nil {
+			return Response{}, fmt.Errorf("%w: %w", ErrWorkDir, err)
+		}
+		argv = append(argv, "--append-system-prompt-file", system)
+	}
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
-	stdout, stderr, runErr := c.run(ctx, dir, c.args(req), req.Prompt)
+	stdout, stderr, runErr := c.run(ctx, dir, argv, req.Prompt)
 	if ctx.Err() != nil {
 		return Response{}, fmt.Errorf("llm: claude %w", ctx.Err())
 	}
@@ -117,9 +129,6 @@ func (c *ClaudeCLI) args(req Request) []string {
 	}
 	if req.Effort != "" {
 		argv = append(argv, "--effort", req.Effort)
-	}
-	if req.System != "" {
-		argv = append(argv, "--append-system-prompt", req.System)
 	}
 	return argv
 }

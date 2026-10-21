@@ -156,8 +156,7 @@ func TestStoresReportLoadFails(t *testing.T) {
 		{"health fails on the knowledge", args{loop.ReportHealth, 0, 1, 9, ""}, assert.AnError},
 		{"health fails on the verdicts", args{loop.ReportHealth, 1, 0, 9, ""}, assert.AnError},
 		{"critic fails on the traces", args{loop.ReportCritic, 9, 9, 0, ""}, assert.AnError},
-		{"effect fails on the knob traces", args{loop.ReportEffect, 9, 9, 0, ""}, assert.AnError},
-		{"effect fails on the runs after the knob traces", args{loop.ReportEffect, 9, 9, 1, ""}, assert.AnError},
+		{"effect fails on the traces read with the knob traces", args{loop.ReportEffect, 9, 9, 0, ""}, assert.AnError},
 		{"effect fails on a corrupt outcome", args{loop.ReportEffect, 9, 9, 9, "not json\n"}, feedbackfile.ErrCorrupt},
 	}
 	for _, tc := range tcs {

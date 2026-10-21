@@ -38,7 +38,15 @@ func (d desk) stopIn(t *testing.T, session, repo string, pushed bool) curate.Ask
 	t.Helper()
 	m, err := curate.ReadMark(d.stores.Dir)
 	require.NoError(t, err)
-	return curate.Asking{Session: session, Run: "run-" + session, Place: *acme(repo), Pushed: pushed, Mark: m, Seal: hexSeal, Words: runWords}
+	return curate.Asking{Session: session, Run: "run-" + session, Place: *acme(repo), Pushed: pushed, Mark: m, All: d.all(t), Seal: hexSeal, Words: runWords}
+}
+
+// The ledger of the bench as a stop reads it
+func (b bench) all(t *testing.T) knowledge.Set {
+	t.Helper()
+	all, err := b.stores.Ledger.All(context.Background())
+	require.NoError(t, err)
+	return all
 }
 
 // What the expose of a stop showed as "kind id round source p" and empty for nothing shown
@@ -299,11 +307,12 @@ func (b bench) flakyIntervener(lists, appends int) *curate.Intervener {
 // 2. the answer names the expose with its source and draw and proof reply
 // The ledger record names the answer
 // 3. an input that names no choice of a question shown after that answer matches nothing
+// So does a click on a question other than the text the stop showed
 // 4. a question closed already matches and records nothing
 func TestIntervenerReply(t *testing.T) {
 	ctx := context.Background()
 	type args struct {
-		reply func(key string) curate.Reply
+		reply func(q curate.Question) curate.Reply
 		// Answers before the reply
 		setup func(t *testing.T, d desk)
 	}
@@ -315,14 +324,23 @@ func TestIntervenerReply(t *testing.T) {
 		statuses []string
 		err      error
 	}
-	word := func(run, w string) func(string) curate.Reply {
-		return func(string) curate.Reply { return curate.Reply{Session: "s-new", Run: run, Word: w, Person: "ann"} }
-	}
-	click := func(label string) func(string) curate.Reply {
-		return func(key string) curate.Reply {
-			return curate.Reply{Session: "s-new", Key: key, Word: label, Person: "ann"}
+	word := func(run, w string) func(curate.Question) curate.Reply {
+		return func(curate.Question) curate.Reply {
+			return curate.Reply{Session: "s-new", Run: run, Word: w, Person: "ann"}
 		}
 	}
+	// The lines up to Prepared that the AskUserQuestion call copies word for word
+	lines := func(q curate.Question) string {
+		before, _, _ := strings.Cut(q.Text(), "\nReply ")
+		return before
+	}
+	clickOn := func(question func(curate.Question) string, seal func(string) string, label string) func(curate.Question) curate.Reply {
+		return func(q curate.Question) curate.Reply {
+			return curate.Reply{Session: "s-new", Key: q.Key, Question: question(q), Seal: seal, Word: label, Person: "ann"}
+		}
+	}
+	click := func(label string) func(curate.Question) curate.Reply { return clickOn(lines, hexSeal, label) }
+	worded := func(curate.Question) string { return "Drop the lesson?" }
 	waiting := []string{"k-add v1 candidate", "k-ask v1 candidate", "k-carried v1 approved nodloop", "k-dup v1 retired nodloop duplicate"}
 	tcs := []struct {
 		name string
@@ -345,6 +363,12 @@ func TestIntervenerReply(t *testing.T) {
 		{"a word that is no choice answers nothing", args{word("run-s-new", "maybe"), nil}, want{false, "", false, []string{}, waiting, nil}},
 		{"a label that is no choice answers nothing", args{click("Other"), nil}, want{false, "", false, []string{}, waiting, nil}},
 		{
+			"a click on a question a model worded itself under the key of the header answers nothing",
+			args{clickOn(worded, hexSeal, "drop"), nil},
+			want{false, "", false, []string{}, waiting, nil},
+		},
+		{"a click checked with no seal answers nothing", args{clickOn(lines, nil, "drop"), nil}, want{false, "", false, []string{}, waiting, nil}},
+		{
 			"a question answered already matches and records nothing more",
 			args{word("run-s-new", "drop"), func(t *testing.T, d desk) {
 				_, err := d.iv.Intervene(ctx, curate.Request{Action: trace.ActionDismiss, Target: d.decideOf(t, "k-ask")}, person)
@@ -354,7 +378,7 @@ func TestIntervenerReply(t *testing.T) {
 		},
 		{
 			"the reserved name nodloop records nothing",
-			args{func(string) curate.Reply {
+			args{func(curate.Question) curate.Reply {
 				return curate.Reply{Session: "s-new", Run: "run-s-new", Word: "keep", Person: knowledge.ApproverNodloop}
 			}, nil},
 			want{false, "", false, []string{}, waiting, knowledge.ErrApproverReserved},
@@ -370,7 +394,7 @@ func TestIntervenerReply(t *testing.T) {
 				tc.args.setup(t, d)
 			}
 
-			got, err := d.iv.Reply(ctx, tc.args.reply(shown.Question.Key))
+			got, err := d.iv.Reply(ctx, tc.args.reply(shown.Question))
 
 			assert.ErrorIs(t, err, tc.want.err)
 			assert.Equal(t, tc.want, want{got.Matched, got.Choice, got.Answer != "", d.answers(t), statuses(t, d.bench), tc.want.err})
@@ -509,7 +533,7 @@ func (b bench) noticeStop(t *testing.T, session, repo string) curate.Asking {
 	t.Helper()
 	b.correct(t, "run-"+session, trace.Labels{"repo": {repo}}, nil)
 	return curate.Asking{
-		Session: session, Run: "run-" + session, Place: *acme(repo), Pushed: true, Seal: hexSeal,
+		Session: session, Run: "run-" + session, Place: *acme(repo), Pushed: true, Seal: hexSeal, All: b.all(t),
 		Mark: curate.Mark{CycleID: "2026-09-21", PolicyVersion: "0.10.0+1a2b3c4d", Seed: "5eed"},
 	}
 }
@@ -1026,7 +1050,8 @@ func TestIntervenerNoticeEarlier(t *testing.T) {
 	}
 }
 
-// A ledger that cannot be read fails the stop, the reply to a question shown and the notice and shows nothing
+// A ledger that cannot be read fails the reply to a question shown and records nothing
+// The stop and the notice read none since they take the ledger the stop read
 func TestIntervenerAskUnreadableLedger(t *testing.T) {
 	ctx := context.Background()
 	d := newDesk(t)
@@ -1035,14 +1060,14 @@ func TestIntervenerAskUnreadableLedger(t *testing.T) {
 	require.NoError(t, err)
 	iv := curate.NewIntervener(flakyLedger(t, d.bench, 0), d.stores.Traces, curate.InterveneSetting{Build: "0.10.0"}, d.stores.Clock.Now)
 
-	asked, askErr := iv.Ask(ctx, a)
+	asked, askErr := iv.Ask(ctx, d.stopIn(t, "s-other", "svc", true))
 	replied, replyErr := iv.Reply(ctx, curate.Reply{Session: "s-new", Run: "run-s-new", Word: "keep", Person: "ann"})
-	noticed, noticeErr := iv.Notice(ctx, a)
 
-	assert.ErrorIs(t, askErr, assert.AnError)
+	require.NoError(t, askErr)
 	assert.ErrorIs(t, replyErr, assert.AnError)
-	assert.ErrorIs(t, noticeErr, assert.AnError)
-	assert.Equal(t, []any{"", false, ""}, []any{exposed(t, asked), replied.Matched, noticed.Notice})
+	answers, err := d.stores.Traces.List(ctx, record.TraceFilter{Name: string(trace.NameAnswer)})
+	require.NoError(t, err)
+	assert.Equal(t, []any{true, false, 0}, []any{exposed(t, asked) != "", replied.Matched, len(answers)})
 }
 
 // The audit of a version the ledger no longer holds quotes nothing and reaches everywhere
@@ -1107,7 +1132,7 @@ func TestIntervenerAskPolicyInForce(t *testing.T) {
 	m, err := curate.ReadMark(b.stores.Dir)
 	require.NoError(t, err)
 	b.correct(t, "run-s-new", trace.Labels{"repo": {"svc"}}, nil)
-	a := curate.Asking{Session: "s-new", Run: "run-s-new", Place: *acme("svc"), Pushed: true, Mark: m, Seal: hexSeal, Words: runWords}
+	a := curate.Asking{Session: "s-new", Run: "run-s-new", Place: *acme("svc"), Pushed: true, Mark: m, All: b.all(t), Seal: hexSeal, Words: runWords}
 
 	asked, err := iv.Ask(ctx, a)
 	require.NoError(t, err)

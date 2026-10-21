@@ -121,47 +121,50 @@ func (s Stores) Snapshot(ctx context.Context, name ReportName) (Snapshot, error)
 // 2. a cycle is read whole from its start since no prune removes a run of a cycle that has no rollup
 // 3. a closed cycle with a rollup reads from the rollup and the runs a prune left in it count nothing
 // So the counts of a closed cycle are the same before and after the prune of its runs
-// The knob traces that mark the cycles join the traces of the names so no reader of the snapshot reads them twice
+// The knob traces that mark the cycles are read with the traces of the names so the store is read once
 func (s Stores) cycled(ctx context.Context, names []trace.Name) (Snapshot, error) {
-	marks, err := s.list(ctx, trace.NameKnob, s.Since)
+	all, err := s.read(ctx, append(slices.Clone(names), trace.NameKnob), time.Time{})
 	if err != nil {
 		return Snapshot{}, err
 	}
 	since := s.Since
-	if first, ok := marks.FirstCycle(); ok && first.Start.Before(since) {
+	if first, ok := all.FirstCycle(); ok && first.Start.Before(since) {
 		since = first.Start
 	}
-	snap, err := s.snapshot(ctx, names, since)
+	snap, err := s.over(ctx, all, since)
 	if err != nil {
 		return Snapshot{}, err
 	}
 	outcomes, err := s.Outcomes.List(ctx, "")
-	snap.traces = append(snap.traces, marks...)
 	snap.outcomes, snap.rollups = feedback.RestoreOutcomes(outcomes), NewRollups(snap.traces)
 	return snap, err
 }
 
-// The traces of the name in the newest first order of the store
-// Runs and classify traces are read from since on since a prune removes both and a count over all time would mix what survived
-func (s Stores) list(ctx context.Context, name trace.Name, since time.Time) (trace.Traces, error) {
-	f := record.TraceFilter{Name: string(name)}
-	if name == trace.NameRun || name == trace.NameClassify {
-		f.Since = since
+// The traces of the names newest first from since on in one read of the store
+func (s Stores) read(ctx context.Context, names []trace.Name, since time.Time) (trace.Traces, error) {
+	f := record.TraceFilter{Since: since}
+	for _, name := range names {
+		f.Names = append(f.Names, string(name))
 	}
 	found, err := s.Traces.List(ctx, f)
 	return trace.RestoreAll(found), err
 }
 
-// Reads the traces of each name in turn so no report reads a trace it never looks at
+// Reads the traces of the names in one read so no report reads a trace it never looks at
 func (s Stores) snapshot(ctx context.Context, names []trace.Name, since time.Time) (Snapshot, error) {
-	var all trace.Traces
-	for _, name := range names {
-		found, err := s.list(ctx, name, since)
-		if err != nil {
-			return Snapshot{}, err
-		}
-		all = append(all, found...)
+	all, err := s.read(ctx, names, time.Time{})
+	if err != nil {
+		return Snapshot{}, err
 	}
+	return s.over(ctx, all, since)
+}
+
+// The snapshot of the traces with the verdicts and the ledger
+// Runs and classify traces before since are left out since a prune removes both and a count over all time would mix what survived
+func (s Stores) over(ctx context.Context, all trace.Traces, since time.Time) (Snapshot, error) {
+	all = slices.DeleteFunc(all, func(t trace.Trace) bool {
+		return (t.Name == trace.NameRun || t.Name == trace.NameClassify) && t.Time.Before(since)
+	})
 	records, err := s.Verdicts.List(ctx, record.FeedbackFilter{})
 	if err != nil {
 		return Snapshot{}, err

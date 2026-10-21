@@ -116,7 +116,8 @@ func New(
 	extractor *extract.Extractor, now func() time.Time, session, exe, recordArgs string, caller Caller, policy Policy,
 ) *Server {
 	intervener := curate.NewIntervener(ledger, traces, curate.InterveneSetting{
-		Build: policy.Build, Coverage: compactor.Coverage, Marks: policy.Curate, Cursor: schema.CursorAt,
+		Build: policy.Build, Coverage: compactor.Coverage, Marks: policy.Curate,
+		Cursor: schema.CursorAt, KnowledgeCursor: schema.KnowledgeCursor,
 	}, now)
 	return &Server{
 		traces: traces, verdicts: verdicts, outcomes: outcomes, ledger: ledger, source: source, compactor: compactor, extractor: extractor,
@@ -338,9 +339,9 @@ var tools = []tool{
 		"when the call proves a person under a server key of a person. "+
 		"Any other call records an agent proposal the person is asked about, answers proposal and changes nothing", (*Server).reaffirm),
 	newTool("records", "Page the raw records of one kind in its published schema: runs, verdicts, knowledge records, decisions, questions, answers, "+
-		"interventions and every other kind, oldest first after the cursor since. The free text of the kind such as outputs, reasons and lesson content "+
-		"is left out unless content is true. A record younger than 10 s waits for a later page. Pass next back as since for the following page, "+
-		"which answers the same next while nothing newer is settled. Reads only", (*Server).records),
+		"interventions and every other kind, in the order they were appended after the cursor since. The free text of the kind such as outputs, reasons and lesson content "+
+		"is left out unless content is true. Pass next back as since for the following page, so a record appended late with an earlier time still comes once. "+
+		"Reads only", (*Server).records),
 	newTool("intervene", "Submit what the person named on what nodloop prepared or carried out: judge a lesson keep, undo or scope, answer or dismiss a question, "+
 		"pause or resume curate for a kind or a scope, set a knob within its range, reanchor a place, or reverse an earlier intervention. "+
 		"digest answers the cursor since the person's last judgment and changes nothing, so page records of answer, intervention, decide, expose and knowledge from it. "+

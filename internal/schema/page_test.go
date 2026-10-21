@@ -1,6 +1,7 @@
 package schema_test
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -10,84 +11,22 @@ import (
 	"github.com/jeon-jihyeon/nodloop/internal/schema"
 )
 
-// Records of one millisecond page by record_id and a record younger than the settle time waits for a later page
-func TestRecordsPage(t *testing.T) {
-	ms := time.Date(2026, 10, 6, 9, 0, 0, 0, time.UTC)
-	now := ms.Add(time.Minute)
-	rec := func(id string, at time.Time) schema.Record { return schema.Record{Kind: "run", ID: id, Time: at} }
-	// Listed out of order as two stores would hand them over
-	old, a, b, c := rec("old", ms.Add(-time.Hour)), rec("a", ms), rec("b", ms), rec("c", ms)
-	all := schema.Records{c, a, rec("young", now.Add(-time.Second)), b, old}
-	type args struct {
-		after schema.Cursor
-		limit int
-	}
-	type want struct {
-		page schema.Records
-		next schema.Cursor
-	}
-	tcs := []struct {
-		name string
-		args args
-		want want
-	}{
-		{"the first page starts at the oldest record", args{schema.Cursor{}, 2},
-			want{schema.Records{old, a}, a.Cursor()}},
-		{"a cursor inside one millisecond goes on by record_id", args{schema.Cursor{Time: ms, RecordID: "a"}, 1},
-			want{schema.Records{b}, b.Cursor()}},
-		{"no limit holds every settled record", args{schema.Cursor{}, 0},
-			want{schema.Records{old, a, b, c}, c.Cursor()}},
-		{"a page past the settled records is empty and keeps the cursor", args{schema.Cursor{Time: ms, RecordID: "c"}, 5},
-			want{schema.Records{}, c.Cursor()}},
-	}
-	for _, tc := range tcs {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-
-			page, next := all.Page(tc.args.after, tc.args.limit, now)
-
-			assert.Equal(t, tc.want.page, page)
-			assert.Equal(t, tc.want.next, next)
-		})
-	}
-}
-
-// Paging one record at a time through records of one millisecond returns each once
-func TestRecordsPageWalk(t *testing.T) {
-	ms := time.Date(2026, 10, 6, 9, 0, 0, 0, time.UTC)
-	all := schema.Records{{ID: "b", Time: ms}, {ID: "a", Time: ms}, {ID: "c", Time: ms}}
-	var walked []string
-	after := schema.Cursor{}
-	for range len(all) + 1 {
-		page, next := all.Page(after, 1, ms.Add(time.Hour))
-		for _, r := range page {
-			walked = append(walked, r.ID)
-		}
-		parsed, err := schema.ParseCursor(next.String())
-		require.NoError(t, err)
-		after = parsed
-	}
-
-	assert.Equal(t, []string{"a", "b", "c"}, walked)
-}
-
 func TestParseCursor(t *testing.T) {
 	ms := time.Date(2026, 10, 6, 9, 0, 0, 123456789, time.UTC)
-	type want struct {
-		cursor schema.Cursor
-		err    error
-	}
 	tcs := []struct {
 		name string
 		args string
-		want want
+		want schema.Cursor
+		err  error
 	}{
-		{"the form of a cursor names its record", schema.Cursor{Time: ms, RecordID: "t1"}.String(), want{cursor: schema.Cursor{Time: ms, RecordID: "t1"}}},
-		{"the form a digest answers names its record", schema.CursorAt(ms, "t2"), want{cursor: schema.Cursor{Time: ms, RecordID: "t2"}}},
-		{"an empty form is the start", "", want{}},
-		{"a form that is no base64 is refused", "%%%", want{err: schema.ErrCursorInvalid}},
-		{"a form without a record id is refused", schema.Cursor{Time: ms}.String(), want{err: schema.ErrCursorInvalid}},
-		{"a form whose time is no number is refused", "bm9vbjp0MQ", want{err: schema.ErrCursorInvalid}},
+		{"the form of a position names its position", schema.Cursor{Position: "12:af"}.String(), schema.Cursor{Position: "12:af"}, nil},
+		{"the form of a time names its record", schema.Cursor{Time: ms, RecordID: "t1"}.String(), schema.Cursor{Time: ms, RecordID: "t1"}, nil},
+		{"the form a digest answers names its record", schema.CursorAt(ms, "t2"), schema.Cursor{Time: ms, RecordID: "t2"}, nil},
+		{"an empty form is the start", "", schema.Cursor{}, nil},
+		{"a form that is no base64 is refused", "%%%", schema.Cursor{}, schema.ErrCursorInvalid},
+		{"a form of a time without a record id is refused", "MTIzOg", schema.Cursor{}, schema.ErrCursorInvalid},
+		{"a form whose time is no number is refused", "bm9vbjp0MQ", schema.Cursor{}, schema.ErrCursorInvalid},
+		{"a form of an empty position is refused", "QA", schema.Cursor{}, schema.ErrCursorInvalid},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
@@ -95,10 +34,25 @@ func TestParseCursor(t *testing.T) {
 
 			got, err := schema.ParseCursor(tc.args)
 
-			assert.ErrorIs(t, err, tc.want.err)
-			assert.True(t, tc.want.cursor.Time.Equal(got.Time))
-			assert.Equal(t, tc.want.cursor.RecordID, got.RecordID)
+			assert.ErrorIs(t, err, tc.err)
+			assert.True(t, tc.want.Time.Equal(got.Time))
+			assert.Equal(t, tc.want.RecordID, got.RecordID)
+			assert.Equal(t, tc.want.Position, got.Position)
 		})
 	}
 	assert.Empty(t, schema.Cursor{}.String())
+}
+
+// The cursor a digest answers after a knowledge record names that record by time so a page from it starts after it
+func TestKnowledgeCursor(t *testing.T) {
+	k := source().Knowledge.(items)[0]
+
+	got, err := schema.ParseCursor(schema.KnowledgeCursor(k))
+	require.NoError(t, err)
+	page, err := source().Page(context.Background(), schema.Query{Kind: "knowledge", Since: schema.KnowledgeCursor(k)})
+	require.NoError(t, err)
+
+	assert.True(t, k.Time.Equal(got.Time))
+	assert.Equal(t, recordID(t, "knowledge", k), got.RecordID)
+	assert.Empty(t, page.Records)
 }

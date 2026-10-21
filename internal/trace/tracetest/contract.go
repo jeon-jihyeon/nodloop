@@ -22,6 +22,7 @@ type Store interface {
 	Append(ctx context.Context, t record.Trace) error
 	Get(ctx context.Context, id string) (record.Trace, error)
 	List(ctx context.Context, f record.TraceFilter) ([]record.Trace, error)
+	After(ctx context.Context, f record.TraceFilter, from string) ([]record.Trace, string, error)
 	Heads(ctx context.Context, names ...string) ([]record.Trace, error)
 	Prune(ctx context.Context, decide func(context.Context) ([]string, error)) (int, error)
 }
@@ -94,6 +95,9 @@ func Run(t *testing.T, store Store) {
 			},
 			{"limit keeps the newest", record.TraceFilter{SessionID: "session-1", Limit: 2}, []record.Trace{seed[2], seed[1]}},
 			{"since leaves out older traces", record.TraceFilter{SessionID: "session-1", Since: seed[1].Time}, []record.Trace{seed[2], seed[1]}},
+			{"names keep the traces of each", record.TraceFilter{Names: []string{"check", "run"}, Ref: "ref-3"}, []record.Trace{seed[4]}},
+			{"names and a limit keep the newest of them", record.TraceFilter{Names: []string{"check"}, Limit: 1}, []record.Trace{seed[3]}},
+			{"without output leaves the output out", record.TraceFilter{Ref: "ref-3", WithoutOutput: true}, []record.Trace{withoutOutput(seed[4])}},
 			{"no match lists nothing", record.TraceFilter{Ref: "ref-9"}, nil},
 		}
 		for _, tc := range tcs {
@@ -121,8 +125,7 @@ func Run(t *testing.T, store Store) {
 			}
 			return out
 		}
-		bare := seed[4]
-		bare.Output = nil
+		bare := withoutOutput(seed[4])
 		tcs := []struct {
 			name string
 			args []string
@@ -141,6 +144,41 @@ func Run(t *testing.T, store Store) {
 			})
 		}
 	})
+
+	t.Run("after", func(t *testing.T) {
+		t.Parallel()
+		after(ctx, t, store, seed)
+	})
+}
+
+func withoutOutput(t record.Trace) record.Trace {
+	t.Output = nil
+	return t
+}
+
+// A read in append order goes on from the position the read before answered
+// 1. the filter keeps what it keeps and the limit ends a read early
+// 2. a read past the last trace answers nothing and the position it was given
+// 3. a position no read answered fails with record.ErrPositionGone
+func after(ctx context.Context, t *testing.T, store Store, seed []record.Trace) {
+	t.Helper()
+	runs := record.TraceFilter{Names: []string{"run"}, Limit: 2}
+	first, at, err := store.After(ctx, runs, "")
+	require.NoError(t, err)
+	rest, end, err := store.After(ctx, record.TraceFilter{Names: []string{"run"}}, at)
+	require.NoError(t, err)
+	none, again, err := store.After(ctx, record.TraceFilter{}, end)
+	require.NoError(t, err)
+	all, _, err := store.After(ctx, record.TraceFilter{}, "")
+	require.NoError(t, err)
+	_, _, goneErr := store.After(ctx, record.TraceFilter{}, "no-such-position")
+
+	assert.Equal(t, []record.Trace{seed[0], seed[1]}, first)
+	assert.Equal(t, []record.Trace{seed[2], seed[4]}, rest, "the check between them is left out")
+	assert.Empty(t, none)
+	assert.Equal(t, end, again)
+	assert.Equal(t, seed, all, "the empty position reads every trace oldest first")
+	assert.ErrorIs(t, goneErr, record.ErrPositionGone)
 }
 
 // Prune removes the traces of the ids it is given and nothing else and leaves the store empty again

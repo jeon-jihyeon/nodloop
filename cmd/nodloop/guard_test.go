@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeon-jihyeon/nodloop/internal/jsonl"
+	"github.com/jeon-jihyeon/nodloop/internal/record"
 	"github.com/jeon-jihyeon/nodloop/internal/veto"
 	vetofile "github.com/jeon-jihyeon/nodloop/internal/veto/file"
 )
@@ -83,7 +84,7 @@ func TestRunGuard(t *testing.T) {
 			args{args: []string{"--vetoes", "nope.yaml"}, stdin: sed, home: "{home}", settings: "{}"},
 			want{
 				1, "",
-				`^nodloop guard: failed to load vetoes, skipped: nope.yaml: failed to read veto file: open nope.yaml: no such file`,
+				`^nodloop guard: failed to load vetoes, skipped: nope.yaml: failed to read veto file: stat nope.yaml: no such file`,
 				"{}",
 			},
 		},
@@ -187,7 +188,7 @@ func TestRunGuard(t *testing.T) {
 				stdin: []byte(`{"tool_name":"Bash","tool_input":{"command":"ls"},"cwd":"{home}/repo"}`),
 				home:  "{home}", settings: "{}", dirs: []string{"{home}/repo/.git", "{home}/repo/{rel}"},
 			},
-			want{1, "", `^nodloop guard: failed to load vetoes, skipped: [^\n]*is a directory\n$`, "{}"},
+			want{1, "", `^nodloop guard: failed to load vetoes, skipped: [^\n]*not a regular file: [^\n]*\n$`, "{}"},
 		},
 		{
 			"hook blocks a plain call below a repository root under home whose file is not yaml",
@@ -681,36 +682,43 @@ func TestRunGuardCall(t *testing.T) {
 	}
 }
 
-// The decision log as the raw record pages read it, newest first and nothing for a home without one
-func TestGuardLogList(t *testing.T) {
+// The decision log as the raw record pages read it in the order it was written
+// A home without one reads nothing
+func TestGuardLogAfter(t *testing.T) {
+	type args struct {
+		// Builds the home under the temp directory and answers the home the log is read from
+		home func(t *testing.T, dir string) homeDir
+		from string
+	}
 	type want struct {
 		lines []string
 		err   error
 	}
+	logged := func(t *testing.T, dir string) homeDir {
+		require.NoError(t, os.MkdirAll(homeDir(dir).dir(), 0o700))
+		require.NoError(t, os.WriteFile(filepath.Join(homeDir(dir).dir(), decisionLog), []byte(`{"veto":"a"}`+"\n"+`{"veto":"b"}`+"\n"), 0o600))
+		return homeDir(dir)
+	}
 	tcs := []struct {
 		name string
-		// Builds the home under the temp directory and answers the home the log is read from
-		args func(t *testing.T, dir string) homeDir
+		args args
 		want want
 	}{
-		{"no home lists nothing", func(*testing.T, string) homeDir { return "" }, want{[]string{}, nil}},
-		{"a home without the nodloop directory lists nothing", func(_ *testing.T, dir string) homeDir { return homeDir(dir) }, want{[]string{}, nil}},
-		{"a nodloop path that is a file fails", func(t *testing.T, dir string) homeDir {
+		{"no home reads nothing", args{func(*testing.T, string) homeDir { return "" }, ""}, want{[]string{}, nil}},
+		{"a home without the nodloop directory reads nothing", args{func(_ *testing.T, dir string) homeDir { return homeDir(dir) }, ""}, want{[]string{}, nil}},
+		{"a nodloop path that is a file fails", args{func(t *testing.T, dir string) homeDir {
 			require.NoError(t, os.WriteFile(homeDir(dir).dir(), nil, 0o600))
 			return homeDir(dir)
-		}, want{[]string{}, jsonl.ErrNotDirectory}},
-		{"every logged decision newest first", func(t *testing.T, dir string) homeDir {
-			require.NoError(t, os.MkdirAll(homeDir(dir).dir(), 0o700))
-			require.NoError(t, os.WriteFile(filepath.Join(homeDir(dir).dir(), decisionLog), []byte(`{"veto":"a"}`+"\n"+`{"veto":"b"}`+"\n"), 0o600))
-			return homeDir(dir)
-		}, want{[]string{`{"veto":"b"}`, `{"veto":"a"}`}, nil}},
+		}, ""}, want{[]string{}, jsonl.ErrNotDirectory}},
+		{"every logged decision in the order it was written", args{logged, ""}, want{[]string{`{"veto":"a"}`, `{"veto":"b"}`}, nil}},
+		{"a position the log never answered fails", args{logged, "x"}, want{[]string{}, record.ErrPositionGone}},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			home := tc.args(t, t.TempDir())
+			home := tc.args.home(t, t.TempDir())
 
-			got, err := guardLog{home}.List(t.Context())
+			got, _, err := guardLog{home}.After(t.Context(), tc.args.from, 0)
 
 			lines := []string{}
 			for _, line := range got {

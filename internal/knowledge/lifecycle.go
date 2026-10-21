@@ -61,7 +61,7 @@ func (l *Ledger) Reaffirm(ctx context.Context, id string, version int, approver 
 // 1. the refuted runs join the outcome evidence
 // 2. fails with ErrNarrowInvalid for an item without a run scope or without values
 // 3. fails with ErrNarrowExhausted when the scope requires that key and every value it allows would be excepted
-// The version is checked under the store lock like Narrow
+// The version is checked under the store lock like Reaffirm
 func (l *Ledger) Narrow(
 	ctx context.Context, id string, version int, key string, values, traceIDs []string, author string,
 ) (Knowledge, Set, error) {
@@ -103,9 +103,9 @@ func (k Knowledge) narrowedRun(key string, values []string) (Knowledge, error) {
 // Proposes the next version of the current approved version with basis verified on the confirmed runs
 // 1. content and scope and exceptions and veto stay so the approval replaces the version without widening or lifting
 // 2. the confirmed runs join the outcome evidence
-// 3. the candidate is approved like any new version by a named person
-// 1. fails with ErrPromoteInvalid when no confirmed run is given
-// 2. fails with ErrPromoteVerified when the version is verified already
+// 3. the candidate is approved like any new version
+// 4. fails with ErrPromoteInvalid when no confirmed run is given
+// 5. fails with ErrPromoteVerified when the version is verified already
 // The version is checked under the store lock like Narrow
 func (l *Ledger) Promote(ctx context.Context, id string, version int, traceIDs []string, author string) (Knowledge, Set, error) {
 	return l.appendCandidate(ctx, func(all Set, now time.Time) (Knowledge, error) {

@@ -309,7 +309,11 @@ func (c captureCommand) reader(ctx context.Context, session string, judges bool)
 	if err != nil {
 		return messageReader{}, err
 	}
-	r := messageReader{session: session, replies: iv, person: cmp.Or(c.app.cfg.approver, unnamedPerson), now: c.app.now}
+	key, err := textkey.Load(c.app.cfg.recordDir)
+	if err != nil {
+		return messageReader{}, err
+	}
+	r := messageReader{session: session, replies: iv, person: cmp.Or(c.app.cfg.approver, unnamedPerson), seal: key.Sum, now: c.app.now}
 	if !judges {
 		return r, nil
 	}
@@ -366,6 +370,8 @@ type messageReader struct {
 	shown sessionExposes
 	// The name an answer is recorded under
 	person string
+	// The HMAC under the key of the record directory that the question of a click is checked with
+	seal func(string) string
 	// Nil when the capture judges nothing
 	plan     *classify.Plan
 	items    knowledge.Set
@@ -397,12 +403,15 @@ func (r messageReader) judge(ctx context.Context, messages personMessages, runs 
 }
 
 // The answer the message gives to a question of the stop
-// A typed message after an answer whose stop asked no question answers none so it never reads the records of curate
+// A typed message whose first word names no choice of a question the stop asked after the answer answers none
+// So it never reads the records of curate
 func (r messageReader) answer(ctx context.Context, m personMessage, run trace.Trace) (curate.Replied, error) {
-	if m.key == "" && !r.shown.asked(run.ID) {
+	if m.key == "" && r.shown.named(run.ID, m.firstWord()) == "" {
 		return curate.Replied{}, nil
 	}
-	return r.replies.Reply(ctx, curate.Reply{Session: r.session, Key: m.key, Run: run.ID, Word: m.firstWord(), Person: r.person})
+	return r.replies.Reply(ctx, curate.Reply{
+		Session: r.session, Key: m.key, Question: m.question, Seal: r.seal, Run: run.ID, Word: m.firstWord(), Person: r.person,
+	})
 }
 
 // The answers of the reaction point on one message with the verdict and the signals they make
@@ -480,7 +489,7 @@ func (c captureCommand) follow(ctx context.Context, judged []string, signals int
 	if err != nil && !errors.Is(err, knowledgefile.ErrCorrupt) {
 		return err
 	}
-	f := knowledgeFlags{model: c.model, author: feedback.ReviewerAuthor}
+	f := knowledgeFlags{model: c.model, author: knowledge.DefaultAuthor}
 	extracted := 0
 	for _, run := range judged {
 		corrects, err := c.corrected(ctx, run)
@@ -734,7 +743,7 @@ func (e transcriptEntry) clicks(asked askedQuestions) personMessages {
 	var out personMessages
 	for _, question := range slices.Sorted(maps.Keys(result.Answers)) {
 		if key, ok := strings.CutPrefix(headers[question], askHeaderPrefix); ok {
-			out = append(out, personMessage{text: result.Answers[question], at: e.Timestamp, key: key})
+			out = append(out, personMessage{text: result.Answers[question], at: e.Timestamp, key: key, question: question})
 		}
 	}
 	return out
@@ -797,6 +806,8 @@ type personMessage struct {
 	at   time.Time
 	// The key of the question of the stop a picked label answers and empty for a typed message
 	key string
+	// The question of the AskUserQuestion call a picked label answers as the call wrote it
+	question string
 }
 
 // The label picked or the first word typed

@@ -147,6 +147,29 @@ type Exposure struct {
 	Runes int `json:"runes,omitempty"`
 }
 
+// The punctuation a reply word may end with so a keep followed by a comma still names keep
+const replyMarks = ".,!;:"
+
+// The choice the word names among the choices shown and false for none
+// Case, surrounding space and trailing punctuation are ignored so every reader of a reply names the same choice
+func (x Exposure) Names(word string) (Choice, bool) {
+	c := Choice(strings.TrimRight(strings.ToLower(strings.TrimSpace(word)), replyMarks))
+	return c, slices.Contains(x.Choices, c)
+}
+
+// Whether the question of an AskUserQuestion call is the text the expose sealed
+// 1. the call holds the lines up to Prepared and the expose sealed them with the reply line after them
+// So a question a model worded itself under the header of the key shows nothing the stop asked
+// 2. a check with no seal finds nothing
+func (x Exposure) shows(question string, seal func(string) string) bool {
+	return seal != nil && len(x.Choices) == 2 && seal(question+replyLine(x.Choices[0], x.Choices[1])) == x.Text
+}
+
+// The last line of a question with its two reply keys
+func replyLine(first, second Choice) string {
+	return fmt.Sprintf("\nReply %s or %s", first, second)
+}
+
 // The runes a question or a notice may show at most
 const MaxRunes = 600
 
@@ -180,7 +203,7 @@ const (
 // 1. the quoted lessons and words shrink together until the text fits
 // 2. lines that still do not fit are cut before the reply line so the reply line always shows
 func (q Question) Text() string {
-	reply := fmt.Sprintf("\nReply %s or %s", q.Choices[0], q.Choices[1])
+	reply := replyLine(q.Choices[0], q.Choices[1])
 	room := MaxRunes - utf8.RuneCountInString(reply)
 	limit := quoteRunes
 	body := q.body(limit)

@@ -108,7 +108,7 @@ func TestOutcomeImplicit(t *testing.T) {
 	}{
 		{"session reviewer is implicit", feedback.ReviewerSession, true},
 		{"nodloop reviewer is implicit", feedback.ReviewerNodloop, true},
-		{"author reviewer is a person", feedback.ReviewerAuthor, false},
+		{"author reviewer of earlier releases is a person", "author", false},
 		{"named reviewer is a person", "sam", false},
 	}
 	for _, tc := range tcs {

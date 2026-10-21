@@ -11,7 +11,7 @@ test("a corrected run teaches an item the same tenant receives once the person a
   const c = await open();
   try {
     const run = await c.record({ producer: "support-bot", output: "Here are the refund steps", labels: acme });
-    await c.judge(run, "reject", "ann", { reason: "the refund window was missing", reasonCode: "scope" });
+    await c.judge(run, "reject", { reviewer: "ann", reason: "the refund window was missing", reasonCode: "scope" });
     const p = await c.propose({ kind: "judgment", content: "Quote the refund window before the steps", from: run, id: "refund-window" });
     const proposal = await c.approve(p.id, p.version, "ann");
     const before = await c.knowledge("support-bot", acme);
@@ -46,7 +46,12 @@ test("a verdict without a reviewer is refused over stdio, where no key names one
   const c = await open();
   try {
     const run = await c.record({ producer: "bot", output: "answer", labels: acme });
-    await assert.rejects(c.judge(run, "approve", ""), (e) => e instanceof ToolError && /a reviewer is required/.test(e.message));
+    const required = (e: unknown) => e instanceof ToolError && /a reviewer is required/.test(e.message);
+    await assert.rejects(c.judge(run, "approve", { reviewer: "" }), required);
+    // A call of an earlier release whose options name no reviewer
+    await assert.rejects(c.judge(run, "reject", { reason: "the window was missing" } as never), required);
+    const written = existsSync(join(c.recordDir, "feedback.jsonl")) && readFileSync(join(c.recordDir, "feedback.jsonl"), "utf8") !== "";
+    assert.equal(written, false);
   } finally {
     await c.close();
   }
@@ -57,7 +62,7 @@ test("nodloop is reserved for the capture of a session, so a verdict or an outco
   try {
     const run = await c.record({ producer: "bot", output: "answer", labels: acme });
     const reserved = (e: unknown) => e instanceof ToolError && /reserved for what the capture reads/.test(e.message);
-    await assert.rejects(c.judge(run, "reject", "nodloop", { reason: "wrong" }), reserved);
+    await assert.rejects(c.judge(run, "reject", { reviewer: "nodloop", reason: "wrong" }), reserved);
     await assert.rejects(c.outcome(run, "confirmed", { reviewer: "nodloop" }), reserved);
     const written = ["feedback.jsonl", "outcomes.jsonl"].filter((f) => existsSync(join(c.recordDir, f)) && readFileSync(join(c.recordDir, f), "utf8") !== "");
     assert.deepEqual(written, []);
@@ -85,12 +90,12 @@ test("a server key a person holds approves under its own name and a key of a ser
   const c = await Client.open({ url, key });
   try {
     const run = await bot.record({ producer: "support-bot", output: "steps", labels: acme });
-    await bot.judge(run, "reject", "ci", { reason: "the window was missing" });
+    await bot.judge(run, "reject", { reviewer: "ci", reason: "the window was missing" });
     const p = await bot.propose({ kind: "judgment", content: "Quote the refund window", from: run, id: "window" });
     const proposal = await bot.approve(p.id, p.version, "mallory");
     const approved = await c.approve(p.id, p.version, "mallory");
     const mine = await c.knowledge("support-bot", acme);
-    await assert.rejects(c.judge(run, "approve", "nodloop"), (e) => e instanceof ToolError && /reserved for what the capture reads/.test(e.message));
+    await assert.rejects(c.judge(run, "approve", { reviewer: "nodloop" }), (e) => e instanceof ToolError && /reserved for what the capture reads/.test(e.message));
 
     assert.deepEqual([p.id, p.status], ["window", "candidate"]);
     assert.deepEqual([proposal.status, proposal.proposal !== ""], ["candidate", true]);
@@ -109,7 +114,7 @@ test("an intervention under a key a person holds decides at once, its reverse ta
   const c = await Client.open({ url, key });
   try {
     const run = await bot.record({ producer: "support-bot", output: "steps", labels: acme });
-    await bot.judge(run, "reject", "ci", { reason: "the window was missing" });
+    await bot.judge(run, "reject", { reviewer: "ci", reason: "the window was missing" });
     const p = await bot.propose({ kind: "judgment", content: "Quote the refund window", from: run, id: "window" });
     const proposal = await bot.intervene({ action: "judge", target: `${p.id}:${p.version}`, choice: "keep" });
     const kept = await c.intervene({ action: "judge", target: `${p.id}:${p.version}`, choice: "keep" });
@@ -134,7 +139,7 @@ test("an intervention over stdio records a proposal, a digest answers its cursor
   const c = await open();
   try {
     const run = await c.record({ producer: "support-bot", output: "steps", labels: acme });
-    await c.judge(run, "reject", "ann", { reason: "the window was missing" });
+    await c.judge(run, "reject", { reviewer: "ann", reason: "the window was missing" });
     const p = await c.propose({ kind: "judgment", content: "Quote the refund window", from: run, id: "window" });
     const proposal = await c.intervene({ action: "judge", target: `${p.id}:${p.version}`, choice: "keep", session: "s-1" });
     const digest = await c.intervene({ action: "digest", target: "support-bot", labels: acme });
@@ -162,7 +167,7 @@ test("an eleventh item for the same runs under the run chars approves", async ()
   const c = await open();
   try {
     const run = await c.record({ producer: "support-bot", output: "steps", labels: acme });
-    await c.judge(run, "reject", "ann", { reason: "the window was missing" });
+    await c.judge(run, "reject", { reviewer: "ann", reason: "the window was missing" });
     for (let n = 0; n < 11; n++) {
       const p = await c.propose({ kind: "judgment", content: `Refund rule number ${n}`, from: run, id: `rule-${n}` });
       approve(c.recordDir, p.id, p.version);
@@ -179,7 +184,7 @@ test("approve proposes the labels the person picked and the person approves them
   try {
     const run = await c.record({ producer: "support-bot", output: "Here are the refund steps", labels: acme });
     await c.record({ producer: "support-bot", output: "ok", labels: { tenant: ["globex"] } });
-    await c.judge(run, "reject", "ann", { reason: "too long", reasonCode: "form" });
+    await c.judge(run, "reject", { reviewer: "ann", reason: "too long", reasonCode: "form" });
     const p = await c.propose({ kind: "judgment", content: "Answer in three lines", from: run });
 
     const proposal = await c.approve(p.id, p.version, "ann", { labels: {} });
@@ -199,7 +204,7 @@ test("a holdout key withholds a share of runs and a withheld run joins the withh
   const c = await open();
   try {
     const run = await c.record({ producer: "stream-bot", output: "lag rose", labels: acme });
-    await c.judge(run, "reject", "ann", { reason: "name the partition" });
+    await c.judge(run, "reject", { reviewer: "ann", reason: "name the partition" });
     const p = await c.propose({ kind: "judgment", content: "Name the partition", from: run, id: "partition" });
     approve(c.recordDir, p.id, p.version);
     const drawn = [];
@@ -228,7 +233,7 @@ test("items passed as withheld and refs passed as applied are recorded by id and
   const c = await Client.open({ recordDir: records, binary: binary() });
   try {
     const run = await c.record({ producer: "stream-bot", output: "lag rose", labels: acme });
-    await c.judge(run, "reject", "ann", { reason: "name the partition" });
+    await c.judge(run, "reject", { reviewer: "ann", reason: "name the partition" });
     const p = await c.propose({ kind: "judgment", content: "Name the partition", from: run, id: "partition" });
     approve(records, p.id, p.version);
     const { items } = await c.knowledge("stream-bot", acme);

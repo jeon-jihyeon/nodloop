@@ -81,7 +81,8 @@ func TestRunFeedbackAddRefused(t *testing.T) {
 		want string
 	}{
 		{"no verdict", args{[]string{"--trace", "{run}"}, ""}, "add: --trace and a --verdict of approve or edit or reject or withdraw is required"},
-		{"an edit file that cannot be read", args{[]string{"--trace", "{run}", "--verdict", "edit", "--edited", "{dir}/missing.json"}, ""}, "--edited: open "},
+		{"an edit file that cannot be read", args{[]string{"--trace", "{run}", "--verdict", "edit", "--edited", "{dir}/missing.json"}, ""}, "--edited: stat "},
+		{"an edit file that names a folder", args{[]string{"--trace", "{run}", "--verdict", "edit", "--edited", "{dir}"}, ""}, "--edited: not a regular file"},
 		{"a run that is not recorded", args{[]string{"--trace", "r-unknown", "--verdict", "reject"}, ""}, record.ErrTraceNotFound.Error()},
 		{"a verdict file that cannot open", args{[]string{"--trace", "{run}", "--verdict", "reject"}, "feedback.jsonl.bak"}, "feedback file: "},
 		{"a verdict file that takes no line", args{[]string{"--trace", "{run}", "--verdict", "reject"}, "feedback.jsonl"}, "feedback file: append failed"},

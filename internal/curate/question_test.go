@@ -116,6 +116,34 @@ func TestEventExposeFields(t *testing.T) {
 	assert.NoError(t, schema.Validate(string(trace.NameExpose), got.Record()))
 }
 
+// A reply word names a choice shown whatever its case, the space around it and the punctuation it ends with
+func TestExposureNames(t *testing.T) {
+	type want struct {
+		choice curate.Choice
+		named  bool
+	}
+	tcs := []struct {
+		name string
+		args string
+		want want
+	}{
+		{"a choice as shown", "keep", want{curate.ChoiceKeep, true}},
+		{"a capital, a space and a trailing comma", " Drop, ", want{curate.ChoiceDrop, true}},
+		{"a choice the question does not show", "merge", want{curate.ChoiceMerge, false}},
+		{"no word", "", want{"", false}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			x := curate.Exposure{Choices: []curate.Choice{curate.ChoiceKeep, curate.ChoiceDrop}}
+
+			choice, named := x.Names(tc.args)
+
+			assert.Equal(t, tc.want, want{choice, named})
+		})
+	}
+}
+
 func TestEventAnswer(t *testing.T) {
 	change := &knowledge.Ref{ID: "k-1", Version: 1}
 	answered := pushed()

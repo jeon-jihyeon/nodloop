@@ -23,6 +23,8 @@ func TestClaudeCLIComplete(t *testing.T) {
 		res   llm.Response
 		args  []string
 		stdin string
+		// The system prompt file as claude read it and its mode
+		system, mode string
 	}
 	success := llm.Response{
 		Output:         json.RawMessage(`{"answer":42}`),
@@ -41,7 +43,7 @@ func TestClaudeCLIComplete(t *testing.T) {
 		want want
 	}{
 		{
-			name: "every request field reaches claude and the success fixture becomes the response",
+			name: "every request field reaches claude with the system prompt in a private file and the success fixture becomes the response",
 			args: llm.Request{
 				System: "be terse", Prompt: "hello", Schema: json.RawMessage(`{"type":"object"}`), Model: "haiku",
 			},
@@ -50,9 +52,11 @@ func TestClaudeCLIComplete(t *testing.T) {
 				args: []string{
 					"-p", "--output-format", "json", "--json-schema", `{"type":"object"}`, "--max-turns", "3",
 					"--max-budget-usd", "0.5", "--no-session-persistence", "--safe-mode", "--setting-sources", "user", "--model", "haiku",
-					"--append-system-prompt", "be terse",
+					"--append-system-prompt-file", "system.md",
 				},
-				stdin: "hello",
+				stdin:  "hello",
+				system: "be terse",
+				mode:   "-rw-------",
 			},
 		},
 		{
@@ -65,9 +69,11 @@ func TestClaudeCLIComplete(t *testing.T) {
 				args: []string{
 					"-p", "--output-format", "json", "--json-schema", `{"type":"object"}`, "--max-turns", "3",
 					"--max-budget-usd", "0.5", "--no-session-persistence", "--safe-mode", "--setting-sources", "user",
-					"--model", "claude-opus-5-5", "--effort", "high", "--append-system-prompt", "be terse",
+					"--model", "claude-opus-5-5", "--effort", "high", "--append-system-prompt-file", "system.md",
 				},
-				stdin: "hello",
+				stdin:  "hello",
+				system: "be terse",
+				mode:   "-rw-------",
 			},
 		},
 		{
@@ -89,8 +95,13 @@ func TestClaudeCLIComplete(t *testing.T) {
 			t.Parallel()
 			dir := t.TempDir()
 			bin := filepath.Join(dir, "claude")
+			// The path of the system prompt file is printed by its base name since the work dir is random
 			script := "#!/bin/sh\n" +
-				"printf '%s\\n' \"$@\" > \"" + dir + "/args\"\n" +
+				": > \"" + dir + "/system\"; : > \"" + dir + "/mode\"\n" +
+				"for a in \"$@\"; do case \"$a\" in\n" +
+				"*/system.md) printf 'system.md\\n'; /bin/cat \"$a\" > \"" + dir + "/system\"; ls -l \"$a\" | cut -c1-10 > \"" + dir + "/mode\";;\n" +
+				"*) printf '%s\\n' \"$a\";;\n" +
+				"esac; done > \"" + dir + "/args\"\n" +
 				"/bin/cat > \"" + dir + "/stdin\"\n" +
 				"/bin/cat \"" + testdata + "/success.json\"\n"
 			require.NoError(t, os.WriteFile(bin, []byte(script), 0o755))
@@ -102,9 +113,15 @@ func TestClaudeCLIComplete(t *testing.T) {
 			require.NoError(t, err)
 			stdin, err := os.ReadFile(filepath.Join(dir, "stdin"))
 			require.NoError(t, err)
+			system, err := os.ReadFile(filepath.Join(dir, "system"))
+			require.NoError(t, err)
+			mode, err := os.ReadFile(filepath.Join(dir, "mode"))
+			require.NoError(t, err)
 			assert.Equal(t, tc.want.res, got)
 			assert.Equal(t, tc.want.args, strings.Split(strings.TrimSuffix(string(args), "\n"), "\n"))
 			assert.Equal(t, tc.want.stdin, string(stdin))
+			assert.Equal(t, tc.want.system, string(system))
+			assert.Equal(t, tc.want.mode, strings.TrimSpace(string(mode)))
 		})
 	}
 }

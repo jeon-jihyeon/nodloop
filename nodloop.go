@@ -133,7 +133,9 @@ func Open(dir string, opts ...Option) (*Client, error) {
 		source: schema.Source{Traces: traces, Verdicts: verdicts, Outcomes: outcomes, Knowledge: store},
 		marks:  retain.NewMarker(dir), pruneFailed: o.pruneFailed,
 		// The package starts no curate pass so a proposal waits for the next pass of a CLI or a plugin session over the directory
-		intervener: curate.NewIntervener(ledger, traces, curate.InterveneSetting{Cursor: schema.CursorAt}, o.now),
+		intervener: curate.NewIntervener(ledger, traces, curate.InterveneSetting{
+			Cursor: schema.CursorAt, KnowledgeCursor: schema.KnowledgeCursor,
+		}, o.now),
 	}
 	if days == 0 {
 		return c, nil

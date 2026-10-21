@@ -55,18 +55,15 @@ var knobbedTraces = []trace.Name{trace.NameKnob, trace.NameDecide, trace.NameExp
 // 2. so every list starts at the start of the cycle before the one that holds the start of that configuration
 // A curate pass after a capture then reads a cycle or two of records and never every record
 // 3. the runs, rollups and outcomes no knob reads are left out with every other part of the report
+// 4. one read takes the traces of every name so the store is read once
 func (s Stores) Knobbed(ctx context.Context, now time.Time) (CurationReport, error) {
 	since, err := s.configured(ctx, now)
 	if err != nil {
 		return CurationReport{}, err
 	}
-	var all trace.Traces
-	for _, name := range knobbedTraces {
-		found, err := s.Traces.List(ctx, record.TraceFilter{Name: string(name), Since: since})
-		if err != nil {
-			return CurationReport{}, err
-		}
-		all = append(all, trace.RestoreAll(found)...)
+	all, err := s.read(ctx, knobbedTraces, since)
+	if err != nil {
+		return CurationReport{}, err
 	}
 	e := newEvents(all, now)
 	asked, shifts := e.units(), e.shifts()

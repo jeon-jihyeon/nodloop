@@ -13,7 +13,7 @@ import (
 )
 
 type Request struct {
-	// Passed as `--append-system-prompt`
+	// Passed to claude as `--append-system-prompt-file` of a private file and as the system message of a chat request
 	// Omitted when empty
 	System string
 	// Passed on stdin

@@ -99,29 +99,46 @@ func (a app) ledger() (*knowledge.Ledger, error) {
 	if err != nil {
 		return nil, err
 	}
-	return knowledge.NewLedger(store, a.vetoFile(dir), a.now, knowledge.NewIDs(a.now)), nil
+	return a.ledgerOver(store), nil
 }
 
-// The stores of the record directory and the guard log of the home as the raw record pages read them
-func (a app) source() (schema.Source, error) {
+// The ledger over a knowledge store of the record directory
+func (a app) ledgerOver(store *knowledgefile.Store) *knowledge.Ledger {
+	return knowledge.NewLedger(store, a.vetoFile(a.cfg.recordDir), a.now, knowledge.NewIDs(a.now))
+}
+
+// The stores of the record directory a command that reads every kind opens once
+type recordStores struct {
+	traces   *tracefile.Store
+	verdicts *feedbackfile.Store
+	outcomes *feedbackfile.OutcomeStore
+	items    *knowledgefile.Store
+}
+
+func (a app) stores() (recordStores, error) {
 	traces, err := a.traces()
 	if err != nil {
-		return schema.Source{}, err
+		return recordStores{}, err
 	}
 	verdicts, err := a.feedback()
 	if err != nil {
-		return schema.Source{}, err
+		return recordStores{}, err
 	}
 	outcomes, err := a.outcomes()
 	if err != nil {
-		return schema.Source{}, err
+		return recordStores{}, err
 	}
 	// The record directory exists once the stores above opened
 	items, err := knowledgefile.New(a.cfg.recordDir)
 	if err != nil {
-		return schema.Source{}, err
+		return recordStores{}, err
 	}
-	return schema.Source{Traces: traces, Verdicts: verdicts, Outcomes: outcomes, Knowledge: items, Guard: guardLog{a.cfg.home}}, nil
+	return recordStores{traces: traces, verdicts: verdicts, outcomes: outcomes, items: items}, nil
+}
+
+// The stores and the guard log of the home as the raw record pages read them
+func (s recordStores) source(home homeDir) schema.Source {
+	return schema.Source{Traces: s.traces, Verdicts: s.verdicts, Outcomes: s.outcomes, Knowledge: s.items, Guard: guardLog{home}}
 }
 
 // The mark curate.json of the record directory leaves the hooks with the knobs of the item hold and the questions due
@@ -155,6 +172,10 @@ func (a app) compactor(ledger *knowledge.Ledger) (*compact.Compactor, error) {
 // The critic runs in the detached extraction so a slow CPU model only delays a draft
 // A probe in the foreground waits as long so it shows what the critic would see
 const classifierTimeout = 30 * time.Second
+
+// Bytes a file that a flag names or a hook reports may hold
+// A run output or an import of lessons fits many times over so a larger file is refused before it fills memory or a record
+const inputLimit = 16 << 20
 
 // The critic of an extraction
 // 1. claude alone with no classify trace while the user set up nothing for the critic point

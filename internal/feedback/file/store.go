@@ -41,6 +41,26 @@ func (s *Store) List(_ context.Context, f record.FeedbackFilter) ([]record.Feedb
 	return records, nil
 }
 
+// The verdicts the file holds after the position oldest first with the position after the last line read
+// 1. the empty position starts at the first verdict and a limit of zero reads every one
+// 2. a position whose verdict a rewrite removed fails with record.ErrPositionGone
+// A corrupt line returns the verdicts of the other lines with the error as List does
+func (s *Store) After(_ context.Context, from string, limit int) ([]record.Feedback, string, error) {
+	return after(s.file, from, limit)
+}
+
+// The records of one file after the position with the errors of the store
+func after[T any](file jsonl.File[T], from string, limit int) ([]T, string, error) {
+	found, next, err := file.After(from, func(T) bool { return true }, limit)
+	switch {
+	case errors.Is(err, jsonl.ErrPositionGone):
+		return nil, from, fmt.Errorf("%w: %w", record.ErrPositionGone, err)
+	case err != nil:
+		return found, next, readFailed(err)
+	}
+	return found, next, nil
+}
+
 // How many records the file holds and the error naming its corrupt lines
 func (s *Store) Check() (int, error) {
 	n, err := s.file.Check()

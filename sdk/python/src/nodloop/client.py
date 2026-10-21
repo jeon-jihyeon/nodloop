@@ -147,12 +147,12 @@ class Report:
 
 @dataclass(frozen=True)
 class Page:
-    """One page of raw records in the published schema of their kind, oldest first"""
+    """One page of raw records in the published schema of their kind, in the order they were appended"""
 
     # Each record as the TypedDict of its kind in nodloop.records
     records: list[AnyRecord]
     # The cursor to pass as since for the next page
-    # It stays the same while no newer record is settled
+    # A page with nothing new still answers one to pass again
     next: str = ""
 
 
@@ -307,6 +307,7 @@ class Client:
         self,
         run: str,
         verdict: str,
+        *,
         reviewer: str,
         reason: str = "",
         reason_code: str = "",
@@ -316,6 +317,8 @@ class Client:
 
         reviewer names who judged so a verdict without a name never reads as a person's
         nodloop is refused since only the capture of a session records verdicts under it
+        Every argument after verdict is keyword only
+        So a call of an earlier release that passed the reason third fails instead of naming it the reviewer
         """
         args: dict[str, Any] = {"trace_id": run, "verdict": verdict}
         for key, value in (("reason", reason), ("reason_code", reason_code), ("reviewer", reviewer)):
@@ -348,10 +351,9 @@ class Client:
         return Report(answer["report"], answer.get("since", ""))
 
     async def records(self, kind: RecordKind, since: str = "", limit: int = 0, content: bool = False) -> Page:
-        """One page of the raw records of a kind in its published schema, oldest first after the cursor since
+        """One page of the raw records of a kind in its published schema, in the order they were appended after the cursor since
 
-        Pass next back as since for the following page, which answers the same next while nothing newer is settled
-        A record younger than 10 s waits for a later page
+        Pass next back as since for the following page, so a record appended late with an earlier time still comes once
         limit is 100 by default and at most 1000
         The free text of the kind such as outputs, reasons and lesson content is left out unless content is true
         """
