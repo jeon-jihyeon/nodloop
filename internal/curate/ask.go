@@ -242,7 +242,7 @@ func (iv *Intervener) show(ctx context.Context, a Asking, s state, due Due, draw
 	text := q.Text()
 	x := Exposure{
 		Kind: due.Kind, Key: q.Key, Surface: SurfaceContext, Rules: QuestionRules, Choices: q.Choices[:], Text: a.Seal(text),
-		Round: len(s.exposed(d.ID)) + 1, Run: a.Run, Runes: utf8.RuneCountInString(text),
+		Lines: q.lines().sealed(a.Seal), Round: len(s.exposed(d.ID)) + 1, Run: a.Run, Runes: utf8.RuneCountInString(text),
 	}
 	if d.Change.ID != "" {
 		x.Change = &knowledge.Ref{ID: d.Change.ID, Version: d.Change.Version}
@@ -587,8 +587,9 @@ type Reply struct {
 	Run string
 	// The key of an AskUserQuestion header and empty for a typed word
 	Key string
-	// The question of the AskUserQuestion call a click answers as the transcript holds it
+	// The question of the AskUserQuestion call a click answers and its options as the transcript holds them
 	Question string
+	Options  []Option
 	// The HMAC of a text under the key of the record directory that the question of a click is checked with
 	Seal func(string) string
 	// The choice clicked or the first word typed with case and trailing punctuation ignored
@@ -620,6 +621,11 @@ func (iv *Intervener) Reply(ctx context.Context, r Reply) (Replied, error) {
 	if !ok {
 		return Replied{}, nil
 	}
+	release, err := iv.turn()
+	if err != nil {
+		return Replied{}, err
+	}
+	defer release()
 	s, err := iv.read(ctx)
 	if err != nil {
 		return Replied{}, err
@@ -638,12 +644,12 @@ func (iv *Intervener) Reply(ctx context.Context, r Reply) (Replied, error) {
 }
 
 // The question of the session the input answers with the choice it names
-// 1. a click names its question by the key of its header and holds the text the stop showed
+// 1. a click names its question by the key of its header and holds every line the stop showed
 // So a model that asks a question of its own under that header never records an answer
 // 2. a typed word answers the question shown after the answer the person read
 func (xs shownExposes) replied(r Reply) (shownExpose, Choice, bool) {
 	for _, x := range xs {
-		named := r.Key != "" && x.Key == r.Key && x.shows(r.Question, r.Seal) || r.Key == "" && r.Run != "" && x.Run == r.Run
+		named := r.Key != "" && x.Key == r.Key && x.shows(r) || r.Key == "" && r.Run != "" && x.Run == r.Run
 		if choice, ok := x.Names(r.Word); x.SessionID == r.Session && x.asks() && named && ok {
 			return x, choice, true
 		}

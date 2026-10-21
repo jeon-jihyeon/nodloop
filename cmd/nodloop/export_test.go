@@ -581,6 +581,59 @@ func TestRunExportOtelPendingLookupFails(t *testing.T) {
 	}
 }
 
+// A decision links the extraction that drafted its version however many extractions came after and none when no extraction did
+func TestRunExportOtelDecisionDrafts(t *testing.T) {
+	records := t.TempDir()
+	stores, err := (app{cfg: config{recordDir: records}}).stores()
+	require.NoError(t, err)
+	ctx := t.Context()
+	var extracts []trace.Trace
+	for i := range 9 {
+		at := exportAt.Add(time.Duration(i) * time.Minute)
+		extracts = append(extracts, trace.Trace{
+			ID: trace.NewID(at), Name: trace.NameExtract, Time: at, Input: json.RawMessage("{}"),
+			Output: json.RawMessage(fmt.Sprintf(`{"conclusion":"proposed","candidate":{"id":"lesson-%d","version":1}}`, i)),
+		})
+		require.NoError(t, stores.traces.Append(ctx, extracts[i].Record()))
+	}
+	decided := exportAt.Add(time.Hour)
+	for _, id := range []string{"lesson-0", "manual"} {
+		require.NoError(t, stores.items.Append(ctx, record.Knowledge{
+			ID: id, Version: 1, Kind: string(knowledge.KindJudgment), Content: "Use git -C", Status: string(knowledge.StatusApproved),
+			Approver: "ann", ApprovedAt: decided, Time: decided, Author: "claude",
+		}))
+	}
+	c := &otlpCollector{}
+	srv := httptest.NewServer(c)
+	t.Cleanup(srv.Close)
+	getenv := func(k string) string { return map[string]string{envRecordDir: records}[k] }
+	var stderr bytes.Buffer
+	code := runExport([]string{"otel", "--protocol", "http/json", "--endpoint", srv.URL + "/v1/traces"}, getenv, time.Now, &bytes.Buffer{}, &stderr)
+	require.Equal(t, 0, code, stderr.String())
+	links := map[string][]string{}
+	for _, s := range c.spans {
+		for _, l := range s.Links {
+			links[s.SpanID] = append(links[s.SpanID], l.SpanID)
+		}
+	}
+	tcs := []struct {
+		name string
+		args string
+		want []string
+	}{
+		{"a version drafted before eight newer extractions links that extraction", "lesson-0", []string{otel.TraceSpan(extracts[0].ID).SpanID}},
+		{"a version no extraction drafted links nothing", "manual", nil},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			span := otel.DecisionSpan(otel.Ref{ID: tc.args, Version: 1}, string(knowledge.StatusApproved), decided)
+
+			assert.Equal(t, tc.want, links[span.SpanID])
+		})
+	}
+}
+
 // An export that fails leaves the mark and its error names neither the token of the endpoint query nor a header value
 // 1. a collector that refuses the logs fails it after the traces went out
 // 2. a collector that redirects fails it so neither the records nor the headers reach the place it names
@@ -795,7 +848,7 @@ func TestExportWithNoCommand(t *testing.T) {
 	env := map[string]string{"HOME": home, envRecordDir: records}
 	getenv := func(k string) string { return env[k] }
 	var out bytes.Buffer
-	require.Equal(t, 0, runOTel([]string{"set", "--endpoint", srv.URL, "--protocol", "http/json"}, getenv, &out, &out), out.String())
+	require.Equal(t, 0, runOTel([]string{"set", "--endpoint", srv.URL, "--protocol", "http/json"}, getenv, atTerminal, &out, &out), out.String())
 	at := exportAt
 	now := func() time.Time { return at }
 	out.Reset()

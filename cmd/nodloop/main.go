@@ -34,12 +34,12 @@ commands:
                             that names a choice of the question shown is kept from being judged and the capture records
                             it. instructions records the path and an HMAC of
                             the content of each CLAUDE.md and rules file Claude Code loads, leaving out approved.md and
-                            auto memory. All exit 0.
+                            auto memory and refusing any other file. All exit 0.
                             --host reads the input and writes the answer of that agent and labels the run host,
                             claude-code by default. codex runs every hook. cursor and copilot run start and stop alone:
                             start adds every item and stop records no run since their input holds no answer. Their hook
-                            files are in examples/hooks. The session mode is NODLOOP_SESSION, then config session_mode,
-                            then deferred: deferred records verdicts silently and drafts their lessons after the turn,
+                            files are in examples/hooks. The session mode is config session_mode, deferred by default:
+                            deferred records verdicts silently and drafts their lessons after the turn,
                             manual leaves out the note and off records nothing. immediate of an earlier release reads as
                             deferred
   session capture --session <id> [--transcript <path>] [--model <m>]
@@ -207,7 +207,8 @@ commands:
   llm set chat --base-url <u> --model <m> [--key-env <ENV>] | llm set claude [--model <m>]
                             Call an OpenAI compatible Chat Completions endpoint such as http://localhost:11434/v1 of
                             Ollama instead of claude -p in every command that calls a model, or claude with a default
-                            model NODLOOP_LLM_MODEL still overrides. The key is read from the env when a command starts
+                            model NODLOOP_LLM_MODEL still overrides in a command you run, never in a pass a hook or
+                            another command starts in the background. The key is read from the env when a command starts
                             and never saved. Only an interactive terminal outside an agent session sets it, since the
                             backend also answers as the judge of curate
   llm unset                 Every command calls claude -p again, only at an interactive terminal outside an agent session
@@ -218,13 +219,15 @@ commands:
   config holdout [<share>]  Print or save the share of draws that get no item so report effect can compare: each Claude
                             Code conversation is one draw, and each holdout key a producer passes to knowledge_for, to
                             knowledge for --holdout-key or to the nodloop-server it reads at start is one draw.
-                            The Go package takes WithHoldout instead. 0 by default
+                            The Go package takes WithHoldout instead. 0 by default. Only an interactive terminal outside
+                            an agent session saves one
   config retention [<days>] Print or save the whole days of unjudged and uncited runs the records keep. 0 by default
                             keeps every run and fewer than 7 is refused. Reports then read the runs of that window and
-                            the text of report loop, critic and effect names its start in a first window line
+                            the text of report loop, critic and effect names its start in a first window line. Only an
+                            interactive terminal outside an agent session saves one
   config session_mode [<mode>]
                             Print or save how a conversation records the verdicts it infers: deferred, manual or off.
-                            deferred by default and NODLOOP_SESSION overrides it. Only an interactive terminal outside an
+                            deferred by default and no variable overrides it. Only an interactive terminal outside an
                             agent session saves one
   anchor [add <path> | remove <path>]
                             List what nodloop reads as your judgment on record in every place: the lessons you approved,
@@ -236,7 +239,7 @@ commands:
                             Act on what curate prepared or carried out: judge a lesson keep, undo or scope, answer or
                             dismiss a question, pause a change kind or a scope and resume it, set a knob within its range,
                             reanchor a place, reverse an earlier intervention, or digest for the cursor since your last
-                            judgment. The target is id:version, a compaction, a question, a kind, a pause, a knob such as
+                            decision. The target is id:version, a compaction, a question, a kind, a pause, a knob such as
                             audit_tier1, a producer or an intervention. --payload takes the JSON of POST /v1/interventions.
                             Only an interactive terminal outside an agent session decides at once under config approver,
                             else person. From a script or the shell of an agent it records a proposal the person is asked about
@@ -247,9 +250,8 @@ commands:
                             which judges whether the user's message corrects or approves the previous answer before the
                             conversation does, and judge, where the endpoint answers beside the three claude judges
                             whether your recorded decisions settle a change curate prepared. The key is read from the
-                            env at call time and never saved. Every answer is recorded as a classify trace. The judge and
-                            the reaction point predict you, so only an interactive terminal outside an agent session sets
-                            or unsets them
+                            env at call time and never saved. Every answer is recorded as a classify trace. Each point
+                            judges for you, so only an interactive terminal outside an agent session sets or unsets one
   classifier unset <point>  The point asks claude alone again
   classifier list           Every point with its endpoint or claude alone
   classifier probe <point>  Ask the endpoint of the point one question and print its answer and time
@@ -259,8 +261,9 @@ commands:
                             extractions start export otel --pending after what they record. The endpoint is the base URL
                             /v1/traces and /v1/logs join, such as http://127.0.0.1:4318. Headers are read from the variable
                             --headers-env names at each export and never saved. --no-logs sends traces only, for Langfuse,
-                            Phoenix or Datadog. --content also sends outputs, reasons, notes and candidate text
-  otel unset                Export nothing on its own again
+                            Phoenix or Datadog. --content also sends outputs, reasons, notes and candidate text. Only an
+                            interactive terminal outside an agent session sets it
+  otel unset                Export nothing on its own again, only at an interactive terminal outside an agent session
   otel                      Print the saved target
   export otel [--endpoint <url>] [--protocol <p>] [--header <Name=value>] [--since <RFC3339> | --pending] [--with-content]
                             Send the records as OTLP traces and logs of the OpenTelemetry GenAI and OpenInference conventions:
@@ -367,7 +370,7 @@ func run(args []string, getenv func(string) string, stdin io.Reader, stdout io.W
 		"server":     func([]string) int { return fail(stderr, "server", errServerMoved) },
 		"doctor":     func(args []string) int { return runDoctor(args, getenv, time.Now, stdout, stderr) },
 		"export":     func(args []string) int { return runExport(args, getenv, time.Now, stdout, stderr) },
-		"otel":       func(args []string) int { return runOTel(args, getenv, stdout, stderr) },
+		"otel":       func(args []string) int { return runOTel(args, getenv, person, stdout, stderr) },
 		"version": func([]string) int {
 			fmt.Fprintln(stdout, buildVersion())
 			return 0

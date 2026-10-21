@@ -134,7 +134,7 @@ func Open(dir string, opts ...Option) (*Client, error) {
 		marks:  retain.NewMarker(dir), pruneFailed: o.pruneFailed,
 		// The package starts no curate pass so a proposal waits for the next pass of a CLI or a plugin session over the directory
 		intervener: curate.NewIntervener(ledger, traces, curate.InterveneSetting{
-			Cursor: schema.CursorAt, KnowledgeCursor: schema.KnowledgeCursor,
+			Cursor: schema.CursorAt, KnowledgeCursor: schema.KnowledgeCursor, Turn: curate.FileTurn(dir),
 		}, o.now),
 	}
 	if days == 0 {

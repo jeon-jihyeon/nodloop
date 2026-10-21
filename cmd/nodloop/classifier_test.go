@@ -206,7 +206,7 @@ func TestRunClassifierProbe(t *testing.T) {
 	t.Cleanup(srv.Close)
 	home := t.TempDir()
 	getenv := func(k string) string { return map[string]string{"HOME": home, "LAYA_KEY": "secret"}[k] }
-	require.Equal(t, 0, runClassifier([]string{"set", "critic", "--url", srv.URL, "--key-env", "LAYA_KEY"}, getenv, time.Now, trace.ProofNone, &bytes.Buffer{}, &bytes.Buffer{}))
+	require.Equal(t, 0, runClassifier([]string{"set", "critic", "--url", srv.URL, "--key-env", "LAYA_KEY"}, getenv, time.Now, atTerminal, &bytes.Buffer{}, &bytes.Buffer{}))
 	var stdout, stderr bytes.Buffer
 
 	code := runClassifier([]string{"probe", "critic"}, getenv, time.Now, trace.ProofNone, &stdout, &stderr)

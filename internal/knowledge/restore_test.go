@@ -272,6 +272,53 @@ func TestLedgerReverseRefused(t *testing.T) {
 	}
 }
 
+// Only the records a reverse of the stamp writes took it back and another write of the same id never does
+func TestSetTakenBack(t *testing.T) {
+	f := newRestoreFixture()
+	type args struct {
+		// The write under d1 after the approve of k1 under x1
+		then            func(ctx context.Context, l *knowledge.Ledger) error
+		stamp, decision string
+	}
+	reverse := func(ctx context.Context, l *knowledge.Ledger) error { return testkit.Err(l.Reverse(ctx, "x1", "ann")) }
+	retire := func(ctx context.Context, l *knowledge.Ledger) error {
+		return testkit.Err(l.Retire(ctx, "k1", 1, "ann"))
+	}
+	more := func(ctx context.Context, l *knowledge.Ledger) error {
+		if err := reverse(ctx, l); err != nil {
+			return err
+		}
+		return testkit.Err(l.Retire(ctx, "k1", 2, "ann"))
+	}
+	tcs := []struct {
+		name string
+		args args
+		want bool
+	}{
+		{"the reverse of the stamp", args{reverse, "x1", "d1"}, true},
+		{"a retire of the version the stamp approved", args{retire, "x1", "d1"}, false},
+		{"a reverse with another write of the id under the decision", args{more, "x1", "d1"}, false},
+		{"a decision that wrote nothing", args{reverse, "x1", "d9"}, false},
+		{"an empty decision", args{reverse, "x1", ""}, false},
+		{"a stamp no record names", args{reverse, "x9", "d1"}, false},
+	}
+	ctx := context.Background()
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			l := f.ledger(t)
+			require.NoError(t, testkit.Err(l.Under("x1").Approve(ctx, "k1", 1, "ann")))
+			require.NoError(t, tc.args.then(ctx, l.Under("d1")))
+			all, err := l.All(ctx)
+			require.NoError(t, err)
+
+			got := all.TakenBack(tc.args.stamp, tc.args.decision, "ann")
+
+			assert.Equal(t, tc.want, got)
+		})
+	}
+}
+
 func TestLedgerRestore(t *testing.T) {
 	f := newRestoreFixture()
 	long, _, legacy, _ := f.extras()

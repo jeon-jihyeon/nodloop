@@ -561,9 +561,8 @@ func TestRunHookStopStartsTheDailyCurate(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			home, records, repo := hookHome(t, "use git -C")
-			getenv := func(k string) string {
-				return map[string]string{"HOME": home, envRecordDir: records, envSession: tc.args.session}[k]
-			}
+			saveMode(t, home, tc.args.session)
+			getenv := func(k string) string { return map[string]string{"HOME": home, envRecordDir: records}[k] }
 			if tc.args.mark != "" {
 				require.NoError(t, os.WriteFile(filepath.Join(records, curate.MarkFile), []byte(tc.args.mark), 0o600))
 			}

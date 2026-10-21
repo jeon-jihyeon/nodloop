@@ -17,7 +17,7 @@ const positionMark = "@"
 
 // Where a page ended
 // 1. a page answers the position its store read up to so the next page reads on in the order the store appended records
-// 2. a cursor of a time and a record_id starts after them by time as a digest names the last judgment of a person
+// 2. a cursor of a time and a record_id starts after them by time as a digest names the last decision of a person
 type Cursor struct {
 	// Opaque to every reader but the store that answered it and empty for a cursor of a time
 	Position string
@@ -32,7 +32,7 @@ func CursorAt(at time.Time, recordID string) string {
 }
 
 // The opaque form of the cursor that starts after a knowledge record by time
-// The func a composition root hands curate for a digest whose last judgment is a ledger record no trace names
+// The func a composition root hands curate for a digest whose last decision is a ledger record no trace names
 func KnowledgeCursor(k record.Knowledge) string {
 	// The record_id of a knowledge record is a digest of its fields and never fails
 	id, _ := StoreKnowledge.recordID(keys{ID: k.ID, Version: k.Version, Status: k.Status, Time: k.Time})

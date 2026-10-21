@@ -128,7 +128,7 @@ func (c configCommand) list(getenv func(string) string) error {
 	if err != nil {
 		return err
 	}
-	mode, err := sessionModeOf(getenv(envSession), uc.SessionMode)
+	mode, err := sessionModeOf(uc.SessionMode)
 	session := string(mode)
 	if err != nil {
 		session = err.Error()
@@ -151,7 +151,7 @@ func (c configCommand) list(getenv func(string) string) error {
 	}
 	rows := []struct{ name, env, configured, value string }{
 		{"record_dir", envRecordDir, uc.RecordDir, records},
-		{"session_mode", envSession, uc.SessionMode, session},
+		{"session_mode", "", uc.SessionMode, session},
 		{"approver", "", uc.Approver, uc.Approver},
 		{"holdout", "", share, cmp.Or(share, "0")},
 		{"retention", "", days, cmp.Or(days, "0")},
@@ -202,8 +202,12 @@ func (c configCommand) approver(name string) error {
 }
 
 // Prints the saved share or saves the one given
-// A share of 1 or more would withhold every item so it is refused
+// 1. saving needs the terminal proof since the share decides which sessions get no lesson and so what report effect counts
+// 2. a share of 1 or more would withhold every item so it is refused
 func (c configCommand) holdout(value string) error {
+	if value != "" && c.proof == trace.ProofNone {
+		return fmt.Errorf("holdout: %w", errPersonOnly)
+	}
 	if value == "" {
 		uc, err := c.home.readConfig()
 		if err != nil {
@@ -227,8 +231,12 @@ func (c configCommand) holdout(value string) error {
 }
 
 // Prints the saved days or saves the ones given
-// 0 keeps every trace and fewer than retain MinDays is refused since the hooks look back that far for the previous run of a session
+// 1. saving needs the terminal proof since the days decide which records of the person are kept
+// 2. 0 keeps every trace and fewer than retain MinDays is refused since the hooks look back that far for the previous run of a session
 func (c configCommand) retention(value string) error {
+	if value != "" && c.proof == trace.ProofNone {
+		return fmt.Errorf("retention: %w", errPersonOnly)
+	}
 	if value == "" {
 		uc, err := c.home.readConfig()
 		if err != nil {
@@ -268,7 +276,7 @@ func (c configCommand) sessionMode(value string) error {
 		if err != nil {
 			return err
 		}
-		mode, err := sessionModeOf("", uc.SessionMode)
+		mode, err := sessionModeOf(uc.SessionMode)
 		if err != nil {
 			return err
 		}

@@ -170,6 +170,39 @@ func TestKnowledgeDecisionsSerialize(t *testing.T) {
 	assert.Len(t, all, 1)
 }
 
+// An append of knowledge waits while a decision of the tenant holds the lock
+// One whose context ends meanwhile fails with ErrAppend and writes nothing
+func TestKnowledgeAppendWaitsForDecision(t *testing.T) {
+	db, tenant := open(t)
+	ctx := context.Background()
+	store := db.Knowledge(tenant)
+	deciding, release := make(chan struct{}), make(chan struct{})
+	decided := make(chan error, 1)
+	go func() {
+		decided <- store.AppendDecided(ctx, func([]record.Knowledge) ([]record.Knowledge, error) {
+			close(deciding)
+			<-release
+			return []record.Knowledge{{ID: "decided", Version: 1}}, nil
+		})
+	}()
+	select {
+	case <-deciding:
+	case err := <-decided:
+		t.Fatalf("the decision ended before it decided: %v", err)
+	}
+	timed, cancel := context.WithTimeout(ctx, 200*time.Millisecond)
+	defer cancel()
+
+	waitErr := store.Append(timed, record.Knowledge{ID: "gave-up", Version: 1})
+	close(release)
+	require.NoError(t, <-decided)
+	all, err := store.List(ctx)
+	require.NoError(t, err)
+
+	assert.ErrorIs(t, waitErr, pg.ErrAppend)
+	assert.Equal(t, []record.Knowledge{{ID: "decided", Version: 1}}, all)
+}
+
 // Servers that open one empty database at once all create or find the tables
 // Each run uses a schema of its own so the tables are missing when the opens race
 func TestOpenConcurrent(t *testing.T) {
@@ -178,8 +211,12 @@ func TestOpenConcurrent(t *testing.T) {
 	dsn := os.Getenv("NODLOOP_TEST_POSTGRES")
 	conn, err := pgx.Connect(context.Background(), dsn)
 	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = conn.Exec(context.Background(), "DROP SCHEMA "+schema+" CASCADE")
+		_ = conn.Close(context.Background())
+	})
 	_, err = conn.Exec(context.Background(), "CREATE SCHEMA "+schema)
-	require.NoError(t, errors.Join(err, conn.Close(context.Background())))
+	require.NoError(t, err)
 	sep := "?"
 	if strings.Contains(dsn, "?") {
 		sep = "&"
@@ -198,35 +235,6 @@ func TestOpenConcurrent(t *testing.T) {
 	wg.Wait()
 
 	assert.NoError(t, errors.Join(errs...))
-}
-
-// A read in append order holds back the rows after a transaction still open so the row it commits later is never skipped
-func TestAfterWaitsForOpenTransactions(t *testing.T) {
-	db, tenant := open(t)
-	ctx := context.Background()
-	traces := db.Traces(tenant)
-	at := time.Date(2026, 10, 7, 9, 0, 0, 0, time.UTC)
-	slow := record.Trace{ID: trace.NewID(at), Name: "run", Time: at, Input: json.RawMessage(`{}`)}
-	fast := record.Trace{ID: trace.NewID(at.Add(time.Second)), Name: "run", Time: at.Add(time.Second), Input: json.RawMessage(`{}`)}
-	conn, err := pgx.Connect(ctx, os.Getenv("NODLOOP_TEST_POSTGRES"))
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = conn.Close(ctx) })
-	tx, err := conn.Begin(ctx)
-	require.NoError(t, err)
-	data, err := json.Marshal(slow)
-	require.NoError(t, err)
-	_, err = tx.Exec(ctx, `INSERT INTO nodloop_traces (tenant, id, name, session_id, data) VALUES ($1, $2, $3, '', $4)`, tenant, slow.ID, slow.Name, data)
-	require.NoError(t, err)
-	require.NoError(t, traces.Append(ctx, fast))
-
-	held, at1, err := traces.After(ctx, record.TraceFilter{}, "")
-	require.NoError(t, err)
-	require.NoError(t, tx.Commit(ctx))
-	both, _, err := traces.After(ctx, record.TraceFilter{}, at1)
-	require.NoError(t, err)
-
-	assert.Empty(t, held, "the committed row waits behind the open transaction")
-	assert.Equal(t, []record.Trace{slow, fast}, both)
 }
 
 // Outcomes read in append order from the position the read before answered
@@ -250,10 +258,155 @@ func TestOutcomeStoreAfter(t *testing.T) {
 	none, again, err := store.After(ctx, end, 0)
 	require.NoError(t, err)
 	_, _, goneErr := store.After(ctx, "x", 0)
+	_, _, zeroErr := store.After(ctx, "0", 0)
 
 	assert.Equal(t, outcomes[:1], first)
 	assert.Equal(t, outcomes[1:], rest)
 	assert.Empty(t, none)
 	assert.Equal(t, end, again)
 	assert.ErrorIs(t, goneErr, record.ErrPositionGone)
+	assert.ErrorIs(t, zeroErr, record.ErrPositionGone, "no read answers the position before every row")
+}
+
+// An append that cannot land fails with ErrAppend
+// 1. a record that does not encode fails before the database
+// 2. a canceled append fails before it takes the lock
+func TestAppendFails(t *testing.T) {
+	db, tenant := open(t)
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+	tcs := []struct {
+		name string
+		args func() error
+	}{
+		{"a trace that does not encode", func() error {
+			return db.Traces(tenant).Append(context.Background(), record.Trace{ID: "r1", Input: json.RawMessage(`{`)})
+		}},
+		{"a canceled trace", func() error {
+			return db.Traces(tenant).Append(canceled, record.Trace{ID: "r1", Input: json.RawMessage(`{}`)})
+		}},
+		{"a canceled verdict", func() error {
+			return db.Feedback(tenant).Append(canceled, record.Feedback{TraceID: "r1"})
+		}},
+		{"a canceled outcome", func() error {
+			return db.Outcomes(tenant).Append(canceled, record.Outcome{TraceID: "r1"})
+		}},
+		{"a canceled knowledge record", func() error {
+			return db.Knowledge(tenant).Append(canceled, record.Knowledge{ID: "k"})
+		}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.ErrorIs(t, tc.args(), pg.ErrAppend)
+		})
+	}
+}
+
+// A read in append order that cannot go on fails with ErrRead
+// 1. a canceled read fails before any row
+// 2. a row whose data does not decode fails the read
+func TestAfterFails(t *testing.T) {
+	db, tenant := open(t)
+	ctx := context.Background()
+	conn, err := pgx.Connect(ctx, os.Getenv("NODLOOP_TEST_POSTGRES"))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = conn.Close(ctx) })
+	_, err = conn.Exec(ctx, `INSERT INTO nodloop_outcomes (tenant, trace_id, data) VALUES ($1, 't1', '{"time":"noon"}')`, tenant)
+	require.NoError(t, err)
+	canceled, cancel := context.WithCancel(ctx)
+	cancel()
+
+	_, _, tracesErr := db.Traces(tenant).After(canceled, record.TraceFilter{}, "")
+	_, _, outcomesErr := db.Outcomes(tenant).After(canceled, "", 0)
+	_, _, decodeErr := db.Outcomes(tenant).After(ctx, "", 0)
+
+	assert.ErrorIs(t, tracesErr, pg.ErrRead)
+	assert.ErrorIs(t, outcomesErr, pg.ErrRead)
+	assert.ErrorIs(t, decodeErr, pg.ErrRead)
+}
+
+// Appends of one tenant from two connections at once reach a reader paging meanwhile
+// 1. every row comes once and none is passed over
+// 2. the rows of each writer come in the order it appended them
+func TestAfterTakesConcurrentAppendsOnce(t *testing.T) {
+	db, tenant := open(t)
+	ctx := context.Background()
+	other, err := pg.Open(ctx, os.Getenv("NODLOOP_TEST_POSTGRES"))
+	require.NoError(t, err)
+	t.Cleanup(other.Close)
+	writers := map[string]*pg.TraceStore{"a": db.Traces(tenant), "b": other.Traces(tenant)}
+	want := map[string][]string{}
+	errs := make(chan error, len(writers))
+	var wg sync.WaitGroup
+	for name, store := range writers {
+		var ids []string
+		for i := range 200 {
+			ids = append(ids, fmt.Sprintf("%s-%03d", name, i))
+		}
+		want[name] = ids
+		wg.Go(func() {
+			for _, id := range ids {
+				err := store.Append(ctx, record.Trace{ID: id, Name: "run", Input: json.RawMessage(`{}`)})
+				if err != nil {
+					errs <- err
+					return
+				}
+			}
+		})
+	}
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	got := map[string][]string{}
+	from := ""
+	for finished := false; ; {
+		select {
+		case <-done:
+			finished = true
+		default:
+		}
+		page, next, err := db.Traces(tenant).After(ctx, record.TraceFilter{Limit: 7}, from)
+		require.NoError(t, err)
+		for _, tr := range page {
+			got[tr.ID[:1]] = append(got[tr.ID[:1]], tr.ID)
+		}
+		from = next
+		if finished && len(page) == 0 {
+			break
+		}
+	}
+	close(errs)
+
+	require.NoError(t, <-errs)
+	assert.Equal(t, want, got)
+}
+
+// A transaction left open in another database of the cluster never holds a page back
+// It takes a transaction id since a snapshot of the cluster counts only such a transaction as open
+// The other database is postgres since every cluster has it
+func TestAfterIgnoresOtherDatabases(t *testing.T) {
+	db, tenant := open(t)
+	ctx := context.Background()
+	cfg, err := pgx.ParseConfig(os.Getenv("NODLOOP_TEST_POSTGRES"))
+	require.NoError(t, err)
+	cfg.Database = "postgres"
+	conn, err := pgx.ConnectConfig(ctx, cfg)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = conn.Close(ctx) })
+	tx, err := conn.Begin(ctx)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = tx.Rollback(ctx) })
+	_, err = tx.Exec(ctx, `SELECT pg_current_xact_id()`)
+	require.NoError(t, err)
+	at := time.Date(2026, 10, 7, 9, 0, 0, 0, time.UTC)
+	run := record.Trace{ID: "r1", Name: "run", Time: at, Input: json.RawMessage(`{}`)}
+	require.NoError(t, db.Traces(tenant).Append(ctx, run))
+
+	page, _, err := db.Traces(tenant).After(ctx, record.TraceFilter{}, "")
+
+	require.NoError(t, err)
+	assert.Equal(t, []record.Trace{run}, page)
 }

@@ -180,7 +180,7 @@ func TestRunHookStopQuestionHosts(t *testing.T) {
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			b := newQuestionBench(t, nil)
+			b := newQuestionBench(t, "")
 
 			shown, shownErr := b.hook(t, "stop", tc.args.host, tc.args.stop, b.svc, noStart)
 			exposes := len(b.traces(t, trace.NameExpose))

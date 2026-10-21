@@ -36,6 +36,8 @@ var (
 	errSessionTrace = errors.New("invalid session trace")
 	// The answer of the reaction member of the capture does not decode
 	errReactionInvalid = errors.New("reaction answer invalid")
+	// A file the instructions hook names that the host never loads as the person's instructions
+	errInstructionsForeign = errors.New("not a rules file Claude Code loads as the person's instructions")
 	// A transcript the capture would read that is no transcript Claude Code keeps for the session
 	errTranscriptForeign = errors.New("not the transcript Claude Code keeps for the session")
 	// A path anchor add would designate that names no regular file

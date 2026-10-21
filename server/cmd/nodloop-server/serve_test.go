@@ -102,10 +102,34 @@ func backends(t *testing.T) map[string]func(t *testing.T) tenantStores {
 			db, err := pg.Open(context.Background(), dsn)
 			require.NoError(t, err)
 			t.Cleanup(db.Close)
-			return prefixed{pgTenants{db: db}, fmt.Sprintf("t%d-", time.Now().UnixNano())}
+			return prefixed{pgTenants{db: db, turns: &tenantTurns{}}, fmt.Sprintf("t%d-", time.Now().UnixNano())}
 		}
 	}
 	return out
+}
+
+// The interventions of one tenant take turns whatever key submits and another tenant never waits for them
+func TestTenantTurns(t *testing.T) {
+	turns := &tenantTurns{}
+	release, err := turns.of("acme")()
+	require.NoError(t, err)
+	other, err := turns.of("beta")()
+	require.NoError(t, err)
+	other()
+	taken := make(chan struct{})
+	go func() {
+		next, _ := turns.of("acme")()
+		close(taken)
+		next()
+	}()
+
+	select {
+	case <-taken:
+		assert.Fail(t, "a second turn of the tenant was taken while the first was held")
+	case <-time.After(50 * time.Millisecond):
+	}
+	release()
+	<-taken
 }
 
 // Tenants under a prefix so a shared database starts empty for each test

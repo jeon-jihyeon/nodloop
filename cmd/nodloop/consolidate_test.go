@@ -29,11 +29,10 @@ var consolidateNow = time.Date(2026, 10, 12, 6, 0, 0, 0, time.UTC)
 func consolidateHome(t *testing.T, candidates int, session string) (getenv func(string) string, records, repo string) {
 	t.Helper()
 	home, records := t.TempDir(), t.TempDir()
+	saveMode(t, home, session)
 	repo = filepath.Join(t.TempDir(), "nodloop")
 	require.NoError(t, os.MkdirAll(filepath.Join(repo, ".git"), 0o755))
-	getenv = func(k string) string {
-		return map[string]string{"HOME": home, envRecordDir: records, envSession: session}[k]
-	}
+	getenv = func(k string) string { return map[string]string{"HOME": home, envRecordDir: records}[k] }
 	now := func() time.Time { return consolidateNow }
 	out := filepath.Join(home, "out.txt")
 	require.NoError(t, os.WriteFile(out, []byte("answer"), 0o600))

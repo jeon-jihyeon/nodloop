@@ -192,14 +192,14 @@ func TestRunConfigList(t *testing.T) {
 				"decision_points\t-\tdefault\nllm\tclaude\tdefault\nclaude binary\tclaude\tdefault\nmodel\tsonnet\tdefault\notel\t-\tdefault\n",
 		},
 		{
-			"config.json and the environment name their source and the environment wins",
+			"config.json and the environment name their source and the variable of an earlier release is ignored",
 			args{
 				`{"record_dir":"/saved","approver":"ann","holdout":0.1,"retention":30,"session_mode":"manual","classifiers":{"local":{"url":"http://x"}},` +
 					`"otel":{"endpoint":"http://192.0.2.1:4318","headers_env":"ACME_OTLP"},` +
 					`"decisions":{"critic":{"mode":"single","members":["local"]}},"server":{"keys":[{"name":"ci","tenant":"acme","role":"producer","sha256":"x"}]}}`,
-				map[string]string{envRecordDir: "/env", envSession: "off", envLLMModel: "opus"},
+				map[string]string{envRecordDir: "/env", "NODLOOP_SESSION": "off", envLLMModel: "opus"},
 			},
-			"record_dir\t/env\tNODLOOP_RECORD_DIR\nsession_mode\toff\tNODLOOP_SESSION\napprover\tann\tconfig.json\nholdout\t0.1\tconfig.json\nretention\t30\tconfig.json\n" +
+			"record_dir\t/env\tNODLOOP_RECORD_DIR\nsession_mode\tmanual\tconfig.json\napprover\tann\tconfig.json\nholdout\t0.1\tconfig.json\nretention\t30\tconfig.json\n" +
 				"decision_points\tcritic\tconfig.json\nllm\tclaude\tdefault\nclaude binary\tclaude\tdefault\n" +
 				"model\topus\tNODLOOP_LLM_MODEL\notel\thttp://192.0.2.1:4318\tconfig.json\n",
 		},
@@ -224,10 +224,10 @@ func TestRunConfigList(t *testing.T) {
 				"llm\tclaude\tdefault\nclaude binary\tclaude\tdefault\nmodel\tsonnet\tdefault\notel\t-\tdefault\n",
 		},
 		{
-			"an invalid NODLOOP_SESSION shows its error in its row",
-			args{"", map[string]string{envSession: "later"}},
+			"an invalid session_mode shows its error in its row",
+			args{`{"session_mode":"later"}`, nil},
 			"record_dir\t<home>/.nodloop/records\tdefault\n" +
-				"session_mode\tunknown session mode: NODLOOP_SESSION is \"later\". Use deferred, manual or off\tNODLOOP_SESSION\n" +
+				"session_mode\tunknown session mode: session_mode in config.json is \"later\". Use deferred, manual or off\tconfig.json\n" +
 				"approver\t-\tdefault\nholdout\t0\tdefault\nretention\t0\tdefault\ndecision_points\t-\tdefault\nllm\tclaude\tdefault\nclaude binary\tclaude\tdefault\nmodel\tsonnet\tdefault\notel\t-\tdefault\n",
 		},
 	}
