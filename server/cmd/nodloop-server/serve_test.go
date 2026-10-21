@@ -373,12 +373,15 @@ func TestRunServeRefuses(t *testing.T) {
 		want string
 	}{
 		{"a retention under a week", args{`{"retention":3,` + keys + `}`, "127.0.0.1:0"}, retain.ErrDaysTooShort.Error()},
+		{"an overflowing retention", args{`{"retention":106752,` + keys + `}`, "127.0.0.1:0"}, retain.ErrDaysTooLong.Error()},
 		{"a holdout of 1", args{`{"holdout":1,` + keys + `}`, "127.0.0.1:0"}, knowledge.ErrHoldoutInvalid.Error()},
 		{"an address it cannot listen on", args{`{"retention":30,` + keys + `}`, "127.0.0.1:-1"}, "listen tcp"},
 		{"a key named nodloop", args{`{"server":{"keys":[{"name":"nodloop","tenant":"acme","role":"approver","sha256":"00"}]}}`, "127.0.0.1:0"},
 			knowledge.ErrApproverReserved.Error()},
 		{"a tenant edited into a path", args{`{"server":{"keys":[{"name":"ann","tenant":"../acme","role":"approver","sha256":"00"}]}}`, "127.0.0.1:0"},
 			errTenantInvalid.Error()},
+		{"duplicate key names across tenants", args{`{"server":{"keys":[{"name":"reviewer","tenant":"one","role":"approver","sha256":"00"},{"name":"reviewer","tenant":"two","role":"producer","sha256":"11"}]}}`, "127.0.0.1:0"},
+			errKeyExists.Error()},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {

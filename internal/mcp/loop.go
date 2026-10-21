@@ -122,9 +122,13 @@ func (s *Server) reaffirm(ctx context.Context, _ *sdk.CallToolRequest, in reaffi
 	if err := knowledge.CheckApprover(approver); err != nil {
 		return nil, reaffirmAnswer{}, err
 	}
+	release, err := s.takeTurn()
+	if err != nil {
+		return nil, reaffirmAnswer{}, err
+	}
+	defer release()
 	judgment := trace.Intervention{Action: trace.ActionJudge, ID: in.ID, Version: in.Version, Choice: trace.ChoiceKeep, Proof: s.proof()}
 	var k knowledge.Knowledge
-	var err error
 	var wrote knowledge.Set
 	id := trace.NewID(s.now())
 	if judgment.Proof == trace.ProofNone {

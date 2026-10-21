@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"iter"
+	"math"
 	"slices"
 	"time"
 
@@ -23,8 +24,10 @@ const MinDays = 7
 // 0 keeps every trace so a record directory changes nothing until its user sets one
 type Days int
 
-// 0 or MinDays and more
 func (d Days) Check() error {
+	if d > Days(math.MaxInt64/int64(24*time.Hour)) {
+		return fmt.Errorf("%w: %d", ErrDaysTooLong, d)
+	}
 	if d == 0 || d >= MinDays {
 		return nil
 	}

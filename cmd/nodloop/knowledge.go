@@ -8,7 +8,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
@@ -16,6 +15,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/jeon-jihyeon/nodloop/internal/atomicfile"
+	"github.com/jeon-jihyeon/nodloop/internal/curate"
 	"github.com/jeon-jihyeon/nodloop/internal/feedback"
 	"github.com/jeon-jihyeon/nodloop/internal/jsonl"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
@@ -543,6 +543,11 @@ func (c knowledgeCommand) transition(ctx context.Context, action string, move mo
 		}
 		return c.proposal(ctx, action, judgment)
 	}
+	release, err := curate.FileTurn(c.app.cfg.recordDir)()
+	if err != nil {
+		return err
+	}
+	defer release()
 	before, err := c.ledger.All(ctx)
 	if err != nil {
 		return err
@@ -668,18 +673,13 @@ func (c knowledgeCommand) importFile(ctx context.Context, path string) error {
 	if c.proof == trace.ProofNone {
 		return fmt.Errorf("import: %w", errPersonOnly)
 	}
-	// 1. jsonl Open reads a missing file as empty so a wrong path would import nothing
-	// 2. a fifo would hold the read and a device or a file past inputLimit would fill memory
-	if err := atomicfile.Check(path, inputLimit); err != nil {
-		return err
-	}
-	file, err := jsonl.Open[knowledge.Knowledge](filepath.Dir(path), filepath.Base(path))
+	data, err := atomicfile.Read(path, inputLimit)
 	if err != nil {
 		return err
 	}
-	records, err := file.All()
+	records, err := jsonl.Decode[knowledge.Knowledge](data)
 	if err != nil {
-		return err
+		return fmt.Errorf("%s: %w", path, err)
 	}
 	imported, err := c.ledger.Import(ctx, records)
 	if err != nil {

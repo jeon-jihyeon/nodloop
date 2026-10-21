@@ -120,6 +120,29 @@ func past(n int) string {
 	return schema.Cursor{Position: strconv.Itoa(n)}.String()
 }
 
+func TestSourcePageModelErrors(t *testing.T) {
+	for _, name := range []string{"extract", "compact", "consolidate"} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			r := record.Trace{ID: "example", Name: name, Time: settled, Input: json.RawMessage(`{}`), Error: "private-model-stderr"}
+			if name == "extract" {
+				r.Output = json.RawMessage(`{"attempts":[{"error":"private-model-stderr"}]}`)
+			}
+			s := schema.Source{Traces: traces{r}}
+
+			without, err := s.Page(t.Context(), schema.Query{Kind: name})
+			require.NoError(t, err)
+			with, err := s.Page(t.Context(), schema.Query{Kind: name, Content: true})
+			require.NoError(t, err)
+
+			require.Len(t, without.Records, 1)
+			require.Len(t, with.Records, 1)
+			assert.NotContains(t, string(without.Records[0]), "private-model-stderr")
+			assert.Contains(t, string(with.Records[0]), "private-model-stderr")
+		})
+	}
+}
+
 const (
 	runOne      = `{"record_kind":"run","record_id":"t1","id":"t1","name":"run","time":"2026-10-06T09:00:00Z","input":{"applied":[]},"usage":{"input_tokens":0,"output_tokens":0,"cache_read":0,"cache_create":0,"cost_usd":0},"duration_ms":0,"producer":"bot","schema_version":1}`
 	runTwo      = `{"record_kind":"run","record_id":"t2","id":"t2","name":"run","time":"2026-10-06T09:00:00Z","input":{"applied":[]},"usage":{"input_tokens":0,"output_tokens":0,"cache_read":0,"cache_create":0,"cost_usd":0},"duration_ms":0,"producer":"bot","schema_version":1}`
@@ -248,6 +271,20 @@ func TestSourceReadRefuses(t *testing.T) {
 	_, _, err := source().Read(context.Background(), schema.Kind{Name: "run", Store: "runs.csv"}, schema.Cursor{}, 0)
 
 	assert.ErrorIs(t, err, schema.ErrStoreUnknown)
+}
+
+func TestSourceReadUnlimitedTimeCursor(t *testing.T) {
+	for _, limit := range []int{0, -1} {
+		t.Run(strconv.Itoa(limit), func(t *testing.T) {
+			t.Parallel()
+			after := schema.Cursor{Time: settled.Add(-2 * time.Hour), RecordID: "t0"}
+
+			records, _, err := source().Read(t.Context(), kind(t, "run"), after, limit)
+
+			require.NoError(t, err)
+			assert.Len(t, records, 3)
+		})
+	}
 }
 
 // A limit past the most one page holds is cut to it and no limit holds the default

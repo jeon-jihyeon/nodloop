@@ -135,7 +135,7 @@ func (s Source) Read(ctx context.Context, k Kind, after Cursor, limit int) (Reco
 			later, counts = append(later, r), append(counts, i+1)
 		}
 	}
-	if limit == 0 || len(later) <= limit {
+	if limit <= 0 || len(later) <= limit {
 		return later, end, nil
 	}
 	// The position after the last record of the page is where a read of the records up to it ends

@@ -72,17 +72,23 @@ func readPayload(path string, stdin io.Reader) (curate.Request, error) {
 	case "":
 		return r, nil
 	case "-":
-		b, err = io.ReadAll(io.LimitReader(stdin, inputLimit))
+		b, err = io.ReadAll(io.LimitReader(stdin, inputLimit+1))
 	default:
 		b, err = atomicfile.Read(path, inputLimit)
 	}
 	if err != nil {
 		return r, err
 	}
+	if len(b) > inputLimit {
+		return r, fmt.Errorf("%w: %w", errPayload, atomicfile.ErrTooLarge)
+	}
 	dec := json.NewDecoder(strings.NewReader(string(b)))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&r); err != nil {
 		return r, fmt.Errorf("%w: %w", errPayload, err)
+	}
+	if err := dec.Decode(new(json.RawMessage)); !errors.Is(err, io.EOF) {
+		return r, errPayload
 	}
 	return r, nil
 }

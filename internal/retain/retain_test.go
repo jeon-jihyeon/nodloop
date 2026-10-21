@@ -485,6 +485,9 @@ func TestDaysCheck(t *testing.T) {
 		{"0 keeps every trace", 0, nil},
 		{"a week is the shortest", 7, nil},
 		{"a month passes", 30, nil},
+		{"the largest whole day duration passes", 106751, nil},
+		{"an overflowing duration is refused", 106752, retain.ErrDaysTooLong},
+		{"a much larger duration is refused", 200000, retain.ErrDaysTooLong},
 		{"a day is refused", 1, retain.ErrDaysTooShort},
 		{"6 days is refused", 6, retain.ErrDaysTooShort},
 		{"a negative count is refused", -1, retain.ErrDaysTooShort},
@@ -506,6 +509,8 @@ func TestDaysCutoff(t *testing.T) {
 		{"0 keeps every run", 0, time.Time{}},
 		{"days Check refuses keep every run", 3, time.Time{}},
 		{"a negative count keeps every run", -30, time.Time{}},
+		{"an overflowing duration keeps every run", 106752, time.Time{}},
+		{"the largest duration stays before now", 106751, now.Add(-106751 * 24 * time.Hour)},
 		{"whole days of 24 hours before now", 30, now.Add(-30 * 24 * time.Hour)},
 	}
 	for _, tc := range tcs {

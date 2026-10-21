@@ -834,6 +834,9 @@ func TestServerRunDuration(t *testing.T) {
 		{"the duration of the run lands in the trace", 1500, want{"", []int64{1500}}},
 		{"a run without a duration records none", 0, want{"", []int64{0}}},
 		{"a negative duration is refused and records nothing", -1, want{trace.ErrDurationNegative.Error(), nil}},
+		{"the largest whole millisecond duration is kept", 9223372036854, want{"", []int64{9223372036854}}},
+		{"an overflowing duration is refused before conversion", 9223372036855, want{mcp.ErrDurationInvalid.Error(), nil}},
+		{"a negative overflowing duration is refused before conversion", -9223372036855, want{trace.ErrDurationNegative.Error(), nil}},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {

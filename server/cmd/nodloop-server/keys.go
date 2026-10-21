@@ -73,6 +73,13 @@ func (c serverConfig) check() error {
 	if c.has(knowledge.ApproverNodloop) {
 		return fmt.Errorf("%w: remove the key %s and add it again under another name", knowledge.ErrApproverReserved, knowledge.ApproverNodloop)
 	}
+	names := make(map[string]bool, len(c.Keys))
+	for _, k := range c.Keys {
+		if names[k.Name] {
+			return fmt.Errorf("%w: %s", errKeyExists, k.Name)
+		}
+		names[k.Name] = true
+	}
 	for _, t := range c.tenants() {
 		if !tenantName.MatchString(t) {
 			return fmt.Errorf("%w: %q. Use lower case letters, digits, - and _", errTenantInvalid, t)

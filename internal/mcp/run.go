@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"math"
 	"time"
 	"unicode/utf8"
 
@@ -49,7 +50,7 @@ func (s *Server) checkCompaction(
 
 type runInput struct {
 	Producer string              `json:"producer" jsonschema:"who made the output such as session"`
-	Labels   map[string][]string `json:"labels,omitempty" jsonschema:"the situation of the run as key to values such as repo, dir or task. Knowledge scoped to these labels reaches it"`
+	Labels   map[string][]string `json:"labels,omitempty" jsonschema:"the situation of the run with one value per key. correlation preserves an external conversation id but is excluded from inferred knowledge scope"`
 	Subject  string              `json:"subject,omitempty" jsonschema:"what the run was about in a few words"`
 	Model    string              `json:"model,omitempty" jsonschema:"the one model the producer runs. Leave it out when the producer may switch models"`
 	Output   any                 `json:"output" jsonschema:"the output as it was given to the person, a JSON value or text"`
@@ -67,6 +68,12 @@ type runAnswer struct {
 // Records one output so a person can nod on it
 // AfterRun of the policy follows the record
 func (s *Server) run(ctx context.Context, _ *sdk.CallToolRequest, in runInput) (*sdk.CallToolResult, runAnswer, error) {
+	if in.DurationMS < 0 {
+		return nil, runAnswer{}, trace.ErrDurationNegative
+	}
+	if in.DurationMS > math.MaxInt64/int64(time.Millisecond) {
+		return nil, runAnswer{}, ErrDurationInvalid
+	}
 	refs, err := knowledge.NewRunInput(in.Applied, in.Withheld, "")
 	if err != nil {
 		return nil, runAnswer{}, err
