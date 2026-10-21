@@ -35,9 +35,12 @@ func (r *Reads) next() error {
 }
 
 // The ledger reads it so a test can let Prepare see the items and make the selection fail
+// Its writes fail after the allowed ones so a test sees a write of several records stop between two of them
 type FlakyKnowledge struct {
 	*knowledgefile.Store
 	Reads
+	// Counted apart from the reads
+	Appends Reads
 }
 
 func (f *FlakyKnowledge) List(ctx context.Context) ([]record.Knowledge, error) {
@@ -45,6 +48,13 @@ func (f *FlakyKnowledge) List(ctx context.Context) ([]record.Knowledge, error) {
 		return nil, err
 	}
 	return f.Store.List(ctx)
+}
+
+func (f *FlakyKnowledge) AppendDecided(ctx context.Context, decide func(all []record.Knowledge) ([]record.Knowledge, error)) error {
+	if err := f.Appends.next(); err != nil {
+		return err
+	}
+	return f.Store.AppendDecided(ctx, decide)
 }
 
 type FlakyFeedback struct {
@@ -61,7 +71,7 @@ func (f *FlakyFeedback) List(ctx context.Context, filter record.FeedbackFilter) 
 
 // Fails Heads and Prune after the allowed calls so a test sees a prune fail at its read or at its removal
 // Append fails after the allowed appends so a test sees a trace that is never recorded
-// List fails after the allowed lists so a test sees one read of a pass fail after the others
+// List and After fail after the allowed lists so a test sees one read of a pass or a page fail after the others
 // Get fails after the allowed gets so a test sees one trace that cannot be read where a missing one would be passed over
 type FlakyTraces struct {
 	*tracefile.Store
@@ -91,6 +101,13 @@ func (f *FlakyTraces) List(ctx context.Context, filter record.TraceFilter) ([]re
 		return nil, err
 	}
 	return f.Store.List(ctx, filter)
+}
+
+func (f *FlakyTraces) After(ctx context.Context, filter record.TraceFilter, from string) ([]record.Trace, string, error) {
+	if err := f.Lists.next(); err != nil {
+		return nil, from, err
+	}
+	return f.Store.After(ctx, filter, from)
 }
 
 func (f *FlakyTraces) Heads(ctx context.Context, names ...string) ([]record.Trace, error) {
@@ -179,7 +196,7 @@ func (c *Clock) Now() time.Time {
 	return now
 }
 
-// Moves the clock on without a read such as past the settle time of a records page
+// Moves the clock on without a read such as past the hour a correction waits for its own extraction
 func (c *Clock) Advance(d time.Duration) {
 	c.mu.Lock()
 	defer c.mu.Unlock()

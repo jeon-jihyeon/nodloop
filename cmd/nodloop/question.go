@@ -17,8 +17,8 @@ import (
 )
 
 // The one stop path that talks to the person after the run of the turn was recorded
-// 1. a question curate prepared through the answer shape of the host after its expose is on record
-// 2. otherwise a notice of what curate carried out in the place through Stop systemMessage on a host that shows one
+// 1. a question curate prepared through Stop additionalContext after its expose is on record
+// 2. otherwise a notice of what curate carried out in the place through Stop systemMessage
 // 3. curate is asked only for what the stop may still show so a stop after the question and the notice of its session makes no key
 func (c hookCommand) talk(ctx context.Context, sessionID string, place knowledge.RunScope, run string, all knowledge.Set) error {
 	asks, notices, err := c.showable(ctx, sessionID, place, all)
@@ -34,7 +34,7 @@ func (c hookCommand) talk(ctx context.Context, sessionID string, place knowledge
 	if err != nil {
 		return err
 	}
-	a := curate.Asking{Session: sessionID, Run: run, Place: place, Pushed: c.mode.infers(), Mark: c.mark, Seal: key.Sum, Words: c.words}
+	a := curate.Asking{Session: sessionID, Run: run, Place: place, Pushed: c.mode.infers(), Mark: c.mark, All: all, Seal: key.Sum, Words: c.words}
 	if asks {
 		asked, err := iv.Ask(ctx, a)
 		if err != nil || asked.Question.Key != "" {
@@ -52,13 +52,17 @@ func (c hookCommand) talk(ctx context.Context, sessionID string, place knowledge
 }
 
 // Whether the stop of the session may still show a question and a notice
-// 1. curate reads every question and answer on record so curate.json and the exposes of the session decide first
+// 1. a host whose replies code cannot read is shown nothing so every question stays due
+// 2. curate reads every question and answer on record so curate.json and the exposes of the session decide first
 // A stop after the one question and the one notice of its session reads one window of its exposes and no other record of curate
-// 2. exposes that cannot be read show nothing and the stop reports why
+// 3. exposes that cannot be read show nothing and the stop reports why
 func (c hookCommand) showable(ctx context.Context, sessionID string, place knowledge.RunScope, all knowledge.Set) (asks, notices bool, err error) {
+	if !c.host.talks() {
+		return false, false, nil
+	}
 	due := dueQuestions(c.mark.Due)
 	proposed, reaching := due.proposed(sessionID), c.mode.infers() && due.reaching(place)
-	notices = c.host.notices() && curate.Noticeable(all, place)
+	notices = curate.Noticeable(all, place)
 	if !proposed && !reaching && !notices {
 		return false, false, nil
 	}
@@ -69,12 +73,13 @@ func (c hookCommand) showable(ctx context.Context, sessionID string, place knowl
 	return proposed || reaching && !shown.pushed(), notices && !shown.noticed(), nil
 }
 
-// The question in the answer shape of the host and nothing for none
+// The question as Stop additionalContext and nothing for none
+// Claude Code continues the turn on it with no decision, which shows no error label as a block does
 func (c hookCommand) ask(q curate.Question) error {
 	if q.Key == "" {
 		return nil
 	}
-	return c.host.ask(c.out, q.Block())
+	return c.host.context(c.out, "Stop", q.Block())
 }
 
 // The person's own words on the runs as the verdicts keep them
@@ -144,11 +149,6 @@ func (a app) exposes(ctx context.Context, session string, since time.Time) (sess
 	return sessionExposes(trace.RestoreAll(found)), err
 }
 
-// Whether the stop after the run asked a question a typed word may answer
-func (xs sessionExposes) asked(run string) bool {
-	return len(xs.questions(run)) > 0
-}
-
 // The questions the stop after the run asked
 func (xs sessionExposes) questions(run string) []curate.Exposure {
 	var out []curate.Exposure
@@ -161,16 +161,11 @@ func (xs sessionExposes) questions(run string) []curate.Exposure {
 	return out
 }
 
-// The punctuation a reply word may end with as curate reads it
-// So keep followed by a comma still names keep
-const replyMarks = ".,!;:"
-
 // The choice the word names of a question the stop asked after the run and empty for none
-// Case and trailing punctuation are ignored as curate ignores them when it records the answer
+// curate names it so the hook and the capture read a reply as curate records it
 func (xs sessionExposes) named(run, word string) curate.Choice {
-	choice := curate.Choice(strings.TrimRight(strings.ToLower(word), replyMarks))
 	for _, x := range xs.questions(run) {
-		if slices.Contains(x.Choices, choice) {
+		if choice, ok := x.Names(word); ok {
 			return choice
 		}
 	}

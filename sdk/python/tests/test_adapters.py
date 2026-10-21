@@ -25,7 +25,7 @@ Approve = Callable[..., None]
 async def seed(c: Client, approve: Approve) -> None:
     """An item for acme and a veto on rm, both approved by the person at a terminal"""
     run = await c.record("bot", "answer", labels=ACME)
-    await c.judge(run, "reject", "ann", reason="missing the window")
+    await c.judge(run, "reject", reviewer="ann", reason="missing the window")
     for item_id, content, veto in (("window", "Quote the refund window", None), ("no-rm", "Never run rm", NO_RM)):
         p = await c.propose("judgment", content, from_run=run, item_id=item_id, veto=veto)
         approve(p.id, p.version)
@@ -154,7 +154,7 @@ async def test_langchain_create_agent(binary: str, records: str, approve: Approv
         await seed(c, approve)
         # A veto names the tool as this agent calls it
         run = await c.record("bot", "ran rm", labels=ACME)
-        await c.judge(run, "reject", "ann", reason="never rm")
+        await c.judge(run, "reject", reviewer="ann", reason="never rm")
         veto = {"tool": "bash", "when": [{"field": "commands", "match": "(?m)^rm "}], "example": {"command": "rm -rf /data"}}
         p = await c.propose("judgment", "Never run rm through bash", from_run=run, item_id="no-rm-bash", veto=veto)
         approve(p.id, p.version)

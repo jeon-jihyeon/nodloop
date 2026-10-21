@@ -177,11 +177,10 @@ func (c hookCommand) prompt(ctx context.Context, sessionID, message string, labe
 	if allErr != nil && !errors.Is(allErr, knowledgefile.ErrCorrupt) {
 		return allErr
 	}
-	runs, runsErr := c.recentRuns(ctx, sessionID)
-	answered := runs.answered()
+	recent, runsErr := c.recent(ctx, sessionID, trace.NameRefill)
+	answered := recent.runs().answered()
 	previous := trace.Traces(answered).Newest()
-	refill, refillErr := c.refill(ctx, sessionID, previous.Time)
-	runsErr = errors.Join(runsErr, refillErr)
+	refill := recent.newest(trace.NameRefill, previous.Time)
 	items := hookItems(all.For(sessionProducer, labels))
 	if c.holdout.WithholdsRun(sessionProducer, sessionID) {
 		items = nil
@@ -282,23 +281,14 @@ func (c hookCommand) recordTurn(ctx context.Context, sessionID string) error {
 // The prompt that began the turn wrote it
 // 2. else the previous run when a stop hook continued the turn since the turn went on from that stop
 // 3. else the zero time and the run records no duration
-func (c hookCommand) turnStart(ctx context.Context, sessionID string, previous trace.Trace, continued bool) (time.Time, error) {
-	if sessionID == "" {
-		return time.Time{}, nil
-	}
-	store, err := c.app.traces()
-	if err != nil {
-		return time.Time{}, err
-	}
-	since := cmp.Or(previous.Time, c.app.now().Add(-sessionWindow))
-	found, err := store.List(ctx, record.TraceFilter{Name: string(trace.NameTurn), SessionID: sessionID, Since: since, Limit: 1})
-	if turn := trace.Traces(trace.RestoreAll(found)).Newest(); turn.ID != "" && turn.Time.After(previous.Time) {
-		return turn.Time, err
+func (ts sessionTraces) turnStart(previous trace.Trace, continued bool) time.Time {
+	if turn := ts.newest(trace.NameTurn, previous.Time); turn.ID != "" && turn.Time.After(previous.Time) {
+		return turn.Time
 	}
 	if continued && previous.ID != "" {
-		return previous.Time, err
+		return previous.Time
 	}
-	return time.Time{}, err
+	return time.Time{}
 }
 
 // The items a session start added as a refill trace of the session
@@ -318,39 +308,14 @@ func (c hookCommand) recordRefill(ctx context.Context, sessionID string, added k
 	return store.Append(ctx, tr.Record())
 }
 
-// The newest refill of the session since the newest answer or none
-// 1. a refill before that answer names no context the answer did not record so the read stops at its time
-// 2. with no answer the read goes back sessionWindow
-func (c hookCommand) refill(ctx context.Context, sessionID string, answered time.Time) (trace.Trace, error) {
-	if sessionID == "" {
-		return trace.Trace{}, nil
-	}
-	store, err := c.app.traces()
-	if err != nil {
-		return trace.Trace{}, err
-	}
-	since := cmp.Or(answered, c.app.now().Add(-sessionWindow))
-	found, err := store.List(ctx, record.TraceFilter{Name: string(trace.NameRefill), SessionID: sessionID, Since: since, Limit: 1})
-	return trace.Traces(trace.RestoreAll(found)).Newest(), err
-}
-
-// The runs of the session within sessionWindow newest first back to the run before its newest answer
+// The runs of the session within sessionWindow newest first back to the run before its newest answer with the traces of the other names since
 // 1. the run before the answer bounds the turn the answer ended so the read reaches it too
-// 2. the read starts at two runs and doubles past continued runs since another stop hook may continue a turn more than once
-// 3. it ends at the first read that holds both or returns fewer runs than it asked for
-func (c hookCommand) recentRuns(ctx context.Context, sessionID string) (sessionTurns, error) {
-	for limit := 2; ; limit *= 2 {
-		runs, err := c.sessionRuns(ctx, sessionID, limit)
-		if len(runs) < limit || len(runs.answered()) > 1 {
-			return runs, err
-		}
-	}
-}
-
-// At most limit runs of the session within sessionWindow newest first
-// 1. an empty id would match the runs of every session so it has none
-// 2. a corrupt line returns the runs found with the error
-func (c hookCommand) sessionRuns(ctx context.Context, sessionID string, limit int) (sessionTurns, error) {
+// 2. the read starts at two traces and doubles past continued runs since another stop hook may continue a turn more than once
+// 3. it ends at the first read that holds both or returns fewer traces than it asked for
+// 4. the other names come in the same read so a session with no run yet reads its window once
+// 5. an empty id would match the traces of every session so it has none
+// 6. a corrupt line returns the traces found with the error
+func (c hookCommand) recent(ctx context.Context, sessionID string, others ...trace.Name) (sessionTraces, error) {
 	if sessionID == "" {
 		return nil, nil
 	}
@@ -358,9 +323,33 @@ func (c hookCommand) sessionRuns(ctx context.Context, sessionID string, limit in
 	if err != nil {
 		return nil, err
 	}
-	since := c.app.now().Add(-sessionWindow)
-	runs, err := store.List(ctx, record.TraceFilter{Name: string(trace.NameRun), SessionID: sessionID, Since: since, Limit: limit})
-	return sessionTurns(trace.RestoreAll(runs)), err
+	f := record.TraceFilter{Names: []string{string(trace.NameRun)}, SessionID: sessionID, Since: c.app.now().Add(-sessionWindow)}
+	for _, name := range others {
+		f.Names = append(f.Names, string(name))
+	}
+	for f.Limit = 2; ; f.Limit *= 2 {
+		found, err := store.List(ctx, f)
+		recent := sessionTraces(trace.RestoreAll(found))
+		if len(found) < f.Limit || len(recent.runs().answered()) > 1 {
+			return recent, err
+		}
+	}
+}
+
+// The traces of a session newest first
+type sessionTraces trace.Traces
+
+func (ts sessionTraces) runs() sessionTurns {
+	return sessionTurns(slices.DeleteFunc(slices.Clone(ts), func(t trace.Trace) bool { return t.Name != trace.NameRun }))
+}
+
+// The newest trace of the name at the time or later and the zero trace when none is
+func (ts sessionTraces) newest(name trace.Name, since time.Time) trace.Trace {
+	i := slices.IndexFunc(ts, func(t trace.Trace) bool { return t.Name == name && !t.Time.Before(since) })
+	if i < 0 {
+		return trace.Trace{}
+	}
+	return ts[i]
 }
 
 // The runs of a session newest first
@@ -427,11 +416,11 @@ func (c hookCommand) stop(ctx context.Context, sessionID string, labels trace.La
 	if c.host.answers() && strings.TrimSpace(string(answer)) == "" {
 		return nil
 	}
-	runs, runsErr := c.recentRuns(ctx, sessionID)
+	recent, runsErr := c.recent(ctx, sessionID, trace.NameTurn)
 	if runsErr != nil && !errors.Is(runsErr, tracefile.ErrCorrupt) {
 		return runsErr
 	}
-	previous := trace.Traces(runs).Newest()
+	previous := trace.Traces(recent.runs()).Newest()
 	all, allErr := c.all(ctx)
 	if allErr != nil && !errors.Is(allErr, knowledgefile.ErrCorrupt) {
 		return allErr
@@ -440,7 +429,7 @@ func (c hookCommand) stop(ctx context.Context, sessionID string, labels trace.La
 	var failed error
 	var run trace.Trace
 	if c.host.answers() {
-		run, failed = c.record(ctx, sessionID, labels, answer, all, previous, continued)
+		run, failed = c.record(ctx, sessionID, labels, answer, all, recent.turnStart(previous, continued), continued)
 	}
 	if c.export != nil && c.host.answers() && failed == nil {
 		failed = c.app.startExport(c.export)
@@ -472,12 +461,11 @@ func (c hookCommand) capture(sessionID string, t transcript, continued bool) err
 }
 
 // The answer as a run of the session with every fitting item of the place in its context and the duration of its turn
-// 1. a turn start that cannot be read leaves the duration out and still records the run
-// 2. a corrupt line is left to the read of the previous run that reports it already
-// 3. the run of a turn a stop hook continued is marked so no reader takes it for the answer the person judged
-// 4. the item hold takes the versions it keeps from the session out of applied and records every fitting version with its chance
+// 1. a zero start leaves the duration out and still records the run
+// 2. the run of a turn a stop hook continued is marked so no reader takes it for the answer the person judged
+// 3. the item hold takes the versions it keeps from the session out of applied and records every fitting version with its chance
 func (c hookCommand) record(
-	ctx context.Context, sessionID string, labels trace.Labels, answer reply, all knowledge.Set, previous trace.Trace, continued bool,
+	ctx context.Context, sessionID string, labels trace.Labels, answer reply, all knowledge.Set, start time.Time, continued bool,
 ) (trace.Trace, error) {
 	shown := hookItems(all.For(sessionProducer, labels)).fitting()
 	applied := shown.Refs()
@@ -498,10 +486,6 @@ func (c hookCommand) record(
 		return trace.Trace{}, err
 	}
 	tr.SessionID = sessionID
-	start, startErr := c.turnStart(ctx, sessionID, previous, continued)
-	if errors.Is(startErr, tracefile.ErrCorrupt) {
-		startErr = nil
-	}
 	if !start.IsZero() {
 		if tr, err = tr.Took(tr.Time.Sub(start)); err != nil {
 			return trace.Trace{}, err
@@ -511,7 +495,7 @@ func (c hookCommand) record(
 	if err != nil {
 		return trace.Trace{}, err
 	}
-	return tr, errors.Join(store.Append(ctx, tr.Record()), startErr)
+	return tr, store.Append(ctx, tr.Record())
 }
 
 // Starts records prune --daily in a process of its own when the daily prune is due

@@ -7,11 +7,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/jeon-jihyeon/nodloop/internal/atomicfile"
 	"github.com/jeon-jihyeon/nodloop/internal/curate"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	"github.com/jeon-jihyeon/nodloop/internal/schema"
@@ -63,6 +63,7 @@ func runIntervene(
 }
 
 // The payload of a file or of stdin for -, and the zero payload without one
+// stdin is read up to inputLimit like a file so a payload past it fails to decode
 func readPayload(path string, stdin io.Reader) (curate.Request, error) {
 	var r curate.Request
 	var b []byte
@@ -71,9 +72,9 @@ func readPayload(path string, stdin io.Reader) (curate.Request, error) {
 	case "":
 		return r, nil
 	case "-":
-		b, err = io.ReadAll(stdin)
+		b, err = io.ReadAll(io.LimitReader(stdin, inputLimit))
 	default:
-		b, err = os.ReadFile(path)
+		b, err = atomicfile.Read(path, inputLimit)
 	}
 	if err != nil {
 		return r, err
@@ -142,6 +143,6 @@ func (a app) intervener() (*curate.Intervener, error) {
 	}
 	return curate.NewIntervener(ledger, traces, curate.InterveneSetting{
 		Build: buildVersion(), Coverage: compactor.Coverage, Marks: curate.NewMarker(dir),
-		Cursor: schema.CursorAt,
+		Cursor: schema.CursorAt, KnowledgeCursor: schema.KnowledgeCursor,
 	}, a.now), nil
 }

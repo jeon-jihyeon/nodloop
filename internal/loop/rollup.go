@@ -165,8 +165,9 @@ func (rs Rollups) covers(t time.Time) bool {
 // The rollup of the closed cycle as JSON for retain to append before it prunes a run of the cycle
 // 1. it counts every run of the cycle and every verdict, outcome and knowledge record as they stand
 // 2. it counts the runs as effect counts them so a report reads the same from the rollup once the runs are gone
+// 3. no count reads an answer so the runs are read without their output
 func (s Stores) Rollup(ctx context.Context, c trace.Cycle) (json.RawMessage, error) {
-	found, err := s.Traces.List(ctx, record.TraceFilter{Name: string(trace.NameRun), Since: c.Start})
+	found, err := s.Traces.List(ctx, record.TraceFilter{Name: string(trace.NameRun), Since: c.Start, WithoutOutput: true})
 	if err != nil {
 		return nil, err
 	}

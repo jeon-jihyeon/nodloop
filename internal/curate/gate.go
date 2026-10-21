@@ -14,10 +14,11 @@ type Opening struct {
 // Every kind and bin tier 1 may carry out in the order the gate offers them
 // 1. a withdrawal first since it only returns to what the person confirmed
 // 2. then by bin from the most confident and within a bin by kind
+// A compaction is approved only with its passed coverage check that no pass holds so no pass decides one and no widening opens it
 func Openings() []Opening {
 	out := []Opening{{Kind: ChangeWithdraw}}
 	for _, b := range Bins() {
-		for _, k := range []ChangeKind{ChangeAdd, ChangeUpdate, ChangeCompaction} {
+		for _, k := range []ChangeKind{ChangeAdd, ChangeUpdate} {
 			out = append(out, Opening{Kind: k, Bin: b})
 		}
 	}

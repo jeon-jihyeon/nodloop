@@ -5,11 +5,11 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/jeon-jihyeon/nodloop/internal/atomicfile"
 	"github.com/jeon-jihyeon/nodloop/internal/curate"
 	knowledgefile "github.com/jeon-jihyeon/nodloop/internal/knowledge/file"
 	"github.com/jeon-jihyeon/nodloop/internal/textkey"
@@ -44,11 +44,12 @@ func (in instructionsInput) trace(session string, now time.Time) (trace.Trace, e
 // A rules file the session loaded as an instructions trace so curate reads the person's rules files as part of the anchor
 // 1. a file whose lines no person confirmed is left out
 // 2. the content is kept only as its HMAC and nothing reaches the context
+// 3. a path that names no regular file or one past inputLimit is refused so the hook never waits on a fifo
 func (c hookCommand) instructions(ctx context.Context, in hookInput) error {
 	if c.unconfirmed.holds(in.FilePath, in.MemoryType) {
 		return nil
 	}
-	content, err := os.ReadFile(in.FilePath)
+	content, err := atomicfile.Read(in.FilePath, inputLimit)
 	if err != nil {
 		return err
 	}

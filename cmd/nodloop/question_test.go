@@ -93,22 +93,20 @@ func (b questionBench) exposed(t *testing.T) (trace.Trace, curate.Exposure) {
 	return exposes[0], x
 }
 
-// The text a stop answer holds under the field of the host and the decision it names
-func stopAnswer(t *testing.T, stdout, field string) (text, decision string) {
+// The Stop additionalContext a stop answer holds and the decision it names
+func stopAnswer(t *testing.T, stdout string) (text, decision string) {
 	t.Helper()
 	if stdout == "" {
 		return "", ""
 	}
-	var answer map[string]any
-	require.NoError(t, json.Unmarshal([]byte(stdout), &answer), stdout)
-	decision, _ = answer["decision"].(string)
-	if field == "additionalContext" {
-		out, _ := answer["hookSpecificOutput"].(map[string]any)
-		text, _ = out[field].(string)
-		return text, decision
+	var answer struct {
+		Decision string `json:"decision"`
+		Output   struct {
+			Context string `json:"additionalContext"`
+		} `json:"hookSpecificOutput"`
 	}
-	text, _ = answer[field].(string)
-	return text, decision
+	require.NoError(t, json.Unmarshal([]byte(stdout), &answer), stdout)
+	return answer.Output.Context, answer.Decision
 }
 
 const questionStop = `{"session_id":"s1","cwd":"{repo}","last_assistant_message":"done"}`
@@ -116,52 +114,26 @@ const questionStop = `{"session_id":"s1","cwd":"{repo}","last_assistant_message"
 // The start of the block of the question about k-wide
 const wideQuestion = "nodloop question for you\nOne decision for you: add the lesson \"Use the staging cluster\" in repo svc\n"
 
-// Every host asks the one question due for the place at the end of the first answer of a session in its own answer shape
-// 1. Claude Code continues the turn on Stop additionalContext with no decision
-// 2. Codex and Copilot block the stop with the question as the reason and Cursor follows up with it
-// 3. Cursor and Copilot record no run so the expose of the session alone keeps a later stop from asking again
+// Claude Code asks the one question due for the place at the end of the first answer of a session
+// It continues the turn on Stop additionalContext with no decision
 func TestRunHookStopQuestion(t *testing.T) {
-	type args struct {
-		host string
-		// The input of both stops, a fixture under testdata/hooks or a JSON text
-		stop string
-	}
-	type want struct {
-		field, decision string
-		runs            int
-	}
-	tcs := []struct {
-		name string
-		args args
-		want want
-	}{
-		{"Claude Code asks through additionalContext with no decision", args{"claude-code", questionStop}, want{"additionalContext", "", 2}},
-		{"Codex blocks its stop with the question", args{"codex", "codex_stop.json"}, want{"reason", "block", 2}},
-		{"Cursor follows up once", args{"cursor", "cursor_stop.json"}, want{"followup_message", "", 0}},
-		{"Copilot blocks its stop once", args{"copilot", "copilot_stop.json"}, want{"reason", "block", 0}},
-	}
-	for _, tc := range tcs {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			b := newQuestionBench(t, nil)
+	b := newQuestionBench(t, nil)
 
-			first, firstErr := b.hook(t, "stop", tc.args.host, tc.args.stop, b.svc, noStart)
-			second, secondErr := b.hook(t, "stop", tc.args.host, tc.args.stop, b.svc, noStart)
+	first, firstErr := b.hook(t, "stop", "claude-code", questionStop, b.svc, noStart)
+	second, secondErr := b.hook(t, "stop", "claude-code", questionStop, b.svc, noStart)
 
-			text, decision := stopAnswer(t, first, tc.want.field)
-			expose, x := b.exposed(t)
-			assert.Empty(t, firstErr+secondErr)
-			assert.Empty(t, second, "one question per session")
-			assert.Equal(t, tc.want.decision, decision)
-			assert.True(t, strings.HasPrefix(text, wideQuestion), text)
-			assert.Contains(t, text, `AskUserQuestion call with header "nodloop `+x.Key+`", the two choices keep and drop`)
-			assert.LessOrEqual(t, len("nodloop "+x.Key), 12, "the header AskUserQuestion allows")
-			assert.Len(t, b.traces(t, trace.NameExpose), 1)
-			assert.Equal(t, []any{"s1", curate.QuestionDirection, trace.SourcePush}, []any{expose.SessionID, x.Kind, expose.Source})
-			assert.Len(t, b.traces(t, trace.NameRun), tc.want.runs+3, "the three runs of the bench and those of the stops")
-			assert.NoError(t, schema.Validate(string(trace.NameExpose), expose.Record()))
-		})
-	}
+	text, decision := stopAnswer(t, first)
+	expose, x := b.exposed(t)
+	assert.Empty(t, firstErr+secondErr)
+	assert.Empty(t, second, "one question per session")
+	assert.Empty(t, decision)
+	assert.True(t, strings.HasPrefix(text, wideQuestion), text)
+	assert.Contains(t, text, `AskUserQuestion call with header "nodloop `+x.Key+`", the two choices keep and drop`)
+	assert.LessOrEqual(t, len("nodloop "+x.Key), 12, "the header AskUserQuestion allows")
+	assert.Len(t, b.traces(t, trace.NameExpose), 1)
+	assert.Equal(t, []any{"s1", curate.QuestionDirection, trace.SourcePush}, []any{expose.SessionID, x.Kind, expose.Source})
+	assert.Len(t, b.traces(t, trace.NameRun), 5, "the three runs of the bench and those of the stops")
+	assert.NoError(t, schema.Validate(string(trace.NameExpose), expose.Record()))
 }
 
 // A writer that reads the exposes of the records when the stop writes its answer
@@ -189,7 +161,7 @@ func TestRunHookStopQuestionExpose(t *testing.T) {
 	assert.Equal(t, 1, w.found)
 	expose, x := b.exposed(t)
 	runs := b.traces(t, trace.NameRun)
-	text, _ := stopAnswer(t, w.out.String(), "additionalContext")
+	text, _ := stopAnswer(t, w.out.String())
 	assert.Equal(t, []any{runs[0].ID, 1}, []any{x.Run, x.Round})
 	assert.Positive(t, x.Runes)
 	assert.Less(t, x.Runes, len([]rune(text)), "the runes of the question alone")
@@ -257,7 +229,7 @@ func TestRunHookStopQuestionRules(t *testing.T) {
 
 			stdout, stderr := b.hook(t, "stop", "claude-code", tc.args.stop, repo, tc.args.start)
 
-			text, _ := stopAnswer(t, stdout, "additionalContext")
+			text, _ := stopAnswer(t, stdout)
 			assert.True(t, strings.HasPrefix(text, tc.want.start), text)
 			assert.Equal(t, tc.want.start == "", text == "")
 			assert.Contains(t, stderr, tc.want.stderr)
@@ -380,7 +352,7 @@ func TestRunHookStopNotice(t *testing.T) {
 	assert.JSONEq(t, `{"systemMessage":"From your earlier decisions nodloop applied a lesson here: \"Name the failing test first\". `+
 		`/nodloop:nod shows them and takes any back"}`, first)
 	assert.Empty(t, second, "one notice per session")
-	assert.Empty(t, codex, "a host that shows no stop line gets no notice")
+	assert.Empty(t, codex, "a host whose replies code cannot read gets no notice")
 	expose, x := b.exposed(t)
 	assert.Equal(t, []any{curate.QuestionNotice, curate.SurfaceMessage, "s1"}, []any{x.Kind, x.Surface, expose.SessionID})
 }
@@ -473,26 +445,26 @@ func TestSessionExposes(t *testing.T) {
 		word  string
 	}
 	type want struct {
-		asked, pushed, noticed bool
-		named                  curate.Choice
+		pushed, noticed bool
+		named           curate.Choice
 	}
 	tcs := []struct {
 		name string
 		args args
 		want want
 	}{
-		{"a question pushed after the run", args{sessionExposes{expose(curate.QuestionDirection, trace.SourcePush, "r1")}, "r1", "Keep,"}, want{true, true, false, "keep"}},
-		{"a question after another run", args{sessionExposes{expose(curate.QuestionAudit, trace.SourcePush, "r2")}, "r1", "keep"}, want{false, true, false, ""}},
-		{"a word that names no choice", args{sessionExposes{expose(curate.QuestionDirection, trace.SourcePush, "r1")}, "r1", "maybe"}, want{true, true, false, ""}},
-		{"a proposal the person asked for", args{sessionExposes{expose(curate.QuestionDirection, trace.SourceManual, "r1")}, "r1", "drop"}, want{true, false, false, "drop"}},
-		{"a notice", args{sessionExposes{expose(curate.QuestionNotice, trace.SourcePush, "r1")}, "r1", "keep"}, want{false, false, true, ""}},
-		{"an input that does not decode", args{sessionExposes{{Name: trace.NameExpose, Input: json.RawMessage(`"x"`)}}, "r1", "keep"}, want{false, false, false, ""}},
+		{"a question pushed after the run", args{sessionExposes{expose(curate.QuestionDirection, trace.SourcePush, "r1")}, "r1", "Keep,"}, want{true, false, "keep"}},
+		{"a question after another run", args{sessionExposes{expose(curate.QuestionAudit, trace.SourcePush, "r2")}, "r1", "keep"}, want{true, false, ""}},
+		{"a word that names no choice", args{sessionExposes{expose(curate.QuestionDirection, trace.SourcePush, "r1")}, "r1", "maybe"}, want{true, false, ""}},
+		{"a proposal the person asked for", args{sessionExposes{expose(curate.QuestionDirection, trace.SourceManual, "r1")}, "r1", "drop"}, want{false, false, "drop"}},
+		{"a notice", args{sessionExposes{expose(curate.QuestionNotice, trace.SourcePush, "r1")}, "r1", "keep"}, want{false, true, ""}},
+		{"an input that does not decode", args{sessionExposes{{Name: trace.NameExpose, Input: json.RawMessage(`"x"`)}}, "r1", "keep"}, want{false, false, ""}},
 		{"no expose", args{nil, "r1", "keep"}, want{}},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got := want{tc.args.shown.asked(tc.args.run), tc.args.shown.pushed(), tc.args.shown.noticed(), tc.args.shown.named(tc.args.run, tc.args.word)}
+			got := want{tc.args.shown.pushed(), tc.args.shown.noticed(), tc.args.shown.named(tc.args.run, tc.args.word)}
 			assert.Equal(t, tc.want, got)
 		})
 	}

@@ -30,6 +30,8 @@ type Key struct {
 // 1. the first caller creates it by an exclusive create of the name
 // 2. a caller that loses that race reads the key the winner wrote so two processes never hash under two keys
 // 3. a file of another length fails with ErrInvalid since hashing on under a new key would split old hashes from new
+// 4. a file another user may read or write fails with ErrShared and is never repaired or replaced
+// Whoever reads the key can try candidates against every hash it keyed so the person decides how it came to be shared
 func Load(dir string) (Key, error) {
 	f := file(filepath.Join(dir, FileName))
 	k, err := f.read()
@@ -53,6 +55,13 @@ func (k Key) Sum(text string) string {
 type file string
 
 func (f file) read() (Key, error) {
+	info, err := os.Stat(string(f))
+	if err != nil {
+		return Key{}, fmt.Errorf("%w: %w", ErrRead, err)
+	}
+	if shared(info.Mode()) {
+		return Key{}, fmt.Errorf("%w: %s has mode %04o, run chmod 600 on it to keep its hashes", ErrShared, f, info.Mode().Perm())
+	}
 	b, err := os.ReadFile(string(f))
 	if err != nil {
 		return Key{}, fmt.Errorf("%w: %w", ErrRead, err)

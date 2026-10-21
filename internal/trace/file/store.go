@@ -20,7 +20,21 @@ type Store struct {
 	// The same file read as heads by a prune
 	heads jsonl.File[head]
 	ids   jsonl.File[idLine]
+	// The same file read by a list that leaves the output out
+	bare jsonl.File[bare]
 }
+
+// A trace line read without its output
+type bare struct {
+	record.Trace
+	// Shadows the output of the trace so the decoder passes over it and never copies it
+	Output skipped `json:"output"`
+}
+
+// A value whose decoding keeps nothing
+type skipped struct{}
+
+func (*skipped) UnmarshalJSON([]byte) error { return nil }
 
 // The fields of a trace a prune reads
 type head struct {
@@ -54,7 +68,11 @@ func open(dir, name string) (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrOpen, err)
 	}
-	return &Store{file: f, heads: heads, ids: ids}, nil
+	b, err := jsonl.Open[bare](dir, name)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrOpen, err)
+	}
+	return &Store{file: f, heads: heads, ids: ids, bare: b}, nil
 }
 
 func (s *Store) Append(_ context.Context, t record.Trace) error {
@@ -81,11 +99,28 @@ func (s *Store) Get(_ context.Context, id string) (record.Trace, error) {
 // Newest first
 // A corrupt line returns the traces of the other lines with the error
 func (s *Store) List(_ context.Context, f record.TraceFilter) ([]record.Trace, error) {
-	found, err := s.file.Newest(f.Matches, f.Older, f.Limit)
-	if err != nil {
+	if !f.WithoutOutput {
+		found, err := s.file.Newest(f.Matches, f.Older, f.Limit)
 		return found, readFailed(err)
 	}
-	return found, nil
+	found, err := s.bare.Newest(func(b bare) bool { return f.Matches(b.Trace) }, func(b bare) bool { return f.Older(b.Trace) }, f.Limit)
+	var out []record.Trace
+	for _, b := range found {
+		out = append(out, b.Trace)
+	}
+	return out, readFailed(err)
+}
+
+// The traces the filter keeps that the file holds after the position oldest first with the position after the last line read
+// 1. the empty position starts at the first trace and Limit ends the read early
+// 2. a position whose trace a rewrite removed fails with record.ErrPositionGone
+// A corrupt line returns the traces of the other lines with the error as List does
+func (s *Store) After(_ context.Context, f record.TraceFilter, from string) ([]record.Trace, string, error) {
+	found, next, err := s.file.After(from, f.Matches, f.Limit)
+	if errors.Is(err, jsonl.ErrPositionGone) {
+		return nil, from, fmt.Errorf("%w: %w", record.ErrPositionGone, err)
+	}
+	return found, next, readFailed(err)
 }
 
 // The traces of the names newest first without their output
@@ -148,6 +183,9 @@ func (s *Store) Name() string {
 
 // A corrupt line also matches ErrCorrupt so a caller tells it from a file it cannot read
 func readFailed(err error) error {
+	if err == nil {
+		return nil
+	}
 	if errors.Is(err, jsonl.ErrCorrupt) {
 		return corruptError{err}
 	}

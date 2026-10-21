@@ -172,12 +172,12 @@ export interface Report {
   since?: string;
 }
 
-/** One page of raw records in the published schema of their kind, oldest first */
+/** One page of raw records in the published schema of their kind, in the order they were appended */
 export interface Page<T = AnyRecord> {
   records: T[];
   /**
    * The cursor to pass as since for the next page
-   * It stays the same while no newer record is settled
+   * A page with nothing new still answers one to pass again
    */
   next: string;
 }
@@ -295,15 +295,15 @@ export class Client {
    * Records a verdict on a run: approve, edit with the corrected output, reject with what was wrong, or withdraw an earlier one
    * reviewer names who judged so a verdict without a name never reads as a person's
    * nodloop is refused since only the capture of a session records verdicts under it
+   * reviewer stays in the options of an earlier release and is required there so no positional argument can take its place
    */
   async judge(
     run: string,
     verdict: "approve" | "edit" | "reject" | "withdraw",
-    reviewer: string,
-    options: { reason?: string; reasonCode?: string; edited?: unknown } = {},
+    options: { reviewer: string; reason?: string; reasonCode?: string; edited?: unknown },
   ): Promise<void> {
     const args: Record<string, unknown> = { trace_id: run, verdict };
-    if (reviewer) args.reviewer = reviewer;
+    if (options.reviewer) args.reviewer = options.reviewer;
     if (options.reason) args.reason = options.reason;
     if (options.reasonCode) args.reason_code = options.reasonCode;
     if (options.edited !== undefined) args.edited_output = options.edited;
@@ -338,9 +338,8 @@ export class Client {
   }
 
   /**
-   * One page of the raw records of a kind in its published schema, oldest first after the cursor since
-   * Pass next back as since for the following page, which answers the same next while nothing newer is settled
-   * A record younger than 10 s waits for a later page
+   * One page of the raw records of a kind in its published schema, in the order they were appended after the cursor since
+   * Pass next back as since for the following page, so a record appended late with an earlier time still comes once
    * The free text of the kind such as outputs, reasons and lesson content is left out unless content is true
    */
   async records<K extends RecordKind>(kind: K, options: PageOptions = {}): Promise<Page<Records[K]>> {

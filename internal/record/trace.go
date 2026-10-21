@@ -52,8 +52,10 @@ type Usage struct {
 
 // Empty fields mean all
 type TraceFilter struct {
-	ID        string
-	Name      string
+	ID   string
+	Name string
+	// Any of them so a reader of several names reads the store once
+	Names     []string
 	SessionID string
 	Subject   string
 	Ref       string
@@ -64,6 +66,8 @@ type TraceFilter struct {
 	Since time.Time
 	// Zero means all
 	Limit int
+	// Leaves Output out of every trace a List returns so a reader of counts never copies a run answer
+	WithoutOutput bool
 }
 
 func (f TraceFilter) Matches(t Trace) bool {
@@ -73,7 +77,7 @@ func (f TraceFilter) Matches(t Trace) bool {
 	if f.ID != "" && t.ID != f.ID {
 		return false
 	}
-	if f.Name != "" && t.Name != f.Name {
+	if !f.named(t.Name) {
 		return false
 	}
 	if f.SessionID != "" && t.SessionID != f.SessionID {
@@ -91,6 +95,11 @@ func (f TraceFilter) Matches(t Trace) bool {
 		}
 	}
 	return true
+}
+
+// Whether the name is the one Name sets and one of Names when either is set
+func (f TraceFilter) named(name string) bool {
+	return (f.Name == "" || name == f.Name) && (len(f.Names) == 0 || slices.Contains(f.Names, name))
 }
 
 // Whether the trace is from before Since

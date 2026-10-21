@@ -5,11 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"os"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/jeon-jihyeon/nodloop/internal/atomicfile"
 	"github.com/jeon-jihyeon/nodloop/internal/feedback"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
@@ -102,7 +102,7 @@ func (c runCommand) record(
 	if outputPath == "" {
 		return fmt.Errorf("record: --output %w", errRequired)
 	}
-	output, err := os.ReadFile(outputPath)
+	output, err := atomicfile.Read(outputPath, inputLimit)
 	if err != nil {
 		return fmt.Errorf("--output: %w", err)
 	}

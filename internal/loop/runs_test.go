@@ -24,7 +24,7 @@ func TestRunsReport(t *testing.T) {
 	v1 := knowledge.Ref{ID: "git-c", Version: 1}
 	verdict := func(id string, v feedback.Verdict, code feedback.ReasonCode, after time.Duration) feedback.Feedback {
 		return feedback.Feedback{
-			TraceID: id, Verdict: v, ReasonCode: code, Time: at.Add(after), Reviewer: feedback.ReviewerAuthor, Proof: trace.ProofTerminal,
+			TraceID: id, Verdict: v, ReasonCode: code, Time: at.Add(after), Reviewer: "ann", Proof: trace.ProofTerminal,
 		}
 	}
 	named := func(id string, v feedback.Verdict, code feedback.ReasonCode, after time.Duration) feedback.Feedback {
@@ -150,12 +150,12 @@ func TestRunsTotals(t *testing.T) {
 		return knowledge.Knowledge{ID: id, Version: 1, Kind: knowledge.KindJudgment, Content: id, Status: status, Run: scope, Compaction: compaction}
 	}
 	verdicts := feedback.Records{
-		verdict("r1", feedback.VerdictApprove, feedback.ReviewerAuthor).WithProof(trace.ProofKey),
+		verdict("r1", feedback.VerdictApprove, "ann").WithProof(trace.ProofKey),
 		verdict("r2", feedback.VerdictReject, feedback.ReviewerSession),
 		// A name with no proof such as one of a script
-		verdict("r2", feedback.VerdictEdit, feedback.ReviewerAuthor),
+		verdict("r2", feedback.VerdictEdit, "ann"),
 		verdict("r3", feedback.VerdictReject, feedback.ReviewerSession),
-		verdict("failed", feedback.VerdictReject, feedback.ReviewerAuthor),
+		verdict("failed", feedback.VerdictReject, "ann"),
 		// An inferred reject of r4 a person withdrew counts as no verdict
 		{TraceID: "r4", Time: time.Unix(2, 0), Verdict: feedback.VerdictWithdraw, Reviewer: "ann"},
 		{TraceID: "r4", Time: time.Unix(1, 0), Verdict: feedback.VerdictReject, ReasonCode: feedback.ReasonScope, Reviewer: feedback.ReviewerSession},

@@ -32,6 +32,7 @@ import (
 	"github.com/jeon-jihyeon/nodloop/internal/llm/llmmock"
 	"github.com/jeon-jihyeon/nodloop/internal/record"
 	"github.com/jeon-jihyeon/nodloop/internal/schema"
+	"github.com/jeon-jihyeon/nodloop/internal/textkey"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
 	tracefile "github.com/jeon-jihyeon/nodloop/internal/trace/file"
 )
@@ -1218,10 +1219,15 @@ func TestSessionTurnsBefore(t *testing.T) {
 	}
 }
 
+// The text the stop shows for the question askuser.jsonl clicks with its reply line after the lines the call copies
+const askuserShown = "Keep the lesson to deploy with the script?\nReply keep or drop"
+
 // Asks the question of a waiting lesson in session s1 after the first stop of the bench under the key of askuser.jsonl
-// and returns the decide it asks about
-func (b captureBench) asked(t *testing.T) string {
+// with the HMAC of the text shown under the key of the record directory and returns the decide it asks about
+func (b captureBench) asked(t *testing.T, shown string) string {
 	t.Helper()
+	key, err := textkey.Load(b.records)
+	require.NoError(t, err)
 	ctx := context.Background()
 	var stderr bytes.Buffer
 	require.Equal(t, 0, runKnowledge([]string{
@@ -1238,7 +1244,7 @@ func (b captureBench) asked(t *testing.T) string {
 	expose, err := curate.Event{Session: "s1", Ref: id, Source: trace.SourcePush, Draw: trace.NewDraw("2026-10-12", "0.10.0+1a2b3c4d", "5eed", id, "direction", 1)}.
 		Expose(curate.Exposure{
 			Kind: curate.QuestionDirection, Key: "k3x9", Change: &knowledge.Ref{ID: "c-new", Version: 1}, Surface: curate.SurfaceContext, Rules: curate.QuestionRules,
-			Choices: []curate.Choice{curate.ChoiceKeep, curate.ChoiceDrop}, Text: strings.Repeat("ab", 32), Round: 1, Run: b.runs[0], Runes: 120,
+			Choices: []curate.Choice{curate.ChoiceKeep, curate.ChoiceDrop}, Text: key.Sum(shown), Round: 1, Run: b.runs[0], Runes: 120,
 		}, at)
 	require.NoError(t, err)
 	require.NoError(t, errors.Join(store.Append(ctx, decide.Record()), store.Append(ctx, expose.Record())))
@@ -1258,7 +1264,8 @@ func (b captureBench) decided(t *testing.T) (string, string) {
 }
 
 // The capture records the person's answer to a question of the stop and never reads it as a verdict
-// 1. a click under the header nodloop and the key of the question, case ignored
+// 1. a click under the header nodloop and the key of the question on the text the stop showed, case ignored
+// A click on a question the model worded otherwise records nothing and is still never judged
 // 2. a first word typed after the answer the question followed
 // 3. a question answered already records nothing more and its reply is still never judged
 // 4. any other message after the question is judged as before
@@ -1268,6 +1275,8 @@ func TestRunSessionCaptureAnswers(t *testing.T) {
 		stops      []captureStop
 		// Whether an answer of the write side closed the question before the capture
 		answered bool
+		// The text the stop showed as its expose seals it
+		shown string
 	}
 	type want struct {
 		messages, answers, calls int
@@ -1280,16 +1289,21 @@ func TestRunSessionCaptureAnswers(t *testing.T) {
 		args args
 		want want
 	}{
-		{"a click on the question keeps the lesson under the person", args{"askuser.jsonl", clicked, false}, want{1, 1, 0, "approved person"}},
-		{"a reply word typed after the answer the question followed keeps it", args{"reply.jsonl", typed, false}, want{1, 1, 0, "approved person"}},
-		{"a reply to a question answered already records nothing more", args{"reply.jsonl", typed, true}, want{1, 0, 0, "approved person"}},
-		{"another message after the question is judged as before", args{"correction.jsonl", twoStops, false}, want{1, 0, 1, "candidate"}},
+		{"a click on the question keeps the lesson under the person", args{"askuser.jsonl", clicked, false, askuserShown}, want{1, 1, 0, "approved person"}},
+		{
+			"a click on a question other than the one the stop showed records nothing",
+			args{"askuser.jsonl", clicked, false, "Keep the lesson to deploy with make?\nReply keep or drop"},
+			want{1, 0, 0, "candidate"},
+		},
+		{"a reply word typed after the answer the question followed keeps it", args{"reply.jsonl", typed, false, askuserShown}, want{1, 1, 0, "approved person"}},
+		{"a reply to a question answered already records nothing more", args{"reply.jsonl", typed, true, askuserShown}, want{1, 0, 0, "approved person"}},
+		{"another message after the question is judged as before", args{"correction.jsonl", twoStops, false, askuserShown}, want{1, 0, 1, "candidate"}},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			b := newCaptureBench(t, tc.args.stops, nil)
-			b.asked(t)
+			b.asked(t, tc.args.shown)
 			if tc.args.answered {
 				iv, err := (app{cfg: config{recordDir: b.records}, now: func() time.Time { return captureDay.Add(31 * time.Second) }}).intervener()
 				require.NoError(t, err)
@@ -1329,22 +1343,25 @@ func TestMessageReaderReplyFails(t *testing.T) {
 		// The run the stop asked its question after
 		asked string
 		key   string
+		text  string
 	}
 	tcs := []struct {
 		name string
 		args args
 		want error
 	}{
-		{"a typed word after the question reads the reply", args{asked: run.ID}, assert.AnError},
-		{"a click reads the reply", args{key: "k3x9"}, assert.AnError},
-		{"a typed word after an answer whose stop asked nothing reads none", args{asked: "r-other"}, nil},
+		{"a typed word after the question reads the reply", args{asked: run.ID, text: "Keep,"}, assert.AnError},
+		{"a click reads the reply", args{key: "k3x9", text: "keep"}, assert.AnError},
+		{"a typed word after an answer whose stop asked nothing reads none", args{asked: "r-other", text: "keep"}, nil},
+		{"a typed word that names no choice of the question reads none", args{asked: run.ID, text: "maybe"}, nil},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			shown := sessionExposes{{Name: trace.NameExpose, Subject: "direction", Input: json.RawMessage(`{"kind":"direction","run":"` + tc.args.asked + `"}`)}}
+			in := `{"kind":"direction","run":"` + tc.args.asked + `","choices":["keep","drop"]}`
+			shown := sessionExposes{{Name: trace.NameExpose, Subject: "direction", Input: json.RawMessage(in)}}
 			r := messageReader{session: "s1", replies: failingReplier{}, person: unnamedPerson, shown: shown}
-			messages := personMessages{{text: "keep", at: captureDay.Add(time.Second), key: tc.args.key}}
+			messages := personMessages{{text: tc.args.text, at: captureDay.Add(time.Second), key: tc.args.key}}
 
 			out, err := r.judge(context.Background(), messages, sessionTurns{run})
 
@@ -1358,8 +1375,9 @@ func TestMessageReaderReplyFails(t *testing.T) {
 func TestTranscriptEntryClicks(t *testing.T) {
 	asked := askedQuestions{"t1": {"Keep it?": "nodloop k3x9"}, "t2": {"Which env?": "Env"}}
 	type want struct {
-		texts, keys []string
+		texts, keys, questions []string
 	}
+	none := want{[]string{}, []string{}, []string{}}
 	tcs := []struct {
 		name string
 		args string
@@ -1368,24 +1386,24 @@ func TestTranscriptEntryClicks(t *testing.T) {
 		{
 			"the header of the call of the same id names the key",
 			`{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1"}]},"toolUseResult":{"answers":{"Keep it?":"Keep"}}}`,
-			want{[]string{"Keep"}, []string{"k3x9"}},
+			want{[]string{"Keep"}, []string{"k3x9"}, []string{"Keep it?"}},
 		},
 		{
 			"a result of a call the read does not hold is no click whatever its questions name",
 			`{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t9"}]},` +
 				`"toolUseResult":{"questions":[{"question":"Drop it?","header":"nodloop ab12"}],"answers":{"Drop it?":"drop"}}}`,
-			want{[]string{}, []string{}},
+			none,
 		},
 		{
 			"a result whose answers name the question of a call under another id is no click",
 			`{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t9"}]},"toolUseResult":{"answers":{"Keep it?":"Keep"}}}`,
-			want{[]string{}, []string{}},
+			none,
 		},
 		{"a header of no question of the stop is no click", `{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t2"}]},"toolUseResult":{"answers":{"Which env?":"dev"}}}`,
-			want{[]string{}, []string{}}},
+			none},
 		{"a call the person refused is no click", `{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1"}]},"toolUseResult":"User rejected tool use"}`,
-			want{[]string{}, []string{}}},
-		{"a typed message is no click", `{"type":"user","message":{"content":"keep"}}`, want{[]string{}, []string{}}},
+			none},
+		{"a typed message is no click", `{"type":"user","message":{"content":"keep"}}`, none},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1395,11 +1413,11 @@ func TestTranscriptEntryClicks(t *testing.T) {
 
 			got := e.clicks(asked)
 
-			texts, keys := []string{}, []string{}
+			texts, keys, questions := []string{}, []string{}, []string{}
 			for _, m := range got {
-				texts, keys = append(texts, m.text), append(keys, m.key)
+				texts, keys, questions = append(texts, m.text), append(keys, m.key), append(questions, m.question)
 			}
-			assert.Equal(t, tc.want, want{texts, keys})
+			assert.Equal(t, tc.want, want{texts, keys, questions})
 		})
 	}
 }

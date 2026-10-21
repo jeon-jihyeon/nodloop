@@ -124,8 +124,7 @@ type cursorInput struct {
 }
 
 // 1. the first workspace root is the place since the input has no cwd
-// 2. a stop after a followup or after an aborted or failed loop counts as continued
-// A followup then would submit a message the user never typed
+// 2. a stop after a followup or after an aborted or failed loop counts as continued as stop_hook_active marks it on Claude Code
 func (in cursorInput) fields() hookInput {
 	out := hookInput{SessionID: in.ConversationID, StopHookActive: in.LoopCount > 0 || in.Status == "aborted" || in.Status == "error"}
 	if len(in.WorkspaceRoots) > 0 {
@@ -158,24 +157,12 @@ func (h host) context(w io.Writer, event, text string) error {
 	return h.write(w, map[string]any{"hookSpecificOutput": map[string]any{"hookEventName": event, "additionalContext": text}})
 }
 
-// The question at the end of the answer in the stop answer of the host
-// 1. Claude Code continues the turn on Stop additionalContext with no decision, which shows no error label as a block does
-// 2. Cursor submits followup_message as the next message of the user
-// 3. Codex and Copilot take the reason of a blocked stop as the next prompt
-func (h host) ask(w io.Writer, text string) error {
-	switch h {
-	case hostClaudeCode:
-		return h.write(w, map[string]any{"hookSpecificOutput": map[string]any{"hookEventName": "Stop", "additionalContext": text}})
-	case hostCursor:
-		return h.write(w, map[string]string{"followup_message": text})
-	}
-	return h.write(w, map[string]string{"decision": "block", "reason": text})
-}
-
-// Whether the host shows a line of the stop to the person with no model turn
-// Only Claude Code documents the common field systemMessage of a synchronous Stop hook
-func (h host) notices() bool {
-	return h == hostClaudeCode
+// Whether its stop shows the person a question or a notice
+// 1. code reads a reply only from the transcript the capture reads
+// A question elsewhere spends the person's attention with no way to record the answer so it stays due for a Claude Code session or the manual path
+// 2. only Claude Code documents the common field systemMessage of a synchronous Stop hook
+func (h host) talks() bool {
+	return h.transcripts()
 }
 
 // The notice as the systemMessage of the stop alone so the turn ends and the model never repeats the answer

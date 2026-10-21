@@ -18,6 +18,7 @@ import (
 type Store interface {
 	Append(ctx context.Context, f record.Feedback) error
 	List(ctx context.Context, f record.FeedbackFilter) ([]record.Feedback, error)
+	After(ctx context.Context, from string, limit int) ([]record.Feedback, string, error)
 }
 
 // Runs against an empty store
@@ -74,4 +75,20 @@ func Run(t *testing.T, store Store) {
 			assert.Equal(t, tc.want, got)
 		})
 	}
+	t.Run("after reads in append order from the position the read before answered", func(t *testing.T) {
+		t.Parallel()
+		first, at, err := store.After(ctx, "", 3)
+		require.NoError(t, err)
+		rest, end, err := store.After(ctx, at, 0)
+		require.NoError(t, err)
+		none, again, err := store.After(ctx, end, 0)
+		require.NoError(t, err)
+		_, _, goneErr := store.After(ctx, "no-such-position", 0)
+
+		assert.Equal(t, seed[:3], first)
+		assert.Equal(t, seed[3:], rest)
+		assert.Empty(t, none)
+		assert.Equal(t, end, again, "a read past the last verdict answers its position")
+		assert.ErrorIs(t, goneErr, record.ErrPositionGone)
+	})
 }

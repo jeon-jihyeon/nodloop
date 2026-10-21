@@ -1,4 +1,4 @@
-// Package knowledge is what corrections taught as versioned scoped items applied only after a named approval
+// Package knowledge is what corrections taught as versioned scoped items applied only after a person or curate on their behalf approved them
 package knowledge
 
 import (
@@ -29,9 +29,9 @@ func (k Kind) valid() bool {
 type Status string
 
 const (
-	StatusCandidate  Status = "candidate"  // extracted and never applied
+	StatusCandidate  Status = "candidate"  // proposed and never applied
 	StatusApproved   Status = "approved"   // active for runs that fit the scope
-	StatusRetired    Status = "retired"    // withdrawn by a person
+	StatusRetired    Status = "retired"    // taken out by a person or by curate with the reason it names
 	StatusSuperseded Status = "superseded" // replaced by a newer approved version of the same id
 )
 
@@ -83,7 +83,7 @@ type Knowledge struct {
 	Basis    Basis    `json:"basis"`
 	Status   Status   `json:"status"`
 	// Required once the status leaves candidate
-	// The person who approved or retired or last reaffirmed the version
+	// The person who approved or retired or last reaffirmed the version or ApproverNodloop for what curate carried out
 	Approver   string    `json:"approver,omitempty"`
 	ApprovedAt time.Time `json:"approved_at,omitzero"`
 	// Set by a reaffirm on an approved record

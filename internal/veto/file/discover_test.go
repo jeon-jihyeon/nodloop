@@ -4,12 +4,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"syscall"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeon-jihyeon/nodloop/internal/atomicfile"
 	"github.com/jeon-jihyeon/nodloop/internal/veto"
 	"github.com/jeon-jihyeon/nodloop/internal/veto/file"
 )
@@ -100,13 +100,13 @@ func TestDiscover(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(blocked, ".claude", "nodloop"), nil, 0o644))
 	blockedDir := filepath.Join(blocked, ".claude", "nodloop")
 	blockedMsg := fmt.Sprintf("%[1]s: failed to read veto file: open %[1]s: not a directory\n"+
-		"%[2]s: failed to read veto file: open %[2]s: not a directory",
+		"%[2]s: failed to read veto file: stat %[2]s: not a directory",
 		blockedDir, filepath.Join(blocked, file.RelPath))
 	parseMsg := filepath.Join(broken, file.RelPath) +
 		": failed to read veto file: failed to parse yaml: yaml: line 1: did not find expected node content"
 	directoryPath := filepath.Join(directory, file.RelPath)
 	outside := file.ErrOutsideHome.Error() + ": "
-	readMsg := fmt.Sprintf("%[1]s: failed to read veto file: read %[1]s: is a directory", directoryPath)
+	readMsg := fmt.Sprintf("%[1]s: failed to read veto file: not a regular file: %[1]s", directoryPath)
 	type args struct {
 		cwd  string
 		home string
@@ -209,7 +209,7 @@ func TestDiscover(t *testing.T) {
 		{
 			"both broken files are reported together",
 			args{broken, directory},
-			want{nil, syscall.EISDIR, outside + parseMsg + "\n" + readMsg},
+			want{nil, atomicfile.ErrNotRegular, outside + parseMsg + "\n" + readMsg},
 		},
 		{
 			"cwd outside home without .git reads no file of a parent",

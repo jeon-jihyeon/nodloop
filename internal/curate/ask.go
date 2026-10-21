@@ -27,6 +27,8 @@ type Asking struct {
 	// Whether the mode infers so the questions curate prepared are pushed beside the proposals the session made
 	Pushed bool
 	Mark   Mark
+	// The ledger as the stop read it so curate never reads it a second time
+	All knowledge.Set
 	// The HMAC of a text under the key of the record directory
 	Seal func(string) string
 	// The person's own words on the runs
@@ -82,7 +84,7 @@ func (iv *Intervener) Ask(ctx context.Context, a Asking) (Shown, error) {
 	if len(a.Mark.Due) == 0 || a.Session == "" {
 		return Shown{}, nil
 	}
-	s, err := iv.readOf(ctx, []trace.Name{trace.NameIntervention, trace.NameAnswer, trace.NameDecide, trace.NameExpose, trace.NameKnob, trace.NameAnchor})
+	s, err := iv.readOver(ctx, a.All)
 	if err != nil {
 		return Shown{}, err
 	}
@@ -399,7 +401,7 @@ func (s state) offerWords(d Decided) (string, []string) {
 // The kind and bin of a widening in plain words
 func openingWords(o Opening) string {
 	kinds := map[ChangeKind]string{
-		ChangeAdd: "new lessons", ChangeUpdate: "updates of lessons", ChangeCompaction: "merges of lessons", ChangeWithdraw: "withdrawals of lessons it approved",
+		ChangeAdd: "new lessons", ChangeUpdate: "updates of lessons", ChangeWithdraw: "withdrawals of lessons it approved",
 	}
 	bins := map[Bin]string{Bin1: "almost certain of", Bin2: "quite sure of", Bin3: "fairly sure of", Bin4: "unsure of"}
 	if b, ok := bins[o.Bin]; ok {
@@ -454,16 +456,15 @@ func escape(text string) string {
 // 2. the versions curate approved or withdrew that reach the place since the newest notice shown in the place
 // A drop or a join changes no run so it gets none
 func (iv *Intervener) Notice(ctx context.Context, a Asking) (Shown, error) {
-	all, err := iv.ledger.All(ctx)
-	if err != nil || a.Session == "" || a.Mark.CycleID == "" || len(carriedOut(all, a.Place, time.Time{})) == 0 {
-		return Shown{}, err
+	if a.Session == "" || a.Mark.CycleID == "" || !Noticeable(a.All, a.Place) {
+		return Shown{}, nil
 	}
 	found, err := iv.traces.List(ctx, record.TraceFilter{Name: string(trace.NameExpose)})
 	if err != nil {
 		return Shown{}, err
 	}
 	since, ok, err := iv.lastNotice(ctx, trace.RestoreAll(found), a)
-	changed := carriedOut(all, a.Place, since)
+	changed := carriedOut(a.All, a.Place, since)
 	if err != nil || !ok || len(changed) == 0 {
 		return Shown{}, err
 	}
@@ -586,6 +587,10 @@ type Reply struct {
 	Run string
 	// The key of an AskUserQuestion header and empty for a typed word
 	Key string
+	// The question of the AskUserQuestion call a click answers as the transcript holds it
+	Question string
+	// The HMAC of a text under the key of the record directory that the question of a click is checked with
+	Seal func(string) string
 	// The choice clicked or the first word typed with case and trailing punctuation ignored
 	Word   string
 	Person string
@@ -601,7 +606,7 @@ type Replied struct {
 }
 
 // Records the answer the person's own input gives to a question the stop showed and carries out its choice under the person's name
-// 1. the reply word of the prompt hook and the AskUserQuestion click of the capture both prove the person with proof reply
+// 1. the capture reads the first word typed and the AskUserQuestion click from the transcript and both prove the person with proof reply
 // 2. the answer names the expose and takes its source and draw so a pushed answer adds no intervention trace
 // 3. a question closed since matches with nothing recorded so the input is still no verdict
 // 4. the exposes of the session are read first and the rest of the records only once the input names a choice of one
@@ -632,18 +637,15 @@ func (iv *Intervener) Reply(ctx context.Context, r Reply) (Replied, error) {
 	return out, err
 }
 
-// The punctuation a reply word may end with so a keep followed by a comma still names keep
-const replyMarks = ".,!;:"
-
 // The question of the session the input answers with the choice it names
-// 1. a click names its question by the key of its header
+// 1. a click names its question by the key of its header and holds the text the stop showed
+// So a model that asks a question of its own under that header never records an answer
 // 2. a typed word answers the question shown after the answer the person read
 func (xs shownExposes) replied(r Reply) (shownExpose, Choice, bool) {
-	word := Choice(strings.TrimRight(strings.ToLower(strings.TrimSpace(r.Word)), replyMarks))
 	for _, x := range xs {
-		named := r.Key != "" && x.Key == r.Key || r.Key == "" && r.Run != "" && x.Run == r.Run
-		if x.SessionID == r.Session && x.asks() && named && slices.Contains(x.Choices, word) {
-			return x, word, true
+		named := r.Key != "" && x.Key == r.Key && x.shows(r.Question, r.Seal) || r.Key == "" && r.Run != "" && x.Run == r.Run
+		if choice, ok := x.Names(r.Word); x.SessionID == r.Session && x.asks() && named && ok {
+			return x, choice, true
 		}
 	}
 	return shownExpose{}, "", false

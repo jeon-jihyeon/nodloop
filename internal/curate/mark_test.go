@@ -1,8 +1,10 @@
 package curate_test
 
 import (
+	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -120,6 +122,75 @@ func TestMarkerFails(t *testing.T) {
 	assert.ErrorIs(t, writeErr, curate.ErrMark)
 	assert.ErrorIs(t, releaseErr, curate.ErrMark)
 	assert.Equal(t, curate.Mark{}, released.Mark)
+}
+
+// A reply that records its answer takes the question off the questions curate.json leaves due
+// 1. the other questions stay due
+// 2. a mark another pass holds and an intervener with no mark at hand leave it for the next pass
+func TestIntervenerReplySettles(t *testing.T) {
+	ctx := context.Background()
+	type args struct {
+		// The mark the intervener of the reply holds and nil for none
+		marks func(d desk) curate.Marks
+		// Whether another pass holds the mark during the reply
+		held bool
+	}
+	type want struct {
+		// Whether the question about k-ask is still due and how many others are
+		due    bool
+		others int
+	}
+	marker := func(d desk) curate.Marks { return curate.NewMarker(d.stores.Dir) }
+	none := func(desk) curate.Marks { return nil }
+	tcs := []struct {
+		name string
+		args args
+		want want
+	}{
+		{"the answered question leaves", args{marker, false}, want{false, 2}},
+		{"a mark another pass holds stays", args{marker, true}, want{true, 2}},
+		{"no mark at hand changes no mark", args{none, false}, want{true, 2}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			d := newDesk(t)
+			ask := d.decideOf(t, "k-ask")
+			shown, err := d.iv.Ask(ctx, d.stopIn(t, "s-new", "svc", true))
+			require.NoError(t, err)
+			require.Equal(t, ask, shown.Expose.Ref)
+			if tc.args.held {
+				held, err := curate.NewMarker(d.stores.Dir).Hold()
+				require.NoError(t, err)
+				t.Cleanup(func() { _ = held.Release() })
+			}
+
+			got, err := d.intervener(tc.args.marks(d)).Reply(ctx, curate.Reply{Session: "s-new", Run: "run-s-new", Word: "keep", Person: "ann"})
+
+			require.NoError(t, err)
+			after, err := curate.ReadMark(d.stores.Dir)
+			require.NoError(t, err)
+			asked := func(x curate.Due) bool { return x.Decide == ask }
+			assert.NotEmpty(t, got.Answer)
+			assert.Equal(t, tc.want, want{slices.ContainsFunc(after.Due, asked), len(slices.DeleteFunc(slices.Clone(after.Due), asked))})
+		})
+	}
+}
+
+// A mark that cannot be held fails the reply after its answer is recorded
+func TestIntervenerReplySettleFails(t *testing.T) {
+	ctx := context.Background()
+	d := newDesk(t)
+	_, err := d.iv.Ask(ctx, d.stopIn(t, "s-new", "svc", true))
+	require.NoError(t, err)
+	path := filepath.Join(d.stores.Dir, curate.MarkFile)
+	require.NoError(t, os.Remove(path))
+	require.NoError(t, os.Mkdir(path, 0o755))
+
+	got, err := d.iv.Reply(ctx, curate.Reply{Session: "s-new", Run: "run-s-new", Word: "keep", Person: "ann"})
+
+	assert.ErrorIs(t, err, curate.ErrMark)
+	assert.NotEmpty(t, got.Answer)
 }
 
 // The mark keeps the time of the last daily pass and a day after it the next one is due

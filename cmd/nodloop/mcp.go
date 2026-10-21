@@ -113,27 +113,12 @@ func (o mcpOpen) open(context.Context) (*mcp.Server, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%w. Fix what this names, or set --record-dir or %s", err, envRecordDir)
 	}
-	traces, err := a.traces()
+	s, err := a.stores()
 	if err != nil {
 		return nil, err
 	}
-	verdicts, err := a.feedback()
-	if err != nil {
-		return nil, err
-	}
-	outcomes, err := a.outcomes()
-	if err != nil {
-		return nil, err
-	}
-	ledger, err := a.ledger()
-	if err != nil {
-		return nil, err
-	}
-	source, err := a.source()
-	if err != nil {
-		return nil, err
-	}
-	// The record directory exists once the stores above opened
+	ledger := a.ledgerOver(s.items)
+	// The record directory exists once the stores opened
 	dir := a.cfg.recordDir
 	policy := mcp.Policy{
 		Holdout: a.cfg.holdout, Retention: a.cfg.retention, Marks: retain.NewMarker(dir), AfterRun: a.afterRun(o.log),
@@ -144,7 +129,8 @@ func (o mcpOpen) open(context.Context) (*mcp.Server, error) {
 		policy.AfterVerdict = a.afterVerdict(o.export, o.log)
 	}
 	return mcp.New(
-		traces, verdicts, outcomes, ledger, source, compact.New(ledger, traces, verdicts, traces, o.now), extract.New(ledger, traces, verdicts, o.now),
+		s.traces, s.verdicts, s.outcomes, ledger, s.source(a.cfg.home),
+		compact.New(ledger, s.traces, s.verdicts, s.traces, o.now), extract.New(ledger, s.traces, s.verdicts, o.now),
 		o.now, o.session, executable(), a.cfg.recordArgs(), o.caller, policy,
 	), nil
 }

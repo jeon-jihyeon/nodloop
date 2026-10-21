@@ -200,7 +200,7 @@ func paths(kindNames, reports []any) map[string]any {
 		}},
 		"/v1/records/{kind}": map[string]any{"get": map[string]any{
 			"summary":     "One page of the raw records of a kind of the tenant of the key",
-			"description": "Records by time then record_id after the cursor since, only those at least 10 s old, with the free text of the kind only with content true",
+			"description": "Records in the order the tenant appended them after the cursor since, with the free text of the kind only with content true",
 			"parameters": []any{
 				map[string]any{"name": "kind", "in": "path", "required": true, "schema": map[string]any{"type": "string", "enum": kindNames}},
 				query("since", "the next cursor of the page before, empty for the first page", map[string]any{"type": "string"}),

@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -44,16 +46,47 @@ func (s *TraceStore) Get(ctx context.Context, id string) (record.Trace, error) {
 	return found[0], nil
 }
 
+// The fields of a trace filter both trace queries narrow by as $2 to $5
+// Matches of the filter decides the rest so the store answers exactly what the file store does
+const traceNarrowed = ` AND ($2 = '' OR id = $2) AND ($3 = '' OR name = $3) AND ($4 = '' OR session_id = $4)
+	AND (coalesce(cardinality($5::text[]), 0) = 0 OR name = ANY($5))`
+
+// The rows after a position in append order
+// 1. xid then seq is the order since a row an open transaction commits later takes a seq below the rows committed before it
+// 2. only rows of transactions older than every one still open so no row lands before a position once it was read
+const appendedOrder = ` AND xid < pg_snapshot_xmin(pg_current_snapshot()) ORDER BY xid, seq`
+
 // Newest first
-// The query narrows by the indexed fields and Matches decides the rest so the store answers exactly what the file store does
+// Output is left out after the decode since json has no operator that drops a key and jsonb rewrites the bytes of the input
 func (s *TraceStore) List(ctx context.Context, f record.TraceFilter) ([]record.Trace, error) {
-	rows, err := s.pool.Query(ctx, `SELECT data FROM nodloop_traces
-		WHERE tenant = $1 AND ($2 = '' OR id = $2) AND ($3 = '' OR name = $3) AND ($4 = '' OR session_id = $4)
-		ORDER BY seq DESC`, s.tenant, f.ID, f.Name, f.SessionID)
+	rows, err := s.pool.Query(ctx, `SELECT data FROM nodloop_traces WHERE tenant = $1`+traceNarrowed+` ORDER BY seq DESC`,
+		s.tenant, f.ID, f.Name, f.SessionID, f.Names)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrRead, err)
 	}
-	return collect(rows, f.Limit, f.Matches)
+	found, err := collect(rows, f.Limit, f.Matches)
+	if f.WithoutOutput {
+		for i := range found {
+			found[i].Output = nil
+		}
+	}
+	return found, err
+}
+
+// The traces the filter keeps after the position oldest first with the position after the last row read
+// A position no read answered fails with record.ErrPositionGone
+func (s *TraceStore) After(ctx context.Context, f record.TraceFilter, from string) ([]record.Trace, string, error) {
+	at, err := parsePosition(from)
+	if err != nil {
+		return nil, from, err
+	}
+	rows, err := s.pool.Query(ctx, `SELECT xid::text, seq, data FROM nodloop_traces WHERE tenant = $1`+traceNarrowed+`
+		AND (xid, seq) > ($6::xid8, $7::bigint)`+appendedOrder+` LIMIT $8`,
+		s.tenant, f.ID, f.Name, f.SessionID, f.Names, at.xid, at.seq, limitOf(f.Limit))
+	if err != nil {
+		return nil, from, fmt.Errorf("%w: %w", ErrRead, err)
+	}
+	return appended(rows, from, f.Matches)
 }
 
 // The traces of the tenant with the names newest first without their output
@@ -161,6 +194,87 @@ func (s *OutcomeStore) List(ctx context.Context, traceID string) ([]record.Outco
 		return nil, fmt.Errorf("%w: %w", ErrRead, err)
 	}
 	return collect(rows, 0, record.OutcomeFilter{TraceID: traceID}.Matches)
+}
+
+// The verdicts after the position oldest first with the position after the last row read
+// A position no read answered fails with record.ErrPositionGone
+func (s *FeedbackStore) After(ctx context.Context, from string, limit int) ([]record.Feedback, string, error) {
+	return after[record.Feedback](ctx, s.pool, "nodloop_feedback", s.tenant, from, limit)
+}
+
+// The outcomes after the position oldest first with the position after the last row read
+// A position no read answered fails with record.ErrPositionGone
+func (s *OutcomeStore) After(ctx context.Context, from string, limit int) ([]record.Outcome, string, error) {
+	return after[record.Outcome](ctx, s.pool, "nodloop_outcomes", s.tenant, from, limit)
+}
+
+// Where a read in append order ended: the transaction that wrote the last row read and its seq
+// The zero position is before every row
+type position struct {
+	xid string
+	seq int64
+}
+
+// A form no read answered fails with record.ErrPositionGone
+func parsePosition(s string) (position, error) {
+	if s == "" {
+		return position{xid: "0"}, nil
+	}
+	xid, at, ok := strings.Cut(s, ":")
+	_, xidErr := strconv.ParseUint(xid, 10, 64)
+	seq, err := strconv.ParseInt(at, 10, 64)
+	if !ok || xidErr != nil || err != nil {
+		return position{}, fmt.Errorf("%w: %q", record.ErrPositionGone, s)
+	}
+	return position{xid: xid, seq: seq}, nil
+}
+
+// The limit of a query with null for every row
+func limitOf(n int) any {
+	if n <= 0 {
+		return nil
+	}
+	return n
+}
+
+// The rows of the table of the tenant after the position in append order up to the limit
+func after[T any](ctx context.Context, pool *pgxpool.Pool, table, tenant, from string, limit int) ([]T, string, error) {
+	at, err := parsePosition(from)
+	if err != nil {
+		return nil, from, err
+	}
+	rows, err := pool.Query(ctx, `SELECT xid::text, seq, data FROM `+table+` WHERE tenant = $1
+		AND (xid, seq) > ($2::xid8, $3::bigint)`+appendedOrder+` LIMIT $4`, tenant, at.xid, at.seq, limitOf(limit))
+	if err != nil {
+		return nil, from, fmt.Errorf("%w: %w", ErrRead, err)
+	}
+	return appended(rows, from, func(T) bool { return true })
+}
+
+// The decoded rows keep holds for and the position after the last row read
+func appended[T any](rows pgx.Rows, from string, keep func(T) bool) ([]T, string, error) {
+	defer rows.Close()
+	var out []T
+	next := from
+	for rows.Next() {
+		var at position
+		var data []byte
+		if err := rows.Scan(&at.xid, &at.seq, &data); err != nil {
+			return nil, from, fmt.Errorf("%w: %w", ErrRead, err)
+		}
+		var r T
+		if err := json.Unmarshal(data, &r); err != nil {
+			return nil, from, fmt.Errorf("%w: %w", ErrRead, err)
+		}
+		if keep(r) {
+			out = append(out, r)
+		}
+		next = at.xid + ":" + strconv.FormatInt(at.seq, 10)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, from, fmt.Errorf("%w: %w", ErrRead, err)
+	}
+	return out, next, nil
 }
 
 func insert(ctx context.Context, pool *pgxpool.Pool, sql, tenant, traceID string, record any) error {

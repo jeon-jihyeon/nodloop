@@ -35,15 +35,14 @@ func (p recordsPage) checked(t *testing.T, kind string) []string {
 	return ids
 }
 
-// Records of the stores a server wrote page across a cursor with none skipped or repeated, and one younger than the settle time waits
+// Records of the stores a server wrote page across a cursor with none skipped or repeated
+// A run recorded after an empty page comes on the next one
 func TestServerRecords(t *testing.T) {
 	st := testkit.Open(t)
 	c := connect(t, st)
 	first, second := recordRun(t, c, "nodloop"), recordRun(t, c, "nodloop")
 	require.NoError(t, c.Run(t, "feedback", map[string]any{"trace_id": first, "verdict": "reject", "reason": "ran cd"}))
 	require.NoError(t, c.Run(t, "propose", map[string]any{"id": "git-c", "kind": "judgment", "content": "use git -C", "from": first}))
-	st.Clock.Advance(schema.Settle)
-	young := recordRun(t, c, "nodloop")
 	page := func(args map[string]any) recordsPage {
 		var p recordsPage
 		require.NoError(t, c.Call(t, "records", args, &p))
@@ -53,14 +52,16 @@ func TestServerRecords(t *testing.T) {
 	one := page(map[string]any{"kind": "run", "limit": 1})
 	two := page(map[string]any{"kind": "run", "limit": 1, "since": one.Next})
 	end := page(map[string]any{"kind": "run", "since": two.Next})
+	later := recordRun(t, c, "nodloop")
+	next := page(map[string]any{"kind": "run", "since": end.Next})
 	shown := page(map[string]any{"kind": "run", "limit": 1, "content": true})
 	verdicts := page(map[string]any{"kind": "verdict"})
 	items := page(map[string]any{"kind": "knowledge"})
 
 	assert.Equal(t, []string{first}, one.checked(t, "run"))
 	assert.Equal(t, []string{second}, two.checked(t, "run"))
-	assert.Empty(t, end.checked(t, "run"), "the run %s waits for the settle time", young)
-	assert.Equal(t, two.Next, end.Next, "an empty page answers the cursor it was given")
+	assert.Empty(t, end.checked(t, "run"))
+	assert.Equal(t, []string{later}, next.checked(t, "run"), "a run recorded since the empty page comes next")
 	assert.NotContains(t, string(one.Records[0]), "git status", "the output is text")
 	assert.Contains(t, string(shown.Records[0]), "git status", "content keeps the output")
 	assert.Len(t, verdicts.checked(t, "verdict"), 1)

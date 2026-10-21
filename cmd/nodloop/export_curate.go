@@ -70,13 +70,13 @@ func (d exportDecide) evaluation(sessionID string) otel.Evaluation {
 }
 
 // The decide of a trace in the session of the run it cites or of the proposal it asks about
-func (l lookup) curated(t trace.Trace) otel.Evaluation {
+func (l *lookup) curated(t trace.Trace) otel.Evaluation {
 	d := readDecide(t)
-	return d.evaluation(l.byID[cmp.Or(t.Ref, d.held.Change.Proposal)].SessionID)
+	return d.evaluation(l.trace(cmp.Or(t.Ref, d.held.Change.Proposal)).SessionID)
 }
 
 // The question an expose trace records with the text of the version it asks about
-func (l lookup) question(t trace.Trace) otel.Question {
+func (l *lookup) question(t trace.Trace) otel.Question {
 	var x curate.Exposure
 	_ = json.Unmarshal(t.Input, &x)
 	q := otel.Question{
@@ -93,7 +93,7 @@ func (l lookup) question(t trace.Trace) otel.Question {
 }
 
 // The evaluation of an answer, an intervention or a decide
-func (l lookup) evaluation(t trace.Trace) otel.Evaluation {
+func (l *lookup) evaluation(t trace.Trace) otel.Evaluation {
 	switch t.Name {
 	case trace.NameAnswer:
 		return l.judgment(t)
@@ -107,13 +107,13 @@ func (l lookup) evaluation(t trace.Trace) otel.Evaluation {
 // 1. the tier, the change kind, the rule and the bin of the decide the question asked about with the draw of the answer
 // 2. a question nobody answered after its second round was recorded by code
 // 3. an answer of the write side to a question no expose showed links the decide it names
-func (l lookup) judgment(t trace.Trace) otel.Evaluation {
+func (l *lookup) judgment(t trace.Trace) otel.Evaluation {
 	var a curate.Answer
 	_ = json.Unmarshal(t.Input, &a)
-	expose := l.byID[t.Ref]
+	expose := l.trace(t.Ref)
 	var x curate.Exposure
 	_ = json.Unmarshal(expose.Input, &x)
-	enums := readDecide(l.byID[a.Decide]).enums()
+	enums := readDecide(l.trace(a.Decide)).enums()
 	enums.Source, enums.QuestionKind, enums.Choice, enums.Authority = string(t.Source), expose.Subject, string(a.Choice), string(a.Authority)
 	enums.Overturn, enums.Cycle, enums.P = &a.Overturn, "", nil
 	if t.Draw != nil {
@@ -138,7 +138,7 @@ func (l lookup) judgment(t trace.Trace) otel.Evaluation {
 
 // The intervention linked to what it acts on
 // A person's is the judgment of a person and one without a proof the proposal of an agent
-func (l lookup) intervention(t trace.Trace) otel.Evaluation {
+func (l *lookup) intervention(t trace.Trace) otel.Evaluation {
 	var in trace.Intervention
 	_ = json.Unmarshal(t.Input, &in)
 	ev := otel.Evaluation{
@@ -162,10 +162,10 @@ func (l lookup) intervention(t trace.Trace) otel.Evaluation {
 // 1. the question span of the expose it named or else the carrier of the decide of the question it closes or judges
 // 2. the carrier of the intervention a reverse or a resume takes back
 // 3. the extraction that drafted the item version it judges
-func (l lookup) acted(in trace.Intervention) otel.SpanRef {
+func (l *lookup) acted(in trace.Intervention) otel.SpanRef {
 	switch {
 	case in.Decide != "":
-		x := l.byID[in.Target]
+		x := l.trace(in.Target)
 		if x.Name != trace.NameExpose {
 			return otel.TraceSpan(in.Decide)
 		}
@@ -188,7 +188,7 @@ func (l lookup) acted(in trace.Intervention) otel.SpanRef {
 // 2. any other links the extraction that drafted the version and else what its decide or intervention links
 // 3. nodloop decided by a model when a judge ran and by a rule or a signal otherwise
 // 4. every other approver is a person
-func (l lookup) decision(k knowledge.Knowledge) otel.Evaluation {
+func (l *lookup) decision(k knowledge.Knowledge) otel.Evaluation {
 	ref := otel.Ref{ID: k.ID, Version: k.Version}
 	ev := otel.Evaluation{
 		Name: otel.EvaluationDecision, Time: k.Time, Label: string(k.Status), Reviewer: k.Approver, Annotator: otel.AnnotatorHuman,
@@ -205,15 +205,15 @@ func (l lookup) decision(k knowledge.Knowledge) otel.Evaluation {
 		return ev
 	}
 	if extract := l.drafted(k.ID, k.Version); extract.ID != "" {
-		ev.SessionID, ev.Target = l.byID[extract.Ref].SessionID, otel.TraceSpan(extract.ID)
+		ev.SessionID, ev.Target = l.trace(extract.Ref).SessionID, otel.TraceSpan(extract.ID)
 	}
 	return ev
 }
 
 // The answer, the intervention or the decide a knowledge record names in decision with its evaluation
 // The zero evaluation when it names none or the records lack it
-func (l lookup) cause(id string) (trace.Trace, otel.Evaluation) {
-	cause := l.byID[id]
+func (l *lookup) cause(id string) (trace.Trace, otel.Evaluation) {
+	cause := l.trace(id)
 	switch cause.Name {
 	case trace.NameAnswer, trace.NameIntervention, trace.NameDecide:
 		return cause, l.evaluation(cause)

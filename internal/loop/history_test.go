@@ -31,11 +31,11 @@ func sessionRun(t *testing.T, id string, offset int, repo string, applied ...kno
 }
 
 func verdict(traceID string, v feedback.Verdict, at time.Time) feedback.Feedback {
-	return feedback.Feedback{TraceID: traceID, Verdict: v, Time: at, Reviewer: feedback.ReviewerAuthor}
+	return feedback.Feedback{TraceID: traceID, Verdict: v, Time: at, Reviewer: "ann"}
 }
 
 func outcome(traceID string, r feedback.Result, at time.Time) feedback.Outcome {
-	return feedback.Outcome{TraceID: traceID, Result: r, Time: at, Reviewer: feedback.ReviewerAuthor}
+	return feedback.Outcome{TraceID: traceID, Result: r, Time: at, Reviewer: "ann"}
 }
 
 // An approved stated item for the runs of the repo nodloop that cites the run taught

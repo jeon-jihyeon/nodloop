@@ -125,3 +125,9 @@ func (s *KnowledgeStore) list(ctx context.Context, q querier) ([]record.Knowledg
 	}
 	return collect(rows, 0, func(record.Knowledge) bool { return true })
 }
+
+// The records after the position oldest first with the position after the last row read
+// A position no read answered fails with record.ErrPositionGone
+func (s *KnowledgeStore) After(ctx context.Context, from string, limit int) ([]record.Knowledge, string, error) {
+	return after[record.Knowledge](ctx, s.pool, "nodloop_knowledge", s.tenant, from, limit)
+}

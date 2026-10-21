@@ -40,6 +40,12 @@ func (s *OutcomeStore) List(_ context.Context, traceID string) ([]record.Outcome
 	return outcomes, nil
 }
 
+// The outcomes the file holds after the position oldest first with the position after the last line read
+// The position and the limit read as the After of the verdicts does
+func (s *OutcomeStore) After(_ context.Context, from string, limit int) ([]record.Outcome, string, error) {
+	return after(s.file, from, limit)
+}
+
 // How many records the file holds and the error naming its corrupt lines
 func (s *OutcomeStore) Check() (int, error) {
 	n, err := s.file.Check()

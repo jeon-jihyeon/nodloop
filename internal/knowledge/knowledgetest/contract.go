@@ -18,6 +18,7 @@ import (
 type Store interface {
 	knowledge.Store
 	Append(ctx context.Context, k record.Knowledge) error
+	After(ctx context.Context, from string, limit int) ([]record.Knowledge, string, error)
 }
 
 // Runs against an empty store
@@ -64,5 +65,21 @@ func Run(t *testing.T, store Store) {
 		got, err := store.List(ctx)
 		assert.NoError(t, err)
 		assert.Equal(t, []record.Knowledge{retired, reaffirmed, other, approved, candidate}, got)
+	})
+	t.Run("after reads in append order from the position the read before answered", func(t *testing.T) {
+		t.Parallel()
+		first, at, err := store.After(ctx, "", 2)
+		require.NoError(t, err)
+		rest, end, err := store.After(ctx, at, 0)
+		require.NoError(t, err)
+		none, again, err := store.After(ctx, end, 0)
+		require.NoError(t, err)
+		_, _, goneErr := store.After(ctx, "no-such-position", 0)
+
+		assert.Equal(t, []record.Knowledge{candidate, approved}, first)
+		assert.Equal(t, []record.Knowledge{other, reaffirmed, retired}, rest, "the records of one decision keep their order")
+		assert.Empty(t, none)
+		assert.Equal(t, end, again, "a read past the last record answers its position")
+		assert.ErrorIs(t, goneErr, record.ErrPositionGone)
 	})
 }

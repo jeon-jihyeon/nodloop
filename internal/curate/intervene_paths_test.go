@@ -2,6 +2,7 @@ package curate_test
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"slices"
@@ -64,6 +65,9 @@ func TestIntervenerProposal(t *testing.T) {
 	assert.NotEmpty(t, back.Wrote)
 	_, err = d.iv.Describe(ctx, curate.Request{Action: trace.ActionAnswer, Target: proposed.Decide, Choice: trace.ChoiceYes})
 	assert.NoError(t, err, "the question of the proposal is open again")
+	again, err := d.iv.Intervene(ctx, curate.Request{Action: trace.ActionAnswer, Target: proposed.Decide, Choice: trace.ChoiceYes}, person)
+	require.NoError(t, err)
+	assert.NotEmpty(t, again.Wrote, "a yes again carries the proposal out again and takes nothing the reverse took back")
 }
 
 // A proposal waits for the next pass where curate.json is not at hand, names no cycle in force or another pass holds it
@@ -125,10 +129,9 @@ func TestCuratorPassProposals(t *testing.T) {
 	assert.Equal(t, []any{curate.QuestionDirection, curate.RuleProposal, "s-9"}, []any{second.Due[i].Kind, second.Due[i].Rule, second.Due[i].Session})
 }
 
-// A digest changes nothing, needs no proof, is never a proposal and answers the cursor since the person's last judgment
+// A digest changes nothing, needs no proof, is never a proposal and answers the cursor since the person's last decision on record
 func TestIntervenerDigest(t *testing.T) {
 	ctx := context.Background()
-	none := func(*testing.T, desk) string { return "" }
 	kept := func(t *testing.T, d desk) string {
 		kept, err := d.iv.Intervene(ctx, curate.Request{Action: trace.ActionJudge, Target: "k-add:1", Choice: trace.ChoiceKeep}, person)
 		require.NoError(t, err)
@@ -145,13 +148,27 @@ func TestIntervenerDigest(t *testing.T) {
 		// The intervention the digest recorded
 		want string
 	}{
-		{"a digest before any judgment starts at the first record", args{agent, none}, "digest manual agent none"},
+		{"a digest before any intervention starts after the lesson the person approved", args{agent, func(*testing.T, desk) string { return "k-person approved" }}, "digest manual agent none"},
 		{"a digest of an agent after a judgment starts after it", args{agent, kept}, "digest manual agent none"},
 		{"a digest of a person names the person", args{person, kept}, "digest manual person key ann"},
+		{"a digest after an approval at a terminal starts after its ledger record", args{person, func(t *testing.T, d desk) string {
+			_ = kept(t, d)
+			k, err := d.stores.Ledger.Approve(ctx, "k-ask", 1, "ann")
+			require.NoError(t, err)
+			return k.ID + " " + string(k.Status)
+		}}, "digest manual person key ann"},
+		{"a digest after a decision of nodloop starts after the person's", args{person, func(t *testing.T, d desk) string {
+			id := kept(t, d)
+			_, err := d.stores.Ledger.Withdraw(ctx, "k-carried", 1, knowledge.ReasonConflict, "d-later")
+			require.NoError(t, err)
+			return id
+		}}, "digest manual person key ann"},
 		{"a digest after a reply of the person starts after the answer it recorded", args{person, func(t *testing.T, d desk) string {
 			_ = kept(t, d)
 			d.expose(t, d.decideOf(t, "k-ask"))
-			replied, err := d.iv.Reply(ctx, curate.Reply{Session: "s-1", Key: "ab12", Word: "drop", Person: "ann"})
+			// The expose holds the HMAC of zero bytes as the text the click checks
+			shown := func(string) string { return hex.EncodeToString(make([]byte, 32)) }
+			replied, err := d.iv.Reply(ctx, curate.Reply{Session: "s-1", Key: "ab12", Seal: shown, Word: "drop", Person: "ann"})
 			require.NoError(t, err)
 			return replied.Answer
 		}}, "digest manual person key ann"},
@@ -173,6 +190,19 @@ func TestIntervenerDigest(t *testing.T) {
 			assert.Equal(t, tc.want, recorded[len(recorded)-1])
 		})
 	}
+}
+
+// A digest whose last decision is a ledger record answers no cursor where no cursor of a ledger record is at hand
+func TestIntervenerDigestNoCursor(t *testing.T) {
+	d := newDesk(t)
+	iv := curate.NewIntervener(d.stores.Ledger, d.stores.Traces, curate.InterveneSetting{
+		Cursor: func(_ time.Time, id string) string { return id },
+	}, d.stores.Clock.Now)
+
+	got, err := iv.Intervene(context.Background(), curate.Request{Action: trace.ActionDigest, Target: "session"}, agent)
+
+	require.NoError(t, err)
+	assert.Empty(t, got.Since)
 }
 
 // What the records cannot carry out is refused before anything is recorded

@@ -31,7 +31,7 @@ type recordsAnswer struct {
 // One page of the raw records of a kind
 // The same page as GET /v1/records/{kind} of nodloop-server
 func (s *Server) records(ctx context.Context, _ *sdk.CallToolRequest, in recordsInput) (*sdk.CallToolResult, recordsAnswer, error) {
-	page, err := s.source.Page(ctx, schema.Query{Kind: string(in.Kind), Since: in.Since, Limit: in.Limit, Content: in.Content}, s.now())
+	page, err := s.source.Page(ctx, schema.Query{Kind: string(in.Kind), Since: in.Since, Limit: in.Limit, Content: in.Content})
 	if err != nil {
 		return nil, recordsAnswer{}, err
 	}

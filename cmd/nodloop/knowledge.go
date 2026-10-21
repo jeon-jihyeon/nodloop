@@ -8,7 +8,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"os"
 	"path/filepath"
 	"reflect"
 	"slices"
@@ -16,6 +15,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/jeon-jihyeon/nodloop/internal/atomicfile"
 	"github.com/jeon-jihyeon/nodloop/internal/feedback"
 	"github.com/jeon-jihyeon/nodloop/internal/jsonl"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
@@ -51,7 +51,7 @@ func (f *knowledgeFlags) bind(fs *flag.FlagSet) {
 	fs.StringVar(&f.basis, "basis", string(knowledge.BasisStated), "stated or verified")
 	fs.StringVar(&f.approver, "approver", "",
 		"approve, retire, reaffirm and approve-compaction: the name of the person deciding. approver of config.json, then person, when empty")
-	fs.StringVar(&f.author, "author", feedback.ReviewerAuthor, "who proposed")
+	fs.StringVar(&f.author, "author", knowledge.DefaultAuthor, "who proposed")
 	fs.StringVar(&f.status, "status", "", "list: candidate, approved, retired or superseded")
 	fs.StringVar(&f.traceID, "trace", "", "propose: the run whose feedback is the evidence")
 	fs.StringVar(&f.file, "file", "", "import: a jsonl file of knowledge records")
@@ -140,6 +140,13 @@ func (f knowledgeFlags) filter(now time.Time) knowledge.Filter {
 func runKnowledge(
 	args []string, getenv func(string) string, client llm.Client, now func() time.Time, proof trace.Proof, stdout, stderr io.Writer,
 ) int {
+	return runKnowledgeStarting(args, getenv, client, now, proof, detached(homeDir(getenv("HOME")).hookLog()), stdout, stderr)
+}
+
+// start starts the OTLP export after the actions that call a model
+func runKnowledgeStarting(
+	args []string, getenv func(string) string, client llm.Client, now func() time.Time, proof trace.Proof, start starter, stdout, stderr io.Writer,
+) int {
 	if len(args) == 0 {
 		return fail(stderr, "knowledge", errNoAction)
 	}
@@ -165,15 +172,15 @@ func runKnowledge(
 	case args[0] == "extract":
 		// extract, consolidate and curate call a model for a while so their traces leave when they end instead of at the next stop
 		err = flags.runExtract(ctx, a, client, getenv, stdout)
-		a.exportAfter(detached(a.cfg.home.hookLog()), stderr)
+		a.exportAfter(start, stderr)
 	case args[0] == "replay":
 		err = flags.runReplay(ctx, id, a, client, stdout)
 	case args[0] == "consolidate":
 		err = flags.runConsolidate(ctx, a, client, stdout)
-		a.exportAfter(detached(a.cfg.home.hookLog()), stderr)
+		a.exportAfter(start, stderr)
 	case args[0] == "curate":
 		err = flags.runCurate(ctx, a, client, getenv, stdout)
-		a.exportAfter(detached(a.cfg.home.hookLog()), stderr)
+		a.exportAfter(start, stderr)
 	default:
 		err = flags.runRecords(ctx, args[0], id, a, proof, stdout)
 	}
@@ -661,8 +668,9 @@ func (c knowledgeCommand) importFile(ctx context.Context, path string) error {
 	if c.proof == trace.ProofNone {
 		return fmt.Errorf("import: %w", errPersonOnly)
 	}
-	// jsonl Open reads a missing file as empty so a wrong path would import nothing
-	if _, err := os.Stat(path); err != nil {
+	// 1. jsonl Open reads a missing file as empty so a wrong path would import nothing
+	// 2. a fifo would hold the read and a device or a file past inputLimit would fill memory
+	if err := atomicfile.Check(path, inputLimit); err != nil {
 		return err
 	}
 	file, err := jsonl.Open[knowledge.Knowledge](filepath.Dir(path), filepath.Base(path))

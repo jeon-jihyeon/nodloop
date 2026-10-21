@@ -12,10 +12,7 @@ import (
 	"strings"
 	"time"
 
-	feedbackfile "github.com/jeon-jihyeon/nodloop/internal/feedback/file"
-	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	"github.com/jeon-jihyeon/nodloop/internal/otel"
-	tracefile "github.com/jeon-jihyeon/nodloop/internal/trace/file"
 )
 
 // Time one export request may take before the collector counts as down
@@ -187,71 +184,60 @@ func runExport(args []string, getenv func(string) string, now func() time.Time, 
 type exportCommand struct {
 	// The record directory whose mark --pending moves
 	dir      string
-	traces   *tracefile.Store
-	verdicts *feedbackfile.Store
-	outcomes *feedbackfile.OutcomeStore
-	ledger   *knowledge.Ledger
+	stores   recordStores
 	out      io.Writer
 	exporter *otel.Exporter
 }
 
 // The export over the stores of the record directory each opened once
 func (a app) exportCommand(exporter *otel.Exporter, out io.Writer) (exportCommand, error) {
-	traces, err := a.traces()
-	if err != nil {
-		return exportCommand{}, err
-	}
-	verdicts, err := a.feedback()
-	if err != nil {
-		return exportCommand{}, err
-	}
-	outcomes, err := a.outcomes()
-	if err != nil {
-		return exportCommand{}, err
-	}
-	ledger, err := a.ledger()
+	stores, err := a.stores()
 	if err != nil {
 		return exportCommand{}, err
 	}
 	// The record directory exists once the stores above opened
-	return exportCommand{
-		dir: a.cfg.recordDir, traces: traces, verdicts: verdicts, outcomes: outcomes, ledger: ledger, out: out, exporter: exporter,
-	}, nil
+	return exportCommand{dir: a.cfg.recordDir, stores: stores, out: out, exporter: exporter}, nil
 }
 
 // Sends every record stamped at the time or later
+// Every store is read whole since a read that stops at the first record older than the time would end at one a slower process appended late
 func (c exportCommand) since(ctx context.Context, since time.Time) error {
-	all, err := c.stored(ctx)
+	read, err := c.stores.appended(ctx, otel.Mark{})
 	if err != nil {
 		return err
 	}
-	return c.send(ctx, all.lookup(), all.since(since))
+	return c.send(ctx, read.records.stamped(since))
 }
 
 // Sends the records each store appended after the mark and then moves the mark
 // 1. another export holding the mark ends this one at once since it sends the same records
 // 2. a failure leaves the mark where it was so the next export sends them again under the same ids
-// 3. the mark keeps the newest record each store held when read so a record a slower process appends later goes next time whatever its time
+// 3. the mark keeps the position each store read up to so a stop reads only what was appended since
+// A record a slower process appends later with an earlier time still goes next time
 func (c exportCommand) pending(ctx context.Context) (err error) {
 	held, err := otel.NewMarker(c.dir).Hold()
 	if err != nil || held == nil {
 		return err
 	}
 	defer func() { err = errors.Join(err, held.Release()) }()
-	all, err := c.stored(ctx)
+	read, err := c.stores.appended(ctx, held.Mark)
 	if err != nil {
 		return err
 	}
-	fresh := all.after(held.Mark)
-	if err := c.send(ctx, all.lookup(), fresh); err != nil {
+	fresh := read.records.sent()
+	if err := c.send(ctx, fresh); err != nil {
 		return err
 	}
-	return held.Move(otel.Mark{At: fresh.newest(held.At), After: all.cursors(held.After)})
+	return held.Move(otel.Mark{At: fresh.newest(held.At), After: read.positions})
 }
 
-// Sends the records with what they name of every record and prints what went out
-func (c exportCommand) send(ctx context.Context, l lookup, recs exportRecords) error {
-	sent, err := c.exporter.Export(ctx, l.batch(recs))
+// Sends the records with what they name of earlier records and prints what went out
+func (c exportCommand) send(ctx context.Context, recs exportRecords) error {
+	b, err := newLookup(ctx, c.stores, recs).batch(recs)
+	if err != nil {
+		return err
+	}
+	sent, err := c.exporter.Export(ctx, b)
 	if err != nil {
 		return err
 	}

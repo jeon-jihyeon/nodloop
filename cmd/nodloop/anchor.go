@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jeon-jihyeon/nodloop/internal/atomicfile"
 	"github.com/jeon-jihyeon/nodloop/internal/curate"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	"github.com/jeon-jihyeon/nodloop/internal/record"
@@ -270,12 +271,12 @@ func (c anchorCommand) recorded(ctx context.Context, store *tracefile.Store, sin
 }
 
 // The designated files that can be read with the HMAC of their content and the paths of those that cannot
-// A file that is gone or unreadable counts as absent and its lines decide nothing
+// A file that is gone, unreadable, no regular file or past inputLimit counts as absent and its lines decide nothing
 func (c anchorCommand) designated(key textkey.Key) ([]curate.AnchorFile, []string) {
 	var files []curate.AnchorFile
 	var absent []string
 	for _, path := range c.app.cfg.anchor {
-		content, err := os.ReadFile(path)
+		content, err := atomicfile.Read(path, inputLimit)
 		if err != nil {
 			absent = append(absent, path)
 			continue

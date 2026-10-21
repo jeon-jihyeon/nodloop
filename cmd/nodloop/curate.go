@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/jeon-jihyeon/nodloop/internal/atomicfile"
 	"github.com/jeon-jihyeon/nodloop/internal/classify"
 	"github.com/jeon-jihyeon/nodloop/internal/curate"
 	"github.com/jeon-jihyeon/nodloop/internal/llm"
@@ -184,8 +185,9 @@ func tempDirs() curate.TempDirs {
 }
 
 // The text of an anchor file read at check time
+// A path that names no regular file or one past inputLimit fails so a judge never waits on a fifo
 func readText(path string) (string, error) {
-	b, err := os.ReadFile(path)
+	b, err := atomicfile.Read(path, inputLimit)
 	return string(b), err
 }
 

@@ -7,9 +7,9 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"os"
 	"time"
 
+	"github.com/jeon-jihyeon/nodloop/internal/atomicfile"
 	"github.com/jeon-jihyeon/nodloop/internal/feedback"
 	feedbackfile "github.com/jeon-jihyeon/nodloop/internal/feedback/file"
 	"github.com/jeon-jihyeon/nodloop/internal/record"
@@ -27,7 +27,7 @@ type feedbackFlags struct {
 func (f *feedbackFlags) bind(fs *flag.FlagSet) {
 	fs.StringVar(&f.traceID, "trace", "", "the run id")
 	fs.StringVar(&f.verdict, "verdict", "", "approve or edit or reject or withdraw")
-	fs.StringVar(&f.reviewer, "reviewer", "", "reviewer such as author")
+	fs.StringVar(&f.reviewer, "reviewer", "", "add and outcome: the name of the person who judged. list: only the records of that reviewer")
 	fs.IntVar(&f.limit, "limit", 0, "newest n records. 0 means all")
 	fs.StringVar(&f.code, "reason-code", "",
 		"add: what the output got wrong with edit or reject. fact, approach, scope, form or other")
@@ -115,7 +115,7 @@ func (c feedbackCommand) add(
 	}
 	var edited json.RawMessage
 	if editedPath != "" {
-		b, err := os.ReadFile(editedPath)
+		b, err := atomicfile.Read(editedPath, inputLimit)
 		if err != nil {
 			return fmt.Errorf("--edited: %w", err)
 		}

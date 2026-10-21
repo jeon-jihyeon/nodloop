@@ -12,7 +12,7 @@ import (
 type Reason string
 
 const (
-	ReasonDuplicate  Reason = "duplicate"   // the candidate says what an approved item of its scope says
+	ReasonDuplicate  Reason = "duplicate"   // the candidate says what an approved item reaching its scope or an older candidate says
 	ReasonNoEvidence Reason = "no_evidence" // no run its evidence cites still carries a correction
 	ReasonTempScope  Reason = "temp_scope"  // its scope lies in a temporary directory no later session works in
 	ReasonConflict   Reason = "conflict"    // an extract conflict the critic passed names the version
@@ -45,6 +45,9 @@ func (k Knowledge) checkReason() error {
 // The name curate approves and retires under
 // No caller may write it so the records tell what a person decided from what curate carried out
 const ApproverNodloop = "nodloop"
+
+// The author of a proposal whose caller names none
+const DefaultAuthor = "author"
 
 // The name a person decides under
 // 1. an empty name fails with ErrApproverRequired

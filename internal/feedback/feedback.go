@@ -11,9 +11,6 @@ import (
 )
 
 const (
-	// The author of a proposal whose caller names none
-	// Records of earlier releases also carry it as the reviewer a call left out and read as a person
-	ReviewerAuthor = "author"
 	// Reviewer of a record the conversation of a session inferred and not given by a person
 	ReviewerSession = "session"
 	// Reviewer of a record the capture read from the person's words in the transcript

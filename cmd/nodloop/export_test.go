@@ -382,7 +382,7 @@ func TestRunExportOtelPending(t *testing.T) {
 		names  []string
 		// The time export.json keeps after the export
 		at string
-		// Whether export.json names the run as the newest trace the export read
+		// Whether export.json names the position after the last trace the export read
 		cursor bool
 	}
 	none := "exported 0 runs, 0 verdicts, 0 outcomes, 0 model calls, 0 questions, 0 decisions and 0 judgments\n"
@@ -425,6 +425,8 @@ func TestRunExportOtelPending(t *testing.T) {
 			later := exportAt.Add(2 * time.Hour)
 			ids, err := tracefileRuns(records)
 			require.NoError(t, err)
+			end, err := tracefileEnd(records)
+			require.NoError(t, err)
 			a := app{cfg: config{recordDir: records}, now: func() time.Time { return later }}
 			store, err := a.feedback()
 			require.NoError(t, err)
@@ -447,7 +449,7 @@ func TestRunExportOtelPending(t *testing.T) {
 			var mark otel.Mark
 			require.NoError(t, json.Unmarshal(b, &mark))
 			assert.Equal(t, tc.want.at, mark.At.Format(time.RFC3339))
-			assert.Equal(t, tc.want.cursor, mark.After[storeTraces] == ids[0])
+			assert.Equal(t, tc.want.cursor, mark.After[storeTraces] == end)
 		})
 	}
 }
@@ -487,6 +489,96 @@ func TestRunExportOtelPendingLateAppend(t *testing.T) {
 	sent := otel.VerdictSpan(ids[0], late.Time)
 	spans := slices.DeleteFunc(slices.Clone(c.spans), func(s gotSpan) bool { return s.SpanID != sent.SpanID })
 	assert.Len(t, spans, 1, "the late verdict arrives once")
+}
+
+// A prune that removed the trace the mark ends at sends the traces stamped after the mark once and never the ones sent before
+func TestRunExportOtelPendingPruned(t *testing.T) {
+	c := &otlpCollector{}
+	srv := httptest.NewServer(c)
+	t.Cleanup(srv.Close)
+	records := exportFixture(t)
+	traces, err := tracefile.New(records)
+	require.NoError(t, err)
+	appendRun := func(at time.Time) trace.Trace {
+		run, err := trace.NewRun("bot", "", nil, nil, []byte("steps"), at)
+		require.NoError(t, err)
+		require.NoError(t, traces.Append(t.Context(), run.Record()))
+		return run
+	}
+	unjudged := appendRun(exportAt.Add(3 * time.Minute))
+	getenv := func(k string) string { return map[string]string{envRecordDir: records}[k] }
+	export := func() string {
+		var stdout, stderr bytes.Buffer
+		require.Equal(t, 0, runExport([]string{"otel", "--pending", "--protocol", "http/json", "--endpoint", srv.URL}, getenv,
+			func() time.Time { return exportAt.Add(time.Hour) }, &stdout, &stderr), stderr.String())
+		return stdout.String()
+	}
+	first := export()
+	removed, err := traces.Prune(t.Context(), func(context.Context) ([]string, error) { return []string{unjudged.ID}, nil })
+	require.NoError(t, err)
+	require.Equal(t, 1, removed)
+	later := appendRun(exportAt.Add(2 * time.Hour))
+
+	second := export()
+
+	assert.Equal(t, []string{
+		"exported 2 runs, 1 verdicts, 1 outcomes, 0 model calls, 0 questions, 0 decisions and 0 judgments\n",
+		"exported 1 runs, 0 verdicts, 0 outcomes, 0 model calls, 0 questions, 0 decisions and 0 judgments\n",
+	}, []string{first, second})
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	sent := otel.RunSpan(later.ID)
+	assert.Len(t, slices.DeleteFunc(slices.Clone(c.spans), func(s gotSpan) bool { return s.SpanID != sent.SpanID }), 1, "the later run arrives once")
+}
+
+// A corrupt line before the mark that a lookup reads for a new record fails the export and leaves the mark
+// The new record is an extraction of the run so the lookup reads the run and the verdicts of the run
+func TestRunExportOtelPendingLookupFails(t *testing.T) {
+	tcs := []struct {
+		name string
+		// The record file the corrupt line goes into before the mark
+		args string
+	}{
+		{"the trace file read for the session of the run", "traces.jsonl"},
+		{"the verdict file read for the verdict the extraction followed", "feedback.jsonl"},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			c := &otlpCollector{}
+			srv := httptest.NewServer(c)
+			t.Cleanup(srv.Close)
+			records := exportFixture(t)
+			ids, err := tracefileRuns(records)
+			require.NoError(t, err)
+			hookAppend(t, filepath.Join(records, tc.args), "not json\n")
+			stores, err := (app{cfg: config{recordDir: records}}).stores()
+			require.NoError(t, err)
+			ctx := t.Context()
+			_, traces, _ := stores.traces.After(ctx, record.TraceFilter{}, "")
+			_, verdicts, _ := stores.verdicts.After(ctx, "", 0)
+			_, outcomes, _ := stores.outcomes.After(ctx, "", 0)
+			mark, err := json.Marshal(otel.Mark{At: exportAt.Add(2 * time.Minute), After: map[string]string{
+				storeTraces: traces, storeVerdicts: verdicts, storeOutcomes: outcomes, storeLedger: "",
+			}})
+			require.NoError(t, err)
+			require.NoError(t, os.WriteFile(filepath.Join(records, otel.MarkFile), mark, 0o600))
+			extract := trace.Trace{ID: trace.NewID(exportAt.Add(time.Hour)), Name: trace.NameExtract, Ref: ids[0], Time: exportAt.Add(time.Hour), Input: json.RawMessage("{}")}
+			require.NoError(t, stores.traces.Append(ctx, extract.Record()))
+			getenv := func(k string) string { return map[string]string{envRecordDir: records}[k] }
+			var stdout, stderr bytes.Buffer
+
+			code := runExport([]string{"otel", "--pending", "--protocol", "http/json", "--endpoint", srv.URL}, getenv,
+				func() time.Time { return exportAt.Add(2 * time.Hour) }, &stdout, &stderr)
+
+			assert.Equal(t, 1, code)
+			assert.Contains(t, stderr.String(), "has corrupt lines")
+			assert.Empty(t, c.names(), "nothing is sent")
+			kept, err := os.ReadFile(filepath.Join(records, otel.MarkFile))
+			require.NoError(t, err)
+			assert.JSONEq(t, string(mark), string(kept))
+		})
+	}
 }
 
 // An export that fails leaves the mark and its error names neither the token of the endpoint query nor a header value
@@ -612,6 +704,16 @@ func exportRecordFile(t *testing.T, records, name, content string) {
 }
 
 // The ids of the runs of the records newest first
+// The position after the last trace of the record dir
+func tracefileEnd(records string) (string, error) {
+	store, err := tracefile.New(records)
+	if err != nil {
+		return "", err
+	}
+	_, end, err := store.After(context.Background(), record.TraceFilter{}, "")
+	return end, err
+}
+
 func tracefileRuns(records string) ([]string, error) {
 	store, err := tracefile.New(records)
 	if err != nil {

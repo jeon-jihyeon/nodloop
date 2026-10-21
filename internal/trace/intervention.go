@@ -59,7 +59,7 @@ const (
 	ActionResume   Action = "resume"   // end a pause
 	ActionKnob     Action = "knob"     // set one knob within its range
 	ActionReanchor Action = "reanchor" // take the versions nodloop approved in a place as the person's own
-	ActionDigest   Action = "digest"   // the cursor since the person's last judgment and nothing changed
+	ActionDigest   Action = "digest"   // the cursor since the person's last decision and nothing changed
 	ActionReverse  Action = "reverse"  // the inverse of an earlier intervention
 )
 
@@ -123,7 +123,7 @@ type Intervention struct {
 	Version int    `json:"version,omitempty"`
 	// The compaction a judgment acts on in place of an item version
 	Compaction string `json:"compaction,omitempty"`
-	// The decide of the question an answer or a dismiss closes
+	// The decide of the question an answer or a dismiss closes or whose yes carried it out
 	Decide string `json:"decide,omitempty"`
 	Choice Choice `json:"choice,omitempty"`
 	// Where a scope choice approves the candidate, the scope a pause covers or the place of a reanchor or a digest
