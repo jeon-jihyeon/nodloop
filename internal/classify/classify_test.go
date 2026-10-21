@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -120,6 +121,63 @@ func TestHTTPClassify(t *testing.T) {
 				"holds":{"type":"noul","instructions":"It holds beyond this run."},
 				"states":{"type":"noul","instructions":"It states the correction."}}}`, string(*body))
 			assert.Equal(t, tc.want.answers, got)
+		})
+	}
+}
+
+func TestHTTPClassifyBodyBoundary(t *testing.T) {
+	tcs := []struct {
+		name string
+		args int
+		want error
+	}{
+		{"exactly the limit", 1 << 20, nil},
+		{"valid JSON before an oversized suffix", 1<<20 + 1, classify.ErrResponseInvalid},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			body := []byte(`{"answers":{"holds":{"noul":1},"states":{"noul":1}}}`)
+			body = append(body, bytes.Repeat([]byte(" "), tc.args-len(body))...)
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = w.Write(body)
+			}))
+			t.Cleanup(srv.Close)
+			h := classify.NewHTTP(classify.Endpoint{URL: srv.URL}, "", time.Second)
+
+			got, err := h.Classify(context.Background(), classify.Request{Questions: questions})
+
+			require.ErrorIs(t, err, tc.want)
+			if tc.want == nil {
+				assert.Equal(t, classify.Answers{"holds": {Yes: 1}, "states": {Yes: 1}}, got)
+			} else {
+				assert.Nil(t, got)
+			}
+		})
+	}
+}
+
+func TestHTTPClassifyInvalidReply(t *testing.T) {
+	tcs := []struct {
+		name string
+		args string
+	}{
+		{"invalid syntax", `{"answers":`},
+		{"invalid answer type", `{"answers":"unknown"}`},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = io.WriteString(w, tc.args)
+			}))
+			t.Cleanup(srv.Close)
+			h := classify.NewHTTP(classify.Endpoint{URL: srv.URL}, "", time.Second)
+
+			got, err := h.Classify(context.Background(), classify.Request{Questions: questions})
+
+			assert.ErrorIs(t, err, classify.ErrResponseInvalid)
+			assert.Nil(t, got)
 		})
 	}
 }
@@ -252,6 +310,50 @@ func builtin(t *testing.T, answers classify.Answers, err error) classify.Member 
 	m := classifymock.NewMockClassifier(gomock.NewController(t))
 	m.EXPECT().Classify(gomock.Any(), gomock.Any()).Return(answers, err).AnyTimes()
 	return classify.Member{Name: "claude", Classifier: m}
+}
+
+func TestClassifyFailureKeepsTextOutOfTrace(t *testing.T) {
+	tcs := []struct {
+		name string
+		args bool
+	}{
+		{"plan", false},
+		{"panel", true},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ctx := context.Background()
+			traces, err := tracefile.New(t.TempDir())
+			require.NoError(t, err)
+			failed := errors.New("ann said never print it")
+			member := builtin(t, nil, failed)
+			now := func() time.Time { return fixed }
+			req := classify.Request{State: "input", Questions: questions}
+			if tc.args {
+				ballot, err := classify.NewPanel(classify.PointJudge, []classify.Member{member}, traces, seal, now).
+					Classify(ctx, req)
+				require.NoError(t, err)
+				require.Len(t, ballot.Votes, 1)
+				assert.ErrorIs(t, ballot.Votes[0].Err, failed)
+			} else {
+				_, err := classify.NewPlan(classify.PointReaction, classify.Member{}, member, traces, seal, now).
+					Classify(ctx, req)
+				assert.ErrorIs(t, err, failed)
+			}
+
+			recorded, err := traces.List(ctx, record.TraceFilter{})
+			require.NoError(t, err)
+			require.Len(t, recorded, 1)
+			encoded, err := json.Marshal(recorded[0])
+			require.NoError(t, err)
+			assert.NotContains(t, string(encoded), failed.Error())
+			var output classify.TraceOutput
+			require.NoError(t, json.Unmarshal(recorded[0].Output, &output))
+			require.Len(t, output.Members, 1)
+			assert.Equal(t, classify.ErrMemberFailed.Error(), output.Members[0].Error)
+		})
+	}
 }
 
 func TestPlanClassify(t *testing.T) {
@@ -596,6 +698,8 @@ func TestEndpointsCheck(t *testing.T) {
 		{"points with URLs pass", classify.Endpoints{classify.PointCritic: {URL: "http://localhost:8000"}}, nil},
 		{"an unknown point fails", classify.Endpoints{"review": {URL: "http://localhost:8000"}}, classify.ErrPointUnknown},
 		{"a URL edited into a relative one fails", classify.Endpoints{classify.PointCritic: {URL: "localhost"}}, classify.ErrEndpointInvalid},
+		{"a malformed URL with a token fails", classify.Endpoints{classify.PointCritic: {URL: "http://bad host?key=k1"}}, classify.ErrEndpointInvalid},
+		{"an unsupported scheme with a password fails", classify.Endpoints{classify.PointCritic: {URL: "ftp://ann:k1@example.com"}}, classify.ErrEndpointInvalid},
 		{"a password edited into a URL fails", classify.Endpoints{classify.PointCritic: {URL: "http://ann:k1@localhost"}}, classify.ErrEndpointCredentials},
 	}
 	for _, tc := range tcs {
@@ -605,6 +709,9 @@ func TestEndpointsCheck(t *testing.T) {
 			err := tc.endpoints.Check()
 
 			assert.ErrorIs(t, err, tc.err)
+			if err != nil {
+				assert.NotContains(t, err.Error(), "k1")
+			}
 		})
 	}
 }

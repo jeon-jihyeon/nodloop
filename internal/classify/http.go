@@ -83,7 +83,7 @@ func (h *HTTP) answers(ctx context.Context, req Request) (Answers, string, error
 	}
 	// A body fully read leaves nothing for Close to report
 	defer func() { _ = res.Body.Close() }()
-	b, err := io.ReadAll(io.LimitReader(res.Body, bodyLimit))
+	b, err := io.ReadAll(io.LimitReader(res.Body, bodyLimit+1))
 	if err != nil {
 		return nil, "", err
 	}
@@ -91,6 +91,9 @@ func (h *HTTP) answers(ctx context.Context, req Request) (Answers, string, error
 	// and an endpoint that echoes its request would put the state in a field no export strips
 	if res.StatusCode < 200 || res.StatusCode > 299 {
 		return nil, "", fmt.Errorf("%w: %d", ErrStatus, res.StatusCode)
+	}
+	if len(b) > bodyLimit {
+		return nil, "", ErrResponseInvalid
 	}
 	var wire wireResponse
 	if err := json.Unmarshal(b, &wire); err != nil {

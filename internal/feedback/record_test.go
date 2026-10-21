@@ -150,7 +150,7 @@ func TestRestoreOutcomes(t *testing.T) {
 	}
 }
 
-// A verdict, a captured verdict and an outcome of the constructors validate against their published schemas
+// Every verdict writer and outcome writer conforms to its published schema
 func TestRecordsValidate(t *testing.T) {
 	at := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
 	edited, err := feedback.New("t1", feedback.VerdictEdit, feedback.ReasonScope, "reorder", json.RawMessage(`{"order":["db"]}`), "ann", at)

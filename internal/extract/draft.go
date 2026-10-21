@@ -119,7 +119,7 @@ func (c Critique) failed() []string {
 
 // The scope of an add: the producer of the run and the labels of the keys the draft kept
 // 1. no key reaches every run of the producer
-// 2. the host is left out as in a scope filled from the run so only a person narrows a lesson to one host
+// 2. host and correlation stay outside an inferred scope
 func (d Draft) scope(run trace.Trace) knowledge.RunScope {
 	labels := trace.Labels{}
 	place := run.Labels.Place()
@@ -140,7 +140,7 @@ func (d Draft) checkLesson(texts ...string) error {
 	switch {
 	case content == "":
 		return fmt.Errorf("%w: empty", ErrNotLesson)
-	case strings.Contains(content, "\n"):
+	case strings.ContainsAny(content, "\r\n\u0085\u2028\u2029"):
 		return fmt.Errorf("%w: it spans lines", ErrNotLesson)
 	case utf8.RuneCountInString(content) > maxRunes:
 		return fmt.Errorf("%w: over %d characters", ErrNotLesson, maxRunes)

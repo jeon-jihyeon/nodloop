@@ -28,7 +28,6 @@ type FeedbackFilter struct {
 	Verdicts []string
 	Reviewer string
 	// Verdicts before it are left out
-	// Verdicts are appended in time order
 	Since time.Time
 	// Zero means all
 	Limit int

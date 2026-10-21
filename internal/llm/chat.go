@@ -19,7 +19,7 @@ const bodyLimit = 1 << 20
 
 // An OpenAI compatible Chat Completions endpoint such as OpenAI or Gemini or Ollama or vLLM or a LiteLLM proxy
 type ChatCompletions struct {
-	// The URL `/chat/completions` is joined to
+	// The base URL before the Chat Completions route
 	baseURL string
 	model   string
 	// Sent as a Bearer token when not empty

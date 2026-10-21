@@ -135,6 +135,9 @@ func (c configCommand) list(getenv func(string) string) error {
 	}
 	// NODLOOP_LLM_MODEL names the model of claude alone
 	backend, modelEnv := strings.TrimSpace(string(uc.LLM.Backend)+" "+uc.LLM.BaseURL), envLLMModel
+	if err := uc.LLM.Check(); err != nil {
+		backend = err.Error()
+	}
 	model := cmp.Or(getenv(envLLMModel), uc.LLM.Model, llm.DefaultModel)
 	if uc.LLM.Backend == llm.BackendChat {
 		model, modelEnv = uc.LLM.Model, ""

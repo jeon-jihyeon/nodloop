@@ -245,6 +245,16 @@ func TestClaudeCLICompleteFailure(t *testing.T) {
 			},
 			want: want{err: llm.ErrNoOutput, message: "llm: claude result has no structured_output: "},
 		},
+		{
+			name: "an overflowing duration is refused",
+			args: args{req: llm.Request{Schema: schema}, script: `echo '{"type":"result","subtype":"success","structured_output":{},"duration_ms":9223372036855}'`},
+			want: want{err: llm.ErrNotResult, message: "duration_ms out of range"},
+		},
+		{
+			name: "a negative duration is refused",
+			args: args{req: llm.Request{Schema: schema}, script: `echo '{"type":"result","subtype":"success","structured_output":{},"duration_ms":-1}'`},
+			want: want{err: llm.ErrNotResult, message: "duration_ms out of range"},
+		},
 	}
 	ctx := context.Background()
 	for _, tc := range tcs {

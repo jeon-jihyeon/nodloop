@@ -138,7 +138,7 @@ type extraction struct {
 
 // Appends the extract trace of the reaction and returns the error of the extraction joined with any failure to record it
 func (e *Extractor) record(ctx context.Context, r Reaction, path Path, rec Record, x extraction, failed error) error {
-	// Strings, numbers and bools alone always encode
+	// Only strings and numbers and bools so encoding cannot fail
 	input, _ := json.Marshal(TraceInput{
 		Verdict: string(r.Verdict.Verdict), ReasonCode: string(r.Verdict.ReasonCode), Reviewer: r.Verdict.Reviewer, VerdictID: r.Verdict.RecordID(),
 	})

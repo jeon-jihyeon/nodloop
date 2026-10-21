@@ -427,6 +427,10 @@ func TestConfigCheck(t *testing.T) {
 		{"chat with a relative base URL", llm.Config{Backend: llm.BackendChat, BaseURL: "localhost/v1"}, llm.ErrBaseURLInvalid},
 		{"chat with another scheme", llm.Config{Backend: llm.BackendChat, BaseURL: "ftp://example.com"}, llm.ErrBaseURLInvalid},
 		{"chat with a base URL that does not parse", llm.Config{Backend: llm.BackendChat, BaseURL: "http://[::1"}, llm.ErrBaseURLInvalid},
+		{"a malformed URL with a token", llm.Config{Backend: llm.BackendChat, BaseURL: "http://bad host/v1?key=k1"},
+			llm.ErrBaseURLInvalid},
+		{"an unsupported scheme with credentials", llm.Config{Backend: llm.BackendChat, BaseURL: "ftp://ann:k1@example.com"},
+			llm.ErrBaseURLInvalid},
 		{"chat with a password in the base URL", llm.Config{Backend: llm.BackendChat, BaseURL: "https://ann:k1@example.com/v1", Model: "qwen3"},
 			llm.ErrBaseURLCredentials},
 		{"chat with a user in the base URL", llm.Config{Backend: llm.BackendChat, BaseURL: "https://ann@example.com/v1", Model: "qwen3"},
@@ -440,7 +444,11 @@ func TestConfigCheck(t *testing.T) {
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			assert.ErrorIs(t, tc.args.Check(), tc.want)
+			err := tc.args.Check()
+			assert.ErrorIs(t, err, tc.want)
+			if err != nil {
+				assert.NotContains(t, err.Error(), "k1")
+			}
 		})
 	}
 }

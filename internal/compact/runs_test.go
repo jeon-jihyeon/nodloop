@@ -13,6 +13,7 @@ import (
 	"go.uber.org/mock/gomock"
 
 	"github.com/jeon-jihyeon/nodloop/internal/compact"
+	"github.com/jeon-jihyeon/nodloop/internal/feedback"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	"github.com/jeon-jihyeon/nodloop/internal/llm"
 	"github.com/jeon-jihyeon/nodloop/internal/llm/llmmock"
@@ -24,7 +25,7 @@ import (
 
 var errModel = errors.New("model down")
 
-// Two approved run items of the repo nodloop that say one thing twice, a compactor and its proposal
+// A compactable fixture folder with duplicate lessons
 func runFolder(t *testing.T) (testkit.Stores, *compact.Compactor, knowledge.Compaction) {
 	t.Helper()
 	ctx := context.Background()
@@ -63,6 +64,123 @@ func approve(s testkit.Stores, c *compact.Compactor, id string) (knowledge.Compa
 		return knowledge.Compaction{}, err
 	}
 	return s.Ledger.ApproveCompaction(ctx, id, "sam", cov)
+}
+
+func TestFolderCorrectionsUseReconciledVerdicts(t *testing.T) {
+	type verdict struct {
+		reviewer string
+		verdict  feedback.Verdict
+		seconds  int
+	}
+	tcs := []struct {
+		name string
+		args []verdict
+		want []feedback.Verdict
+	}{
+		{"a person wins over a later inferred correction",
+			[]verdict{{"ann", feedback.VerdictApprove, 1}, {"session", feedback.VerdictReject, 2}},
+			[]feedback.Verdict{feedback.VerdictApprove}},
+		{"a disputed inferred verdict supplies no correction",
+			[]verdict{{"session", feedback.VerdictReject, 1}, {"nodloop", feedback.VerdictApprove, 2}}, nil},
+		{"a late older append never replaces a newer verdict",
+			[]verdict{{"ann", feedback.VerdictApprove, 2}, {"ann", feedback.VerdictReject, 1}},
+			[]feedback.Verdict{feedback.VerdictApprove}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ctx := context.Background()
+			s, c, proposed := runFolder(t)
+			id := proposed.Replaced[0].Evidence.FeedbackTraceIDs[0]
+			base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+			for _, v := range tc.args {
+				require.NoError(t, s.Feedback.Append(ctx, feedback.Feedback{
+					TraceID: id, Time: base.Add(time.Duration(v.seconds) * time.Second),
+					Reviewer: v.reviewer, Verdict: v.verdict,
+				}.Record()))
+			}
+
+			folder, err := c.Folder(ctx, "a")
+
+			require.NoError(t, err)
+			var got []feedback.Verdict
+			for _, correction := range folder.Corrections {
+				got = append(got, correction.Verdict)
+			}
+			assert.Equal(t, tc.want, got)
+		})
+	}
+}
+
+func TestCompactorReadFailures(t *testing.T) {
+	type args struct {
+		method  string
+		store   string
+		allowed int
+	}
+	tcs := []struct {
+		name string
+		args args
+	}{
+		{"folder initial items", args{"folder", "items", 0}},
+		{"folder compactable items", args{"folder", "items", 1}},
+		{"folder verdicts", args{"folder", "verdicts", 0}},
+		{"proposal folder", args{"propose", "items", 0}},
+		{"proposal runs", args{"propose", "traces", 0}},
+		{"check compaction", args{"check", "items", 0}},
+		{"record compaction", args{"record", "items", 0}},
+		{"coverage traces", args{"coverage", "traces", 0}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ctx := context.Background()
+			s, _, proposed := runFolder(t)
+			items := &testkit.FlakyKnowledge{Store: s.Knowledge, Reads: testkit.Reads{Allowed: 99, Err: assert.AnError}}
+			verdicts := &testkit.FlakyFeedback{Store: s.Feedback, Reads: testkit.Reads{Allowed: 99, Err: assert.AnError}}
+			traces := &testkit.FlakyTraces{Store: s.Traces, Lists: testkit.Reads{Allowed: 99, Err: assert.AnError}}
+			switch tc.args.store {
+			case "items":
+				items.Allowed = tc.args.allowed
+			case "verdicts":
+				verdicts.Allowed = tc.args.allowed
+			case "traces":
+				traces.Lists.Allowed = tc.args.allowed
+			}
+			ledger := knowledge.NewLedger(items, nil, s.Clock.Now, nil)
+			c := compact.New(ledger, traces, verdicts, traces, s.Clock.Now)
+			var err error
+
+			switch tc.args.method {
+			case "folder":
+				_, err = c.Folder(ctx, "a")
+			case "propose":
+				_, err = c.Propose(ctx, "a", compact.Draft{}, "ann")
+			case "check":
+				_, err = c.Check(ctx, llmmock.NewMockClient(gomock.NewController(t)), proposed.ID, "")
+			case "record":
+				_, err = c.Record(ctx, proposed.ID, nil)
+			case "coverage":
+				_, err = c.Coverage(ctx, proposed.ID)
+			}
+
+			assert.ErrorIs(t, err, assert.AnError)
+		})
+	}
+}
+
+func TestCompactorCorruptCoverage(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s, c, proposed := runFolder(t)
+	require.NoError(t, s.Traces.Append(ctx, trace.Trace{
+		ID: "check-invalid", Name: trace.NameCheck, SessionID: proposed.ID,
+		Time: s.Clock.Now(), Input: json.RawMessage(`{}`), Output: json.RawMessage(`"invalid coverage"`),
+	}.Record()))
+
+	_, err := c.Coverage(ctx, proposed.ID)
+
+	assert.ErrorIs(t, err, compact.ErrCoverageInvalid)
 }
 
 func TestCompactRuns(t *testing.T) {
@@ -119,7 +237,7 @@ func TestCompactRuns(t *testing.T) {
 	}
 }
 
-// A draft that reaches runs an old item never reached, two drafts of one kind for the same runs, an unnamed old item and an unrecorded label are refused
+// Refusals for invalid compaction scope and membership
 func TestCompactRunsRefusals(t *testing.T) {
 	ctx := context.Background()
 	both := []string{"a", "b"}
@@ -253,7 +371,7 @@ func TestCompactRunsCheck(t *testing.T) {
 	}
 }
 
-// Every draft that reaches the model leaves one compact trace with the usage of its calls, its wall time and its error
+// One compact trace per model draft with measured execution metadata
 // A fixable refusal is sent back once and a folder with a pending compaction asks nothing
 func TestCompactDraftTrace(t *testing.T) {
 	ctx := context.Background()

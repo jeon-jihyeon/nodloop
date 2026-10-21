@@ -16,7 +16,7 @@ const (
 // The llm key of config.json
 type Config struct {
 	Backend Backend `json:"backend,omitempty"`
-	// The URL `/chat/completions` is joined to
+	// The base URL before the Chat Completions route
 	// Required for chat
 	BaseURL string `json:"base_url,omitempty"`
 	// The default model of the backend
@@ -30,7 +30,8 @@ type Config struct {
 // 1. a chat backend needs a model since an endpoint has no default of its own
 // 2. a base URL with a user or a password is refused since config.json and config list would keep it in the open
 // 3. a base URL with a query or a fragment is refused without quoting it
-// The path is joined after the base so the query would cut it off, and a token in it would reach config list and hook.log
+// The query would cut off the joined route
+// A token in it would reach config list and the hook log
 func (c Config) Check() error {
 	switch c.Backend {
 	case "", BackendClaude:
@@ -38,7 +39,7 @@ func (c Config) Check() error {
 	case BackendChat:
 		u, err := url.Parse(c.BaseURL)
 		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-			return fmt.Errorf("%w: %q", ErrBaseURLInvalid, c.BaseURL)
+			return ErrBaseURLInvalid
 		}
 		if u.User != nil {
 			return ErrBaseURLCredentials

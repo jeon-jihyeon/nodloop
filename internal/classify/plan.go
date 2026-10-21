@@ -129,7 +129,7 @@ func (m Member) ask(ctx context.Context, req Request, now func() time.Time) (Rep
 		err = reply.Answers.check(req.Questions)
 	}
 	if err != nil {
-		rec.Error = err.Error()
+		rec.Error = ErrMemberFailed.Error()
 		return Reply{Model: reply.Model, Effort: reply.Effort}, rec, fmt.Errorf("%s: %w", m.Name, err)
 	}
 	rec.Answers = reply.Answers.probabilities()
@@ -148,7 +148,7 @@ func (m Member) reply(ctx context.Context, req Request) (Reply, error) {
 // Appends the trace of one request with the error of the deciding member
 func (p *Plan) record(ctx context.Context, tr trace.Trace, failed error) error {
 	if failed != nil {
-		tr.Error = failed.Error()
+		tr.Error = ErrMemberFailed.Error()
 	}
 	return p.traces.Append(ctx, tr.Record())
 }

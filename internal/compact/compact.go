@@ -67,7 +67,7 @@ func New(ledger *knowledge.Ledger, traces TraceStore, verdicts FeedbackStore, ch
 	return &Compactor{ledger: ledger, traces: traces, feedback: verdicts, checks: checks, now: now}
 }
 
-// The anchor and the approved items one run may carry with it, with the corrections behind them
+// The anchor and its compactable items with their corrections
 // Fails with knowledge ErrNotFound as the ledger would refuse the anchor
 func (c *Compactor) Folder(ctx context.Context, anchor string) (Folder, error) {
 	all, err := c.ledger.All(ctx)
@@ -114,26 +114,32 @@ func (c *Compactor) propose(ctx context.Context, f Folder, d Draft, author strin
 	return c.ledger.ProposeCompaction(ctx, f.Anchor, drafts)
 }
 
-// The latest verdict on every evidence trace of the items, once each in the order the items cite them
-// The first listed record of a trace is its newest
+// One reconciled verdict per evidence trace in citation order
+// A later inferred verdict never replaces a person or settles a dispute
 func (c *Compactor) corrections(ctx context.Context, items knowledge.Set) ([]Correction, error) {
 	found, err := c.feedback.List(ctx, record.FeedbackFilter{})
 	if err != nil {
 		return nil, err
 	}
-	verdicts := feedback.RestoreAll(found)
+	verdicts := feedback.RestoreAll(found).Reconciled()
+	byTrace := make(map[string]feedback.Feedback, len(verdicts))
+	for _, verdict := range verdicts {
+		byTrace[verdict.TraceID] = verdict
+	}
 	var ids []string
+	seen := map[string]bool{}
 	for _, k := range items {
 		for _, id := range k.Evidence.TraceIDs() {
-			if !slices.Contains(ids, id) {
+			if !seen[id] {
+				seen[id] = true
 				ids = append(ids, id)
 			}
 		}
 	}
 	out := []Correction{}
 	for _, id := range ids {
-		if j := slices.IndexFunc(verdicts, func(fb feedback.Feedback) bool { return fb.TraceID == id }); j >= 0 {
-			out = append(out, Correction{TraceID: id, Verdict: verdicts[j].Verdict, Reason: verdicts[j].Reason})
+		if verdict, ok := byTrace[id]; ok {
+			out = append(out, Correction{TraceID: id, Verdict: verdict.Verdict, Reason: verdict.Reason})
 		}
 	}
 	return out, nil
@@ -154,7 +160,8 @@ func recordedLabels(runs trace.Traces, drafts []knowledge.Knowledge) error {
 }
 
 // Every recorded run an old item reached is reached by a draft that names it
-// The ledger refuses a draft that reaches further, this refuses drafts that together reach less
+// The ledger rejects wider reach
+// This check rejects lost reach across the drafts
 // so an old fact never silently stops reaching a place it held for
 func keptReach(runs trace.Traces, old knowledge.Set, drafts []knowledge.Knowledge) error {
 	for _, k := range old {
