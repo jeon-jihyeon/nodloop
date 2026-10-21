@@ -409,7 +409,7 @@ func TestRunExportOtelPending(t *testing.T) {
 		{"a cursor of a record no store holds falls back to the time of the mark",
 			args{`{"at":"2026-10-07T10:00:00Z","after":{"traces":"gone","verdicts":"gone","outcomes":"gone"}}`, http.StatusOK, approve},
 			want{0, verdict, []string{"evaluate nodloop.verdict"}, "2026-10-07T11:00:00Z", true}},
-		{"a refused export leaves the mark", args{hourOn, http.StatusInternalServerError, approve},
+		{"a retryable export leaves the mark", args{hourOn, http.StatusServiceUnavailable, approve},
 			want{1, "", []string{"evaluate nodloop.verdict"}, "2026-10-07T10:00:00Z", false}},
 	}
 	for _, tc := range tcs {

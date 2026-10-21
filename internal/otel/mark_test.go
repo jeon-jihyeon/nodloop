@@ -3,6 +3,7 @@ package otel_test
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -22,6 +23,9 @@ func TestMarkerHold(t *testing.T) {
 	}{
 		{"no mark reads as no export", nil, otel.Mark{}},
 		{"a mark of the time alone reads its time", map[string]string{otel.MarkFile: `{"at":"2026-10-07T09:00:00Z"}`}, otel.Mark{At: at}},
+		{"a mark keeps terminal receipt fingerprints",
+			map[string]string{otel.MarkFile: `{"at":"2026-10-07T09:00:00Z","completed":["fingerprint"]}`},
+			otel.Mark{At: at, Completed: []string{"fingerprint"}}},
 		{"a mark reads the cursor of each store", map[string]string{otel.MarkFile: `{"at":"2026-10-07T09:00:00Z","after":{"traces":"t1"}}`},
 			otel.Mark{At: at, After: map[string]string{"traces": "t1"}}},
 		{"a mark that does not decode reads as no export", map[string]string{otel.MarkFile: "{"}, otel.Mark{}},
@@ -148,6 +152,36 @@ func TestHeldReleased(t *testing.T) {
 			assert.ErrorIs(t, moveErr, tc.want.moveErr)
 			assert.ErrorIs(t, releaseErr, tc.want.releaseErr)
 			assert.True(t, tc.want.at.Equal(held.At), held.At)
+		})
+	}
+}
+
+func TestMarkerKeepsReceiptAfterFailedMove(t *testing.T) {
+	for _, failure := range []string{"marshal", "write"} {
+		t.Run(failure, func(t *testing.T) {
+			t.Parallel()
+			if failure == "write" && (runtime.GOOS == "windows" || os.Getuid() == 0) {
+				t.Skip("directory permission failures need an unprivileged Unix process")
+			}
+			dir := t.TempDir()
+			marker := otel.NewMarker(dir)
+			held, err := marker.Hold()
+			require.NoError(t, err)
+			before := otel.Mark{At: at, Completed: []string{"receipt"}}
+			require.NoError(t, held.Move(before))
+			next := otel.Mark{At: at.Add(time.Hour)}
+			if failure == "marshal" {
+				next.At = time.Date(10000, 1, 1, 0, 0, 0, 0, time.UTC)
+			} else {
+				require.NoError(t, os.Chmod(dir, 0o500))
+				t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+			}
+			assert.ErrorIs(t, held.Move(next), otel.ErrMark)
+			require.NoError(t, held.Release())
+			again, err := marker.Hold()
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = again.Release() })
+			assert.Equal(t, before, again.Mark)
 		})
 	}
 }
