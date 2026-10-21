@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jeon-jihyeon/nodloop/internal/curate"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	"github.com/jeon-jihyeon/nodloop/internal/loop"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
@@ -82,6 +83,11 @@ func (c knowledgeCommand) reaffirm(ctx context.Context, id string, version int, 
 		}
 		return c.proposal(ctx, "reaffirm", judgment)
 	}
+	release, err := curate.FileTurn(c.app.cfg.recordDir)()
+	if err != nil {
+		return err
+	}
+	defer release()
 	decision := trace.NewID(c.app.now())
 	k, err := c.ledger.Under(decision).Reaffirm(ctx, id, version, judgment.Person)
 	if err != nil && !errors.Is(err, knowledge.ErrExport) {

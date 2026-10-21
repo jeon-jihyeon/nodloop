@@ -176,6 +176,13 @@ func (s *Server) proof() trace.Proof {
 	return trace.ProofNone
 }
 
+func (s *Server) takeTurn() (func(), error) {
+	if s.policy.Turn == nil {
+		return func() {}, nil
+	}
+	return s.policy.Turn()
+}
+
 // Records the intervention of a judgment under the id its records name with the records it wrote and returns its trace id
 // 1. a judgment without a proof wrote nothing so its intervention is an agent proposal the person is asked about
 // 2. the caller chose what to act on so the source is manual
@@ -580,6 +587,11 @@ func (in approveInput) judgment(proof trace.Proof, approver string) trace.Interv
 // The approval is recorded and a second approve would fail so a later failure never fails the call
 // The intervention follows the approval since it names the record the approval wrote, and the approval names the intervention
 func (s *Server) approved(ctx context.Context, in approveInput, judgment trace.Intervention) (approveAnswer, error) {
+	release, err := s.takeTurn()
+	if err != nil {
+		return approveAnswer{}, err
+	}
+	defer release()
 	id := trace.NewID(s.now())
 	k, err := s.approval(ctx, s.ledger.Under(id), in, judgment.Person)
 	if err != nil && !errors.Is(err, knowledge.ErrExport) {
@@ -764,6 +776,11 @@ func (s *Server) approveCompaction(
 		return nil, approveCompactionAnswer{Compaction: c.ID, Records: c.Statuses(), Proposal: id}, nil
 	}
 	judgment.Person = approver
+	release, err := s.takeTurn()
+	if err != nil {
+		return nil, approveCompactionAnswer{}, err
+	}
+	defer release()
 	id := trace.NewID(s.now())
 	cov, err := s.compactor.Coverage(ctx, in.Compaction)
 	if err != nil {

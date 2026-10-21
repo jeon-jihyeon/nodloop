@@ -298,6 +298,10 @@ func (h *serveHandler) interventions(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("%v: %v", errPayloadInvalid, err), http.StatusBadRequest)
 		return
 	}
+	if err := dec.Decode(new(json.RawMessage)); !errors.Is(err, io.EOF) {
+		http.Error(w, errPayloadInvalid.Error(), http.StatusBadRequest)
+		return
+	}
 	answer, err := h.hostOf(key).host.Intervene(r.Context(), req)
 	switch {
 	case slices.ContainsFunc(refusals, func(refusal error) bool { return errors.Is(err, refusal) }):

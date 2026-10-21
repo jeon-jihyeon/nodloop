@@ -115,7 +115,8 @@
         "output.groups.members"
       ],
       "text": [
-        "output.groups.why"
+        "output.groups.why",
+        "error"
       ]
     },
     {
@@ -160,7 +161,9 @@
         "session_id",
         "subject"
       ],
-      "text": []
+      "text": [
+        "error"
+      ]
     },
     {
       "kind": "instructions",

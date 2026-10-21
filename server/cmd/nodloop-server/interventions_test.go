@@ -137,3 +137,41 @@ func TestServeHandlerInterventionsInternalError(t *testing.T) {
 	assert.Equal(t, http.StatusInternalServerError, status)
 	assert.Equal(t, "internal error\n", body)
 }
+
+func TestServeHandlerInterventionsSinglePayload(t *testing.T) {
+	type args struct {
+		tail string
+	}
+	type want struct {
+		status, records int
+	}
+	const payload = `{"action":"pause","target":"add"}`
+	tcs := []struct {
+		name string
+		args args
+		want want
+	}{
+		{"second object", args{` {"action":"digest"}`}, want{http.StatusBadRequest, 0}},
+		{"trailing garbage", args{" invalid"}, want{http.StatusBadRequest, 0}},
+		{"oversized whitespace", args{strings.Repeat(" ", maxPayload)}, want{http.StatusBadRequest, 0}},
+		{"exact byte limit", args{strings.Repeat(" ", maxPayload-len(payload))}, want{http.StatusOK, 1}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			stores := fileTenants{base: t.TempDir()}
+			key := held(hashed("reviewer", "example", mcp.RoleApprover))
+			srv := httptest.NewServer(newServeHandler(stores, serverConfig{Keys: []serverKey{key}}, time.Now, io.Discard))
+			t.Cleanup(srv.Close)
+
+			status, body := post(t, srv.URL+"/v1/interventions", key.Name, payload+tc.args.tail)
+			source, err := stores.records(key, time.Now)
+			require.NoError(t, err)
+			page, err := source.Page(t.Context(), schema.Query{Kind: "intervention"})
+
+			require.NoError(t, err)
+			assert.Equal(t, tc.want.status, status, body)
+			assert.Len(t, page.Records, tc.want.records)
+		})
+	}
+}

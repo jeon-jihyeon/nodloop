@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/jeon-jihyeon/nodloop/internal/compact"
+	"github.com/jeon-jihyeon/nodloop/internal/curate"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	"github.com/jeon-jihyeon/nodloop/internal/llm"
 	"github.com/jeon-jihyeon/nodloop/internal/replay"
@@ -229,6 +230,11 @@ func (c compactionCommand) approve(ctx context.Context, id, approver string) err
 		}
 		return c.records.proposal(ctx, "approve-compaction", judgment)
 	}
+	release, err := curate.FileTurn(c.records.app.cfg.recordDir)()
+	if err != nil {
+		return err
+	}
+	defer release()
 	before, err := c.ledger.All(ctx)
 	if err != nil {
 		return err
