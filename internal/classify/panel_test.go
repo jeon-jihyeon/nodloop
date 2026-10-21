@@ -94,7 +94,7 @@ func TestPanelClassify(t *testing.T) {
 				members: []asked{
 					{Name: "claude:1", Model: "claude-opus-5-5", Effort: "high", Answers: conform},
 					{Name: "claude:2", Model: "claude-opus-5-5", Effort: "high", Answers: opposed},
-					{Name: "claude:3", Model: "claude-opus-5-5", Effort: "high", Error: "assert.AnError general error for testing"},
+					{Name: "claude:3", Model: "claude-opus-5-5", Effort: "high", Error: classify.ErrMemberFailed.Error()},
 					{Name: "laya", Model: "laya-2", Answers: other},
 				},
 			}},
@@ -103,21 +103,21 @@ func TestPanelClassify(t *testing.T) {
 			want{
 				votes:   []classify.Reply{opus(nil)},
 				failed:  []bool{true},
-				members: []asked{{Name: "claude:1", Model: "claude-opus-5-5", Effort: "high", Error: "classify: question not answered: against"}},
+				members: []asked{{Name: "claude:1", Model: "claude-opus-5-5", Effort: "high", Error: classify.ErrMemberFailed.Error()}},
 			}},
 		{"a member that answers NaN gives no answer",
 			[]member{{name: "claude:1", reply: opus(classify.Answers{"decided": {Yes: math.NaN()}, "against": {Yes: 0}})}},
 			want{
 				votes:   []classify.Reply{opus(nil)},
 				failed:  []bool{true},
-				members: []asked{{Name: "claude:1", Model: "claude-opus-5-5", Effort: "high", Error: "classify: endpoint answer is not valid: decided is NaN"}},
+				members: []asked{{Name: "claude:1", Model: "claude-opus-5-5", Effort: "high", Error: classify.ErrMemberFailed.Error()}},
 			}},
 		{"a failing endpoint keeps the model it was sent and the status without its body",
 			[]member{{name: "laya", endpoint: &endpoint{status: http.StatusServiceUnavailable}}},
 			want{
 				votes:   []classify.Reply{{Model: "laya"}},
 				failed:  []bool{true},
-				members: []asked{{Name: "laya", Model: "laya", Error: "classify: endpoint answered an error status: 503"}},
+				members: []asked{{Name: "laya", Model: "laya", Error: classify.ErrMemberFailed.Error()}},
 			}},
 	}
 	for _, tc := range tcs {

@@ -1,6 +1,6 @@
 package extract
 
-// How a lesson stands to the approved items, the waiting candidates and the retired versions the run reaches
+// How a lesson relates to the versions the run reaches
 type Relation string
 
 const (

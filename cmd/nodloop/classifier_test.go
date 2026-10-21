@@ -63,7 +63,7 @@ func TestRunClassifier(t *testing.T) {
 		{"unset leaves claude alone", args{[][]string{set}, []string{"unset", "critic"}},
 			want{0, "point\tcritic\tclaude (default)\n", ""}},
 		{"set without a URL is refused", args{nil, []string{"set", "critic"}},
-			want{1, "", "nodloop classifier: classify: invalid endpoint: \"\" is not an absolute http or https URL"}},
+			want{1, "", "nodloop classifier: classify: invalid endpoint: expected an absolute http or https URL"}},
 		{"an unknown point is refused", args{nil, []string{"set", "review", "--url", layaURL}},
 			want{1, "", "nodloop classifier: classify: unknown decision point: \"review\". Use one of [critic reaction judge]"}},
 		{"unset of an unknown point is refused", args{nil, []string{"unset", "review"}},
@@ -322,5 +322,5 @@ func TestRunKnowledgeExtractInvalidEndpoint(t *testing.T) {
 	code := runKnowledge([]string{"extract", "--from", strings.TrimSpace(id.String())}, getenv, client, time.Now, atTerminal, &bytes.Buffer{}, &stderr)
 
 	assert.Equal(t, 1, code)
-	assert.Contains(t, stderr.String(), `critic: classify: invalid endpoint: "localhost:8000" is not an absolute http or https URL`)
+	assert.Contains(t, stderr.String(), "critic: classify: invalid endpoint: expected an absolute http or https URL")
 }

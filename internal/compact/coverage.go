@@ -43,7 +43,7 @@ const CoverageSchema = `{
   }
 }`
 
-// One old item as a checker writes it, by ids alone
+// One old item identified by its id alone
 type CoverageAnswer struct {
 	Old       string   `json:"old" jsonschema:"the id of an old item of the compaction"`
 	CoveredBy []string `json:"covered_by" jsonschema:"ids of the new items that state it"`
@@ -72,15 +72,15 @@ func (c *Compactor) Check(ctx context.Context, client llm.Client, id, model stri
 	return c.record(ctx, id, answer.Items, res)
 }
 
-// Records the coverage a checker wrote for the compaction, such as a model call or the conversation
+// Records the coverage from a model or the conversation
 // 1. ids resolve to the versions of the compaction so a coverage can never cite another version
 // 2. an id outside the compaction or an old item answered twice fails with ErrCoverageInvalid
-// 3. the coverage is a trace of name check whose session is the compaction id, and the newest one counts
+// 3. the newest check trace of the compaction session is its coverage
 func (c *Compactor) Record(ctx context.Context, id string, answers []CoverageAnswer) (knowledge.Coverage, error) {
 	return c.record(ctx, id, answers, llm.Response{})
 }
 
-// The coverage with the model, the usage and the duration of the call that wrote it
+// The coverage with its model and measured usage
 // A checker that called no model leaves them empty
 func (c *Compactor) record(ctx context.Context, id string, answers []CoverageAnswer, spent llm.Response) (knowledge.Coverage, error) {
 	compaction, err := c.ledger.Compaction(ctx, id)
@@ -108,10 +108,7 @@ func (c *Compactor) record(ctx context.Context, id string, answers []CoverageAns
 		}
 		cov.Items = append(cov.Items, item)
 	}
-	out, err := json.Marshal(cov)
-	if err != nil {
-		return knowledge.Coverage{}, err
-	}
+	out, _ := json.Marshal(cov)
 	now := c.now()
 	check := trace.Trace{
 		ID: trace.NewID(now), Name: trace.NameCheck, SessionID: id, Time: now, Model: spent.Model, Input: json.RawMessage("{}"), Output: out,
@@ -140,7 +137,7 @@ func (c *Compactor) Coverage(ctx context.Context, id string) (knowledge.Coverage
 	return cov, nil
 }
 
-// The old and the new items as the checker reads them, each with its scope so a fact lost to a narrower scope shows
+// The compared versions with their scopes so lost reach remains visible
 func coverageText(c knowledge.Compaction) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# Compaction %s\n\nAn old item is stated only when a new item says the same and reaches every run the old one reached\n\n## Old items\n", c.ID)

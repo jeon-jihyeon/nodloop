@@ -40,7 +40,7 @@ const quoted = "Quote a path with spaces in a shell command"
 const bullets = "Answer in short bullets"
 
 // A session run of repo nodloop and dir cmd in host claude-code that a person edited
-// It reaches the approved item git-c, the waiting candidate quote and the version dropped a person retired
+// Approved and waiting and retired versions reached by the fixture run
 // The waiting candidate far of another repository never reaches it
 func corrected(t *testing.T) (testkit.Stores, *extract.Extractor, string) {
 	t.Helper()
@@ -208,6 +208,14 @@ func TestExtractorPropose(t *testing.T) {
 		{"an unknown relation is refused", args{draft: draft("merge", "", lesson), critique: pass}, want{err: extract.ErrRelationInvalid}},
 		{"two sentences are refused", args{draft: draft(extract.RelationAdd, "", "Use git -C. Never cd first"), critique: pass},
 			want{err: extract.ErrNotLesson}},
+		{"empty content is refused", args{draft: draft(extract.RelationAdd, "", "  "), critique: pass},
+			want{err: extract.ErrNotLesson}},
+		{"content beyond the character cap is refused", args{draft: draft(extract.RelationAdd, "", strings.Repeat("a", 301)), critique: pass},
+			want{err: extract.ErrNotLesson}},
+		{"a carriage return is refused", args{draft: draft(extract.RelationAdd, "", "Use git\rwith -C"), critique: pass},
+			want{err: extract.ErrNotLesson}},
+		{"a Unicode line separator is refused", args{draft: draft(extract.RelationAdd, "", "Use git\u2028with -C"), critique: pass},
+			want{err: extract.ErrNotLesson}},
 		{"a content that copies the output is refused", args{draft: draft(extract.RelationAdd, "", "Never say "+longLine), critique: pass},
 			want{err: extract.ErrNotLesson}},
 		{"a key the run does not carry is refused and names the keys it carries", args{draft: draft(extract.RelationAdd, "", lesson, "task"), critique: pass},
@@ -239,7 +247,7 @@ func TestExtractorPropose(t *testing.T) {
 }
 
 // A reaction resolves only for a successful run whose verdict still corrects it
-// A later approve or withdraw, a trace that is no successful run and a failed read refuse it
+// Only a successful run with a current correction can resolve
 func TestExtractorReaction(t *testing.T) {
 	type args struct {
 		// The trace the reaction reads and the corrected run when empty
@@ -404,7 +412,7 @@ func TestExtractorExtract(t *testing.T) {
 	// The drafter prompts of the calls
 	type prompts struct {
 		drafts int
-		// Prompts that hold the edit and every item, candidate and retired version the run reaches with who decided it and no other
+		// Prompts limited to the correction and reached versions with their decision provenance
 		reaching int
 		// Prompts that send a refusal back
 		refused int

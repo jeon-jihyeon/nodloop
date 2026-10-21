@@ -35,7 +35,7 @@ func (p Point) Check() error {
 }
 
 type Endpoint struct {
-	// The whole URL a request posts to such as http://localhost:8000/v1/systemone
+	// The endpoint URL of a request
 	URL string `json:"url"`
 	// Sent as the model field
 	// Empty leaves it out
@@ -49,7 +49,7 @@ type Endpoint struct {
 func (e Endpoint) check() error {
 	u, err := url.Parse(e.URL)
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-		return fmt.Errorf("%w: %q is not an absolute http or https URL", ErrEndpointInvalid, e.URL)
+		return fmt.Errorf("%w: expected an absolute http or https URL", ErrEndpointInvalid)
 	}
 	if u.User != nil {
 		return ErrEndpointCredentials

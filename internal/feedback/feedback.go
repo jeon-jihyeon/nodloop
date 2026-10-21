@@ -102,7 +102,7 @@ type Feedback struct {
 
 // The verdict of every writer but the capture
 // The reserved name of the capture fails with ErrReviewerReserved before any other check
-// so no argument, flag or key of a person or a program writes it
+// so no public caller can write that reserved reviewer
 func New(
 	traceID string, verdict Verdict, code ReasonCode, reason string, edited json.RawMessage, reviewer string, now time.Time,
 ) (Feedback, error) {

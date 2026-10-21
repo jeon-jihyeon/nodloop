@@ -54,7 +54,7 @@ func New(ledger *knowledge.Ledger, traces TraceStore, verdicts FeedbackStore, no
 // What a lesson is drafted from
 type Reaction struct {
 	Run trace.Trace
-	// The latest verdict on the run, an edit or a reject
+	// The latest correction on the run
 	Verdict feedback.Feedback
 	// The approved items the producer and labels of the run reach now
 	Reached knowledge.Set
@@ -69,9 +69,9 @@ type Reaction struct {
 type Result struct {
 	Relation Relation
 	Content  string
-	// The item, candidate or retired version an update, a duplicate or a conflict names
+	// The related version the draft names
 	Related *knowledge.Knowledge
-	// The candidate an add, an update, a conflict or a duplicate of a retired version proposed
+	// The candidate proposed from a draft
 	// or the waiting candidate a duplicate corroborated
 	Candidate *knowledge.Knowledge
 	Overlaps  knowledge.Set
@@ -302,9 +302,9 @@ func (e *Extractor) propose(ctx context.Context, r Reaction, d Draft, x extracti
 
 // The candidate a judged draft proposes
 // 1. an add is scoped to the run with the run as its evidence
-// 2. an update keeps the kind, scope, veto, basis and evidence of what it names and joins the run so approval never widens or lifts it
+// 2. an update preserves the scope restrictions and accumulated evidence while changing the lesson
 // 3. a duplicate of a retired version keeps all of it with its text and joins the run so a lesson dropped earlier comes back as it was
-// 4. a conflict keeps the kind, scope and veto of what it contradicts with the run alone as evidence since the old evidence teaches the opposite
+// 4. a conflict keeps the contradicted scope and kind and veto with only the corrected run as evidence
 func (r Reaction) candidate(d Draft, related *knowledge.Knowledge) knowledge.Knowledge {
 	corrected := knowledge.Evidence{FeedbackTraceIDs: []string{r.Run.ID}}
 	switch {
@@ -359,7 +359,7 @@ func (r Reaction) check(d Draft) error {
 
 // The version the relation of a draft names
 // 1. an add names nothing
-// 2. a duplicate names an approved item, a waiting candidate or a retired version the run reaches
+// 2. a duplicate names one reached version regardless of its status
 // 3. an update and a conflict name an approved item or a waiting candidate the run reaches
 // The redraft reads each error as what to fix
 func (r Reaction) checkRelation(d Draft) (knowledge.Knowledge, error) {

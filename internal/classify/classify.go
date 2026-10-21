@@ -103,7 +103,7 @@ func (as Answers) Sure() bool {
 	return true
 }
 
-// The probabilities as one line such as `holds 0.42, states 0.91`
+// The probabilities in name order on one line
 func (as Answers) String() string {
 	parts := make([]string, 0, len(as))
 	for _, name := range slices.Sorted(maps.Keys(as)) {

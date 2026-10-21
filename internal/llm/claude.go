@@ -196,6 +196,9 @@ func (r result) response() (Response, error) {
 	if len(r.StructuredOutput) == 0 || string(r.StructuredOutput) == "null" {
 		return Response{}, ErrNoOutput
 	}
+	if r.DurationMS < 0 || r.DurationMS > (1<<63-1)/int64(time.Millisecond) {
+		return Response{}, fmt.Errorf("%w: duration_ms out of range", ErrNotResult)
+	}
 	return Response{
 		Output:         r.StructuredOutput,
 		CostUSD:        r.TotalCostUSD,

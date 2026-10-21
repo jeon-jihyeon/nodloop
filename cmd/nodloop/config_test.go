@@ -138,6 +138,8 @@ func TestRunConfig(t *testing.T) {
 		{"a retention of 0 removes the key", args{`{"approver":"ann","retention":30}`, []string{"retention", "0"}, false},
 			want{0, "0\n", "", "{\n  \"approver\": \"ann\"\n}\n"}},
 		{"a retention under a week is refused", args{"", []string{"retention", "6"}, false}, want{1, "", "invalid retention", ""}},
+		{"a retention that overflows a duration is refused", args{"", []string{"retention", "106752"}, false},
+			want{1, "", "invalid retention", ""}},
 		{"a retention of part of a day is refused", args{"", []string{"retention", "7.5"}, false}, want{1, "", "invalid retention", ""}},
 		{"no session mode prints deferred", args{"", []string{"session_mode"}, false}, want{0, "deferred\n", "", ""}},
 		{"a session mode is saved", args{"", []string{"session_mode", "manual"}, false}, want{0, "manual\n", "", "{\n  \"session_mode\": \"manual\"\n}\n"}},
@@ -214,6 +216,14 @@ func TestRunConfigList(t *testing.T) {
 			args{`{"llm":{"backend":"claude","model":"haiku"}}`, nil},
 			"record_dir\t<home>/.nodloop/records\tdefault\nsession_mode\tdeferred\tdefault\napprover\t-\tdefault\nholdout\t0\tdefault\nretention\t0\tdefault\n" +
 				"decision_points\t-\tdefault\nllm\tclaude\tconfig.json\nclaude binary\tclaude\tdefault\nmodel\thaiku\tconfig.json\notel\t-\tdefault\n",
+		},
+		{
+			"an invalid backend URL never prints its token",
+			args{`{"llm":{"backend":"chat","base_url":"http://bad host/v1?key=k1","model":"qwen3"}}`, nil},
+			"record_dir\t<home>/.nodloop/records\tdefault\nsession_mode\tdeferred\tdefault\napprover\t-\tdefault\n" +
+				"holdout\t0\tdefault\nretention\t0\tdefault\ndecision_points\t-\tdefault\n" +
+				"llm\tllm: base_url is not an absolute http or https URL\tconfig.json\n" +
+				"claude binary\tclaude\tdefault\nmodel\tqwen3\tconfig.json\notel\t-\tdefault\n",
 		},
 		{
 			"an unreadable classifier setup shows its error in its row",

@@ -27,7 +27,7 @@ type TraceStore interface {
 }
 
 // Asks the model which waiting candidates say the same and records the groups as traces
-// The ledger is only read so a run hides, merges or approves nothing
+// Read access to the ledger only
 type Consolidator struct {
 	items  KnowledgeStore
 	traces TraceStore
@@ -46,7 +46,7 @@ type Group struct {
 	Why     string          `json:"why"`
 }
 
-// The members as one line such as `a v1, b v2`
+// The member references on one line
 func (g Group) String() string {
 	parts := make([]string, 0, len(g.Members))
 	for _, m := range g.Members {
@@ -197,7 +197,7 @@ func (cl cluster) checkGroup(g Group, taken map[knowledge.Ref]bool) error {
 
 // Appends the consolidate trace of the producer
 func (c *Consolidator) record(ctx context.Context, producer string, in TraceInput, res Result, failed error, spent llm.Response, start time.Time) error {
-	// Refs, counts and the reasons of the groups always encode
+	// Only references and counts and reasons so encoding cannot fail
 	input, _ := json.Marshal(in)
 	output, _ := json.Marshal(res)
 	now := c.now()
