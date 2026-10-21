@@ -143,7 +143,7 @@ func (f File[T]) write(file *os.File, decide func() ([]T, error)) error {
 		return err
 	}
 	switch {
-	case len(tail) > 0 && f.torn(tail):
+	case len(tail) > 0 && torn[T](tail):
 		if err = file.Truncate(end); err != nil {
 			return err
 		}
@@ -188,12 +188,20 @@ func (f File[T]) All() ([]T, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", f.Name(), err)
 	}
+	all, err := Decode[T](data)
+	if err != nil {
+		return all, fmt.Errorf("%s %w", f.Name(), err)
+	}
+	return all, nil
+}
+
+func Decode[T any](data []byte) ([]T, error) {
 	var all []T
 	var bad []string
 	line := 0
 	for raw := range bytes.Lines(bytes.TrimPrefix(data, byteOrderMark)) {
 		line++
-		v, ok, err := f.decode(raw)
+		v, ok, err := decode[T](raw)
 		if err != nil {
 			bad = append(bad, fmt.Sprintf("line %d: %v", line, err))
 		}
@@ -201,7 +209,10 @@ func (f File[T]) All() ([]T, error) {
 			all = append(all, v)
 		}
 	}
-	return all, f.corrupt(bad)
+	if len(bad) > 0 {
+		return all, fmt.Errorf("%w: %s", ErrCorrupt, strings.Join(bad, "; "))
+	}
+	return all, nil
 }
 
 // Newest first and read from the end of the file
@@ -236,7 +247,7 @@ func (f File[T]) Newest(keep, stop func(T) bool, limit int) ([]T, error) {
 		if offset == 0 {
 			raw = bytes.TrimPrefix(raw, byteOrderMark)
 		}
-		v, ok, err := f.decode(raw)
+		v, ok, err := decode[T](raw)
 		if err != nil {
 			bad = append(bad, fmt.Sprintf("byte %d: %v", offset, err))
 		}
@@ -264,7 +275,7 @@ func (f File[T]) Newest(keep, stop func(T) bool, limit int) ([]T, error) {
 func (f File[T]) Repair() (int, error) {
 	var bad []byte
 	keep := func(raw []byte) bool {
-		if _, _, err := f.decode(raw); err != nil {
+		if _, _, err := decode[T](raw); err != nil {
 			bad = append(bad, raw...)
 			return false
 		}
@@ -286,7 +297,7 @@ func (f File[T]) Remove(decide func() (func(T) bool, error)) (int, error) {
 			return nil, err
 		}
 		return func(raw []byte) bool {
-			v, ok, err := f.decode(raw)
+			v, ok, err := decode[T](raw)
 			return err != nil || !ok || !drop(v)
 		}, nil
 	}, func() error { return nil })
@@ -481,7 +492,7 @@ func (f File[T]) merge(saved, current []byte) []byte {
 func (f File[T]) whole(content []byte) [][]byte {
 	var out [][]byte
 	for raw := range bytes.Lines(bytes.TrimPrefix(content, byteOrderMark)) {
-		if !bytes.HasSuffix(raw, []byte{'\n'}) && f.torn(raw) {
+		if !bytes.HasSuffix(raw, []byte{'\n'}) && torn[T](raw) {
 			break
 		}
 		out = append(out, bytes.TrimSuffix(raw, []byte{'\n'}))
@@ -504,9 +515,9 @@ func writeSynced(path string, flags int, data []byte) error {
 // The record of one line and whether there was one
 // 1. a blank line holds none
 // 2. an unterminated line that fails to decode is a write in flight and holds none without an error
-func (f File[T]) decode(raw []byte) (T, bool, error) {
+func decode[T any](raw []byte) (T, bool, error) {
 	var v T
-	if !bytes.HasSuffix(raw, []byte{'\n'}) && f.torn(raw) {
+	if !bytes.HasSuffix(raw, []byte{'\n'}) && torn[T](raw) {
 		return v, false, nil
 	}
 	raw = bytes.TrimSpace(raw)
@@ -536,7 +547,7 @@ func (f File[T]) missing() error {
 
 // Whether an unterminated last line fails to decode as a record
 // A file holding one record after a byte order mark keeps it
-func (File[T]) torn(tail []byte) bool {
+func torn[T any](tail []byte) bool {
 	var v T
 	return json.Unmarshal(bytes.TrimPrefix(tail, byteOrderMark), &v) != nil
 }

@@ -14,15 +14,15 @@ func TestNamed(t *testing.T) {
 		args string
 		want bool
 	}{
-		{"user file", "/Users/me/.claude/nodloop/vetoes.yaml", true},
-		{"project file", "/Users/me/repo/.claude/nodloop/vetoes.yaml", true},
-		{"approved file", "/Users/me/.claude/nodloop/vetoes.approved.0123456789ab.yaml", true},
+		{"user file", "/home/me/.claude/nodloop/vetoes.yaml", true},
+		{"project file", "/home/me/repo/.claude/nodloop/vetoes.yaml", true},
+		{"approved file", "/home/me/.claude/nodloop/vetoes.approved.0123456789ab.yaml", true},
 		{"relative project file", ".claude/nodloop/vetoes.yaml", true},
-		{"unclean path", "/Users/me/repo/x/../.claude/nodloop/vetoes.yaml", true},
-		{"lock file", "/Users/me/.claude/nodloop/vetoes.approved.0123456789ab.yaml.lock", false},
-		{"veto file name in another directory", "/Users/me/repo/vetoes.yaml", false},
-		{"directory that only ends like the veto directory", "/Users/me/x.claude/nodloop/vetoes.yaml", false},
-		{"settings file", "/Users/me/.claude/settings.json", false},
+		{"unclean path", "/home/me/repo/x/../.claude/nodloop/vetoes.yaml", true},
+		{"lock file", "/home/me/.claude/nodloop/vetoes.approved.0123456789ab.yaml.lock", false},
+		{"veto file name in another directory", "/home/me/repo/vetoes.yaml", false},
+		{"directory that only ends like the veto directory", "/home/me/x.claude/nodloop/vetoes.yaml", false},
+		{"settings file", "/home/me/.claude/settings.json", false},
 		{"empty path", "", false},
 	}
 	for _, tc := range tcs {

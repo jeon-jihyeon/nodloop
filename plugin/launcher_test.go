@@ -19,6 +19,16 @@ import (
 var launcherTools = []string{"awk", "cat", "chmod", "cut", "dirname", "head", "ln", "mkdir", "mktemp", "mv", "rm", "sed", "tar", "tr", "uname"}
 
 // A copy of the launcher whose plugin version no release carries
+// Writes an executable through cp so no fork of a parallel test holds a write descriptor of it
+// Linux refuses to run a file that some process holds open for writing
+func writeExecutable(t *testing.T, path string, text []byte) {
+	t.Helper()
+	src := path + ".src"
+	require.NoError(t, os.WriteFile(src, text, 0o600))
+	require.NoError(t, exec.Command("cp", src, path).Run())
+	require.NoError(t, os.Chmod(path, 0o755))
+}
+
 func launcher(t *testing.T) (script, tools string) {
 	t.Helper()
 	return launcherWith(t, map[string]string{".claude-plugin": "9.9.9"})
@@ -37,7 +47,7 @@ func launcherWith(t *testing.T, manifests map[string]string) (script, tools stri
 	b, err := os.ReadFile(filepath.Join("bin", "nodloop"))
 	require.NoError(t, err)
 	script = filepath.Join(root, "bin", "nodloop")
-	require.NoError(t, os.WriteFile(script, b, 0o755))
+	writeExecutable(t, script, b)
 	tools = t.TempDir()
 	for _, name := range launcherTools {
 		path, err := exec.LookPath(name)
@@ -52,7 +62,7 @@ func envBinary(t *testing.T, dir string) string {
 	t.Helper()
 	require.NoError(t, os.MkdirAll(dir, 0o755))
 	path := filepath.Join(dir, "nodloop")
-	require.NoError(t, os.WriteFile(path, []byte("#!/bin/sh\necho \"$NODLOOP_PLUGIN_VERSION\"\n"), 0o755))
+	writeExecutable(t, path, []byte("#!/bin/sh\necho \"$NODLOOP_PLUGIN_VERSION\"\n"))
 	return path
 }
 
@@ -153,7 +163,7 @@ func versionedBinary(t *testing.T, dir, name, version string) string {
 	require.NoError(t, os.MkdirAll(dir, 0o755))
 	path := filepath.Join(dir, "nodloop")
 	script := "#!/bin/sh\nif [ \"$1\" = version ]; then echo " + version + "; exit 0; fi\necho " + name + " \"$@\"\n"
-	require.NoError(t, os.WriteFile(path, []byte(script), 0o755))
+	writeExecutable(t, path, []byte(script))
 	return path
 }
 

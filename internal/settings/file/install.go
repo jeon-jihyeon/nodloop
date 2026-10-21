@@ -110,6 +110,9 @@ func load(path string) ([]byte, settings.Document, error) {
 	if err = json.Unmarshal(raw, &doc); err != nil {
 		return nil, nil, fmt.Errorf("%w: %s: %w", ErrJSONInvalid, path, err)
 	}
+	if doc == nil {
+		return nil, nil, fmt.Errorf("%w: %s: document is not an object", ErrJSONInvalid, path)
+	}
 	return raw, doc, nil
 }
 

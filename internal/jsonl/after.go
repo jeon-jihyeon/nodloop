@@ -63,9 +63,13 @@ func (f File[T]) After(from string, keep func(T) bool, limit int) ([]T, string, 
 	}
 	file, err := os.Open(f.path)
 	switch {
-	case errors.Is(err, os.ErrNotExist) && at.offset == 0:
-		return nil, from, f.missing()
 	case errors.Is(err, os.ErrNotExist):
+		if err := f.missing(); err != nil {
+			return nil, from, err
+		}
+		if at.offset == 0 {
+			return nil, from, nil
+		}
 		return nil, from, fmt.Errorf("%s: %w: %q", f.Name(), ErrPositionGone, from)
 	case err != nil:
 		return nil, from, fmt.Errorf("%s: %w", f.Name(), err)
@@ -124,11 +128,11 @@ func (f File[T]) forward(file *os.File, from position, keep func(T) bool, limit 
 		offset += int64(len(line))
 		switch {
 		case len(bytes.TrimSpace(raw)) == 0:
-		case !bytes.HasSuffix(line, []byte{'\n'}) && f.torn(raw):
+		case !bytes.HasSuffix(line, []byte{'\n'}) && torn[T](raw):
 			return out, end.String(), f.corrupt(bad)
 		default:
 			end = position{offset: offset, sum: lineSum(raw)}
-			v, ok, decodeErr := f.decode(raw)
+			v, ok, decodeErr := decode[T](raw)
 			if decodeErr != nil {
 				bad = append(bad, fmt.Sprintf("byte %d: %v", start, decodeErr))
 			}

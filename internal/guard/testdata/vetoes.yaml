@@ -5,7 +5,7 @@ vetoes:
       - field: commands
         match: '(?m)^(sed|perl)( \S+)*? (-[a-zA-Z]*i|--in-place)'
     reason: sed -i and perl -i are forbidden. Use the Edit tool to modify files
-    source: session 24a71b10 on 2026-09-22
+    source: session fixture-session on 2026-09-22
   - id: no-readme
     tool: Write|Edit
     when:

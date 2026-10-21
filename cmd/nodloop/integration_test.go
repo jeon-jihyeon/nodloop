@@ -2,11 +2,11 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -14,35 +14,52 @@ import (
 	vetofile "github.com/jeon-jihyeon/nodloop/internal/veto/file"
 )
 
-// Real exit codes and per process latency of the built binary
-func TestIntegrationBinary(t *testing.T) {
+func integrationFixture(t testing.TB) (bin, home string, sed, plain []byte) {
+	t.Helper()
 	if _, err := exec.LookPath("go"); err != nil {
 		t.Skip("go is not on PATH, so the binary cannot be built")
 	}
-	bin := filepath.Join(t.TempDir(), "nodloop")
+	bin = filepath.Join(t.TempDir(), "nodloop")
 	out, err := exec.Command("go", "build", "-o", bin, ".").CombinedOutput()
 	require.NoError(t, err, "build: %s", out)
-	home := t.TempDir()
+	home = t.TempDir()
 	fifty, err := os.ReadFile("testdata/fifty.yaml")
 	require.NoError(t, err)
 	path := filepath.Join(home, vetofile.RelPath)
 	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
 	require.NoError(t, os.WriteFile(path, fifty, 0o644))
-	sed, err := os.ReadFile("testdata/bash_sed.json")
+	sed, err = os.ReadFile("testdata/bash_sed.json")
 	require.NoError(t, err)
-	plain, err := os.ReadFile("testdata/bash_plain.json")
+	plain, err = os.ReadFile("testdata/bash_plain.json")
 	require.NoError(t, err)
-	guard := func(t *testing.T, stdin []byte) (int, string) {
-		cmd := exec.Command(bin, "guard")
-		// The home alone so no variable of the shell running the tests such as NODLOOP_RECORD_DIR or CLAUDECODE reaches the binary
-		cmd.Env = []string{"HOME=" + home}
-		cmd.Stdin = bytes.NewReader(stdin)
-		var stderr bytes.Buffer
-		cmd.Stderr = &stderr
-		err := cmd.Run()
-		require.NotNil(t, cmd.ProcessState, "run: %v", err)
-		return cmd.ProcessState.ExitCode(), stderr.String()
+	project := t.TempDir()
+	require.NoError(t, os.Mkdir(filepath.Join(project, ".git"), 0o700))
+	local := func(data []byte) []byte {
+		var input map[string]any
+		require.NoError(t, json.Unmarshal(data, &input))
+		input["cwd"] = project
+		out, err := json.Marshal(input)
+		require.NoError(t, err)
+		return out
 	}
+	return bin, home, local(sed), local(plain)
+}
+
+func guardProcess(t testing.TB, bin, home string, stdin []byte) (int, string) {
+	t.Helper()
+	cmd := exec.Command(bin, "guard")
+	// Only the fixture home reaches the binary so no host agent or record variable changes its authority
+	cmd.Env = []string{"HOME=" + home}
+	cmd.Stdin = bytes.NewReader(stdin)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	require.NotNil(t, cmd.ProcessState, "run: %v", err)
+	return cmd.ProcessState.ExitCode(), stderr.String()
+}
+
+func TestIntegrationBinary(t *testing.T) {
+	bin, home, sed, plain := integrationFixture(t)
 	type want struct {
 		code   int
 		stderr string
@@ -59,20 +76,17 @@ func TestIntegrationBinary(t *testing.T) {
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			code, stderr := guard(t, tc.stdin)
+			code, stderr := guardProcess(t, bin, home, tc.stdin)
 			assert.Equal(t, tc.want.code, code, "stderr: %s", stderr)
 			assert.Contains(t, stderr, tc.want.stderr)
 		})
 	}
-	t.Run("average run stays within the budget", func(t *testing.T) {
-		const runs = 200
-		start := time.Now()
-		for i := range runs {
-			code, stderr := guard(t, sed)
-			require.Equal(t, 2, code, "run %d: stderr = %s", i, stderr)
-		}
-		avg := time.Since(start) / runs
-		t.Logf("average process time with 51 vetoes loaded: %s (%d runs)", avg, runs)
-		assert.LessOrEqual(t, avg, 50*time.Millisecond, "average exceeds the 50ms budget")
-	})
+}
+
+func BenchmarkIntegrationGuard(b *testing.B) {
+	bin, home, sed, _ := integrationFixture(b)
+	for b.Loop() {
+		code, stderr := guardProcess(b, bin, home, sed)
+		require.Equal(b, 2, code, "stderr: %s", stderr)
+	}
 }

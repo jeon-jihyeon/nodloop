@@ -316,6 +316,9 @@ func TestFileAll(t *testing.T) {
 			got, err := f.All()
 			assert.NoError(t, err)
 			assert.Equal(t, tc.want, got)
+			decoded, err := jsonl.Decode[row]([]byte(tc.args))
+			assert.NoError(t, err)
+			assert.Equal(t, tc.want, decoded)
 		})
 	}
 }
@@ -394,6 +397,9 @@ func TestFileAllSkipsCorruptLines(t *testing.T) {
 			assert.ErrorIs(t, err, jsonl.ErrCorrupt)
 			assert.ErrorContains(t, err, tc.want.err)
 			assert.Equal(t, tc.want.rows, got)
+			decoded, err := jsonl.Decode[row]([]byte(tc.args))
+			assert.ErrorIs(t, err, jsonl.ErrCorrupt)
+			assert.Equal(t, tc.want.rows, decoded)
 		})
 	}
 }

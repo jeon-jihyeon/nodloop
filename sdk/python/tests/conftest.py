@@ -61,10 +61,12 @@ def at_terminal(args: list[str]) -> str:
     A pseudo terminal stands for the person here and the environment of the test names no agent session
     """
     leader, follower = pty.openpty()
+    agent_variables = {"CLAUDECODE", "CODEX_THREAD_ID", "CURSOR_AGENT", "COPILOT_AGENT_SESSION_ID"}
+    env = {name: value for name, value in os.environ.items() if name not in agent_variables}
     # The output is read while the follower is open since macOS drops what a closed pseudo terminal held
     os.set_blocking(leader, False)
     try:
-        done = subprocess.run(args, stdin=follower, stdout=follower, stderr=subprocess.PIPE, timeout=60, check=False)
+        done = subprocess.run(args, stdin=follower, stdout=follower, stderr=subprocess.PIPE, timeout=60, env=env, check=False)
         try:
             printed = os.read(leader, 65536).decode()
         except BlockingIOError:

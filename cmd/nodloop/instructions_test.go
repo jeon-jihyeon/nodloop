@@ -64,7 +64,7 @@ func TestInstructionsTrace(t *testing.T) {
 	assert.NoError(t, schema.Validate(string(trace.NameInstructions), got.Record()))
 }
 
-// A home, a record directory with approved.md, a repository with the rules files of a project and an auto memory file under each config
+// Separate fixtures for home and records with repository rules and auto memory under each config
 // The first replacer fills the placeholders and the second puts them back
 func instructionsHome(t *testing.T) (place, named *strings.Replacer) {
 	t.Helper()
@@ -95,7 +95,7 @@ func instructionsHome(t *testing.T) (place, named *strings.Replacer) {
 	return strings.NewReplacer(dirs...), strings.NewReplacer(back...)
 }
 
-// The session, path, memory type and load reason of every instructions trace oldest first with the directories named
+// Recorded instructions metadata oldest first with named fixture directories
 func instructionsIn(t *testing.T, records string, named *strings.Replacer) []string {
 	t.Helper()
 	store, err := tracefile.New(records)
@@ -242,7 +242,8 @@ func TestRulesFilesUnconfirmed(t *testing.T) {
 	}
 }
 
-// The projects directory is under CLAUDE_CONFIG_DIR, else under .claude of home, and none without either
+// CLAUDE_CONFIG_DIR takes precedence over the default config under home
+// Neither value leaves the projects directory unnamed
 func TestClaudeProjects(t *testing.T) {
 	type args struct {
 		home, configDir string
@@ -319,7 +320,7 @@ func TestRulesFilesLoads(t *testing.T) {
 			"an import in a fenced code block", args{"/home/ann", "", "{tmp}/acme", "{tmp}/acme/AGENTS.md", "Project"},
 			imported("```\n@AGENTS.md\n```\n"), false,
 		},
-		{"an address that ends in the name", args{"/home/ann", "", "{tmp}/acme", "{tmp}/acme/AGENTS.md", "Project"}, imported("ann@AGENTS.md\n"), false},
+		{"an address that ends in the name", args{"/home/ann", "", "{tmp}/acme", "{tmp}/acme/example.invalid", "Project"}, imported("reader@example.invalid\n"), false},
 		{"a parent that imports another file", args{"/home/ann", "", "{tmp}/acme", "{tmp}/acme/AGENTS.md", "Project"}, imported("@README.md\n"), false},
 		{
 			"a parent that is no instructions file", args{"/home/ann", "", "{tmp}/acme", "{tmp}/acme/more.md", "Project"},
@@ -394,7 +395,7 @@ func TestRunHookInstructionsFailures(t *testing.T) {
 	type args struct {
 		// The record file and the text written to it before the hook
 		file, text string
-		// NODLOOP_RECORD_DIR as {records} or a {records}/file that is no directory
+		// The record directory fixture or a file placed where that directory should be
 		records string
 	}
 	tcs := []struct {

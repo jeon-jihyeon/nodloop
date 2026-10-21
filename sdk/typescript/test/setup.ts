@@ -58,9 +58,11 @@ export async function open(): Promise<Client & { recordDir: string }> {
 // A command that decides for a person or adds a key that proves one runs only when stdin and stdout are a terminal outside an agent session
 // script gives the command the pseudo terminal that stands for the person here and the test process names no agent session
 function atTerminal(args: string[], env: NodeJS.ProcessEnv = process.env): string {
+  const agentVariables = ["CLAUDECODE", "CODEX_THREAD_ID", "CURSOR_AGENT", "COPILOT_AGENT_SESSION_ID"];
+  const childEnv = Object.fromEntries(Object.entries(env).filter(([name]) => !agentVariables.includes(name)));
   const quoted = args.map((a) => `'${a.replaceAll("'", `'\\''`)}'`).join(" ");
   const argv = process.platform === "darwin" ? ["-q", "/dev/null", ...args] : ["-q", "-e", "-c", quoted, "/dev/null"];
-  return execFileSync("script", argv, { env, stdio: ["ignore", "pipe", "pipe"] }).toString();
+  return execFileSync("script", argv, { env: childEnv, stdio: ["ignore", "pipe", "pipe"] }).toString();
 }
 
 // Approves a version of the records as the person ann at a terminal of their own since an SDK call records only a proposal

@@ -11,8 +11,8 @@ import (
 )
 
 func TestDocumentInstall(t *testing.T) {
-	const exe = "/Users/me/go/bin/nodloop"
-	const ours = `{"matcher":"*","hooks":[{"type":"command","command":"/Users/me/go/bin/nodloop guard","timeout":5}]}`
+	const exe = "/home/me/go/bin/nodloop"
+	const ours = `{"matcher":"*","hooks":[{"type":"command","command":"/home/me/go/bin/nodloop guard","timeout":5}]}`
 	const other = `{"matcher":"Bash","hooks":[{"type":"command","command":"/usr/local/bin/other-hook","timeout":10}]}`
 	type args struct {
 		doc string
@@ -28,6 +28,7 @@ func TestDocumentInstall(t *testing.T) {
 		args args
 		want want
 	}{
+		{"nil document is refused", args{`null`, exe}, want{false, settings.ErrHooksInvalid, `null`}},
 		{"empty document gets our hook", args{`{}`, exe}, want{true, nil, `{"hooks":{"PreToolUse":[` + ours + `]}}`}},
 		{
 			"existing hooks gain our hook after other groups and keep every other key",
@@ -52,14 +53,14 @@ func TestDocumentInstall(t *testing.T) {
 		{
 			"quoted executable of this install is left unchanged",
 			args{
-				`{"hooks":{"PreToolUse":[{"matcher":"*","hooks":[{"command":"'/Users/my apps/nodloop' guard"}]}]}}`,
-				"/Users/my apps/nodloop",
+				`{"hooks":{"PreToolUse":[{"matcher":"*","hooks":[{"command":"'/home/my apps/nodloop' guard"}]}]}}`,
+				"/home/my apps/nodloop",
 			},
-			want{false, nil, `{"hooks":{"PreToolUse":[{"matcher":"*","hooks":[{"command":"'/Users/my apps/nodloop' guard"}]}]}}`},
+			want{false, nil, `{"hooks":{"PreToolUse":[{"matcher":"*","hooks":[{"command":"'/home/my apps/nodloop' guard"}]}]}}`},
 		},
 		{
 			"quoted executable of another path is replaced",
-			args{`{"hooks":{"PreToolUse":[{"hooks":[{"command":"'/Users/my apps/nodloop' guard"}]}]}}`, exe},
+			args{`{"hooks":{"PreToolUse":[{"hooks":[{"command":"'/home/my apps/nodloop' guard"}]}]}}`, exe},
 			want{true, nil, `{"hooks":{"PreToolUse":[` + ours + `]}}`},
 		},
 		{
@@ -69,7 +70,7 @@ func TestDocumentInstall(t *testing.T) {
 		},
 		{
 			"hook on Bash alone is replaced by one on every tool",
-			args{`{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"command":"/Users/me/go/bin/nodloop guard"}]}]}}`, exe},
+			args{`{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"command":"/home/me/go/bin/nodloop guard"}]}]}}`, exe},
 			want{true, nil, `{"hooks":{"PreToolUse":[` + ours + `]}}`},
 		},
 		{
@@ -95,15 +96,15 @@ func TestDocumentInstall(t *testing.T) {
 		},
 		{
 			"path with spaces is single quoted",
-			args{`{}`, "/Users/me/my apps/nodloop"},
+			args{`{}`, "/home/me/my apps/nodloop"},
 			want{true, nil, `{"hooks":{"PreToolUse":[{"matcher":"*","hooks":[` +
-				`{"type":"command","command":"'/Users/me/my apps/nodloop' guard","timeout":5}]}]}}`},
+				`{"type":"command","command":"'/home/me/my apps/nodloop' guard","timeout":5}]}]}}`},
 		},
 		{
 			"single quote in the path is escaped",
-			args{`{}`, "/Users/it's/nodloop"},
+			args{`{}`, "/home/it's/nodloop"},
 			want{true, nil, `{"hooks":{"PreToolUse":[{"matcher":"*","hooks":[` +
-				`{"type":"command","command":"'/Users/it'\\''s/nodloop' guard","timeout":5}]}]}}`},
+				`{"type":"command","command":"'/home/it'\\''s/nodloop' guard","timeout":5}]}]}}`},
 		},
 		{
 			"dollar sign in the path is single quoted",
@@ -172,20 +173,30 @@ func TestDocumentUninstall(t *testing.T) {
 		},
 		{
 			"quoted executable of a current install is removed",
-			`{"hooks":{"PreToolUse":[{"hooks":[{"command":"'/Users/my apps/nodloop' guard"}]}]}}`,
+			`{"hooks":{"PreToolUse":[{"hooks":[{"command":"'/home/my apps/nodloop' guard"}]}]}}`,
 			want{true, `{}`},
 		},
 		{
 			"unquoted executable with spaces of an older install is removed",
-			`{"hooks":{"PreToolUse":[{"hooks":[{"command":"/Users/my apps/nodloop guard"}]}]}}`,
+			`{"hooks":{"PreToolUse":[{"hooks":[{"command":"/home/my apps/nodloop guard"}]}]}}`,
 			want{true, `{}`},
 		},
 		{
 			"executable with a space in its name is not ours",
-			`{"hooks":{"PreToolUse":[{"hooks":[{"command":"/Users/me/nodloop tool guard"}]}]}}`,
-			want{false, `{"hooks":{"PreToolUse":[{"hooks":[{"command":"/Users/me/nodloop tool guard"}]}]}}`},
+			`{"hooks":{"PreToolUse":[{"hooks":[{"command":"/home/me/nodloop tool guard"}]}]}}`,
+			want{false, `{"hooks":{"PreToolUse":[{"hooks":[{"command":"/home/me/nodloop tool guard"}]}]}}`},
 		},
 		{"settings without our hook are left unchanged", `{"keep":true}`, want{false, `{"keep":true}`}},
+		{
+			"an unrelated empty group survives removal",
+			`{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[],"keep":true},{"hooks":[{"command":"nodloop guard"}]}]}}`,
+			want{true, `{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[],"keep":true}]}}`},
+		},
+		{
+			"an unrelated group of unknown shape survives removal",
+			`{"hooks":{"PreToolUse":[{"hooks":"unknown","keep":true},{"hooks":[{"command":"nodloop guard"}]}]}}`,
+			want{true, `{"hooks":{"PreToolUse":[{"hooks":"unknown","keep":true}]}}`},
+		},
 		{"hooks that is not an object is left as is", `{"hooks":"odd"}`, want{false, `{"hooks":"odd"}`}},
 		{
 			"PreToolUse that is not an array is left as is",

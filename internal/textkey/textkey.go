@@ -8,9 +8,12 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
+
+	"github.com/jeon-jihyeon/nodloop/internal/atomicfile"
 )
 
 const (
@@ -55,14 +58,19 @@ func (k Key) Sum(text string) string {
 type file string
 
 func (f file) read() (Key, error) {
-	info, err := os.Stat(string(f))
+	opened, err := atomicfile.Open(string(f))
+	if err != nil {
+		return Key{}, fmt.Errorf("%w: %w", ErrRead, err)
+	}
+	defer func() { _ = opened.Close() }()
+	info, err := opened.Stat()
 	if err != nil {
 		return Key{}, fmt.Errorf("%w: %w", ErrRead, err)
 	}
 	if shared(info.Mode()) {
 		return Key{}, fmt.Errorf("%w: %s has mode %04o, run chmod 600 on it to keep its hashes", ErrShared, f, info.Mode().Perm())
 	}
-	b, err := os.ReadFile(string(f))
+	b, err := io.ReadAll(io.LimitReader(opened, size+1))
 	if err != nil {
 		return Key{}, fmt.Errorf("%w: %w", ErrRead, err)
 	}

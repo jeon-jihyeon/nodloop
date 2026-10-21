@@ -1,6 +1,7 @@
 package atomicfile_test
 
 import (
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -12,7 +13,7 @@ import (
 	"github.com/jeon-jihyeon/nodloop/internal/atomicfile"
 )
 
-// The path a case reads in a folder that holds a file of 5 bytes, a link to it, a file its owner may not read and a folder
+// The selected path among regular files and links beside inaccessible and nonregular entries
 func readPath(t *testing.T, name string) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -24,6 +25,25 @@ func readPath(t *testing.T, name string) string {
 		return name
 	}
 	return filepath.Join(dir, name)
+}
+
+func TestOpenKeepsTheValidatedFile(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path, next := filepath.Join(dir, "key"), filepath.Join(dir, "next")
+	require.NoError(t, os.WriteFile(path, []byte("first"), 0o600))
+	f, err := atomicfile.Open(path)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, f.Close()) })
+	require.NoError(t, os.WriteFile(next, []byte("replacement"), 0o644))
+	require.NoError(t, os.Rename(next, path))
+
+	info, err := f.Stat()
+	require.NoError(t, err)
+	content, err := io.ReadAll(f)
+	require.NoError(t, err)
+	assert.Equal(t, "first", string(content))
+	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
 }
 
 func TestRead(t *testing.T) {

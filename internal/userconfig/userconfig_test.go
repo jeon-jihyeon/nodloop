@@ -30,6 +30,7 @@ func TestHomeRead(t *testing.T) {
 		{"a missing file leaves the value", "", want{got{}, nil}},
 		{"a key the value does not name is ignored", `{"record_dir":"/r","server":{"keys":[]}}`, want{got{RecordDir: "/r"}, nil}},
 		{"a broken file fails", "{broken", want{got{}, userconfig.ErrInvalid}},
+		{"a null document fails", " \nnull\n", want{got{}, userconfig.ErrInvalid}},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
@@ -73,6 +74,7 @@ func TestHomeSave(t *testing.T) {
 		},
 		{"removing a missing key changes nothing", args{`{"approver":"ann"}`, map[string]any{"holdout": nil}}, want{"{\n  \"approver\": \"ann\"\n}\n", nil}},
 		{"a broken file is not overwritten", args{"{broken", map[string]any{"approver": "ann"}}, want{"{broken", userconfig.ErrInvalid}},
+		{"a null document is not overwritten", args{"null", map[string]any{"approver": "ann"}}, want{"null", userconfig.ErrInvalid}},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {

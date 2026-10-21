@@ -25,7 +25,7 @@ func TestShellWord(t *testing.T) {
 		want string
 	}{
 		{"a plain path stays as it is", "/home/u/.nodloop/bin/nodloop", "/home/u/.nodloop/bin/nodloop"},
-		{"a path with a space is quoted", "/Users/u/My Tools/nodloop", "'/Users/u/My Tools/nodloop'"},
+		{"a path with a space is quoted", "/home/ann/My Tools/nodloop", "'/home/ann/My Tools/nodloop'"},
 		{"a quote in the path is escaped", "/tmp/it's/nodloop", `'/tmp/it'\''s/nodloop'`},
 		{"a command separator is quoted", "/data/a;b", "'/data/a;b'"},
 		{"an ampersand and a pipe are quoted", "/data/R&D|x", "'/data/R&D|x'"},
