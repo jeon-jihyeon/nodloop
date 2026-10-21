@@ -313,7 +313,7 @@ func TestRunHookPromptDelta(t *testing.T) {
 	}
 }
 
-// Each session mode on the first prompt with a draft waiting, on a later prompt after a draft was made, and after the reaction point recorded a reject
+// Session modes across initial prompts and later prompts with waiting drafts or a recorded rejection
 func TestRunHookPromptModes(t *testing.T) {
 	type turn string
 	const (
@@ -393,7 +393,7 @@ func TestRunHookPromptModes(t *testing.T) {
 	}
 }
 
-// The mode comes from session_mode in config.json, then deferred, and an unknown one records nothing
+// Only a configured session_mode overrides deferred and an unknown mode records nothing
 // No variable sets it since the env of a project settings file an agent may write reaches the hooks
 func TestRunHookSessionMode(t *testing.T) {
 	type args struct {
@@ -456,7 +456,7 @@ func TestRunHookStart(t *testing.T) {
 		withheld bool
 	}
 	type want struct {
-		// The event and context of the output, both empty for none
+		// The output event and context with both empty for none
 		event, context string
 		stderr         string
 	}
@@ -549,7 +549,7 @@ func TestRunHookPromptAfterStart(t *testing.T) {
 	}
 }
 
-// The run of an answer of session s1 in the repo when answered, with a candidate for the repo before it when waiting and after it when drafted
+// The answered run of session s1 with candidates prepared before or after it
 func hookPromptSetup(t *testing.T, getenv func(string) string, now func() time.Time, repo string, answered, waiting, drafted bool) string {
 	t.Helper()
 	store, err := tracefile.New(getenv(envRecordDir))
@@ -738,7 +738,7 @@ func TestRunHookStop(t *testing.T) {
 	}
 }
 
-// The hook input as written or the fixture of that name under testdata/hooks
+// The literal hook input or the named hook fixture
 // {repo} in either stands for the place
 func hookFixture(t *testing.T, stdin, repo string) string {
 	t.Helper()
@@ -752,7 +752,7 @@ func hookFixture(t *testing.T, stdin, repo string) string {
 
 // The stop hook starts the capture of the person's words on the transcript it names and drafts nothing itself
 // 1. a transcript of Claude Code is read in every mode and after a turn a stop hook continued
-// 2. without one the capture reads no message and extracts the answer the turn followed, only after an answer of a mode that infers
+// 2. an inferring mode without a transcript extracts only the answer the turn followed
 // 3. a Codex transcript is in a format the capture cannot read so a Codex stop starts the capture without it
 func TestRunHookStopCapture(t *testing.T) {
 	type args struct {
@@ -914,7 +914,7 @@ func TestRunReportLoop(t *testing.T) {
 	}
 }
 
-// A run item narrows by the dir of its refuted run and promotes on its confirmed run, all on the records alone
+// Refuted run records narrow the scope and confirmed run records promote the basis
 func TestRunKnowledgeLifecycle(t *testing.T) {
 	home, records, _ := hookHome(t, "use git -C")
 	getenv := func(k string) string { return map[string]string{"HOME": home, envRecordDir: records}[k] }
@@ -950,7 +950,7 @@ func TestRunKnowledgeLifecycle(t *testing.T) {
 	assert.Contains(t, stdout, "git-c\tv3\tcandidate\tbasis verified\toutcomes ["+confirmed+"]\n")
 }
 
-// Items past the prompt cap are left out and counted, and the stop hook records only the items that fit
+// Only fitting items reach the prompt and the stop record with the remainder counted
 func TestHookItemsFitting(t *testing.T) {
 	item := func(id string, size int) knowledge.Knowledge {
 		return knowledge.Knowledge{ID: id, Version: 1, Kind: knowledge.KindJudgment, Content: strings.Repeat("x", size)}
@@ -1157,7 +1157,7 @@ func TestRepoName(t *testing.T) {
 	assert.Equal(t, "vendor-lib", repoName(submodule), "a submodule keeps its own name")
 }
 
-// waiting lists the candidates a place would receive with the runs that taught them, and none of another place
+// Waiting candidates and their teaching runs stay within their place
 func TestRunKnowledgeWaiting(t *testing.T) {
 	home, records, repo := hookHome(t, "use git -C")
 	getenv := func(k string) string { return map[string]string{"HOME": home, envRecordDir: records}[k] }
@@ -1314,18 +1314,18 @@ func TestRunHookItemHold(t *testing.T) {
 		`"run":{"producer":"session","labels":{"repo":["nodloop"]}},"evidence":{"feedback_trace_ids":["t1"]},"basis":"stated",` +
 		`"status":"approved","approver":"nodloop","approved_at":"2026-10-02T00:30:00Z","time":"2026-10-02T00:30:00Z","author":"nodloop"}` + "\n"
 	type args struct {
-		// The content of curate.json, none when empty and a directory for dir
+		// curate.json content with an empty value for no file and dir for a directory
 		mark    string
 		session string
 		// The holdout share
 		holdout string
 	}
 	type want struct {
-		// The output of the prompt, stop, second prompt, subagent and compact start hooks in that order
+		// Outputs in prompt then stop then prompt then subagent then compact start order
 		outputs []string
 		// The input of the run the stop recorded as stored
 		input string
-		// Lines on stderr, each one the unreadable mark
+		// stderr lines naming the unreadable mark
 		errors int
 	}
 	both := knowledge.PromptLead + "- [pr-c v1 judgment] write the motivation first\n- [git-c v1 judgment] use git -C\n"
@@ -1406,7 +1406,7 @@ func TestRunHookItemHold(t *testing.T) {
 	}
 }
 
-// Writes curate.json of the record directory, nothing when mark is empty and a directory in its place for dir
+// The mark fixture with no file for an empty mark and a directory for dir
 func hookMark(t *testing.T, records, mark string) {
 	t.Helper()
 	path := filepath.Join(records, curate.MarkFile)

@@ -96,7 +96,7 @@ func TestCaptureTrace(t *testing.T) {
 	assert.NoError(t, schema.Validate(string(trace.NameCapture), got.Record()))
 }
 
-// The day of the transcripts under testdata/transcripts
+// The date used by the transcript fixtures
 var captureDay = time.Date(2026, 10, 13, 9, 0, 0, 0, time.UTC)
 
 // One stop of session s1 in repo acme with the time after the day starts and whether a stop hook continued its turn
@@ -165,7 +165,7 @@ func (b captureBench) transcriptPath(t *testing.T) string {
 	return filepath.Join(dir, "s1.jsonl")
 }
 
-// A copy of a transcript of testdata/transcripts where Claude Code keeps the transcript of session s1
+// A transcript fixture copied into the host location for session s1
 func (b captureBench) transcript(t *testing.T, name string) string {
 	t.Helper()
 	content, err := os.ReadFile(filepath.Join("testdata", "transcripts", name))
@@ -185,7 +185,7 @@ type captureCalls struct {
 // The lesson the drafter of a capture client adds
 const captureDraft = `{"relation":"add","kind":"judgment","content":"Keep a commit message to one line","keys":["repo"]}`
 
-// A client whose reaction member answers as given, whose drafter adds a lesson the critic passes and whose judge finds it conform
+// A configured reaction followed by a passing draft pipeline
 // The reaction member answers a question the given answer leaves out with a sure no as the schema makes a model answer each
 func captureClient(t *testing.T, reaction string, failReaction error) (*llmmock.MockClient, *captureCalls) {
 	t.Helper()
@@ -586,16 +586,17 @@ func TestRunSessionCaptureExtracts(t *testing.T) {
 	}
 }
 
-// A capture with no transcript, as the stop of Codex starts it, reads no message and records no capture trace
+// A capture without a transcript reads no message and records no capture trace
 // 1. it extracts the answer the newest turn followed when the verdict the conversation recorded corrects it and runs the curate pass
-// 2. no turn, an approve, a mode that infers nothing and traces that cannot be read extract nothing
+// 2. extraction requires a readable answered turn with a correction in an inferring mode
 // 3. a corrupt line of the traces is reported and the rest is read
 func TestRunSessionCaptureWithoutTranscript(t *testing.T) {
 	type args struct {
 		verdict string
 		// The turn of the session starts between the two answers
-		turn bool
-		mode string
+		turn    bool
+		pending bool
+		mode    string
 		// A line of the traces that does not decode or traces.jsonl as a directory
 		corrupt, unreadable bool
 		// knowledge.jsonl as a directory
@@ -614,6 +615,7 @@ func TestRunSessionCaptureWithoutTranscript(t *testing.T) {
 	}{
 		{"a correction the conversation recorded on the answer the turn followed", args{verdict: "reject", turn: true}, want{0, "", true, true}},
 		{"no turn follows nothing", args{verdict: "reject"}, want{0, "", false, false}},
+		{"a preceding unfinished turn follows no older answer", args{verdict: "reject", turn: true, pending: true}, want{0, "", false, false}},
 		{"an approve extracts nothing", args{verdict: "approve", turn: true}, want{0, "", false, false}},
 		{"manual extracts nothing", args{verdict: "reject", turn: true, mode: "manual"}, want{0, "", false, false}},
 		{"a corrupt line is reported and the rest is read", args{verdict: "reject", turn: true, corrupt: true}, want{1, "corrupt", true, false}},
@@ -632,6 +634,11 @@ func TestRunSessionCaptureWithoutTranscript(t *testing.T) {
 			require.NoError(t, err)
 			if tc.args.turn {
 				started := captureDay.Add(30 * time.Second)
+				turn := trace.Trace{ID: trace.NewID(started), Name: trace.NameTurn, SessionID: "s1", Time: started, Input: json.RawMessage(`{}`)}
+				require.NoError(t, store.Append(context.Background(), turn.Record()))
+			}
+			if tc.args.pending {
+				started := captureDay.Add(20 * time.Second)
 				turn := trace.Trace{ID: trace.NewID(started), Name: trace.NameTurn, SessionID: "s1", Time: started, Input: json.RawMessage(`{}`)}
 				require.NoError(t, store.Append(context.Background(), turn.Record()))
 			}
@@ -675,7 +682,7 @@ func TestRunSessionCaptureExtractFails(t *testing.T) {
 	assert.Empty(t, b.traces(t, trace.NameKnob), "no curate pass started a cycle")
 }
 
-// Words asking to stop following a lesson a person approved run the curate pass, which asks the person
+// A request to stop a person approved lesson reaches the person through curate
 func TestRunSessionCaptureSignal(t *testing.T) {
 	b := newCaptureBench(t, twoStops, "")
 	client, calls := captureClient(t, `{"corrects":0.1,"approves":0.05,"stops_git-c_v1":0.97}`, nil)
@@ -728,7 +735,7 @@ func TestRunSessionCaptureWords(t *testing.T) {
 	assert.Equal(t, []string{verdicts[0].RecordID()}, out.Records)
 }
 
-// A capture that cannot read what it needs fails and prints why, while a failing member still moves the offset past its message
+// A read failure is reported while a failed member still moves the offset past its message
 func TestRunSessionCaptureFails(t *testing.T) {
 	type args struct {
 		// The arguments after session and none means capture over correction.jsonl
@@ -832,7 +839,7 @@ func TestRunSessionCaptureFails(t *testing.T) {
 }
 
 // The capture reads only the transcript Claude Code keeps for the session so no command an agent runs can name a file of its own
-// 1. <projects>/<project>/<session>.jsonl under .claude of home, or under CLAUDE_CONFIG_DIR when it is set
+// 1. the session JSONL file in one project directory under the selected host config
 // 2. any other file is refused before anything is read or recorded
 func TestRunSessionCaptureTranscript(t *testing.T) {
 	type args struct {
@@ -1052,6 +1059,11 @@ func TestReactionQuestionsKeys(t *testing.T) {
 			reactionQuestions{"stops:a b:v1": "", "stops:a:b:v1": ""},
 			map[string]string{"stops:a b:v1": "stops_a_b_v1", "stops:a:b:v1": "q2"},
 		},
+		{
+			"a fallback skips a key an earlier question already owns",
+			reactionQuestions{"!": "", "?": "", "q5": "", "z?": "", "z_": ""},
+			map[string]string{"!": "_", "?": "q2", "q5": "q5", "z?": "z_", "z_": "q6"},
+		},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1195,9 +1207,9 @@ func TestTranscriptReadWaitsForTheClick(t *testing.T) {
 func TestSessionTurnsBefore(t *testing.T) {
 	at := captureDay
 	run := func(id string, after time.Duration, continued bool) trace.Trace {
-		return trace.Trace{ID: id, Time: at.Add(after), Input: json.RawMessage(fmt.Sprintf(`{"applied":[],"continued":%t}`, continued))}
+		return trace.Trace{ID: id, Name: trace.NameRun, Time: at.Add(after), Input: json.RawMessage(fmt.Sprintf(`{"applied":[],"continued":%t}`, continued))}
 	}
-	turns := sessionTurns{run("r3", 30*time.Second, false), run("r2", 20*time.Second, true), run("r1", 10*time.Second, false)}
+	turns := sessionTraces{run("r3", 30*time.Second, false), run("r2", 20*time.Second, true), run("r1", 10*time.Second, false)}
 	tcs := []struct {
 		name string
 		args time.Duration
@@ -1221,7 +1233,7 @@ const askuserShown = "Keep the lesson to deploy with the script?"
 
 // Asks the question of a waiting lesson in session s1 after the first stop of the bench under the key of askuser.jsonl
 // with the HMAC under the key of the record directory of each line a click must hold and returns the decide it asks about
-// The lines are the question shown, its header and the options as the block names them
+// The sealed lines cover the question with its header and options
 func (b captureBench) asked(t *testing.T, shown string) string {
 	t.Helper()
 	key, err := textkey.Load(b.records)
@@ -1263,7 +1275,7 @@ func (b captureBench) decided(t *testing.T) (string, string) {
 }
 
 // The capture records the person's answer to a question of the stop and never reads it as a verdict
-// 1. a click under the header nodloop and the key of the question on the text the stop showed, case ignored
+// 1. a click names the question key under the nodloop header and matches the shown text after case folding
 // A click on a question the model worded otherwise records nothing and is still never judged
 // 2. a first word typed after the answer the question followed
 // 3. a question answered already records nothing more and its reply is still never judged
@@ -1362,7 +1374,7 @@ func TestMessageReaderReplyFails(t *testing.T) {
 			r := messageReader{session: "s1", replies: failingReplier{}, person: unnamedPerson, shown: shown}
 			messages := personMessages{{text: tc.args.text, at: captureDay.Add(time.Second), key: tc.args.key}}
 
-			out, err := r.judge(context.Background(), messages, sessionTurns{run})
+			out, err := r.judge(context.Background(), messages, sessionTraces{run})
 
 			assert.ErrorIs(t, err, tc.want)
 			assert.Equal(t, []any{1, 0, 0}, []any{out.Messages, out.Answers, len(out.Runs)})

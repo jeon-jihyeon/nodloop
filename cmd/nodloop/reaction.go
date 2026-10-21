@@ -68,13 +68,22 @@ func (t turn) state() string {
 }
 
 // The verdict the reaction point recorded on the newest answer of the session and empty when it recorded none
-// 1. nothing is asked without a reaction setup, in a mode that infers nothing, on the first prompt or for an empty message
+// 1. a call needs a reaction setup and an inferring mode with a previous answer and a nonempty message
 // 2. a deferral to the conversation is no failure since the conversation then judges as it would without the point
 // 3. a reject keeps the user's message redacted and cut as its reason because no reason code can be told from it
 func (c hookCommand) react(ctx context.Context, t turn) (feedback.Verdict, error) {
 	if c.reaction == nil || !c.mode.infers() || t.run.ID == "" || strings.TrimSpace(t.message) == "" {
 		return "", nil
 	}
+	traces, err := c.app.traces()
+	if err != nil {
+		return "", err
+	}
+	previous, err := traces.Get(ctx, t.run.ID)
+	if err != nil {
+		return "", err
+	}
+	t.run.Output = previous.Output
 	answers, err := c.reaction.Classify(ctx, classify.Request{Ref: t.run.ID, State: t.state(), Questions: classify.ReactionQuestions})
 	if errors.Is(err, errDeferred) {
 		return "", nil

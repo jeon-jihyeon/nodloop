@@ -74,7 +74,7 @@ func (c hookCommand) showable(ctx context.Context, sessionID string, place knowl
 }
 
 // The question as Stop additionalContext and nothing for none
-// Claude Code continues the turn on it with no decision, which shows no error label as a block does
+// Additional context continues the turn without the error label of a blocking decision
 func (c hookCommand) ask(q curate.Question) error {
 	if q.Key == "" {
 		return nil
@@ -138,7 +138,7 @@ func (ds dueQuestions) reaching(place knowledge.RunScope) bool {
 type sessionExposes trace.Traces
 
 // The exposes of the session since the time
-// 1. the read stops at the time so a hook never reads the records of every session
+// 1. only exposes of the session at or after the time are returned
 // 2. a corrupt line returns the exposes found with the error
 func (a app) exposes(ctx context.Context, session string, since time.Time) (sessionExposes, error) {
 	store, err := a.traces()

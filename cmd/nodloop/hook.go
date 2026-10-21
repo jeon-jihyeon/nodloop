@@ -38,9 +38,8 @@ const (
 	// Runes of the items and their lead
 	// The session note follows only in the room left under contextRunes so it never pushes an item out
 	promptRunes = 9_800
-	// How far back the hooks and the capture look for the runs, turns, refills, captures and exposes of a session
-	// 1. the reads go from the end of the records and stop here so a new session reads one window and never the records of every session
-	// The busiest day so far recorded 573 runs so a week of such days is about 4000 runs
+	// Lookback for the session events used by the hooks and the capture
+	// 1. only traces of this window may establish a previous answer
 	// 2. a session resumed after it starts without a previous run
 	// 3. the shortest retention so a prune never removes the run a turn names
 	sessionWindow = retain.MinDays * 24 * time.Hour
@@ -118,7 +117,7 @@ func (c hookCommand) run(ctx context.Context, action string, in hookInput, label
 type hookInput struct {
 	SessionID string `json:"session_id"`
 	Cwd       string `json:"cwd"`
-	// How the session started, read by the start hook
+	// How the session started
 	Source string `json:"source"`
 	// Read only for the reaction point and the first word of a reply and never stored except as the reason of a reject the point records
 	Prompt               string `json:"prompt"`
@@ -167,7 +166,8 @@ type hookCommand struct {
 // 3. a turn of a session the holdout draws gets the note and no item
 // 4. the newest answer of the session with the run before it and the newest refill tell which items are in the context already
 // 5. the start of the turn is recorded first so the stop knows how long the turn took
-// 6. the note and the reaction point name the newest answer since a run a stop hook continued answers the stop and never the person
+// 6. the note and the reaction point name only an answer completed after the preceding turn began
+// A run a stop hook continued answers the stop and never the person
 // 7. the versions the item hold keeps from the session are left out of every turn
 // 8. a first word that names a choice of the question shown after that answer is never judged
 // The capture records it as the person's answer from the transcript after the turn
@@ -177,9 +177,12 @@ func (c hookCommand) prompt(ctx context.Context, sessionID, message string, labe
 	if allErr != nil && !errors.Is(allErr, knowledgefile.ErrCorrupt) {
 		return allErr
 	}
-	recent, runsErr := c.recent(ctx, sessionID, trace.NameRefill)
+	recent, runsErr := c.recent(ctx, sessionID, trace.NameRefill, trace.NameTurn)
 	answered := recent.runs().answered()
-	previous := trace.Traces(answered).Newest()
+	previous := recent.before(recent.latestTurn())
+	if turnErr != nil {
+		previous = trace.Trace{}
+	}
 	refill := recent.newest(trace.NameRefill, previous.Time)
 	items := hookItems(all.For(sessionProducer, labels))
 	if c.holdout.WithholdsRun(sessionProducer, sessionID) {
@@ -323,7 +326,9 @@ func (c hookCommand) recent(ctx context.Context, sessionID string, others ...tra
 	if err != nil {
 		return nil, err
 	}
-	f := record.TraceFilter{Names: []string{string(trace.NameRun)}, SessionID: sessionID, Since: c.app.now().Add(-sessionWindow)}
+	f := record.TraceFilter{
+		Names: []string{string(trace.NameRun)}, SessionID: sessionID, Since: c.app.now().Add(-sessionWindow), WithoutOutput: true,
+	}
 	for _, name := range others {
 		f.Names = append(f.Names, string(name))
 	}
@@ -338,6 +343,16 @@ func (c hookCommand) recent(ctx context.Context, sessionID string, others ...tra
 
 // The traces of a session newest first
 type sessionTraces trace.Traces
+
+func (ts sessionTraces) latestTurn() time.Time {
+	var latest time.Time
+	for _, event := range ts {
+		if event.Name == trace.NameTurn && event.Time.After(latest) {
+			latest = event.Time
+		}
+	}
+	return latest
+}
 
 func (ts sessionTraces) runs() sessionTurns {
 	return sessionTurns(ts.of(trace.NameRun))
@@ -410,7 +425,7 @@ func (ts sessionTurns) inContext(items knowledge.Set, refill trace.Trace) []know
 // 1. an empty answer such as an interrupted turn records nothing
 // 2. the holdout draws once per session so every turn of a conversation is in one arm
 // A lesson shown in one turn stays in the context of the next so a draw per turn would leak it into the withheld arm
-// 3. the capture, the daily retention prune, the daily consolidate, the daily curate pass and the OTLP export start in processes of their own
+// 3. background work starts in separate processes
 // so the turn never waits for them
 // A failure to start one is printed and the others still start
 // A failed record starts no export since no new run waits to be sent
@@ -450,7 +465,7 @@ func (c hookCommand) stop(ctx context.Context, sessionID string, labels trace.La
 // 1. a stop without a session id starts none since the capture reads one session
 // 2. with a transcript the capture reads it starts in every mode and after a turn a stop hook continued too
 // A click on a question asked in manual mode or during that turn is read there
-// 3. without one, as on Codex, it starts only after an answer of a mode that infers
+// 3. without a transcript it starts only after an answer of a mode that infers
 // The capture then reads no message and extracts the answer the turn followed when the conversation corrected it
 // So that correction is decided at the next stop as on Claude Code and never waits for the daily pass
 func (c hookCommand) capture(sessionID string, t transcript, continued bool) error {
@@ -484,7 +499,7 @@ func (c hookCommand) record(
 	}
 	in.Continued = continued
 	in = c.hold.Drawn(in, shown, sessionProducer, sessionID)
-	// Refs, strings, flags and shares in [0, 1) always encode
+	// Validated fields always encode
 	input, _ := json.Marshal(c.holdout.Drawn(in, sessionProducer, sessionID))
 	tr, err := trace.NewRun(sessionProducer, "", labels, input, []byte(answer.text()), c.app.now())
 	if err != nil {
@@ -568,7 +583,7 @@ func (items hookItems) context(inContext, held []knowledge.Ref, note sessionNote
 }
 
 // The items that fit the prompt in order before the item hold leaves its versions out
-// The prompt hook shows them and the stop hook records them as applied, so both name the same items
+// Both the prompt context and the stop record use this fitting set
 func (items hookItems) fitting() knowledge.Set {
 	size := utf8.RuneCountInString(knowledge.PromptLead)
 	var shown knowledge.Set
@@ -593,7 +608,7 @@ type sessionNote struct {
 	replied curate.Choice
 }
 
-// The reaction a conversation records is an inferred verdict, so only words that judge the previous answer count
+// Only words that judge the previous answer count as an inferred verdict
 // The verdict is recorded without a word to the user and its lesson is drafted after the turn so a discussion goes on undisturbed
 const reactionNote = "nodloop: your previous answer in this conversation is run %s. " +
 	"If the user's message says that answer was wrong or right, call the nodloop feedback tool on trace %s with reviewer session: " +
@@ -696,8 +711,8 @@ func (w workDir) within(project workDir) workDir {
 }
 
 // repo names the repository and dir is the path below the root of the checkout
-// 1. a worktree has a .git file whose gitdir sits under the .git of the main checkout, so it takes the name of the main checkout
-// 2. outside a repository only dir is set, to the absolute path
+// 1. a worktree takes the name of its main checkout
+// 2. outside a repository only dir is set to the absolute path
 func (w workDir) labels() trace.Labels {
 	abs, err := filepath.Abs(string(w))
 	if err != nil || w == "" {
@@ -715,7 +730,7 @@ func (w workDir) labels() trace.Labels {
 }
 
 // The base name of the main checkout of the repository whose root holds .git
-// A .git file of a worktree reads gitdir: <main>/.git/worktrees/<name>
+// The worktree gitdir lies under the worktrees directory of the main checkout
 func repoName(root string) string {
 	b, err := os.ReadFile(filepath.Join(root, ".git"))
 	if err != nil {

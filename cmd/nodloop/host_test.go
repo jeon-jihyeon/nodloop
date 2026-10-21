@@ -92,7 +92,7 @@ func TestHostInput(t *testing.T) {
 func TestRunHookHosts(t *testing.T) {
 	type args struct {
 		hook []string
-		// A fixture under testdata/hooks or the input as written
+		// A hook fixture name or the input as written
 		stdin string
 	}
 	type want struct {
@@ -164,7 +164,7 @@ func TestRunHookHosts(t *testing.T) {
 func TestRunHookStopQuestionHosts(t *testing.T) {
 	type args struct {
 		host string
-		// A fixture under testdata/hooks of session s1
+		// A hook fixture of session s1
 		stop string
 	}
 	tcs := []struct {

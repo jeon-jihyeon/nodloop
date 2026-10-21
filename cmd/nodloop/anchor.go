@@ -232,7 +232,7 @@ func (c anchorCommand) refresh(ctx context.Context) (anchorState, error) {
 	return state, store.Append(ctx, tr.Record())
 }
 
-// The versions nodloop approved that a reanchor or an answer mine of the person took, as curate folds the records
+// The versions nodloop approved that the person took into the anchor through reanchor or a mine answer
 func reanchored(ctx context.Context, store *tracefile.Store) (map[knowledge.Ref]string, error) {
 	var folded trace.Traces
 	for _, name := range []trace.Name{trace.NameIntervention, trace.NameAnswer, trace.NameDecide} {
@@ -271,7 +271,7 @@ func (c anchorCommand) recorded(ctx context.Context, store *tracefile.Store, sin
 }
 
 // The designated files that can be read with the HMAC of their content and the paths of those that cannot
-// A file that is gone, unreadable, no regular file or past inputLimit counts as absent and its lines decide nothing
+// Only a readable regular file within inputLimit contributes anchor lines
 func (c anchorCommand) designated(key textkey.Key) ([]curate.AnchorFile, []string) {
 	var files []curate.AnchorFile
 	var absent []string
