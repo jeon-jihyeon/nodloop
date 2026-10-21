@@ -2,6 +2,7 @@
 package userconfig
 
 import (
+	"bytes"
 	"cmp"
 	"encoding/json"
 	"errors"
@@ -47,6 +48,9 @@ func (h Home) Read(v any) error {
 	}
 	if err != nil {
 		return err
+	}
+	if bytes.Equal(bytes.TrimSpace(b), []byte("null")) {
+		return fmt.Errorf("%w: %s: config is not an object", ErrInvalid, h.ConfigPath())
 	}
 	if err := json.Unmarshal(b, v); err != nil {
 		return fmt.Errorf("%w: %s: %w", ErrInvalid, h.ConfigPath(), err)

@@ -12,6 +12,7 @@ import (
 
 	"go.yaml.in/yaml/v3"
 
+	"github.com/jeon-jihyeon/nodloop/internal/atomicfile"
 	"github.com/jeon-jihyeon/nodloop/internal/veto"
 )
 
@@ -253,7 +254,7 @@ func approvedPaths(folder string) ([]string, error) {
 // The record directory the first line of an approved file names
 // Empty when the file cannot be read or has no such line
 func approvedRecordDir(path string) string {
-	b, err := os.ReadFile(path)
+	b, err := atomicfile.Read(path, sizeLimit)
 	if err != nil {
 		return ""
 	}

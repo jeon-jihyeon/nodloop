@@ -16,7 +16,7 @@ import (
 )
 
 func TestInstall(t *testing.T) {
-	const exe = "/Users/me/go/bin/nodloop"
+	const exe = "/home/me/go/bin/nodloop"
 	b, err := os.ReadFile(filepath.Join("testdata", "existing.json"))
 	require.NoError(t, err)
 	existing := string(b)
@@ -67,6 +67,11 @@ func TestInstall(t *testing.T) {
 			"invalid json fails and leaves the file",
 			args{files: map[string]string{"settings.json": "{not json"}, mode: 0o700},
 			want{err: file.ErrJSONInvalid, settings: "{not json", backupErr: os.ErrNotExist},
+		},
+		{
+			"null document fails without a backup or replacement",
+			args{files: map[string]string{"settings.json": "null"}, mode: 0o700},
+			want{err: file.ErrJSONInvalid, settings: "null", backupErr: os.ErrNotExist},
 		},
 		{
 			"hooks of an unexpected shape fail and leave the file",
@@ -184,7 +189,7 @@ func TestUninstall(t *testing.T) {
 }
 
 func TestEditOfAnUnusablePath(t *testing.T) {
-	install := func(path string) (bool, error) { return file.Install(path, "/Users/me/go/bin/nodloop") }
+	install := func(path string) (bool, error) { return file.Install(path, "/home/me/go/bin/nodloop") }
 	type args struct {
 		dirs []string
 		mode os.FileMode
@@ -278,6 +283,7 @@ func TestInstalled(t *testing.T) {
 		{"settings without the hook report it missing", map[string]string{"settings.json": existing}, want{false, nil}},
 		{"no settings file reports it missing", map[string]string{}, want{false, nil}},
 		{"broken settings fail", map[string]string{"settings.json": "{"}, want{false, file.ErrJSONInvalid}},
+		{"null settings fail", map[string]string{"settings.json": "null"}, want{false, file.ErrJSONInvalid}},
 		{
 			"a hook on the stable link passes",
 			map[string]string{"settings.json": hook("*", "{dir}/bin/nodloop guard"), "bin/nodloop": "v0.5.0/nodloop"},
@@ -336,7 +342,7 @@ func TestInstalled(t *testing.T) {
 
 // A settings.json kept in a dotfiles directory and linked into place
 func TestEditThroughASymlink(t *testing.T) {
-	const exe = "/Users/me/go/bin/nodloop"
+	const exe = "/home/me/go/bin/nodloop"
 	b, err := os.ReadFile(filepath.Join("testdata", "installed.json"))
 	require.NoError(t, err)
 	installed := string(b)

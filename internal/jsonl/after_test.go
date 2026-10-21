@@ -169,3 +169,37 @@ func TestFileAfterFailsOnUnreadableFile(t *testing.T) {
 	assert.ErrorIs(t, startErr, syscall.EISDIR)
 	assert.ErrorIs(t, onErr, syscall.EISDIR)
 }
+
+func TestFileAfterRemovedDirectory(t *testing.T) {
+	tcs := []struct {
+		name string
+		args bool
+	}{
+		{"from the start", false},
+		{"after a recorded position", true},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir := filepath.Join(t.TempDir(), "records")
+			require.NoError(t, os.Mkdir(dir, 0o700))
+			f, err := jsonl.Open[row](dir, "rows.jsonl")
+			require.NoError(t, err)
+			require.NoError(t, f.Append(row{ID: "example"}))
+			_, position, err := f.After("", every, 0)
+			require.NoError(t, err)
+			from := ""
+			if tc.args {
+				from = position
+			}
+			require.NoError(t, os.RemoveAll(dir))
+
+			rows, next, err := f.After(from, every, 0)
+
+			assert.ErrorIs(t, err, fs.ErrNotExist)
+			assert.NotErrorIs(t, err, jsonl.ErrPositionGone)
+			assert.Empty(t, rows)
+			assert.Equal(t, from, next)
+		})
+	}
+}

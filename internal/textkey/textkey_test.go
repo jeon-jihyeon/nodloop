@@ -59,6 +59,13 @@ func TestLoad(t *testing.T) {
 			require.NoError(t, os.WriteFile(filepath.Join(dir, textkey.FileName), fixed[:31], 0o600))
 			return dir
 		}}, want{zero, textkey.ErrInvalid}},
+		{"a large key is refused without keeping any bytes", args{func(t *testing.T) string {
+			dir := t.TempDir()
+			path := filepath.Join(dir, textkey.FileName)
+			require.NoError(t, os.WriteFile(path, []byte("opaque-key-material"), 0o600))
+			require.NoError(t, os.Truncate(path, 1<<30))
+			return dir
+		}}, want{zero, textkey.ErrInvalid}},
 		{"a key that cannot be read is refused", args{func(t *testing.T) string {
 			dir := t.TempDir()
 			require.NoError(t, os.Mkdir(filepath.Join(dir, textkey.FileName), 0o700))
@@ -77,6 +84,7 @@ func TestLoad(t *testing.T) {
 
 			assert.ErrorIs(t, err, tc.want.err)
 			assert.Equal(t, tc.want.sum, k.Sum("refund window"))
+			assert.NotContains(t, fmt.Sprint(err), "opaque-key-material")
 		})
 	}
 }

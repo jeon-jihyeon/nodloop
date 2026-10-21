@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -14,6 +15,16 @@ import (
 
 	"github.com/jeon-jihyeon/nodloop/internal/llm"
 )
+
+// Writes an executable through cp so no fork of a parallel test holds a write descriptor of it
+// Linux refuses to run a file that some process holds open for writing
+func writeExecutable(t *testing.T, path string, text []byte) {
+	t.Helper()
+	src := path + ".src"
+	require.NoError(t, os.WriteFile(src, text, 0o600))
+	require.NoError(t, exec.Command("cp", src, path).Run())
+	require.NoError(t, os.Chmod(path, 0o755))
+}
 
 func TestClaudeCLIComplete(t *testing.T) {
 	t.Parallel()
@@ -104,7 +115,7 @@ func TestClaudeCLIComplete(t *testing.T) {
 				"esac; done > \"" + dir + "/args\"\n" +
 				"/bin/cat > \"" + dir + "/stdin\"\n" +
 				"/bin/cat \"" + testdata + "/success.json\"\n"
-			require.NoError(t, os.WriteFile(bin, []byte(script), 0o755))
+			writeExecutable(t, bin, []byte(script))
 			c := llm.NewClaudeCLI(bin, "sonnet", dir, 0)
 
 			got, err := c.Complete(ctx, tc.args)
@@ -149,7 +160,7 @@ func TestClaudeCLICompleteModel(t *testing.T) {
 			require.NoError(t, os.WriteFile(filepath.Join(dir, "result.json"), []byte(result), 0o600))
 			bin := filepath.Join(dir, "claude")
 			script := "#!/bin/sh\n/bin/cat > /dev/null\n/bin/cat \"" + dir + "/result.json\"\n"
-			require.NoError(t, os.WriteFile(bin, []byte(script), 0o755))
+			writeExecutable(t, bin, []byte(script))
 
 			got, err := llm.NewClaudeCLI(bin, "sonnet", dir, 0).Complete(ctx, llm.Request{Prompt: "x", Schema: json.RawMessage(`{}`)})
 
@@ -242,7 +253,7 @@ func TestClaudeCLICompleteFailure(t *testing.T) {
 			dir := t.TempDir()
 			bin := filepath.Join(dir, "claude")
 			script := "#!/bin/sh\n/bin/cat > /dev/null\n" + tc.args.script + "\n"
-			require.NoError(t, os.WriteFile(bin, []byte(script), 0o755))
+			writeExecutable(t, bin, []byte(script))
 			c := llm.NewClaudeCLI(bin, "sonnet", filepath.Join(dir, tc.args.workDir), 0)
 
 			got, err := c.Complete(ctx, tc.args.req)
@@ -285,7 +296,7 @@ func TestClaudeCLICompleteResultError(t *testing.T) {
 			dir := t.TempDir()
 			bin := filepath.Join(dir, "claude")
 			script := "#!/bin/sh\ntestdata=\"" + testdata + "\"\n/bin/cat > /dev/null\n" + tc.args + "\n"
-			require.NoError(t, os.WriteFile(bin, []byte(script), 0o755))
+			writeExecutable(t, bin, []byte(script))
 			c := llm.NewClaudeCLI(bin, "sonnet", dir, 0)
 
 			got, err := c.Complete(ctx, llm.Request{Prompt: "x", Schema: json.RawMessage(`{}`)})
@@ -324,7 +335,7 @@ func TestClaudeCLICompleteStops(t *testing.T) {
 			t.Parallel()
 			dir := t.TempDir()
 			bin := filepath.Join(dir, "claude")
-			require.NoError(t, os.WriteFile(bin, []byte("#!/bin/sh\nsleep 10\n"), 0o755))
+			writeExecutable(t, bin, []byte("#!/bin/sh\nsleep 10\n"))
 			c := llm.NewClaudeCLI(bin, "sonnet", dir, tc.args.timeout)
 			callCtx, cancel := context.WithCancel(ctx)
 			t.Cleanup(cancel)
@@ -353,7 +364,7 @@ func TestClaudeCLICompleteDefaults(t *testing.T) {
 		"pwd -P > \"" + dir + "/pwd\"\n" +
 		"/bin/cat > /dev/null\n" +
 		"/bin/cat \"" + testdata + "/success.json\"\n"
-	require.NoError(t, os.WriteFile(bin, []byte(script), 0o755))
+	writeExecutable(t, bin, []byte(script))
 	type args struct {
 		bin   string
 		model string
@@ -465,7 +476,7 @@ func TestClaudeCLICompleteWorkDir(t *testing.T) {
 				"ls -ld . | cut -c1-10 >> \"" + dir + "/mode\"\n" +
 				"/bin/cat > /dev/null\n" +
 				"/bin/cat \"" + testdata + "/success.json\"\n"
-			require.NoError(t, os.WriteFile(bin, []byte(script), 0o755))
+			writeExecutable(t, bin, []byte(script))
 			c := llm.NewClaudeCLI(bin, "sonnet", parent, 0)
 
 			for range 2 {

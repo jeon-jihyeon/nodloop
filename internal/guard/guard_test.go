@@ -31,18 +31,18 @@ func TestRun(t *testing.T) {
 		require.NoError(t, err)
 		fixtures[name] = string(b)
 	}
-	repo := "/Users/me/repo"
+	repo := "/tmp/acme/repo"
 	sedBlocked := "nodloop guard: Bash call blocked by veto no-sed-inplace\n" +
 		"sed -i and perl -i are forbidden. Use the Edit tool to modify files\n"
 	loadWarning := "nodloop guard: failed to load vetoes, skipped: " + assert.AnError.Error() + "\n"
 	parseFailed := "nodloop guard: failed to parse hook input: "
-	vetoPath := "/Users/me/repo/.claude/nodloop/vetoes.yaml"
+	vetoPath := "/tmp/acme/repo/.claude/nodloop/vetoes.yaml"
 	unreadable := fmt.Errorf("%s: %w: %w", vetoPath, vetofile.ErrRead, veto.ErrYAMLInvalid)
 	unreadableWarning := "nodloop guard: failed to load vetoes, skipped: " + unreadable.Error() + "\n"
 	missing := fmt.Errorf("%s: %w: %w", vetoPath, vetofile.ErrRead, os.ErrNotExist)
 	denied := fmt.Errorf("%s: %w: %w", vetoPath, vetofile.ErrRead, os.ErrPermission)
 	shared := fmt.Errorf("%w: %s", vetofile.ErrOutsideHome, unreadable)
-	teamPath := "/Users/me/dotfiles/team-vetoes.yaml"
+	teamPath := "/tmp/acme/dotfiles/team-vetoes.yaml"
 	teamUnreadable := fmt.Errorf("%s: %w: %w", teamPath, vetofile.ErrRead, veto.ErrYAMLInvalid)
 	teamWarning := "nodloop guard: failed to load vetoes, skipped: " + teamUnreadable.Error() + "\n"
 	type args struct {
@@ -120,20 +120,20 @@ func TestRun(t *testing.T) {
 		},
 		{
 			"unreadable veto file lets an edit of a veto file through",
-			args{`{"tool_name":"Edit","tool_input":{"file_path":"` + vetoPath + `"},"cwd":"/Users/me/repo"}`, vetoes, unreadable, ""},
+			args{`{"tool_name":"Edit","tool_input":{"file_path":"` + vetoPath + `"},"cwd":"/tmp/acme/repo"}`, vetoes, unreadable, ""},
 			want{guard.ExitFail, repo, unreadableWarning},
 		},
 		{
 			"unreadable veto file lets a read of an approved veto file through",
 			args{
-				`{"tool_name":"Read","tool_input":{"file_path":"/Users/me/.claude/nodloop/vetoes.approved.0123456789ab.yaml"}}`,
+				`{"tool_name":"Read","tool_input":{"file_path":"/tmp/acme/.claude/nodloop/vetoes.approved.0123456789ab.yaml"}}`,
 				vetoes, unreadable, "",
 			},
 			want{guard.ExitFail, "", unreadableWarning},
 		},
 		{
 			"unreadable veto file blocks an edit of another file",
-			args{`{"tool_name":"Edit","tool_input":{"file_path":"/Users/me/repo/main.go"}}`, nil, unreadable, ""},
+			args{`{"tool_name":"Edit","tool_input":{"file_path":"/tmp/acme/repo/main.go"}}`, nil, unreadable, ""},
 			want{guard.ExitBlock, "", unreadableWarning + "nodloop guard: Edit call blocked because a veto file is not valid YAML\n" +
 				"Fix the file named above. Reading and editing a veto file still pass\n"},
 		},

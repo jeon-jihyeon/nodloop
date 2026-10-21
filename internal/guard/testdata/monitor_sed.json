@@ -1,7 +1,7 @@
 {
-  "session_id": "24a71b10-e36a-4166-822c-5163a7e0d2fa",
-  "transcript_path": "/Users/me/.claude/projects/-Users-me-repo/24a71b10.jsonl",
-  "cwd": "/Users/me/repo",
+  "session_id": "fixture-session",
+  "transcript_path": "/tmp/acme/.claude/projects/-tmp-acme-repo/fixture-session.jsonl",
+  "cwd": "/tmp/acme/repo",
   "permission_mode": "default",
   "hook_event_name": "PreToolUse",
   "tool_name": "Monitor",

@@ -21,9 +21,9 @@ func TestHoldoutDraws(t *testing.T) {
 		args string
 		want want
 	}{
-		{"first turn of a session at 0.918", "0b9c2f1e-5d1a-4c55-9f0e-2b7f5c3a9d10:", want{false, false}},
-		{"later turn at 0.823", "0b9c2f1e-5d1a-4c55-9f0e-2b7f5c3a9d10:019a1f2c3d4e5f60a1b2c3d4", want{false, false}},
-		{"turn at 0.566", "7e4d1a90-3c2b-4f8e-a6d5-0c1b2a3f4e5d:019a1f2c3d4f7a8b9c0d1e2f", want{false, false}},
+		{"first turn of a session at 0.925", "session-example:", want{false, false}},
+		{"later turn at 0.546", "session-example:turn-example-1", want{false, false}},
+		{"turn at 0.325", "session-other:turn-example-2", want{false, true}},
 		{"short session at 0.404", "a:b", want{false, true}},
 		{"turn at 0.036", "session-2:019a00011667", want{true, true}},
 		{"turn at 0.025", "session-3:019a0002e668", want{true, true}},

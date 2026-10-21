@@ -60,6 +60,9 @@ func (d Document) CheckHooksOn() error {
 // 2. drops every other nodloop hook first so a stale path or a narrow matcher is replaced and never left beside it
 // 3. returns ErrHooksInvalid when hooks is not an object or PreToolUse is not an array so no user value is overwritten
 func (d Document) Install(exe string) (changed bool, err error) {
+	if d == nil {
+		return false, fmt.Errorf("%w: document is not an object", ErrHooksInvalid)
+	}
 	want := Hook{Command: string(guardCommand(exe)), Matcher: allTools}
 	if slices.Equal(d.Hooks(), []Hook{want}) {
 		return false, nil
@@ -98,7 +101,11 @@ func (d Document) Uninstall() (changed bool) {
 		}
 		entries, _ := group["hooks"].([]any)
 		kept := slices.DeleteFunc(entries, ourEntry)
-		changed = changed || len(kept) < len(entries)
+		if len(kept) == len(entries) {
+			groups = append(groups, g)
+			continue
+		}
+		changed = true
 		if len(kept) == 0 {
 			continue
 		}

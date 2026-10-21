@@ -22,10 +22,7 @@ func Check(path string, limit int64) error {
 // The whole content of a regular file of at most limit bytes with its links followed
 // The read stops one byte past the limit so a file that grows while it is read never fills memory
 func Read(path string, limit int64) ([]byte, error) {
-	if _, err := regular(path); err != nil {
-		return nil, err
-	}
-	f, err := os.Open(path)
+	f, err := Open(path)
 	if err != nil {
 		return nil, err
 	}
@@ -39,8 +36,28 @@ func Read(path string, limit int64) ([]byte, error) {
 	return b, nil
 }
 
+// The caller closes the returned file
+// Validation uses the opened descriptor so a path replacement cannot substitute a device or fifo
+func Open(path string) (*os.File, error) {
+	if _, err := regular(path); err != nil {
+		return nil, err
+	}
+	f, err := openRead(path)
+	if err != nil {
+		return nil, err
+	}
+	info, err := f.Stat()
+	if err != nil {
+		return nil, errors.Join(err, f.Close())
+	}
+	if !info.Mode().IsRegular() {
+		return nil, errors.Join(fmt.Errorf("%w: %s", ErrNotRegular, path), f.Close())
+	}
+	return f, nil
+}
+
 // The stat of a regular file
-// A fifo, a device or a folder is refused by its mode before anything opens it so no read waits on a writer
+// Only a regular file can pass the mode check before an open
 func regular(path string) (os.FileInfo, error) {
 	info, err := os.Stat(path)
 	if err != nil {
