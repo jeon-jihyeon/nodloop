@@ -33,7 +33,7 @@ type instructionsInput struct {
 }
 
 // The instructions trace of the file in the session
-// The session, the path and the 64 hex of the HMAC are named
+// A session and a path with a 64 hex HMAC are required
 func (in instructionsInput) trace(session string, now time.Time) (trace.Trace, error) {
 	if b, err := hex.DecodeString(in.HMAC); session == "" || in.Path == "" || err != nil || len(b) != 32 {
 		return trace.Trace{}, fmt.Errorf("%w: a rules file of a session names its path and the HMAC of its content", errSessionTrace)
@@ -100,7 +100,7 @@ type rulesFiles struct {
 	config filePath
 	// The folder the session started in
 	project filePath
-	// The folder an @~/ import starts from
+	// The base of a home relative import
 	// Empty when no home is known
 	home homeDir
 }
@@ -137,7 +137,7 @@ func claudeProjects(home homeDir, configDir string) filePath {
 
 // Whether the file holds lines no person confirmed
 // 1. approved.md of the record directory
-// 2. a file below <projects>/<project>/memory/ or one the host reports as auto memory
+// 2. an auto memory file under a project directory or named as such by the host
 func (r rulesFiles) unconfirmed(path, memoryType string) bool {
 	file := filePath(path)
 	switch {
@@ -163,7 +163,7 @@ func (r rulesFiles) loads(path, memoryType, loadReason, parent string) bool {
 
 // Whether the file lies where the host loads instructions from
 // 1. a CLAUDE.md or CLAUDE.local.md lies in the Claude Code config or in a folder of the project tree
-// 2. any other file lies below rules of the Claude Code config or below .claude/rules of a folder of the project tree
+// 2. any other file lies below the rules directory of the Claude Code config or of a project config
 // The folder of the file is compared with its links resolved and the name is the one the host reported
 func (r rulesFiles) placed(path string) bool {
 	dir := filePath(filepath.Dir(path)).resolved()
@@ -183,7 +183,7 @@ func (r rulesFiles) placed(path string) bool {
 }
 
 // Whether an @path of the text of the parent names the file as the host reads imports
-// 1. a relative path starts from the folder of the parent and @~/ from home
+// 1. a relative import starts from the parent folder and a home relative import from home
 // 2. a backslash before a space keeps the space in the path
 // 3. a code span and a fenced code block import nothing
 // 4. a parent that cannot be read imports nothing
@@ -247,7 +247,7 @@ func (r rulesFiles) importOf(parent, imported string) filePath {
 	return filePath(filepath.Join(filepath.Dir(parent), imported))
 }
 
-// Whether the folder is the one the session started in, one above it or one below it
+// Whether the folder and the session project share one ancestor chain
 // The host loads a CLAUDE.md from each folder above the start and from a folder below once the session reads there
 func (r rulesFiles) inProject(dir filePath) bool {
 	return r.project != "" && (dir.below(r.project) != nil || r.project.below(dir) != nil)
@@ -257,7 +257,7 @@ func (r rulesFiles) inProject(dir filePath) bool {
 type filePath string
 
 // The path with its links resolved and the path as given while it names nothing
-// 1. the host may report /private/tmp for a record directory named under /tmp
+// 1. the host may report a different spelling of a linked temporary directory
 // 2. a file that is not there yet takes the links of its folder so it compares with the folder resolved
 func (p filePath) resolved() string {
 	if r, err := filepath.EvalSymlinks(string(p)); err == nil {

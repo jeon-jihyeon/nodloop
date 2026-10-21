@@ -42,7 +42,7 @@ type captureInput struct {
 
 // What one capture read and wrote with no text of the transcript
 type captureOutput struct {
-	// The user messages read and how many became verdicts, answers and signals
+	// Counts of messages and their recorded judgments
 	Messages int `json:"messages"`
 	Verdicts int `json:"verdicts"`
 	Answers  int `json:"answers"`
@@ -70,7 +70,7 @@ func (in captureInput) trace(session string, out captureOutput, now time.Time) (
 		return trace.Trace{}, fmt.Errorf("%w: %d messages made more records than they hold", errSessionTrace, out.Messages)
 	}
 	out.Signals = len(out.Stops)
-	// Offsets, counts and ids always encode
+	// Validated scalar fields always encode
 	input, _ := json.Marshal(in)
 	output, _ := json.Marshal(out.listed())
 	return trace.Trace{ID: trace.NewID(now), Name: trace.NameCapture, SessionID: session, Time: now, Input: input, Output: output}, nil
@@ -181,7 +181,7 @@ type captureCommand struct {
 	app    app
 	client llm.Client
 	getenv func(string) string
-	// The model of the reaction, the extraction and a judge the curate pass starts
+	// The model used by the capture and the curate pass it starts
 	// The llm default when empty
 	model string
 	out   io.Writer
@@ -228,7 +228,7 @@ func (c captureCommand) read(ctx context.Context, session string, t transcript, 
 	if err != nil {
 		return captureOutput{}, err
 	}
-	window, corrupt := c.window(ctx, store, session, trace.NameCapture, trace.NameRun, trace.NameExpose)
+	window, corrupt := c.window(ctx, store, session, trace.NameCapture, trace.NameRun, trace.NameExpose, trace.NameTurn)
 	if corrupt != nil && !errors.Is(corrupt, tracefile.ErrCorrupt) {
 		return captureOutput{}, corrupt
 	}
@@ -243,7 +243,7 @@ func (c captureCommand) read(ctx context.Context, session string, t transcript, 
 		return captureOutput{}, errors.Join(corrupt, err)
 	}
 	reader.shown = sessionExposes(window.of(trace.NameExpose))
-	out, failed := reader.judge(ctx, part.messages.after(runs.started(first)), runs)
+	out, failed := reader.judge(ctx, part.messages.after(runs.started(first)), window)
 	tr, err := part.input.trace(session, out, c.app.now())
 	if err == nil {
 		err = store.Append(ctx, tr.Record())
@@ -269,7 +269,7 @@ func (c captureCommand) followTurn(ctx context.Context, mode sessionMode, sessio
 	if corrupt != nil && !errors.Is(corrupt, tracefile.ErrCorrupt) {
 		return corrupt
 	}
-	followed := window.runs().before(window.newest(trace.NameTurn, time.Time{}).Time)
+	followed := window.before(window.latestTurn())
 	if followed.ID == "" {
 		return corrupt
 	}
@@ -277,7 +277,8 @@ func (c captureCommand) followTurn(ctx context.Context, mode sessionMode, sessio
 }
 
 // The traces of the names of the session within sessionWindow newest first in one read
-// 1. a window older than sessionWindow is never read so a new session never scans the records of every session
+// 1. only traces within sessionWindow are returned
+// Delayed appends require scanning past older timestamps
 // 2. a corrupt line returns the traces found with the error
 func (c captureCommand) window(ctx context.Context, store *tracefile.Store, session string, names ...trace.Name) (sessionTraces, error) {
 	f := record.TraceFilter{SessionID: session, Since: c.app.now().Add(-sessionWindow)}
@@ -300,7 +301,7 @@ func (ts sessionTraces) offset() (int64, bool) {
 	return in.To, false
 }
 
-// Who reads the messages of one capture of the session: the answers it records, the reaction plan, the items it asks about and the verdicts it writes
+// The reader of the messages of one capture
 // A capture that judges nothing has no plan so it reads the answers alone
 func (c captureCommand) reader(ctx context.Context, session string, judges bool) (messageReader, error) {
 	iv, err := c.app.intervener()
@@ -381,7 +382,7 @@ type messageReader struct {
 // 1. a click on a question of the stop and a first word that answers the question shown after the answer read are answers and never verdicts
 // 2. a message that followed no recorded answer is read and judges nothing
 // 3. a message whose reply cannot be read is judged by no one so a reply never becomes a verdict
-func (r messageReader) judge(ctx context.Context, messages personMessages, runs sessionTurns) (captureOutput, error) {
+func (r messageReader) judge(ctx context.Context, messages personMessages, runs sessionTraces) (captureOutput, error) {
 	out := captureOutput{Messages: len(messages)}
 	var errs []error
 	for _, m := range messages {
@@ -527,20 +528,35 @@ func (c captureCommand) corrected(ctx context.Context, run string) (bool, error)
 	return len(reconciled) > 0 && reconciled[0].Corrects(), nil
 }
 
-// The answer the person read before a message at the time: the newest run before it that no stop hook continued
-// The runs are newest first and none means the message followed no recorded answer
-func (ts sessionTurns) before(at time.Time) trace.Trace {
-	i := slices.IndexFunc(ts, func(r trace.Trace) bool { return r.Time.Before(at) })
-	if i < 0 {
+// A turn without a completed answer blocks attribution to an older answer
+// Continued stops stay within the same turn
+func (ts sessionTraces) before(at time.Time) trace.Trace {
+	var answer, turn trace.Trace
+	for _, event := range ts {
+		if !event.Time.Before(at) {
+			continue
+		}
+		switch event.Name {
+		case trace.NameTurn:
+			if event.Time.After(turn.Time) {
+				turn = event
+			}
+		case trace.NameRun:
+			if event.Time.After(answer.Time) && len((sessionTurns{event}).answered()) > 0 {
+				answer = event
+			}
+		}
+	}
+	if !turn.Time.Before(answer.Time) {
 		return trace.Trace{}
 	}
-	return trace.Traces(ts[i:].answered()).Newest()
+	return answer
 }
 
 // When the messages a capture reads begin
 // 1. a later capture reads every message after the offset of the one before it
 // 2. a first capture reads only the turn its stop ended with the messages after the run before the newest one
-// So no capture sends the whole history of a session to the model at once, also when its previous capture lies before sessionWindow
+// A capture whose previous offset is outside sessionWindow still sends only the last turn to the model
 func (ts sessionTurns) started(first bool) time.Time {
 	if !first || len(ts) < 2 {
 		return time.Time{}
@@ -551,7 +567,7 @@ func (ts sessionTurns) started(first bool) time.Time {
 // A Claude Code transcript the capture reads from a byte offset and never copies
 type transcript string
 
-// Refuses a transcript Claude Code does not keep for the session: <projects>/<project>/<session>.jsonl with its links resolved
+// Only the JSONL file named after the session under one project directory is accepted with links resolved
 // The capture records verdicts of reviewer nodloop and the person's answers from it
 // So no command an agent runs can name a file of its own and speak for the person
 func (t transcript) kept(projects filePath, session string) error {
@@ -654,8 +670,12 @@ type transcriptEntry struct {
 	Message   struct {
 		Content json.RawMessage `json:"content"`
 	} `json:"message"`
-	// What a tool returned on the line of its result, for AskUserQuestion the questions and the labels the person picked
+	// The AskUserQuestion result with its questions and the labels the person picked
 	ToolUseResult json.RawMessage `json:"toolUseResult"`
+}
+
+func (e transcriptEntry) primary() bool {
+	return !e.Meta && !e.Sidechain && !e.Summary && !e.Hidden
 }
 
 // One AskUserQuestion question as its call names it
@@ -693,7 +713,7 @@ func (e transcriptEntry) calls() askedQuestions {
 			Questions []askQuestion `json:"questions"`
 		} `json:"input"`
 	}
-	if e.Type != "assistant" || json.Unmarshal(e.Message.Content, &blocks) != nil {
+	if e.Type != "assistant" || !e.primary() || json.Unmarshal(e.Message.Content, &blocks) != nil {
 		return nil
 	}
 	calls := askedQuestions{}
@@ -724,7 +744,7 @@ func (e transcriptEntry) results() []string {
 		Type string `json:"type"`
 		ID   string `json:"tool_use_id"`
 	}
-	if e.Type != "user" || json.Unmarshal(e.Message.Content, &blocks) != nil {
+	if e.Type != "user" || !e.primary() || json.Unmarshal(e.Message.Content, &blocks) != nil {
 		return nil
 	}
 	var ids []string
@@ -764,8 +784,9 @@ func (e transcriptEntry) clicks(asked askedQuestions) personMessages {
 // The starts of what the host writes into a turn of the person
 type hostText []string
 
-// 1. slash commands and their output, notices of background work, reminders, shell mode and interruptions
-// 2. the file and the selection an IDE attaches as blocks beside what the person typed
+// 1. host commands and their output
+// 2. host notices and interruptions
+// 3. the file and the selection an IDE attaches beside what the person typed
 var hostPrefixes = hostText{
 	"<command-", "<local-command", "<task-notification", "<system-reminder", "<bash-", "<agent-message", "[Request interrupted", "Caveat:",
 	"<ide_",
@@ -779,11 +800,11 @@ func (h hostText) wrote(text string) bool {
 
 // The words the person typed on the line and empty for any other line
 // 1. a tool result such as the answer to an AskUserQuestion call is no message the person typed
-// 2. a meta line, a line of a subagent and the summary of a compaction are no words of the person
+// 2. only the visible main conversation carries words of the person
 // 3. a text the host wrote in the turn of the person starts with one of hostPrefixes
 // Each block is read apart so a block of the host never hides the person's words nor passes as them
 func (e transcriptEntry) words() string {
-	if e.Type != "user" || e.Meta || e.Sidechain || e.Summary || e.Hidden {
+	if e.Type != "user" || !e.primary() {
 		return ""
 	}
 	var text string
@@ -886,7 +907,7 @@ func (qs reactionQuestions) names() []string {
 var schemaKeyOutside = regexp.MustCompile(`[^a-zA-Z0-9_.-]`)
 
 // The property each question is answered under
-// 1. the API takes property names of letters, digits, underscore, dot and hyphen up to 64 long
+// 1. property names use the API character set and at most 64 characters
 // So a stops question answers under its name with every other character turned into an underscore
 // 2. a name too long or one two questions would share answers under the number of its question
 func (qs reactionQuestions) keys() map[string]string {
@@ -895,7 +916,12 @@ func (qs reactionQuestions) keys() map[string]string {
 	for i, name := range qs.names() {
 		key := schemaKeyOutside.ReplaceAllString(name, "_")
 		if len(key) > 64 || taken[key] {
-			key = fmt.Sprintf("q%d", i+1)
+			for n := i + 1; ; n++ {
+				key = fmt.Sprintf("q%d", n)
+				if !taken[key] {
+					break
+				}
+			}
 		}
 		taken[key] = true
 		out[name] = key

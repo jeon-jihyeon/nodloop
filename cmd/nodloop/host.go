@@ -117,7 +117,7 @@ type cursorInput struct {
 	// Every hook of a conversation carries it while session_id comes with sessionStart alone
 	ConversationID string   `json:"conversation_id"`
 	WorkspaceRoots []string `json:"workspace_roots"`
-	// completed, aborted or error on stop
+	// Stop status reported by the host
 	Status string `json:"status"`
 	// How many followups in a row continued the conversation
 	LoopCount int `json:"loop_count"`

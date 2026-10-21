@@ -27,7 +27,7 @@ import (
 type questionBench struct {
 	vars    map[string]string
 	records string
-	// The checkouts of repo svc, repo acme and repo work where no lesson reaches
+	// Fixture checkouts with work outside every lesson scope
 	svc, acme, work string
 	now             func() time.Time
 }
@@ -168,7 +168,7 @@ func TestRunHookStopQuestionExpose(t *testing.T) {
 }
 
 // The stop talks to the person only when everything before it went through and only through the one path of the place and mode
-// 1. a stop of a turn a stop hook continued, a place no question reaches and a mode that infers nothing ask nothing curate prepared
+// 1. a question needs a completed turn in its place under an inferring mode
 // 2. a failed start of the background work asks nothing
 // 3. a proposal the session made through the manual path is asked in manual mode too
 func TestRunHookStopQuestionRules(t *testing.T) {
@@ -190,7 +190,7 @@ func TestRunHookStopQuestionRules(t *testing.T) {
 		code := runIntervene([]string{"--payload", "-"}, b.getenv, b.now, trace.ProofNone, strings.NewReader(payload), &out, &stderr)
 		require.Equal(t, 0, code, stderr.String())
 	}
-	// Session s0 was asked the question and its person answered it, which curate.json still lists until the next pass
+	// An answered question remains in curate.json until its next pass
 	answered := func(t *testing.T, b questionBench) {
 		b.hook(t, "stop", "claude-code", strings.Replace(questionStop, "s1", "s0", 1), b.svc, noStart)
 		runs := b.traces(t, trace.NameRun)
@@ -239,7 +239,7 @@ func TestRunHookStopQuestionRules(t *testing.T) {
 
 // The first word of the next prompt that names a choice of the question is never judged and records no answer
 // 1. the prompt gets the reply note in place of the reaction note
-// 2. any other first word, another session and a prompt after another answer get the notes as before
+// 2. only a matching reply in the same answer boundary replaces the reaction note
 // 3. any process can pipe a prompt into the hook so nothing it reads there decides for the person
 func TestRunHookPromptReply(t *testing.T) {
 	type args struct {
@@ -357,7 +357,7 @@ func TestRunHookStopNotice(t *testing.T) {
 	assert.Equal(t, []any{curate.QuestionNotice, curate.SurfaceMessage, "s1"}, []any{x.Kind, x.Surface, expose.SessionID})
 }
 
-// A stop whose question cannot be prepared reports why on stderr, asks nothing and still records the run
+// A failed question preparation preserves the run and reports its failure without asking
 func TestRunHookStopQuestionFails(t *testing.T) {
 	type args struct {
 		// The record file made a directory before the stop
@@ -432,7 +432,7 @@ func TestRunHookStopAsksCurateOnlyWhenDue(t *testing.T) {
 }
 
 // What the exposes of a session tell a hook before it asks curate
-// 1. a typed word answers a question the stop asked after the run it followed, case and trailing punctuation ignored
+// 1. a reply word matches its question after case folding and trailing punctuation removal
 // 2. a pushed question spends the one question of the session and a proposal the person asked for does not
 // 3. a notice is the one notice of the session
 func TestSessionExposes(t *testing.T) {

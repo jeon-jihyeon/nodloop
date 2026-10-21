@@ -21,7 +21,7 @@ import (
 )
 
 // The number and cause of every anchor version oldest first
-// A cause that names a trace reads as the name of that trace, such as the intervention of an approval
+// A trace cause reads as its trace name
 func anchorVersions(t *testing.T, records string) []string {
 	t.Helper()
 	store, err := tracefile.New(records)
