@@ -99,6 +99,13 @@ func TestStoreList(t *testing.T) {
 			assert.Equal(t, tc.want.records, got)
 		})
 	}
+	t.Run("directory in place of the file fails a read in append order", func(t *testing.T) {
+		t.Parallel()
+		got, at, err := store.After(ctx, "", 0)
+		assert.ErrorIs(t, err, file.ErrRead)
+		assert.Empty(t, got)
+		assert.Empty(t, at)
+	})
 }
 
 func TestStoreAppendDecided(t *testing.T) {
@@ -269,14 +276,16 @@ func TestStoreCorruptLine(t *testing.T) {
 	require.NoError(t, store.Append(ctx, c))
 
 	listed, listErr := store.List(ctx)
+	appended, _, afterErr := store.After(ctx, "", 0)
 	n, checkErr := store.Check()
 
-	for _, err := range []error{listErr, checkErr} {
+	for _, err := range []error{listErr, afterErr, checkErr} {
 		assert.ErrorIs(t, err, file.ErrRead)
 		assert.ErrorIs(t, err, file.ErrCorrupt)
 		assert.ErrorIs(t, err, jsonl.ErrCorrupt)
 	}
 	assert.Equal(t, []record.Knowledge{c, a}, listed)
+	assert.Equal(t, []record.Knowledge{a, c}, appended)
 	assert.Equal(t, 2, n)
 	moved, err := store.Repair()
 	require.NoError(t, err)

@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeon-jihyeon/nodloop/internal/atomicfile"
 	"github.com/jeon-jihyeon/nodloop/internal/curate"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	knowledgefile "github.com/jeon-jihyeon/nodloop/internal/knowledge/file"
@@ -61,6 +62,10 @@ func TestRunIntervene(t *testing.T) {
 			want{code: 1, stderr: errPayload.Error(), status: knowledge.StatusApproved}},
 		{"a payload file that is missing is refused", args{proof: atTerminal, command: []string{"--payload", "{payload}.gone"}},
 			want{code: 1, stderr: "no such file", status: knowledge.StatusApproved}},
+		{"a payload that names no regular file is refused", args{proof: atTerminal, command: []string{"--payload", os.DevNull}},
+			want{code: 1, stderr: atomicfile.ErrNotRegular.Error(), status: knowledge.StatusApproved}},
+		{"a payload on stdin past the limit fails to decode", args{proof: atTerminal, command: []string{"--payload", "-"},
+			payload: `{"action":"judge","target":"` + strings.Repeat("x", inputLimit) + `"}`}, want{code: 1, stderr: errPayload.Error(), status: knowledge.StatusApproved}},
 		{"a knob outside its range is refused", args{proof: atTerminal, command: []string{"knob", "--target", "audit_tier1", "--value", "0.9"}},
 			want{code: 1, stderr: curate.ErrTargetInvalid.Error(), status: knowledge.StatusApproved}},
 		{"a value that is no number is refused", args{proof: atTerminal, command: []string{"knob", "--target", "audit_tier1", "--value", "high"}},

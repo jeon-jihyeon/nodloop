@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeon-jihyeon/nodloop/internal/atomicfile"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
 	tracefile "github.com/jeon-jihyeon/nodloop/internal/trace/file"
 )
@@ -44,6 +45,11 @@ func TestRunRunRecord(t *testing.T) {
 			want{input: `{"applied":[]}`, output: `{"answer":1}`},
 		},
 		{"refuses a run without output", []string{"record", "--producer", "session"}, want{code: 1, stderr: `^nodloop run: record: --output is required\n`}},
+		{
+			"refuses an output that names no regular file",
+			[]string{"record", "--producer", "session", "--output", os.DevNull},
+			want{code: 1, stderr: `^nodloop run: --output: ` + regexp.QuoteMeta(atomicfile.ErrNotRegular.Error())},
+		},
 		{
 			"refuses a run without producer",
 			[]string{"record", "--output", "{text}"},

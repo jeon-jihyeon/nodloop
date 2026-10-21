@@ -107,6 +107,7 @@ func TestStoreList(t *testing.T) {
 		want want
 	}{
 		{"directory in place of the file fails to read", record.TraceFilter{}, want{err: file.ErrRead}},
+		{"directory in place of the file fails a read without output", record.TraceFilter{WithoutOutput: true}, want{err: file.ErrRead}},
 	}
 	ctx := context.Background()
 	for _, tc := range tcs {
@@ -117,6 +118,13 @@ func TestStoreList(t *testing.T) {
 			assert.Equal(t, tc.want.traces, got)
 		})
 	}
+	t.Run("directory in place of the file fails a read in append order", func(t *testing.T) {
+		t.Parallel()
+		got, at, err := store.After(ctx, record.TraceFilter{}, "")
+		assert.ErrorIs(t, err, file.ErrRead)
+		assert.Empty(t, got)
+		assert.Empty(t, at)
+	})
 }
 
 // A line that is not JSON leaves the other traces readable
@@ -133,15 +141,19 @@ func TestStoreCorruptLine(t *testing.T) {
 	require.NoError(t, store.Append(ctx, c))
 
 	listed, listErr := store.List(ctx, record.TraceFilter{})
+	bare, bareErr := store.List(ctx, record.TraceFilter{WithoutOutput: true})
+	appended, _, afterErr := store.After(ctx, record.TraceFilter{}, "")
 	got, getErr := store.Get(ctx, "a")
 	n, checkErr := store.Check()
 
-	for _, err := range []error{listErr, getErr, checkErr} {
+	for _, err := range []error{listErr, bareErr, afterErr, getErr, checkErr} {
 		assert.ErrorIs(t, err, file.ErrRead)
 		assert.ErrorIs(t, err, file.ErrCorrupt)
 		assert.ErrorIs(t, err, jsonl.ErrCorrupt)
 	}
 	assert.Equal(t, []record.Trace{c, a}, listed)
+	assert.Equal(t, []record.Trace{{ID: "c", Name: "run", Input: c.Input}, {ID: "a", Name: "run", Input: a.Input}}, bare)
+	assert.Equal(t, []record.Trace{a, c}, appended)
 	assert.Equal(t, a, got, "get returns the trace found with the error as list does")
 	assert.Equal(t, 2, n)
 	moved, err := store.Repair()

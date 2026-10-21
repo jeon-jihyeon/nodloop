@@ -34,7 +34,8 @@ func TestIntegrationBinary(t *testing.T) {
 	require.NoError(t, err)
 	guard := func(t *testing.T, stdin []byte) (int, string) {
 		cmd := exec.Command(bin, "guard")
-		cmd.Env = append(os.Environ(), "HOME="+home)
+		// The home alone so no variable of the shell running the tests such as NODLOOP_RECORD_DIR or CLAUDECODE reaches the binary
+		cmd.Env = []string{"HOME=" + home}
 		cmd.Stdin = bytes.NewReader(stdin)
 		var stderr bytes.Buffer
 		cmd.Stderr = &stderr

@@ -76,8 +76,7 @@ func Example_holdout() {
 	}
 	c.WaitPrune()
 
-	// A page holds a record once it is 10 s old so one another process appends late is never skipped
-	now = now.Add(time.Minute)
+	// The records of a kind page in the order they were appended so one another process appends late is never skipped
 	for _, kind := range []string{"run", "outcome"} {
 		page := must(c.Records(ctx, nodloop.Query{Kind: kind}))
 		fmt.Println(kind, len(page.Records))

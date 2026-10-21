@@ -115,3 +115,31 @@ func TestOutcomeStoreList(t *testing.T) {
 		})
 	}
 }
+
+// Outcomes read in append order from the position the read before answered
+func TestOutcomeStoreAfter(t *testing.T) {
+	base := time.Date(2026, 9, 23, 0, 0, 0, 0, time.UTC)
+	outcomes := []record.Outcome{
+		{TraceID: "t1", Time: base, Result: "refuted", Reviewer: "author"},
+		{TraceID: "t2", Time: base.Add(time.Minute), Result: "confirmed", Reviewer: "author"},
+		{TraceID: "t1", Time: base.Add(-time.Minute), Result: "confirmed", Reviewer: "sam"},
+	}
+	ctx := context.Background()
+	store, err := file.NewOutcomeStore(t.TempDir())
+	require.NoError(t, err)
+	for _, o := range outcomes {
+		require.NoError(t, store.Append(ctx, o))
+	}
+
+	first, at, err := store.After(ctx, "", 1)
+	require.NoError(t, err)
+	rest, end, err := store.After(ctx, at, 0)
+	require.NoError(t, err)
+	none, again, err := store.After(ctx, end, 0)
+	require.NoError(t, err)
+
+	assert.Equal(t, outcomes[:1], first)
+	assert.Equal(t, outcomes[1:], rest, "an outcome stamped before the others still comes in its place")
+	assert.Empty(t, none)
+	assert.Equal(t, end, again)
+}

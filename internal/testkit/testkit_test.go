@@ -184,6 +184,40 @@ func TestFlakyTracesAppend(t *testing.T) {
 	}
 }
 
+// A list and a read in append order share the allowed count and no error set fails none
+func TestFlakyTracesAfter(t *testing.T) {
+	type args struct {
+		allowed int
+		err     error
+	}
+	type want struct {
+		errs  []error
+		found []int
+	}
+	tcs := []struct {
+		name string
+		args args
+		want want
+	}{
+		{"one allowed read lets the list through and fails the read in append order", args{1, assert.AnError}, want{[]error{nil, assert.AnError}, []int{1, 0}}},
+		{"no error set fails no read", args{0, nil}, want{[]error{nil, nil}, []int{1, 1}}},
+	}
+	ctx := context.Background()
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			st := testkit.Open(t)
+			require.NoError(t, st.Traces.Append(ctx, trace.Trace{ID: "t-1", Name: trace.NameRun, Time: st.Clock.Now()}.Record()))
+			flaky := &testkit.FlakyTraces{Store: st.Traces, Lists: testkit.Reads{Allowed: tc.args.allowed, Err: tc.args.err}}
+
+			first, firstErr := flaky.List(ctx, record.TraceFilter{})
+			second, _, secondErr := flaky.After(ctx, record.TraceFilter{}, "")
+
+			assert.Equal(t, tc.want, want{[]error{firstErr, secondErr}, []int{len(first), len(second)}})
+		})
+	}
+}
+
 // Two lists show which of them the allowed count lets through and no error set fails none
 func TestFlakyTracesList(t *testing.T) {
 	type args struct {

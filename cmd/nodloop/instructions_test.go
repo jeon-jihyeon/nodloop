@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeon-jihyeon/nodloop/internal/atomicfile"
 	"github.com/jeon-jihyeon/nodloop/internal/curate"
 	"github.com/jeon-jihyeon/nodloop/internal/record"
 	"github.com/jeon-jihyeon/nodloop/internal/schema"
@@ -147,6 +148,7 @@ func TestRunHookInstructions(t *testing.T) {
 		},
 		{"a file the host reports as auto memory is left out", args{stdin: load("{repo}/notes.md", autoMemoryType)}, want{none, ""}},
 		{"a file that cannot be read records nothing", args{stdin: load("{repo}/gone.md", "instructions")}, want{none, "no such file"}},
+		{"a path that names no regular file records nothing and never waits", args{stdin: load(os.DevNull, "instructions")}, want{none, atomicfile.ErrNotRegular.Error()}},
 		{
 			"a load of no session records nothing",
 			args{stdin: `{"cwd":"{repo}","file_path":"{repo}/CLAUDE.md","memory_type":"instructions"}`},
