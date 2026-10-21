@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -197,4 +198,62 @@ func TestOpenConcurrent(t *testing.T) {
 	wg.Wait()
 
 	assert.NoError(t, errors.Join(errs...))
+}
+
+// A read in append order holds back the rows after a transaction still open so the row it commits later is never skipped
+func TestAfterWaitsForOpenTransactions(t *testing.T) {
+	db, tenant := open(t)
+	ctx := context.Background()
+	traces := db.Traces(tenant)
+	at := time.Date(2026, 10, 7, 9, 0, 0, 0, time.UTC)
+	slow := record.Trace{ID: trace.NewID(at), Name: "run", Time: at, Input: json.RawMessage(`{}`)}
+	fast := record.Trace{ID: trace.NewID(at.Add(time.Second)), Name: "run", Time: at.Add(time.Second), Input: json.RawMessage(`{}`)}
+	conn, err := pgx.Connect(ctx, os.Getenv("NODLOOP_TEST_POSTGRES"))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = conn.Close(ctx) })
+	tx, err := conn.Begin(ctx)
+	require.NoError(t, err)
+	data, err := json.Marshal(slow)
+	require.NoError(t, err)
+	_, err = tx.Exec(ctx, `INSERT INTO nodloop_traces (tenant, id, name, session_id, data) VALUES ($1, $2, $3, '', $4)`, tenant, slow.ID, slow.Name, data)
+	require.NoError(t, err)
+	require.NoError(t, traces.Append(ctx, fast))
+
+	held, at1, err := traces.After(ctx, record.TraceFilter{}, "")
+	require.NoError(t, err)
+	require.NoError(t, tx.Commit(ctx))
+	both, _, err := traces.After(ctx, record.TraceFilter{}, at1)
+	require.NoError(t, err)
+
+	assert.Empty(t, held, "the committed row waits behind the open transaction")
+	assert.Equal(t, []record.Trace{slow, fast}, both)
+}
+
+// Outcomes read in append order from the position the read before answered
+func TestOutcomeStoreAfter(t *testing.T) {
+	db, tenant := open(t)
+	ctx := context.Background()
+	store := db.Outcomes(tenant)
+	base := time.Date(2026, 10, 7, 9, 0, 0, 0, time.UTC)
+	outcomes := []record.Outcome{
+		{TraceID: "t1", Time: base, Result: "refuted", Reviewer: "ann"},
+		{TraceID: "t2", Time: base.Add(-time.Minute), Result: "confirmed", Reviewer: "ann"},
+	}
+	for _, o := range outcomes {
+		require.NoError(t, store.Append(ctx, o))
+	}
+
+	first, at, err := store.After(ctx, "", 1)
+	require.NoError(t, err)
+	rest, end, err := store.After(ctx, at, 0)
+	require.NoError(t, err)
+	none, again, err := store.After(ctx, end, 0)
+	require.NoError(t, err)
+	_, _, goneErr := store.After(ctx, "x", 0)
+
+	assert.Equal(t, outcomes[:1], first)
+	assert.Equal(t, outcomes[1:], rest)
+	assert.Empty(t, none)
+	assert.Equal(t, end, again)
+	assert.ErrorIs(t, goneErr, record.ErrPositionGone)
 }

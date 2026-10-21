@@ -184,3 +184,49 @@ func appendRaw(path, line string) error {
 	_, err = f.WriteString(line)
 	return errors.Join(err, f.Close())
 }
+
+// A read in append order that cannot go on fails with the error of the store
+// A corrupt line still returns the verdicts of the other lines
+func TestStoreAfterFails(t *testing.T) {
+	type args struct {
+		// Created as a directory inside the store directory before the content is written
+		dir string
+		// Written to the path inside the store directory
+		path, content string
+		from          string
+	}
+	type want struct {
+		traceIDs []string
+		err      error
+	}
+	tcs := []struct {
+		name string
+		args args
+		want want
+	}{
+		{"a directory in place of the file", args{"feedback.jsonl", "feedback.jsonl/x", "", ""}, want{nil, file.ErrRead}},
+		{"a corrupt line", args{"", "feedback.jsonl", `{"trace_id":"a"}` + "\nnot json\n" + `{"trace_id":"b"}` + "\n", ""},
+			want{[]string{"a", "b"}, file.ErrCorrupt}},
+		{"a position no read answered", args{"", "feedback.jsonl", `{"trace_id":"a"}` + "\n", "x"}, want{nil, record.ErrPositionGone}},
+	}
+	ctx := context.Background()
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			require.NoError(t, os.MkdirAll(filepath.Join(dir, tc.args.dir), 0o700))
+			require.NoError(t, os.WriteFile(filepath.Join(dir, tc.args.path), []byte(tc.args.content), 0o600))
+			store, err := file.New(dir)
+			require.NoError(t, err)
+
+			got, _, err := store.After(ctx, tc.args.from, 0)
+
+			assert.ErrorIs(t, err, tc.want.err)
+			var ids []string
+			for _, fb := range got {
+				ids = append(ids, fb.TraceID)
+			}
+			assert.Equal(t, tc.want.traceIDs, ids)
+		})
+	}
+}

@@ -42,6 +42,18 @@ func TestLoad(t *testing.T) {
 			require.NoError(t, os.WriteFile(filepath.Join(dir, textkey.FileName), fixed, 0o600))
 			return dir
 		}}, want{sum: "f61d88b7bd64d1721a978366d6a551864aa1324b581003d903be4226851c0b09"}},
+		{"a key every user may read is refused", args{func(t *testing.T) string {
+			dir := t.TempDir()
+			require.NoError(t, os.WriteFile(filepath.Join(dir, textkey.FileName), fixed, 0o600))
+			require.NoError(t, os.Chmod(filepath.Join(dir, textkey.FileName), 0o644))
+			return dir
+		}}, want{zero, textkey.ErrShared}},
+		{"a key the group may write is refused", args{func(t *testing.T) string {
+			dir := t.TempDir()
+			require.NoError(t, os.WriteFile(filepath.Join(dir, textkey.FileName), fixed, 0o600))
+			require.NoError(t, os.Chmod(filepath.Join(dir, textkey.FileName), 0o620))
+			return dir
+		}}, want{zero, textkey.ErrShared}},
 		{"a key cut short is refused", args{func(t *testing.T) string {
 			dir := t.TempDir()
 			require.NoError(t, os.WriteFile(filepath.Join(dir, textkey.FileName), fixed[:31], 0o600))

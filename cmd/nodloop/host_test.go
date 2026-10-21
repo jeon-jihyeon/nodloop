@@ -158,6 +158,46 @@ func TestRunHookHosts(t *testing.T) {
 	}
 }
 
+// A host whose replies code cannot read is shown no question and the question stays due for the next Claude Code session
+// 1. no expose is recorded so the stop spends no round of the question
+// 2. Codex records its run and Cursor and Copilot record none
+func TestRunHookStopQuestionHosts(t *testing.T) {
+	type args struct {
+		host string
+		// A fixture under testdata/hooks of session s1
+		stop string
+	}
+	tcs := []struct {
+		name string
+		args args
+		// The runs of the stop beside the three of the bench and the one of the Claude Code stop
+		want int
+	}{
+		{"Codex records its run and asks nothing", args{"codex", "codex_stop.json"}, 1},
+		{"Cursor asks nothing", args{"cursor", "cursor_stop.json"}, 0},
+		{"Copilot asks nothing", args{"copilot", "copilot_stop.json"}, 0},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			b := newQuestionBench(t, nil)
+
+			shown, shownErr := b.hook(t, "stop", tc.args.host, tc.args.stop, b.svc, noStart)
+			exposes := len(b.traces(t, trace.NameExpose))
+			later, laterErr := b.hook(t, "stop", "claude-code", strings.Replace(questionStop, "s1", "s2", 1), b.svc, noStart)
+
+			text, _ := stopAnswer(t, later)
+			expose, _ := b.exposed(t)
+			assert.Empty(t, shownErr+laterErr)
+			assert.Empty(t, shown)
+			assert.Zero(t, exposes)
+			assert.True(t, strings.HasPrefix(text, wideQuestion), text)
+			assert.Equal(t, "s2", expose.SessionID)
+			assert.Len(t, b.traces(t, trace.NameRun), tc.want+4)
+		})
+	}
+}
+
 // A time after the records hookHome writes
 var hostNow = time.Date(2026, 10, 2, 1, 0, 0, 0, time.UTC)
 

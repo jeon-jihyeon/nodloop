@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeon-jihyeon/nodloop/internal/atomicfile"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	knowledgefile "github.com/jeon-jihyeon/nodloop/internal/knowledge/file"
 	"github.com/jeon-jihyeon/nodloop/internal/record"
@@ -103,6 +104,8 @@ func TestRunKnowledgeJudgmentProof(t *testing.T) {
 			want{code: 1, stderr: knowledge.ErrVersionUnapproved.Error(), statuses: unchanged, interventions: none}},
 		{"an import from a script is refused", args{trace.ProofNone, "", []string{"import", "--file", "{records}/knowledge.jsonl"}, false},
 			want{code: 1, stderr: errPersonOnly.Error(), statuses: unchanged, interventions: none}},
+		{"an import of no regular file is refused at the terminal", args{atTerminal, "", []string{"import", "--file", "{records}"}, false},
+			want{code: 1, stderr: atomicfile.ErrNotRegular.Error(), statuses: unchanged, interventions: none}},
 		{"an approval whose export fails still prints and records its intervention", args{atTerminal, "", []string{"approve", "git-c", "--version", "2", "--approver", "ann"}, true},
 			want{code: 1, stdout: "git-c\tv2\tapproved\tann", stderr: knowledge.ErrExport.Error(), statuses: []string{"v1 superseded", "v2 approved"},
 				interventions: []string{"person terminal ann keep"}}},
