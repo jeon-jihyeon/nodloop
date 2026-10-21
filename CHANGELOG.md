@@ -2,7 +2,7 @@
 
 Every release tag publishes the plugin, the darwin and linux binaries of `nodloop` and, from 0.7.0, `nodloop-server`, and both SDKs under one version. Versions before 0.6.0 reviewed incident data, which left this repository in 0.6.0.
 
-## Unreleased
+## 0.10.0 - 2026-10-21
 
 ### Breaking
 - Automatically inferred knowledge scopes leave out the reserved `correlation` label as they already leave out `host`. An external conversation or request can keep this label on its runs without tying a lesson to that request. Existing stored scopes stay unchanged. If an integration already used `correlation` as a scope key, pass a nonempty explicit scope to keep that boundary when proposing new knowledge
