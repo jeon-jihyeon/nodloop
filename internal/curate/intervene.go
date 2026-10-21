@@ -113,6 +113,9 @@ func (iv *Intervener) Intervene(ctx context.Context, r Request, by Submitter) (I
 		}
 		in.Person = by.Person
 	}
+	if _, err := in.Trace("pending", r.Session, by.Source, trace.InterventionOutput{}, iv.now()); err != nil {
+		return Intervened{}, err
+	}
 	switch {
 	case in.Action == trace.ActionDigest:
 		return iv.digest(ctx, in, r.Session, by, s)

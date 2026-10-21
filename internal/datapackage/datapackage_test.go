@@ -1,9 +1,11 @@
 package datapackage_test
 
 import (
+	"encoding/csv"
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -23,6 +25,62 @@ type meta struct {
 var fields = []datapackage.Field{
 	{Name: "record_id", Type: "string"}, {Name: "time", Type: "datetime"}, {Name: "reason", Type: "string"}, {Name: "rows", Type: "integer"},
 	{Name: "audit", Type: "boolean"}, {Name: "input", Type: "object"}, {Name: "output", Type: "any"},
+}
+
+func TestPackageMissingValue(t *testing.T) {
+	tcs := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"an empty string stays apart from null", []string{""}, datapackage.Null},
+		{"a literal null marker stays a string", []string{datapackage.Null}, datapackage.Null + `\`},
+		{"every occupied candidate is skipped", []string{`\N`, `\N\`, `\N\\`}, `\N\\\`},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			folder := filepath.Join(t.TempDir(), "out")
+			p, err := datapackage.Create(folder, "records", created, meta{})
+			require.NoError(t, err)
+			rows := []json.RawMessage{json.RawMessage(`{"record_id":"r0","value":null}`)}
+			for _, s := range tc.args {
+				b, err := json.Marshal(map[string]string{"record_id": "r1", "value": s})
+				require.NoError(t, err)
+				rows = append(rows, b)
+			}
+			require.NoError(t, p.Write(datapackage.Table{
+				Name: "values", Fields: []datapackage.Field{
+					{Name: "record_id", Type: "string"}, {Name: "value", Type: "string"},
+				},
+			}, rows))
+			require.NoError(t, p.Close(meta{Complete: true}))
+			b, err := os.ReadFile(filepath.Join(folder, "values.csv"))
+			require.NoError(t, err)
+
+			cells, err := csv.NewReader(strings.NewReader(string(b))).ReadAll()
+
+			require.NoError(t, err)
+			require.Len(t, cells, len(tc.args)+2)
+			assert.Equal(t, tc.want, cells[1][1])
+			for i, s := range tc.args {
+				assert.Equal(t, s, cells[i+2][1])
+				assert.NotEqual(t, cells[1][1], cells[i+2][1])
+			}
+			b, err = os.ReadFile(filepath.Join(folder, datapackage.Descriptor))
+			require.NoError(t, err)
+			var d struct {
+				Resources []struct {
+					Schema struct {
+						Missing []string `json:"missingValues"`
+					} `json:"schema"`
+				} `json:"resources"`
+			}
+			require.NoError(t, json.Unmarshal(b, &d))
+			require.Len(t, d.Resources, 1)
+			assert.Equal(t, []string{tc.want}, d.Resources[0].Schema.Missing)
+		})
+	}
 }
 
 // A folder of two tables lists both under the final descriptor with their Table Schema while the first descriptor said it was not done

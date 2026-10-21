@@ -78,7 +78,8 @@ func TestEventDecide(t *testing.T) {
 		{
 			"a retry carries the error of its judge call",
 			args{decided("d3", 0.15), add, curate.Decision{Tier: 1, Action: curate.ActionRetry}, failed},
-			want{`{"kind":"add","id":"k-2","version":1,"extract":"e-1","anchor":3,"diff":"` + hmac + `"}`, `{"tier":1,"action":"retry"}`, "judge timed out", nil},
+			want{`{"kind":"add","id":"k-2","version":1,"extract":"e-1","anchor":3,"diff":"` + hmac + `"}`,
+				`{"tier":1,"action":"retry"}`, "judge_member_failed", nil},
 		},
 		{
 			"a widening names the kind and bin it opens and no version",

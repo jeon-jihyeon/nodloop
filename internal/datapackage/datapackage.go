@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -153,20 +154,21 @@ func (p *Package) Write(t Table, rows []json.RawMessage) error {
 	if err != nil {
 		return err
 	}
-	err = writeRows(f, t.Fields, rows)
+	missing := t.missing(rows)
+	err = writeRows(f, t.Fields, rows, missing)
 	if err := errors.Join(err, f.Close()); err != nil {
 		return err
 	}
 	p.tables = append(p.tables, resource{
 		Name: t.Name, Path: path, Type: "table", Format: "csv", Mediatype: "text/csv", Encoding: "utf-8",
-		Schema:  tableSchema{Fields: t.Fields, MissingValues: []string{Null}, PrimaryKey: t.PrimaryKey, ForeignKeys: t.ForeignKeys},
+		Schema:  tableSchema{Fields: t.Fields, MissingValues: []string{missing}, PrimaryKey: t.PrimaryKey, ForeignKeys: t.ForeignKeys},
 		Nodloop: t.Nodloop,
 	})
 	return nil
 }
 
 // The header of the field names and one line per row
-func writeRows(f *os.File, fields []Field, rows []json.RawMessage) error {
+func writeRows(f *os.File, fields []Field, rows []json.RawMessage, missing string) error {
 	w := csv.NewWriter(f)
 	head := make([]string, 0, len(fields))
 	for _, fd := range fields {
@@ -182,7 +184,7 @@ func writeRows(f *os.File, fields []Field, rows []json.RawMessage) error {
 			return fmt.Errorf("%w: row %d", ErrRowInvalid, i+1)
 		}
 		for j, fd := range fields {
-			cell, err := fd.Cell(values[fd.Name])
+			cell, err := fd.Cell(values[fd.Name], missing)
 			if err != nil {
 				return fmt.Errorf("%w: row %d field %s: %w", ErrRowInvalid, i+1, fd.Name, err)
 			}
@@ -196,13 +198,36 @@ func writeRows(f *os.File, fields []Field, rows []json.RawMessage) error {
 	return w.Error()
 }
 
+func (t Table) missing(rows []json.RawMessage) string {
+	used := map[string]bool{}
+	for _, raw := range rows {
+		var values map[string]json.RawMessage
+		if json.Unmarshal(raw, &values) != nil {
+			continue
+		}
+		for _, f := range t.Fields {
+			var s string
+			if (f.Type == "string" || f.Type == "datetime") &&
+				json.Unmarshal(values[f.Name], &s) == nil && strings.HasPrefix(s, Null) &&
+				strings.Trim(strings.TrimPrefix(s, Null), `\`) == "" {
+				used[s] = true
+			}
+		}
+	}
+	missing := Null
+	for used[missing] {
+		missing += `\`
+	}
+	return missing
+}
+
 // The CSV cell of the JSON value of the field
-// 1. a null or a field the row lacks is Null
+// 1. a null or a field the row lacks is the missing sentinel of its table
 // 2. a string of a field of type string or datetime is the string itself
 // 3. any other value is its JSON text so an object, an array or a field of any type holds JSON
-func (f Field) Cell(v json.RawMessage) (string, error) {
+func (f Field) Cell(v json.RawMessage, missing string) (string, error) {
 	if len(v) == 0 || string(v) == "null" {
-		return Null, nil
+		return missing, nil
 	}
 	if f.Type != "string" && f.Type != "datetime" {
 		return string(v), nil

@@ -289,6 +289,33 @@ func TestRunsCritics(t *testing.T) {
 	}
 }
 
+func TestRunsCriticsRequirePersonDecision(t *testing.T) {
+	tcs := []struct {
+		name string
+		args knowledge.Status
+	}{
+		{"an automatic approval is no person judgment", knowledge.StatusApproved},
+		{"an automatic drop is no person judgment", knowledge.StatusRetired},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			items := knowledge.Set{{
+				ID: "item", Version: 1, Status: tc.args, Approver: knowledge.ApproverNodloop,
+				Evidence: knowledge.Evidence{FeedbackTraceIDs: []string{"run"}},
+			}}
+			traces := trace.Traces{{
+				ID: "extract", Name: trace.NameExtract, Subject: "model", Ref: "run",
+				Output: json.RawMessage(`{"attempts":[{"critique":{"holds":true}}]}`),
+			}}
+
+			got := loop.NewRuns(nil, nil).Critics(items, traces)
+
+			assert.Equal(t, []loop.CriticRow{{Critic: "extract model", Judged: 1, Open: 1}}, got)
+		})
+	}
+}
+
 func TestRunsReactions(t *testing.T) {
 	at := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
 	sureReject := `{"corrects":{"yes":0.95},"approves":{"yes":0.05}}`
