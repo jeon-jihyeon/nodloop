@@ -279,7 +279,7 @@ func TestLedgerCorroborate(t *testing.T) {
 		runs []string
 		// Records of k1 after the call
 		records int
-		// The status, text and scope of the candidate returned and empty on a refusal
+		// The returned candidate state and empty on a refusal
 		status  knowledge.Status
 		content string
 		scope   *knowledge.RunScope

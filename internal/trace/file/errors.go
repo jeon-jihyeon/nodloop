@@ -15,7 +15,7 @@ var (
 
 // A read that left out corrupt lines
 // 1. it reads as the jsonl error alone since that names the file and each line once
-// 2. errors.Is still matches ErrRead and ErrCorrupt and the jsonl error behind them
+// 2. ErrRead and ErrCorrupt remain matchable with the underlying jsonl cause
 type corruptError struct {
 	err error
 }

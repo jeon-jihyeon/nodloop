@@ -4,13 +4,14 @@ import (
 	"cmp"
 	"encoding/json"
 	"maps"
+	"math"
 	"slices"
 	"time"
 )
 
 const week = 7 * 24 * time.Hour
 
-// One cycle of curate within which the knobs, the seed and the policy version stay fixed
+// One cycle of curate with fixed knobs and seed under one policy version
 type Cycle struct {
 	// The date of the Monday the cycle began
 	ID    string
@@ -94,13 +95,16 @@ func (m knobMark) cycles(next, now time.Time) (Cycles, bool) {
 // 2. the next one starts where it ends with the same length until a knob trace records another
 // So a cycle closes by its length even when no later pass started the next one
 // 3. a cycle ends early where a later knob trace starts one
-// 4. a trace of another name, a knob trace that does not decode and one without a start or a positive length mark nothing
+// 4. an invalid mark or a length outside the positive duration range marks nothing
 // So there is no cycle before the first knob trace and none from year one on
 func (ts Traces) Cycles(now time.Time) Cycles {
 	marks := map[string]knobMark{}
 	for _, t := range ts {
 		m := knobMark{at: t.Time, id: t.ID}
 		if t.Name != NameKnob || json.Unmarshal(t.Input, &m) != nil || m.CycleID == "" || m.Start.IsZero() || m.Knobs.CycleWeeks <= 0 {
+			continue
+		}
+		if m.Knobs.CycleWeeks > int(math.MaxInt64/week) {
 			continue
 		}
 		if old, ok := marks[m.CycleID]; ok && !m.earlier(old) {

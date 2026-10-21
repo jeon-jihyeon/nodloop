@@ -46,6 +46,9 @@ func Run(t *testing.T, store Store) {
 	for i := range seed {
 		seed[i].ID = trace.NewID(base.Add(time.Duration(i) * time.Second))
 		seed[i].Time = base.Add(time.Duration(i) * time.Second)
+		if i == len(seed)-1 {
+			seed[i].Time = base.Add(-time.Hour)
+		}
 		seed[i].Input = json.RawMessage(fmt.Sprintf(`{"i":%d}`, i))
 		seed[i].Usage = record.Usage{InputTokens: 10 * (i + 1), CostUSD: 0.01}
 		require.NoError(t, store.Append(ctx, seed[i]))
@@ -95,6 +98,16 @@ func Run(t *testing.T, store Store) {
 			},
 			{"limit keeps the newest", record.TraceFilter{SessionID: "session-1", Limit: 2}, []record.Trace{seed[2], seed[1]}},
 			{"since leaves out older traces", record.TraceFilter{SessionID: "session-1", Since: seed[1].Time}, []record.Trace{seed[2], seed[1]}},
+			{
+				"since crosses a delayed older append without output",
+				record.TraceFilter{SessionID: "session-1", Since: seed[1].Time, WithoutOutput: true},
+				[]record.Trace{seed[2], seed[1]},
+			},
+			{
+				"a limit still ends a since read after a matching append",
+				record.TraceFilter{Since: seed[1].Time, Limit: 1},
+				[]record.Trace{seed[3]},
+			},
 			{"names keep the traces of each", record.TraceFilter{Names: []string{"check", "run"}, Ref: "ref-3"}, []record.Trace{seed[4]}},
 			{"names and a limit keep the newest of them", record.TraceFilter{Names: []string{"check"}, Limit: 1}, []record.Trace{seed[3]}},
 			{"without output leaves the output out", record.TraceFilter{Ref: "ref-3", WithoutOutput: true}, []record.Trace{withoutOutput(seed[4])}},
@@ -159,7 +172,7 @@ func withoutOutput(t record.Trace) record.Trace {
 // A read in append order goes on from the position the read before answered
 // 1. the filter keeps what it keeps and the limit ends a read early
 // 2. a read past the last trace answers nothing and the position it was given
-// 3. a position no read answered fails with record.ErrPositionGone
+// 3. a position no read answered fails with ErrPositionGone from record
 func after(ctx context.Context, t *testing.T, store Store, seed []record.Trace) {
 	t.Helper()
 	runs := record.TraceFilter{Names: []string{"run"}, Limit: 2}

@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-// Where a decide, an expose, an answer or an intervention came from
+// How a decision or interaction was initiated
 type Source string
 
 const (
@@ -35,7 +35,7 @@ func (s Source) SelfSelected() bool {
 // The format of a cycle id
 const CycleDate = time.DateOnly
 
-// The draw a decide, an expose or an answer was recorded under
+// The sampling draw recorded with a decision or interaction
 // Every number a report estimates divides by the probability recorded here and never by one computed later
 type Draw struct {
 	// The date of the Monday the cycle began
@@ -54,7 +54,7 @@ type Draw struct {
 }
 
 // The draw of the unit for the purpose at p under the seed of the cycle
-// 1. the first 8 bytes of SHA-256 of seed, unit and purpose read as a fraction draw the unit when below p
+// 1. a fraction below p draws the unit from the first 8 hash bytes of seed with unit and purpose
 // 2. their hex is the draw id so a reader tells two draws of one unit apart
 // So the draw is taken once from the seed and never from model sampling
 func NewDraw(cycleID, policyVersion, seed, unit, purpose string, p float64) Draw {

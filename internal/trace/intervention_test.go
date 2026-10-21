@@ -182,7 +182,7 @@ func TestInterventionTrace(t *testing.T) {
 	}
 }
 
-// The trace of an intervention groups under the session of its caller, names its action and keeps an id the caller made
+// The intervention trace keeps the caller session and the named action under the caller id
 func TestInterventionTraceFields(t *testing.T) {
 	at := time.Date(2026, 10, 19, 9, 0, 0, 0, time.UTC)
 	in := trace.Intervention{Action: trace.ActionJudge, ID: "k-1", Version: 1, Choice: trace.ChoiceUndo, Proof: trace.ProofNone}

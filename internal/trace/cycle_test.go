@@ -3,6 +3,7 @@ package trace_test
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"testing"
 	"time"
 
@@ -33,6 +34,12 @@ func TestTracesCycles(t *testing.T) {
 		want []string
 	}{
 		{"no knob trace marks no cycle", args{trace.Traces{{ID: "r1", Name: trace.NameRun, Time: day("2026-09-01")}}, day("2026-09-22")}, nil},
+		{"a length that overflows a duration marks no cycle", args{trace.Traces{
+			knob("k1", "2026-08-31", int(math.MaxInt64/(7*24*time.Hour))+1, day("2026-08-31")),
+		}, day("2026-09-22")}, nil},
+		{"the largest int length marks no cycle", args{trace.Traces{
+			knob("k1", "2026-08-31", math.MaxInt, day("2026-08-31")),
+		}, day("2026-09-22")}, nil},
 		{
 			"a cycle closes by its length and the next one follows with the same length",
 			args{trace.Traces{knob("k1", "2026-08-31", 2, day("2026-08-31"))}, day("2026-09-22")},

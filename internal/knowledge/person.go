@@ -60,7 +60,7 @@ func CheckApprover(name string) error {
 }
 
 // Every write a person decides refuses the reserved name from any caller
-// before it reads a record so no argument, flag, key or config value can write it
+// The check precedes record reads so no caller input can write it
 func refuseReserved(name string) error {
 	if name == ApproverNodloop {
 		return fmt.Errorf("%w: %s", ErrApproverReserved, name)
@@ -134,14 +134,14 @@ func checkCarriedOut(reason Reason, decision string) error {
 	return nil
 }
 
-// Whether a person decided the version last: approved, superseded or retired it under a name of their own
+// Whether the last status change of the version names a person
 func (s Set) personDecided(id string, version int) bool {
 	k, err := s.Version(id, version)
 	return err == nil && k.Approver != "" && !k.carriedOut()
 }
 
 // The records of an approval curate carries out as nodloop under the decide
-// 1. a candidate with a veto, one built on a version a person decided and one no version a person approved reaches fail with ErrPersonDecides
+// 1. a candidate fails with ErrPersonDecides when it needs a new decision from the person
 // 2. so does an approval that supersedes a version a person approved
 // 3. every check of an approval holds and every record names the decide
 func (s Set) applied(id string, version int, decision string, now time.Time) ([]Knowledge, error) {

@@ -319,6 +319,9 @@ func TestLabelsPlace(t *testing.T) {
 		{"the host is left out", trace.Labels{"repo": {"o"}, "dir": {"."}, "host": {"codex"}}, trace.Labels{"repo": {"o"}, "dir": {"."}}},
 		{"labels without a host stay", trace.Labels{"repo": {"o"}}, trace.Labels{"repo": {"o"}}},
 		{"the host alone leaves none", trace.Labels{"host": {"cursor"}}, trace.Labels{}},
+		{"correlation is left out", trace.Labels{"tenant": {"acme"}, "correlation": {"conversation-7"}}, trace.Labels{"tenant": {"acme"}}},
+		{"metadata alone leaves none", trace.Labels{"host": {"cursor"}, "correlation": {"conversation-7"}}, trace.Labels{}},
+		{"empty metadata values are left out", trace.Labels{"host": nil, "correlation": nil}, trace.Labels{}},
 		{"nil stays nil", nil, nil},
 	}
 	for _, tc := range tcs {

@@ -231,7 +231,7 @@ func (s Set) fullestRun(id string, run RunScope) Set {
 	return best
 }
 
-// The items in order that one run of run can carry together, each kept while the labels gathered so far still admit it
+// Items kept in order while one run can carry them under the gathered labels
 func (s Set) meeting(run RunScope) Set {
 	out := Set{}
 	for _, k := range s {
@@ -245,7 +245,7 @@ func (s Set) meeting(run RunScope) Set {
 
 // The draft with the producer and labels of a run a person corrected and the run as evidence
 // 1. the producer and labels the draft already names win over those of the run
-// 2. the labels of the run come without the host so a lesson corrected in one host reaches every host of the place
+// 2. inferred labels exclude host and correlation metadata so a correction reaches the same place across conversations
 // 3. the latest of the verdicts on the run must correct it
 func (k Knowledge) From(run trace.Trace, verdicts feedback.Records) (Knowledge, error) {
 	if err := run.CheckRun(); err != nil {

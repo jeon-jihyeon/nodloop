@@ -53,7 +53,8 @@ var knobbedTraces = []trace.Name{trace.NameKnob, trace.NameDecide, trace.NameExp
 // 1. each reads only the records of the judge configuration of the newest knob event
 // The shift of its first cycle reads the cycle before too
 // 2. so every list starts at the start of the cycle before the one that holds the start of that configuration
-// A curate pass after a capture then reads a cycle or two of records and never every record
+// A curate pass after a capture then keeps the events of that configuration and its preceding cycle
+// A file store scans older lines too since a late append may carry an earlier timestamp
 // 3. the runs, rollups and outcomes no knob reads are left out with every other part of the report
 // 4. one read takes the traces of every name so the store is read once
 func (s Stores) Knobbed(ctx context.Context, now time.Time) (CurationReport, error) {

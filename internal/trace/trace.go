@@ -43,10 +43,10 @@ type Trace struct {
 	// The situation of a run trace that knowledge scopes match
 	// Empty on every other name
 	Labels Labels `json:"labels,omitempty"`
-	// The probability a decide, an expose or an answer was drawn with as it was when the draw happened
+	// The sampling probability fixed when the event was drawn
 	// Nil on every other name
 	Draw *Draw `json:"draw,omitempty"`
-	// Where a decide, an expose, an answer or an intervention came from
+	// How the decision or interaction was initiated
 	// Empty on every other name
 	Source Source `json:"source,omitempty"`
 }
@@ -54,27 +54,24 @@ type Trace struct {
 type Name string
 
 const (
-	NameRun         Name = "run"         // output any producer recorded through the core tools
-	NameCheck       Name = "check"       // coverage check of a compaction
-	NameClassify    Name = "classify"    // answers of the classifiers a decision point asked
-	NameExtract     Name = "extract"     // one extraction of a lesson from a corrected run with its drafts and conclusion
-	NameReplay      Name = "replay"      // a lesson judged against the recorded outputs it should and should not catch
-	NameConsolidate Name = "consolidate" // groups of waiting candidates of one producer that may say the same lesson
-	NameRefill      Name = "refill"      // the items a session start added again after the context of the session was emptied
-	NameTurn        Name = "turn"        // the start of a turn of a session that the stop reads for the duration of its run
-	NameCompact     Name = "compact"     // one drafting of a compaction through a model
-	// A rules file a session loaded with the HMAC of its content
-	NameInstructions Name = "instructions"
-	NameCapture      Name = "capture" // one pass of the capture over a transcript of a session
-	NameDecide       Name = "decide"  // one change curate judged with the audit draw of the decision
-	NameKnob         Name = "knob"    // the knobs and the seed of a cycle at its start or at a narrowing inside it
-	NameAnchor       Name = "anchor"  // one version of the person's judgment on record that curate reads
-	NameExpose       Name = "expose"  // a question or a notice shown to the person
-	NameAnswer       Name = "answer"  // the person's answer to a question or no answer after its second round
-	// One action of a person or an agent on what nodloop prepared or carried out with the proof of its caller
-	NameIntervention Name = "intervention"
-	// The counts of a closed cycle the reports read once a prune may remove its runs
-	NameRollup Name = "rollup"
+	NameRun          Name = "run"          // output any producer recorded through the core tools
+	NameCheck        Name = "check"        // coverage check of a compaction
+	NameClassify     Name = "classify"     // answers of the classifiers a decision point asked
+	NameExtract      Name = "extract"      // one extraction of a lesson from a corrected run with its drafts and conclusion
+	NameReplay       Name = "replay"       // a lesson judged against the recorded outputs it should and should not catch
+	NameConsolidate  Name = "consolidate"  // groups of waiting candidates of one producer that may say the same lesson
+	NameRefill       Name = "refill"       // the items a session start added again after the context of the session was emptied
+	NameTurn         Name = "turn"         // the start of a turn of a session that the stop reads for the duration of its run
+	NameCompact      Name = "compact"      // one drafting of a compaction through a model
+	NameInstructions Name = "instructions" // rules file content kept as HMAC
+	NameCapture      Name = "capture"      // one pass of the capture over a transcript of a session
+	NameDecide       Name = "decide"       // one change curate judged with the audit draw of the decision
+	NameKnob         Name = "knob"         // the knobs and the seed of a cycle at its start or at a narrowing inside it
+	NameAnchor       Name = "anchor"       // one version of the person's judgment on record that curate reads
+	NameExpose       Name = "expose"       // a question or a notice shown to the person
+	NameAnswer       Name = "answer"       // the person's answer to a question or no answer after its second round
+	NameIntervention Name = "intervention" // action with the proof of its caller
+	NameRollup       Name = "rollup"       // closed cycle counts retained after its runs are pruned
 )
 
 // Every name in a fixed order for messages
