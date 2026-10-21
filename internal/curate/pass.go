@@ -564,7 +564,10 @@ func (p *pass) sort(ctx context.Context, k knowledge.Knowledge, ref string, retr
 		r.change.Kind, r.decision = ChangeDrop, d
 		return r, nil
 	}
-	run := p.run(ctx, ref)
+	run, err := p.run(ctx, ref)
+	if err != nil {
+		return ruling{}, err
+	}
 	place := p.place(run)
 	if rule, asks := p.asks(k, run, place); asks {
 		r.decision = Decision{Tier: topTier, RuleCode: rule, Action: ActionAsk}
@@ -620,15 +623,21 @@ func (p *pass) judging() (*Judge, error) {
 
 // The run the change cites from the window or the store and the zero trace when neither holds it
 // A run pruned or never recorded leaves the change with no place of its own
-func (p *pass) run(ctx context.Context, id string) trace.Trace {
+func (p *pass) run(ctx context.Context, id string) (trace.Trace, error) {
 	if r, ok := p.runs[id]; ok {
-		return r
+		return r, nil
 	}
 	found, err := p.traces.Get(ctx, id)
-	if err != nil || found.Name != string(trace.NameRun) {
-		return trace.Trace{}
+	if errors.Is(err, record.ErrTraceNotFound) {
+		return trace.Trace{}, nil
 	}
-	return trace.Restore(found)
+	if err != nil {
+		return trace.Trace{}, err
+	}
+	if found.Name != string(trace.NameRun) {
+		return trace.Trace{}, nil
+	}
+	return trace.Restore(found), nil
 }
 
 // The anchor of the place of the run

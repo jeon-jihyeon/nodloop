@@ -300,6 +300,9 @@ func (r Runs) Capture() CaptureRow {
 func decisions(items knowledge.Set) map[string]decision {
 	approvedRuns, droppedRuns, openRuns := map[string]bool{}, map[string]bool{}, map[string]bool{}
 	for _, k := range items {
+		if k.Approver == knowledge.ApproverNodloop {
+			continue
+		}
 		for _, run := range k.Evidence.FeedbackTraceIDs {
 			switch k.Status {
 			case knowledge.StatusApproved:

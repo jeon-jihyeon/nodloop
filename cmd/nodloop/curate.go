@@ -108,7 +108,8 @@ func (f knowledgeFlags) extractGaps(ctx context.Context, a app, client llm.Clien
 // 1. the anchor is refreshed first so every decide names the version it was judged against
 // 2. the numbers of report curation go to the knobs as plain values since curate never reads loop
 // The pass asks for them only when its knobs can move on them so a pass with nothing new reads no report
-// They come from the records of the judge configuration of now alone so the read never grows with every record
+// They come from the events of the judge configuration of now and its preceding cycle
+// The file store still scans older lines to find late appends
 // 3. the judge runs the model --model names or else the model of a chat endpoint or else the default of curate
 // 4. an endpoint set for the judge point joins the claude variants as a member of another model family
 func (f knowledgeFlags) curator(ctx context.Context, a app, client llm.Client, getenv func(string) string) (*curate.Curator, curate.Setting, error) {

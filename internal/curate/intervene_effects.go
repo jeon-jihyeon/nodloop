@@ -28,7 +28,7 @@ func (iv *Intervener) carry(ctx context.Context, in trace.Intervention, session 
 	var res Intervened
 	var err error
 	a, retried := s.unrecorded(in.Decide, in.Choice)
-	earlier, wrote, ok := s.earlier(in.ID, judgmentStatus(in), by.Person)
+	earlier, wrote, ok := s.earlier(knowledge.Ref{ID: in.ID, Version: in.Version}, judgmentStatus(in), by.Person)
 	switch {
 	case ok:
 		id, res = earlier, Intervened{Wrote: wrote}
@@ -201,7 +201,7 @@ func (iv *Intervener) answered(
 	}
 	var res Intervened
 	var err error
-	if earlier, wrote, ok := s.earlier(d.Change.ID, d.leaves(choice), by.Person); ok {
+	if earlier, wrote, ok := s.earlier(knowledge.Ref{ID: d.Change.ID, Version: d.Change.Version}, d.leaves(choice), by.Person); ok {
 		ev.ID, res = earlier, Intervened{Wrote: wrote}
 	} else {
 		ev.ID = cmp.Or(s.untraced(s.writes(d, choice), by.Person), ev.ID)
@@ -320,12 +320,13 @@ func judgmentStatus(in trace.Intervention) knowledge.Status {
 // 1. a try whose event failed to append after its ledger write leaves its record under a decision no trace holds
 // 2. the record has the status the write leaves and the person as approver and is still the newest of its version
 // So a retry takes the decision and the record and appends its event alone and both stand written once
-func (s state) earlier(id string, status knowledge.Status, person string) (string, knowledge.Set, bool) {
-	if id == "" || status == "" {
+func (s state) earlier(ref knowledge.Ref, status knowledge.Status, person string) (string, knowledge.Set, bool) {
+	if ref.ID == "" || status == "" {
 		return "", nil, false
 	}
 	i := slices.IndexFunc(s.all, func(k knowledge.Knowledge) bool {
-		return k.ID == id && k.Status == status && k.Approver == person && k.Decision != "" && !s.traced(k.Decision)
+		return k.ID == ref.ID && s.retryVersion(ref, k) && k.Status == status &&
+			k.Approver == person && k.Decision != "" && !s.traced(k.Decision)
 	})
 	if i < 0 {
 		return "", nil, false
@@ -335,6 +336,18 @@ func (s state) earlier(id string, status knowledge.Status, person string) (strin
 		return "", nil, false
 	}
 	return k.Decision, knowledge.Set{k}, true
+}
+
+func (s state) retryVersion(ref knowledge.Ref, k knowledge.Knowledge) bool {
+	if k.Version == ref.Version {
+		return true
+	}
+	from, err := s.all.Version(ref.ID, ref.Version)
+	return err == nil && from.Status == knowledge.StatusRetired && k.Status == knowledge.StatusApproved &&
+		k.Version > ref.Version && k.Kind == from.Kind && k.Content == from.Content && k.Basis == from.Basis &&
+		k.Author == from.Author && k.Extract == from.Extract && k.Drafted == from.Drafted &&
+		k.NewLabels == from.NewLabels && reflect.DeepEqual(k.Run, from.Run) &&
+		reflect.DeepEqual(k.Evidence, from.Evidence) && reflect.DeepEqual(k.Veto, from.Veto)
 }
 
 // The decision an earlier try of the person's write left on the ids with no event that names it and empty for none

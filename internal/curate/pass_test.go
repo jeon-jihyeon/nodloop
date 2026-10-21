@@ -440,7 +440,7 @@ func TestCuratorPassRetry(t *testing.T) {
 	assert.Empty(t, third.Decided)
 	retried, err := b.stores.Traces.Get(ctx, first.Decided[0].ID)
 	require.NoError(t, err)
-	assert.Contains(t, retried.Error, assert.AnError.Error())
+	assert.Equal(t, "judge_member_failed", retried.Error)
 	assert.Equal(t, curate.OutcomeSplit, second.Decided[0].Decision.Outcome)
 	assert.Equal(t, curate.FailureRepairable, first.Decided[0].Decision.Failure)
 }
@@ -664,6 +664,23 @@ func TestCuratorPassUnreadable(t *testing.T) {
 
 	assert.Error(t, passErr)
 	assert.Error(t, gapsErr)
+}
+
+func TestCuratorPassRefusesUnreadableEvidenceRun(t *testing.T) {
+	t.Parallel()
+	b := newBench(t, answer(0.9, 0.02), []knowledge.Knowledge{
+		lesson("k-old", 1, "Name the failing test first", acme("acme"), knowledge.StatusCandidate, ""),
+	}, nil)
+	traces := &testkit.FlakyTraces{Store: b.stores.Traces, Gets: testkit.Reads{Err: assert.AnError}}
+	setting := b.setting(t)
+	setting.Window = written.Add(time.Hour)
+	c := curate.New(b.stores.Ledger, traces, b.stores.Feedback, b.client, nil, seal, b.stores.Clock.Now)
+
+	got, err := c.Pass(context.Background(), setting)
+
+	assert.ErrorIs(t, err, assert.AnError)
+	assert.Empty(t, got.Decided)
+	assert.Equal(t, []string{"k-old v1 candidate"}, statuses(t, b))
 }
 
 // A candidate is decided from what its evidence cites wherever the run lies and waits as before when it cites no run

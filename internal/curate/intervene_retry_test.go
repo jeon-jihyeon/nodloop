@@ -398,3 +398,87 @@ func TestIntervenerRetryWritesTakeNoOtherWrite(t *testing.T) {
 		})
 	}
 }
+
+func TestIntervenerRetryKeepsVersionsApart(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	d := newDesk(t)
+	first := curate.Request{Action: trace.ActionJudge, Target: "k-add:1", Choice: trace.ChoiceKeep}
+	_, err := d.failingAt(t, -1, 0).Intervene(ctx, first, person)
+	require.ErrorIs(t, err, assert.AnError)
+	next, _, err := d.stores.Ledger.Propose(ctx, knowledge.Knowledge{
+		ID: "k-add", Kind: knowledge.KindJudgment, Content: "Include the failing assertion", Run: acme("acme"),
+		Author: "author", Evidence: knowledge.Evidence{Knowledge: []knowledge.Ref{{ID: "k-add", Version: 1}}},
+	})
+	require.NoError(t, err)
+	require.Equal(t, 2, next.Version)
+
+	got, err := d.iv.Intervene(ctx, curate.Request{
+		Action: trace.ActionJudge, Target: "k-add:2", Choice: trace.ChoiceKeep,
+	}, person)
+
+	require.NoError(t, err)
+	all, err := d.stores.Ledger.All(ctx)
+	require.NoError(t, err)
+	current, ok := all.Approved().Find("k-add")
+	require.True(t, ok)
+	assert.Equal(t, 2, current.Version)
+	require.NotEmpty(t, got.Wrote)
+	assert.Equal(t, 2, got.Wrote[0].Version)
+}
+
+func TestIntervenerRetryRestoredVersion(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	d := newDesk(t)
+	_, err := d.iv.Intervene(ctx, curate.Request{
+		Action: trace.ActionJudge, Target: "k-add:1", Choice: trace.ChoiceUndo,
+	}, person)
+	require.NoError(t, err)
+	request := curate.Request{Action: trace.ActionJudge, Target: "k-add:1", Choice: trace.ChoiceKeep}
+	_, err = d.failingAt(t, -1, 0).Intervene(ctx, request, person)
+	require.ErrorIs(t, err, assert.AnError)
+	before, err := d.stores.Ledger.All(ctx)
+	require.NoError(t, err)
+
+	got, err := d.iv.Intervene(ctx, request, person)
+
+	require.NoError(t, err)
+	after, err := d.stores.Ledger.All(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, before, after)
+	require.Len(t, got.Wrote, 1)
+	assert.Equal(t, 2, got.Wrote[0].Version)
+	assert.Empty(t, d.orphans(t))
+}
+
+func TestIntervenerRefusesBeforeCompactionWrite(t *testing.T) {
+	type args struct {
+		choice trace.Choice
+		source trace.Source
+	}
+	tcs := []struct {
+		name string
+		args args
+	}{
+		{"undo names no compaction judgment", args{trace.ChoiceUndo, trace.SourceManual}},
+		{"scope names no compaction judgment", args{trace.ChoiceScope, trace.SourceManual}},
+		{"a pushed source proves no self selected intervention", args{trace.ChoiceKeep, trace.SourcePush}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			b := compactionBench(t, "ann")
+			before := b.written(t)
+			by := person
+			by.Source = tc.args.source
+
+			_, err := b.intervener(nil).Intervene(context.Background(), curate.Request{
+				Action: trace.ActionJudge, Target: "c-generated", Choice: tc.args.choice,
+			}, by)
+
+			assert.ErrorIs(t, err, trace.ErrInterventionInvalid)
+			assert.Equal(t, before, b.written(t))
+		})
+	}
+}

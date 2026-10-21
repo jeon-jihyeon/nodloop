@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -100,6 +101,38 @@ func readExport(t *testing.T, folder string) exported {
 	var d exported
 	require.NoError(t, json.Unmarshal(b, &d))
 	return d
+}
+
+func TestExportPackageLiteralMissingValue(t *testing.T) {
+	t.Parallel()
+	at := time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
+	r := newPackageRecords(t)
+	run := r.write(t, at, "answer")
+	var stdout, stderr bytes.Buffer
+	code := runFeedback([]string{
+		"add", "--trace", run, "--verdict", "reject", "--reason", datapackage.Null, "--reviewer", "ann",
+	}, r.getenv, func() time.Time { return at.Add(time.Second) }, atTerminal, &stdout, &stderr)
+	require.Equal(t, 0, code, stderr.String())
+	folder := filepath.Join(t.TempDir(), "out")
+
+	code, _, message := r.export(t, at, "--out", folder, "--kind", "verdict", "--with-content")
+
+	require.Equal(t, 0, code, message)
+	d := readExport(t, folder)
+	require.Len(t, d.Resources, 1)
+	res := d.Resources[0]
+	assert.Equal(t, []string{datapackage.Null + `\`}, res.Schema.MissingValues)
+	b, err := os.ReadFile(filepath.Join(folder, res.Path))
+	require.NoError(t, err)
+	rows, err := csv.NewReader(bytes.NewReader(b)).ReadAll()
+	require.NoError(t, err)
+	i := slices.Index(rows[0], "reason")
+	require.GreaterOrEqual(t, i, 0)
+	var reasons []string
+	for _, row := range rows[1:] {
+		reasons = append(reasons, row[i])
+	}
+	assert.Contains(t, reasons, datapackage.Null)
 }
 
 // The rows of each resource by name and every cell that does not read as the type of its field

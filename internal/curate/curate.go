@@ -295,7 +295,7 @@ func (e Event) Decide(c Change, d Decision, failed error, now time.Time) (trace.
 		return trace.Trace{}, fmt.Errorf("%w: %w", ErrDecideInvalid, err)
 	}
 	if failed != nil {
-		tr.Error = failed.Error()
+		tr.Error = "judge_member_failed"
 	}
 	return tr, nil
 }
