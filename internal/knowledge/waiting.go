@@ -138,7 +138,7 @@ func (s Set) waitingVersion(id string, version int) (Knowledge, error) {
 }
 
 // The record that joins a corrected run to the teaching runs of the newest candidate version of id
-// 1. content, scope, veto, basis and version stay so the text a person approves never changes
+// 1. only the evidence grows so the version a person approves never changes
 // 2. a run the candidate already cites returns no record so a repeated call changes nothing
 func (s Set) corroborate(id string, version int, run trace.Trace, verdicts feedback.Records, now time.Time) ([]Knowledge, error) {
 	k, err := s.waitingVersion(id, version)

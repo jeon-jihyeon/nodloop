@@ -77,7 +77,7 @@ func (f restoreFixture) extras() (long, big, legacy, old knowledge.Knowledge) {
 	return long, big, legacy, old
 }
 
-// What runs receive and what waits by id, content and scope with every version number left out
+// The active and waiting state with version numbers left out
 func ledgerView(t *testing.T, l *knowledge.Ledger) []string {
 	t.Helper()
 	all, err := l.All(context.Background())
@@ -104,7 +104,7 @@ func TestLedgerReverse(t *testing.T) {
 	type want struct {
 		// Whether the write changed what runs receive or what waits
 		changes bool
-		// The records the reverse wrote as id, version and status
+		// The references and statuses written by the reverse
 		wrote []string
 	}
 	tcs := []struct {
@@ -328,7 +328,7 @@ func TestLedgerRestore(t *testing.T) {
 		approver string
 	}
 	type want struct {
-		// The newest record of the id after the call as version, status and approver
+		// The newest version and its status under the recorded approver
 		newest string
 		err    error
 	}
@@ -365,7 +365,7 @@ func TestLedgerRestore(t *testing.T) {
 	}
 }
 
-// A restored version keeps the text, the scope and the evidence of the retired one and names the decision
+// A restored version keeps the retired content and scope with its evidence under the new decision
 func TestLedgerRestoreFields(t *testing.T) {
 	f := newRestoreFixture()
 	ctx := context.Background()

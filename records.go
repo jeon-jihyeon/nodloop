@@ -17,6 +17,7 @@ import (
 )
 
 // The situation of a run as label keys with their values such as tenant or task
+// correlation preserves an external conversation id without entering inferred knowledge scope
 type Labels = trace.Labels
 
 // One knowledge version

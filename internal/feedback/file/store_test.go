@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -62,6 +63,35 @@ func TestStoreAppend(t *testing.T) {
 			store, err := file.New(dir)
 			require.NoError(t, err)
 			assert.ErrorIs(t, store.Append(ctx, record.Feedback{TraceID: "a"}), tc.want)
+		})
+	}
+}
+
+func TestStoreListLateOlderAppend(t *testing.T) {
+	tcs := []struct {
+		name string
+		args int
+	}{
+		{"unlimited", 0},
+		{"limited", 1},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ctx := context.Background()
+			store, err := file.New(t.TempDir())
+			require.NoError(t, err)
+			at := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+			current := record.Feedback{TraceID: "current", Time: at, Verdict: "approve", Reviewer: "ann"}
+			require.NoError(t, store.Append(ctx, current))
+			require.NoError(t, store.Append(ctx, record.Feedback{
+				TraceID: "old", Time: at.Add(-time.Hour), Verdict: "reject", Reviewer: "ann",
+			}))
+
+			got, err := store.List(ctx, record.FeedbackFilter{Since: at, Limit: tc.args})
+
+			require.NoError(t, err)
+			assert.Equal(t, []record.Feedback{current}, got)
 		})
 	}
 }

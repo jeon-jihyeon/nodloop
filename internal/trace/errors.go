@@ -20,7 +20,7 @@ var ErrLabelValues = errors.New("trace: a run label has more than one value")
 // A run ends at its time so a duration below zero would start it after it ended
 var ErrDurationNegative = errors.New("trace: negative duration")
 
-// An intervention whose action, target, proof or person does not hold together
+// An intervention with inconsistent action metadata
 var ErrInterventionInvalid = errors.New("trace: invalid intervention")
 
 // A draw envelope that does not fit its source

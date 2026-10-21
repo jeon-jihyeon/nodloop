@@ -80,6 +80,7 @@ export interface Run {
   producer: string;
   /** Text or any JSON value */
   output: unknown;
+  /** correlation labels preserve an external id without entering inferred knowledge scope */
   labels?: Labels;
   /** The items the run received as knowledge returned them, or their refs */
   applied?: (Item | Ref)[];
@@ -271,6 +272,7 @@ export class Client {
    * holdoutKey is a string kept for one run such as a service and an hour block and the holdout share of config.json draws on it
    * A drawn run gets no item and withheld instead
    * Without a key nothing is withheld
+   * the correlation label names an external conversation independently of the returned run id and holdoutKey
    */
   async knowledge(producer: string, labels: Labels = {}, holdoutKey = ""): Promise<Knowledge> {
     const args: Record<string, unknown> = { producer, labels };
@@ -281,6 +283,9 @@ export class Client {
 
   /** Records one output and returns the run id a verdict cites */
   async record(run: Run): Promise<string> {
+    if (run.durationMs !== undefined && (!Number.isFinite(run.durationMs) || run.durationMs < 0 || Math.round(run.durationMs) > 9223372036854)) {
+      throw new RangeError("durationMs must be finite and between 0 and 9223372036854 milliseconds");
+    }
     const args: Record<string, unknown> = { producer: run.producer, output: run.output, labels: run.labels ?? {} };
     if (run.applied?.length) args.applied = run.applied.map((i) => ({ id: i.id, version: i.version }));
     if (run.withheld?.length) args.withheld = run.withheld.map(({ id, version }) => ({ id, version }));

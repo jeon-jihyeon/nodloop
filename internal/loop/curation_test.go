@@ -19,6 +19,7 @@ import (
 	"github.com/jeon-jihyeon/nodloop/internal/loop"
 	"github.com/jeon-jihyeon/nodloop/internal/testkit"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
+	tracefile "github.com/jeon-jihyeon/nodloop/internal/trace/file"
 )
 
 // The Monday the first cycle of the curation fixtures starts on
@@ -428,10 +429,7 @@ func TestStoresKnobbed(t *testing.T) {
 	}
 }
 
-// A record before the cycle before the start of the newest judge configuration is never read
-// 1. nor is a record before the first cycle when the configuration started in it
-// 2. a corrupt line there fails the whole curation report and not Knobbed
-func TestStoresKnobbedReadsFromItsStart(t *testing.T) {
+func TestStoresKnobbedRefusesCorruptHistory(t *testing.T) {
 	tcs := []struct {
 		name string
 		args []string
@@ -448,11 +446,10 @@ func TestStoresKnobbedReadsFromItsStart(t *testing.T) {
 			now := cycleAt(4).AddDate(0, 0, 1)
 
 			_, wholeErr := stores.Curation(ctx, now)
-			got, err := stores.Knobbed(ctx, now)
+			_, err := stores.Knobbed(ctx, now)
 
 			assert.Error(t, wholeErr)
-			require.NoError(t, err)
-			assert.Equal(t, cycleAt(3).Format(trace.CycleDate), knobbedOf(got).closed)
+			assert.ErrorIs(t, err, tracefile.ErrCorrupt)
 		})
 	}
 }

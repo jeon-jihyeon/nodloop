@@ -40,7 +40,7 @@ type Compaction struct {
 	Replaced Set
 }
 
-// The id, version and status of the new versions and then the old ones
+// The references and statuses of the new versions and then the old ones
 func (c Compaction) Statuses() []string {
 	out := make([]string, 0, len(c.Items)+len(c.Replaced))
 	for _, k := range slices.Concat(c.Items, c.Replaced) {
@@ -64,7 +64,7 @@ type CoverageItem struct {
 	Lost []string `json:"lost,omitempty"`
 }
 
-// Passes when it is of this compaction, every old item is covered by its new items and no fact is lost
+// A passing coverage names this compaction and covers every old item with no fact lost
 // Fails with ErrCoverageNotPassed naming the first reason
 func (cv Coverage) Passes(c Compaction) error {
 	if cv.Compaction != c.ID {

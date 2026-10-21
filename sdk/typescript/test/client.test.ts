@@ -42,6 +42,30 @@ test("a refusal is a ToolError", async () => {
   }
 });
 
+for (const explicit of [false, true]) {
+  test(`correlation is preserved in records and explicit scope is ${explicit}`, async () => {
+    const c = await open();
+    const labels = { ...acme, task: ["refund"], correlation: ["conversation-7"] };
+    try {
+      const run = await c.record({ producer: "support-bot", output: "answer", labels });
+      await c.judge(run, "reject", { reviewer: "ann", reason: "missing the window" });
+      const p = await c.propose({ kind: "judgment", content: "Quote the refund window", from: run, labels: explicit ? labels : undefined, id: "window" });
+      approve(c.recordDir, p.id, p.version);
+      const same = await c.knowledge("support-bot", labels);
+      const another = await c.knowledge("support-bot", { ...labels, correlation: ["conversation-8"] });
+      const otherTenant = await c.knowledge("support-bot", { tenant: ["globex"], task: ["refund"] });
+      const page = await c.records("run");
+      assert.deepEqual(same.items.map(i => i.id), ["window"]);
+      assert.deepEqual(another.items.map(i => i.id), explicit ? [] : ["window"]);
+      assert.deepEqual(otherTenant.items, []);
+      assert.equal(page.records[0].record_id, run);
+      assert.deepEqual(page.records[0].labels, labels);
+    } finally {
+      await c.close();
+    }
+  });
+}
+
 test("a verdict without a reviewer is refused over stdio, where no key names one", async () => {
   const c = await open();
   try {
@@ -280,6 +304,18 @@ test("the duration of a run lands in its trace so its span has a length", async 
     const traces = readFileSync(join(records, "traces.jsonl"), "utf8").split("\n").filter((l) => l.trim()).map((l) => JSON.parse(l));
     assert.equal(traces.find((t) => t.id === timed).duration_ms, 1500);
     assert.equal(traces.find((t) => t.id === bare).duration_ms, 0);
+  } finally {
+    await c.close();
+  }
+});
+
+test("an invalid duration records no run before rounding or transport serialization", async () => {
+  const c = await open();
+  try {
+    for (const durationMs of [-0.1, -9223372036855, 9223372036855, NaN, Infinity, -Infinity]) {
+      await assert.rejects(c.record({ producer: "example-bot", output: "example", durationMs }), RangeError);
+    }
+    assert.deepEqual((await c.records("run")).records, []);
   } finally {
     await c.close();
   }

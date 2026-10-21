@@ -256,6 +256,7 @@ class Client:
         holdout_key is a string kept for one run such as a service and an hour block and the holdout share of config.json draws on it
         A drawn run gets no item and withheld instead
         Without a key nothing is withheld
+        the correlation label may name an external conversation without becoming inferred knowledge scope
         """
         args: dict[str, Any] = {"producer": producer, "labels": labels or {}}
         if holdout_key:
@@ -284,6 +285,7 @@ class Client:
         Never together with applied
         holdout_key is the key the run passed to knowledge
         report effect counts a run without it only as undrawn
+        the correlation label preserves an external id independently of the returned run id and holdout_key
         model is the one model the producer runs and the OTLP export names it
         Leave it out when the producer may switch models
         duration_ms is how long the run took up to this call so its OTLP span has a length

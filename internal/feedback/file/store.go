@@ -34,7 +34,7 @@ func (s *Store) Append(_ context.Context, fb record.Feedback) error {
 // Newest first
 // A corrupt line returns the verdicts of the other lines with the error
 func (s *Store) List(_ context.Context, f record.FeedbackFilter) ([]record.Feedback, error) {
-	records, err := s.file.Newest(f.Matches, f.Older, f.Limit)
+	records, err := s.file.Newest(f.Matches, nil, f.Limit)
 	if err != nil {
 		return records, readFailed(err)
 	}

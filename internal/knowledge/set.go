@@ -120,7 +120,7 @@ func (s Set) Refs() []Ref {
 	return out
 }
 
-// The id, version and status of each record in set order as an intervention names the records it wrote
+// The references and statuses of the records an intervention wrote in set order
 func (s Set) Written() []trace.Written {
 	out := make([]trace.Written, 0, len(s))
 	for _, k := range s {
@@ -298,7 +298,7 @@ func (s Set) OverlapsOf(id string) (Set, error) {
 }
 
 // The draft as the next candidate version of its id
-// 1. status, approval, reason and decision fields of the draft are dropped so a proposal never arrives decided
+// 1. prior status change fields are dropped so a proposal never arrives decided
 // 2. compaction fields are dropped so only a compaction proposal marks its candidates
 // 3. the base is the current version of the id so approval can tell which versions the candidate was built on
 func (s Set) propose(draft Knowledge, now time.Time) (Knowledge, error) {
@@ -326,7 +326,6 @@ func (s Set) propose(draft Knowledge, now time.Time) (Knowledge, error) {
 
 // The candidate as a record in the labels a person picked
 // Fails with ErrTransitionInvalid unless the version is a candidate
-// A stored version always has a run scope since validate requires one
 func (s Set) scoped(id string, version int, labels trace.Labels) (Knowledge, error) {
 	k, err := s.Version(id, version)
 	if err != nil {
@@ -334,6 +333,9 @@ func (s Set) scoped(id string, version int, labels trace.Labels) (Knowledge, err
 	}
 	if k.Status != StatusCandidate {
 		return Knowledge{}, fmt.Errorf("%w: %s v%d is %s and only a candidate takes a scope at approval", ErrTransitionInvalid, id, version, k.Status)
+	}
+	if err := k.checkScope(); err != nil {
+		return Knowledge{}, err
 	}
 	run, err := RunScope{Producer: k.Run.Producer, Labels: labels, Except: k.Run.Except}.normalized()
 	if err != nil {

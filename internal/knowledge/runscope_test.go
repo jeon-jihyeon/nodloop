@@ -345,7 +345,7 @@ func TestLedgerNarrowExcept(t *testing.T) {
 	}
 }
 
-// A draft without labels takes the place of the corrected run without its host so the lesson reaches every host
+// Inferred scope excludes correlation and host metadata so a lesson reaches the same place across conversations
 func TestKnowledgeFrom(t *testing.T) {
 	run := trace.Trace{
 		ID: "r1", Name: trace.NameRun, Producer: "session",
@@ -376,6 +376,17 @@ func TestKnowledgeFrom(t *testing.T) {
 			"a host the draft names stays",
 			args{knowledge.Knowledge{Run: &knowledge.RunScope{Labels: trace.Labels{"host": {"codex"}}}}, run, reject},
 			want{&knowledge.RunScope{Producer: "session", Labels: trace.Labels{"host": {"codex"}}}, []string{"r1"}, nil},
+		},
+		{
+			"correlation is metadata in an inferred scope",
+			args{knowledge.Knowledge{}, trace.Trace{ID: "r1", Name: trace.NameRun, Producer: "session",
+				Labels: trace.Labels{"tenant": {"acme"}, "correlation": {"conversation-7"}}}, reject},
+			want{&knowledge.RunScope{Producer: "session", Labels: trace.Labels{"tenant": {"acme"}}}, []string{"r1"}, nil},
+		},
+		{
+			"an explicit correlation scope stays",
+			args{knowledge.Knowledge{Run: &knowledge.RunScope{Labels: trace.Labels{"correlation": {"conversation-7"}}}}, run, reject},
+			want{&knowledge.RunScope{Producer: "session", Labels: trace.Labels{"correlation": {"conversation-7"}}}, []string{"r1"}, nil},
 		},
 		{
 			"a run with the host alone reaches every run of the producer",

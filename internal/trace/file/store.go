@@ -100,10 +100,10 @@ func (s *Store) Get(_ context.Context, id string) (record.Trace, error) {
 // A corrupt line returns the traces of the other lines with the error
 func (s *Store) List(_ context.Context, f record.TraceFilter) ([]record.Trace, error) {
 	if !f.WithoutOutput {
-		found, err := s.file.Newest(f.Matches, f.Older, f.Limit)
+		found, err := s.file.Newest(f.Matches, nil, f.Limit)
 		return found, readFailed(err)
 	}
-	found, err := s.bare.Newest(func(b bare) bool { return f.Matches(b.Trace) }, func(b bare) bool { return f.Older(b.Trace) }, f.Limit)
+	found, err := s.bare.Newest(func(b bare) bool { return f.Matches(b.Trace) }, nil, f.Limit)
 	var out []record.Trace
 	for _, b := range found {
 		out = append(out, b.Trace)
@@ -113,7 +113,7 @@ func (s *Store) List(_ context.Context, f record.TraceFilter) ([]record.Trace, e
 
 // The traces the filter keeps that the file holds after the position oldest first with the position after the last line read
 // 1. the empty position starts at the first trace and Limit ends the read early
-// 2. a position whose trace a rewrite removed fails with record.ErrPositionGone
+// 2. a position whose trace a rewrite removed fails with ErrPositionGone from record
 // A corrupt line returns the traces of the other lines with the error as List does
 func (s *Store) After(_ context.Context, f record.TraceFilter, from string) ([]record.Trace, string, error) {
 	found, next, err := s.file.After(from, f.Matches, f.Limit)

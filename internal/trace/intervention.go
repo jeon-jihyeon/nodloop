@@ -116,7 +116,7 @@ type ItemVersion struct {
 // The input of an intervention trace
 type Intervention struct {
 	Action Action `json:"action"`
-	// What the caller named: an item version as id:version, a compaction, a decide, an intervention, a knob, a change kind or a producer
+	// The target named by the caller for this action
 	Target string `json:"target,omitempty"`
 	// The item version a judgment acts on or the one the question of an answer names
 	ID      string `json:"id,omitempty"`
@@ -126,7 +126,7 @@ type Intervention struct {
 	// The decide of the question an answer or a dismiss closes or whose yes carried it out
 	Decide string `json:"decide,omitempty"`
 	Choice Choice `json:"choice,omitempty"`
-	// Where a scope choice approves the candidate, the scope a pause covers or the place of a reanchor or a digest
+	// The scope selected by this action
 	// None reaches every run of its producer
 	Labels Labels `json:"labels,omitempty"`
 	// The knob a knob intervention or its reverse sets with the value it takes and the one it had so a reverse returns it
@@ -167,7 +167,7 @@ func (o InterventionOutput) wrote() bool {
 	return len(o.Records) > 0 || o.Answer != ""
 }
 
-// The trace of the intervention with what it wrote under the id, or a new id when empty
+// The intervention and its written records under the given id or a new id when empty
 // 1. the action and the proof are known and the action names what it acts on
 // 2. the authority follows the proof
 // 3. a person's names the person and a proposal names none and wrote nothing
@@ -238,7 +238,7 @@ func (in Intervention) names() bool {
 	return true
 }
 
-// Whether an answer or a dismiss names its question, an answer with a choice of a question and a dismiss with none
+// An answer names a question and its choice while a dismiss names only the question
 func (in Intervention) closes() bool {
 	if in.Action == ActionDismiss {
 		return in.Decide != "" && in.Choice == ""

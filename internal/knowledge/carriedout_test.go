@@ -407,7 +407,7 @@ func TestLedgerCompactionAfterWrite(t *testing.T) {
 	}
 }
 
-// The items that each reach every run of a scope, a record that names a decide and when a version was proposed
+// The records that explain the scope and the provenance of carried out changes
 func TestSetCarriedOutReads(t *testing.T) {
 	at := time.Date(2026, 10, 12, 9, 0, 0, 0, time.UTC)
 	wide := carried("w-wide", 1, 0, knowledge.StatusApproved, "ann", at)

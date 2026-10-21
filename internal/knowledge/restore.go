@@ -128,7 +128,7 @@ func (s Set) reversal(decision, approver string, now time.Time) (Set, error) {
 
 // Whether the records of the decision took back the write of the stamp
 // 1. they are the records a reverse of the stamp under the approver writes over the records without them
-// The same ids, versions and statuses in the order they were appended
+// Matching references and statuses in append order
 // 2. a decision that wrote no record on an id of the stamp took nothing back
 // So a retry of a reverse whose event failed to append goes on after what it took back
 // and another write of the same ids never passes for it

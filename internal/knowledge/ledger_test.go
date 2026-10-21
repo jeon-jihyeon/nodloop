@@ -1585,7 +1585,7 @@ func TestLedgerRefusedRetryExportsVetoes(t *testing.T) {
 	}
 }
 
-// The folder of an approval counts the items the fullest run it reaches carries, never items no one run carries together
+// The folder of an approval counts only items that one fullest run can carry together
 func TestLedgerFolderFullestRun(t *testing.T) {
 	at := time.Date(2026, 9, 27, 0, 0, 0, 0, time.UTC)
 	session := func(labels trace.Labels) *knowledge.RunScope {
@@ -2051,7 +2051,7 @@ func TestNewIDs(t *testing.T) {
 	assert.Regexp(t, `^k-19a0b0c0d0e[0-9a-f]{4}$`, got)
 }
 
-// Every record the ledger appends through propose, approve and retire validates against the published schema knowledge
+// Every proposed record and status change validates against the published knowledge schema
 func TestLedgerRecordsValidate(t *testing.T) {
 	ctx := context.Background()
 	store, err := file.New(t.TempDir())

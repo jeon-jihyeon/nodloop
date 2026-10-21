@@ -50,6 +50,28 @@ async def test_refusal_is_a_tool_error(binary: str, records: str) -> None:
             await c.propose("judgment", "x", from_run=run)
 
 
+@pytest.mark.parametrize("explicit", [False, True])
+async def test_correlation_scope(binary: str, records: str, approve: Approve, explicit: bool) -> None:
+    labels = ACME | {"correlation": ["conversation-7"]}
+    async with Client(records, binary) as c:
+        run = await c.record("support-bot", "answer", labels=labels)
+        await c.judge(run, "reject", reviewer="ann", reason="missing the window")
+        proposed = await c.propose(
+            "judgment", "Quote the refund window", from_run=run, labels=labels if explicit else None, item_id="window"
+        )
+        approve(proposed.id, proposed.version)
+        same = await c.knowledge("support-bot", labels)
+        another = await c.knowledge("support-bot", ACME | {"correlation": ["conversation-8"]})
+        other_tenant = await c.knowledge("support-bot", {"tenant": ["globex"], "task": ["refund"]})
+        page = await c.records("run")
+
+    assert [i.id for i in same.items] == ["window"]
+    assert [i.id for i in another.items] == ([] if explicit else ["window"])
+    assert other_tenant.items == []
+    assert page.records[0]["record_id"] == run
+    assert page.records[0]["labels"] == labels
+
+
 async def test_judge_names_its_reviewer(binary: str, records: str) -> None:
     """A verdict without a reviewer is refused over stdio, where no key names one
 
@@ -264,6 +286,16 @@ async def test_record_names_the_duration(binary: str, records: str) -> None:
     runs = {t["id"]: t for t in (json.loads(line) for line in (Path(records) / "traces.jsonl").read_text().splitlines() if line.strip())}
     assert runs[timed]["duration_ms"] == 1500
     assert runs[bare]["duration_ms"] == 0
+
+
+@pytest.mark.parametrize("duration_ms", [-1, -9223372036855, 9223372036855])
+async def test_record_refuses_invalid_duration(binary: str, records: str, duration_ms: int) -> None:
+    async with Client(records, binary) as c:
+        with pytest.raises(ToolError, match="duration"):
+            await c.record("example-bot", "example", duration_ms=duration_ms)
+        page = await c.records("run")
+
+    assert page.records == []
 
 
 async def test_outcome_and_report(binary: str, records: str) -> None:
