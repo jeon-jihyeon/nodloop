@@ -8,7 +8,7 @@ import { find } from "./binary.ts";
 import type { AnyRecord, InterventionRecord, RecordKind, Records } from "./records.ts";
 
 /** The binary release the client fetches when no nodloop is installed */
-export const version = "0.10.0";
+export const version = "0.10.1";
 
 export type Labels = Record<string, string[]>;
 
