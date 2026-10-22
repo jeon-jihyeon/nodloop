@@ -143,12 +143,16 @@ func (f knowledgeFlags) curator(ctx context.Context, a app, client llm.Client, g
 		judge.Backend, judge.Model, judge.Effort = llm.BackendChat, a.cfg.llm.Model, ""
 	}
 	judge.Model = cmp.Or(f.model, judge.Model)
+	delegations, err := a.cfg.delegations()
+	if err != nil {
+		return nil, curate.Setting{}, err
+	}
 	var seed [16]byte
 	// crypto rand Read never returns an error
 	_, _ = rand.Read(seed[:])
 	return curator, curate.Setting{
 		Build: buildVersion(), Judge: judge, Seed: hex.EncodeToString(seed[:]), Anchor: state.anchor, Version: state.version, Since: state.at,
-		Window: state.since, Temp: tempDirs(), Read: readText, Numbers: numbers,
+		Window: state.since, Temp: tempDirs(), Read: readText, Numbers: numbers, Delegations: delegations,
 	}, nil
 }
 

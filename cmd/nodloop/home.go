@@ -27,6 +27,8 @@ type userConfig struct {
 	OTel *otelConfig `json:"otel,omitempty"`
 	// The documents the person designates as direction
 	Anchor anchorConfig `json:"anchor"`
+	// The scopes where the person delegated new answer preferences
+	Curation userconfig.Curation `json:"curation"`
 	classifierConfig
 }
 
