@@ -395,9 +395,7 @@ func knobbedStores(t *testing.T, f knobbedFixture) testkit.Stores {
 	return st
 }
 
-// What the knobs read from Knobbed equals what they read from the whole curation report
-// 1. Knobbed reads from the start of the cycle before the one that holds the start of the newest judge configuration
-// 2. it reads every record with no knob trace, with one that names no start and when the knob traces end before that cycle
+// Knobbed and the full report share the same retained event history
 func TestStoresKnobbed(t *testing.T) {
 	tcs := []struct {
 		name string
@@ -454,15 +452,12 @@ func TestStoresKnobbedRefusesCorruptHistory(t *testing.T) {
 	}
 }
 
-// A read that fails fails Knobbed: the first knob read, a doubled one and a list of the report
 func TestStoresKnobbedFails(t *testing.T) {
 	tcs := []struct {
 		name string
 		args int
 	}{
-		{"the newest knob traces", 0},
-		{"the knob traces of the cycle before", 1},
-		{"a list of the report", 2},
+		{"the retained events", 0},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {

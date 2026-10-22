@@ -29,6 +29,7 @@ type CurationReport struct {
 	CUSUM       CUSUMReport     `json:"cusum"`
 	Shift       []ShiftRow      `json:"shift"`
 	Items       []ItemEffect    `json:"items"`
+	Delegated   []DelegatedRow  `json:"delegated"`
 }
 
 // The trace names report curation reads beside the knob traces every cycled snapshot holds
@@ -57,6 +58,7 @@ var knobbedTraces = []trace.Name{trace.NameKnob, trace.NameDecide, trace.NameExp
 // A file store scans older lines too since a late append may carry an earlier timestamp
 // 3. the runs, rollups and outcomes no knob reads are left out with every other part of the report
 // 4. one read takes the traces of every name so the store is read once
+// 5. delegated decisions never move the judge's knobs so their answers are left out
 func (s Stores) Knobbed(ctx context.Context, now time.Time) (CurationReport, error) {
 	since, err := s.configured(ctx, now)
 	if err != nil {
@@ -67,8 +69,8 @@ func (s Stores) Knobbed(ctx context.Context, now time.Time) (CurationReport, err
 		return CurationReport{}, err
 	}
 	e := newEvents(all, now)
-	asked, shifts := e.units(), e.shifts()
-	return CurationReport{Cycles: e.cycleRows(), Kinds: e.kinds(asked, shifts), Shadow: e.shadow(asked), CUSUM: e.cusum(asked), Shift: shifts}, nil
+	judged, shifts := e.units().withoutDelegated(), e.shifts()
+	return CurationReport{Cycles: e.cycleRows(), Kinds: e.kinds(judged, shifts), Shadow: e.shadow(judged), CUSUM: e.cusum(judged), Shift: shifts}, nil
 }
 
 // The start of the cycle before the one that holds the start of the judge configuration of the newest knob event
@@ -104,11 +106,12 @@ func (s Stores) configured(ctx context.Context, now time.Time) (time.Time, error
 func (s Snapshot) curation(now time.Time) CurationReport {
 	e := newEvents(s.traces, now)
 	asked, shifts, carried := e.units(), e.shifts(), s.carried()
+	judged := asked.withoutDelegated()
 	return CurationReport{
-		Since: s.since, Cycles: e.cycleRows(), Touchpoints: e.touchpoints(), Kinds: e.kinds(asked, shifts),
-		Calibration: asked.since(e.configStart()).calibration(), Shadow: e.shadow(asked), Estimates: asked.estimates(),
-		Overturns: e.overturns(asked, carried, s.items, s.runs), CUSUM: e.cusum(asked), Shift: shifts,
-		Items: s.runs.itemEffects(carried, s.rollups),
+		Since: s.since, Cycles: e.cycleRows(), Touchpoints: e.touchpoints(), Kinds: e.kinds(judged, shifts),
+		Calibration: judged.since(e.configStart()).calibration(), Shadow: e.shadow(judged), Estimates: judged.estimates(),
+		Overturns: e.overturns(asked, carried, s.items, s.runs), CUSUM: e.cusum(judged), Shift: shifts,
+		Items: s.runs.itemEffects(carried, s.rollups), Delegated: e.delegated(asked),
 	}
 }
 
@@ -133,6 +136,7 @@ const (
 	choiceNoAnswer    = "no_answer"
 	outcomeConform    = "conform"
 	ruleProposal      = "proposal"
+	ruleDelegated     = "delegated"
 	changeWithdraw    = "withdraw"
 	actionShadow      = "shadow"
 	actionAsk         = "ask"
@@ -169,6 +173,7 @@ type decideOutput struct {
 	Bin        string   `json:"bin"`
 	Action     string   `json:"action"`
 	Confidence *float64 `json:"confidence"`
+	Delegation string   `json:"delegation"`
 }
 
 // A decide trace as the report reads it
@@ -273,6 +278,8 @@ type knobInput struct {
 			Alpha float64 `json:"alpha"`
 		} `json:"target"`
 		CUSUM cusumKnob `json:"cusum"`
+		// The grants curate stopped for good
+		DelegationPaused []string `json:"delegation_paused"`
 	} `json:"knobs"`
 	Judge judgeConfig `json:"judge"`
 	// The knob event this one follows and empty on the first knob event of the records

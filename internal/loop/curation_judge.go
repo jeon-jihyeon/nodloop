@@ -21,7 +21,7 @@ type ShiftRow struct {
 	AgainstBins     map[string]float64 `json:"against_bins"`
 	// The chi squared p of the outcomes with their bins between the two cycles and nil without a cycle to hold against
 	P *float64 `json:"p"`
-	// Whether the model, the effort, the prompt version or the few-shot sets differ from the cycle before
+	// Whether the judge configuration differs from the one of the cycle before
 	Changed bool `json:"changed"`
 	// A change of configuration or a p below ShiftThreshold
 	Shift bool `json:"shift"`
@@ -60,7 +60,7 @@ func (j judgeTally) shares(c categories) map[string]float64 {
 func (e events) shifts() []ShiftRow {
 	cycles := map[string]*judgeTally{}
 	for _, d := range e.decides {
-		if d.out.Outcome == "" {
+		if d.out.RuleCode == ruleDelegated || d.out.Outcome == "" {
 			continue
 		}
 		c := d.cycle()
