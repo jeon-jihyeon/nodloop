@@ -972,3 +972,35 @@ func TestVerdictEvaluation(t *testing.T) {
 		})
 	}
 }
+
+// DefaultTransport is process wide so these cases stay serial
+func TestExportClientTransport(t *testing.T) {
+	tcs := []struct {
+		name string
+		args http.RoundTripper
+		// A clone keeps the proxy of the default and a fresh transport takes the one of the environment
+		want bool
+	}{
+		{"a standard transport is cloned", &http.Transport{}, false},
+		{"a custom transport gets a fresh one", http.NewFileTransport(http.Dir(t.TempDir())), true},
+		{"a nil transport gets a fresh one", nil, true},
+		{"a typed nil transport gets a fresh one", (*http.Transport)(nil), true},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			original := http.DefaultTransport
+			http.DefaultTransport = tc.args
+			defer func() { http.DefaultTransport = original }()
+
+			c := exportClient()
+
+			own, ok := c.Transport.(*http.Transport)
+			require.True(t, ok)
+			require.NotNil(t, own)
+			assert.False(t, tc.args == http.RoundTripper(own), "the default transport is shared")
+			assert.Equal(t, tc.want, own.Proxy != nil)
+			assert.Equal(t, exportTimeout, c.Timeout)
+			assert.ErrorIs(t, c.CheckRedirect(nil, nil), http.ErrUseLastResponse)
+		})
+	}
+}

@@ -29,12 +29,18 @@ type ChatCompletions struct {
 	client  *http.Client
 }
 
-// An empty timeout takes the default of ClaudeCLI
-// A redirect is answered as the status it carries since following it would send the prompt to an endpoint the config does not name
+// 1. an empty timeout takes the default of ClaudeCLI
+// 2. a redirect is answered as the status it carries since following it would send the prompt to an endpoint the config does not name
+// 3. the client owns its transport so another client cannot close its idle connections
 func NewChatCompletions(baseURL, model, key string, timeout time.Duration, now func() time.Time) *ChatCompletions {
+	// A program that replaced the default transport still gets a transport of its own
+	transport := &http.Transport{Proxy: http.ProxyFromEnvironment}
+	if base, ok := http.DefaultTransport.(*http.Transport); ok && base != nil {
+		transport = base.Clone()
+	}
 	return &ChatCompletions{
 		baseURL: strings.TrimSuffix(baseURL, "/"), model: model, key: key, timeout: cmp.Or(timeout, defaultTimeout), now: now,
-		client: &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }},
+		client: &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }},
 	}
 }
 

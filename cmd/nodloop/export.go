@@ -18,6 +18,19 @@ import (
 // Time one export request may take before the collector counts as down
 const exportTimeout = 30 * time.Second
 
+// The client of one export
+// 1. a redirect fails as its status since following it would carry the records and the headers to an endpoint nobody named
+// 2. the client owns its transport so another client cannot close its idle connections
+func exportClient() *http.Client {
+	transport := &http.Transport{Proxy: http.ProxyFromEnvironment}
+	if base, ok := http.DefaultTransport.(*http.Transport); ok && base != nil {
+		transport = base.Clone()
+	}
+	return &http.Client{
+		Transport: transport, Timeout: exportTimeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+}
+
 // Repeatable Name=value flag of HTTP headers
 type headerFlag map[string]string
 
@@ -163,8 +176,7 @@ func runExport(args []string, getenv func(string) string, now func() time.Time, 
 	if err != nil {
 		return fail(stderr, "export", err)
 	}
-	// A redirect fails as its status since following it would carry the records and the headers to an endpoint nobody named
-	cfg.Client = &http.Client{Timeout: exportTimeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	cfg.Client = exportClient()
 	cfg.Version = buildVersion()
 	c, err := a.exportCommand(otel.New(cfg), stdout)
 	if err != nil {
