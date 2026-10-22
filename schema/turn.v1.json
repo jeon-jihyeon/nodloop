@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/jeon-jihyeon/nodloop/schema/turn.v1.json",
   "title": "turn",
-  "description": "The start of a turn of a session",
+  "description": "The start of a turn of a session with its context item references",
   "type": "object",
   "properties": {
     "record_kind": {
@@ -36,7 +36,30 @@
       "type": "string"
     },
     "input": {
-      "type": "object"
+      "type": "object",
+      "properties": {
+        "context": {
+          "type": [
+            "null",
+            "array"
+          ],
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "version": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "id",
+              "version"
+            ]
+          }
+        }
+      }
     },
     "error": {
       "type": "string"

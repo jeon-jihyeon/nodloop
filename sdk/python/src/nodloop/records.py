@@ -528,6 +528,15 @@ class RefillRecord(_RefillRecordRequired, total=False):
     labels: dict[str, list[str] | None]
 
 
+class TurnRecordInputContext(TypedDict):
+    id: str
+    version: int
+
+
+class TurnRecordInput(TypedDict, total=False):
+    context: list[TurnRecordInputContext] | None
+
+
 class _TurnRecordUsageRequired(TypedDict):
     input_tokens: int
     output_tokens: int
@@ -546,14 +555,14 @@ class _TurnRecordRequired(TypedDict):
     id: str
     name: Literal["turn"]
     time: str
-    input: dict[str, Any]
+    input: TurnRecordInput
     usage: TurnRecordUsage
     duration_ms: int
     schema_version: Literal[1]
 
 
 class TurnRecord(_TurnRecordRequired, total=False):
-    """The start of a turn of a session"""
+    """The start of a turn of a session with its context item references"""
 
     session_id: str
     subject: str

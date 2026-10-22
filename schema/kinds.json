@@ -143,9 +143,10 @@
       ],
       "store": "traces.jsonl",
       "schema": "https://github.com/jeon-jihyeon/nodloop/schema/turn.v1.json",
-      "description": "The start of a turn of a session",
+      "description": "The start of a turn of a session with its context item references",
       "links": [
-        "session_id"
+        "session_id",
+        "input.context"
       ],
       "text": []
     },
