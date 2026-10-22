@@ -171,7 +171,7 @@ func (c compactionCommand) replayItems(ctx context.Context, r *replay.Replayer, 
 			return 0, 0, err
 		}
 		missed, overreach = missed+res.Missed, overreach+res.Overreach
-		fmt.Fprintf(c.out, "replay\t%s\tv%d\t%s\tmissed %d\toverreach %d\n", k.ID, k.Version, res.Outcome(), res.Missed, res.Overreach)
+		fmt.Fprintf(c.out, "replay\t%s\tv%d\t%s\n", k.ID, k.Version, replayOutcome(res, "\t"))
 	}
 	return missed, overreach, nil
 }

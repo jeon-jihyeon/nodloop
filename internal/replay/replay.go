@@ -51,6 +51,15 @@ const (
 	ExpectKeeps  Expect = "keeps"  // an approved output the lesson must leave as it is
 )
 
+// How a judgment reads on a report line
+type Outcome string
+
+const (
+	OutcomePassed  Outcome = "passed"  // both axes held a case and none went wrong
+	OutcomePartial Outcome = "partial" // none went wrong and one axis held no case
+	OutcomeFailed  Outcome = "failed"  // a corrected output missed or an approved output changed
+)
+
 // One recorded output and what the judge said of it
 type Case struct {
 	Run    string `json:"run"`
@@ -76,16 +85,37 @@ type Result struct {
 	Overreach int `json:"overreach"`
 }
 
-func (r Result) Passed() bool {
-	return r.Missed == 0 && r.Overreach == 0
+// 1. failed when the lesson got a case wrong
+// 2. partial when the breaks or the keeps cases number zero since an axis with no case is untested
+// 3. passed otherwise
+func (r Result) Outcome() Outcome {
+	switch {
+	case r.Missed > 0 || r.Overreach > 0:
+		return OutcomeFailed
+	case r.Corrected() == 0 || r.Approved() == 0:
+		return OutcomePartial
+	}
+	return OutcomePassed
 }
 
-// passed or failed as a report line shows the judgment
-func (r Result) Outcome() string {
-	if r.Passed() {
-		return "passed"
+// The corrected outputs judged
+func (r Result) Corrected() int {
+	return r.count(ExpectBreaks)
+}
+
+// The approved outputs judged
+func (r Result) Approved() int {
+	return r.count(ExpectKeeps)
+}
+
+func (r Result) count(e Expect) int {
+	n := 0
+	for _, c := range r.Cases {
+		if c.Expect == e {
+			n++
+		}
 	}
-	return "failed"
+	return n
 }
 
 // Gathers the cases of a lesson, asks the judge in one call and records a replay trace

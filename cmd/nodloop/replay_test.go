@@ -40,11 +40,11 @@ func TestRunKnowledgeReplay(t *testing.T) {
 	}{
 		{"a lesson that catches the correction alone passes", args{false}, want{
 			[]string{"\tbreaks\tbreaks true\tok\t", "\tkeeps\tbreaks false\tok\t", "replay\tgit-c\tv1\tpassed\tmissed 0 of 1\toverreach 0 of 1\n"},
-			[]string{"\treplay passed\n"},
+			[]string{"\treplay passed missed 0 of 1 overreach 0 of 1\n"},
 		}},
 		{"a lesson that changes an approved output fails", args{true}, want{
 			[]string{"\tkeeps\tbreaks true\twrong\t", "replay\tgit-c\tv1\tfailed\tmissed 0 of 1\toverreach 1 of 1\n"},
-			[]string{"\treplay failed\n"},
+			[]string{"\treplay failed missed 0 of 1 overreach 1 of 1\n"},
 		}},
 	}
 	for _, tc := range tcs {
@@ -111,18 +111,25 @@ func TestRunKnowledgeWaitingReplays(t *testing.T) {
 		waiting string
 		stderr  string
 	}
-	passed := json.RawMessage(`{"id":"git-c","version":1,"cases":[],"missed":0,"overreach":0}`)
-	failed := json.RawMessage(`{"id":"git-c","version":1,"cases":[],"missed":1,"overreach":0}`)
-	other := json.RawMessage(`{"id":"git-c","version":2,"cases":[],"missed":1,"overreach":0}`)
+	passed := json.RawMessage(`{"id":"git-c","version":1,` +
+		`"cases":[{"expect":"breaks"},{"expect":"keeps"}],"missed":0,"overreach":0}`)
+	partial := json.RawMessage(`{"id":"git-c","version":1,"cases":[{"expect":"breaks"}],"missed":0,"overreach":0}`)
+	failed := json.RawMessage(`{"id":"git-c","version":1,"cases":[{"expect":"breaks"}],"missed":1,"overreach":0}`)
+	other := json.RawMessage(`{"id":"git-c","version":2,"cases":[{"expect":"breaks"}],"missed":1,"overreach":0}`)
 	tcs := []struct {
 		name string
 		args args
 		want want
 	}{
 		{"no replay shows none", args{nil}, want{0, "\treplay none\n", ""}},
-		{"the newest replay of the version wins", args{[]trace.Trace{{Output: failed}, {Output: passed}}}, want{0, "\treplay passed\n", ""}},
+		{"the newest replay of the version wins", args{[]trace.Trace{{Output: failed}, {Output: passed}}},
+			want{0, "\treplay passed missed 0 of 1 overreach 0 of 1\n", ""}},
+		{"a replay with no approved output to judge is partial", args{[]trace.Trace{{Output: partial}}},
+			want{0, "\treplay partial missed 0 of 1 overreach 0 of 0\n", ""}},
 		{"a replay of another version is not this one", args{[]trace.Trace{{Output: other}}}, want{0, "\treplay none\n", ""}},
-		{"a replay that failed to judge is no judgment", args{[]trace.Trace{{Output: passed}, {Error: "replay: the judgment is incomplete"}}}, want{0, "\treplay passed\n", ""}},
+		{"a replay that failed to judge is no judgment", args{[]trace.Trace{{Output: failed},
+			{Error: "replay: the judgment is incomplete"}}},
+			want{0, "\treplay failed missed 1 of 1 overreach 0 of 0\n", ""}},
 		{"a replay result that does not decode fails", args{[]trace.Trace{{Output: json.RawMessage(`"cut"`)}}}, want{1, "", "replay trace does not decode"}},
 	}
 	for _, tc := range tcs {
@@ -192,7 +199,7 @@ func TestRunKnowledgeCheckReplay(t *testing.T) {
 
 	require.Equal(t, 0, code, stderr.String())
 	assert.Contains(t, stdout.String(), "covered\ta v1\tby a v2\tlost -\n")
-	assert.Contains(t, stdout.String(), "replay\ta\tv2\tfailed\tmissed 1\toverreach 0\n")
+	assert.Contains(t, stdout.String(), "replay\ta\tv2\tfailed\tmissed 1 of 1\toverreach 0 of 0\n")
 	assert.Contains(t, stdout.String(), "replay\tcompaction "+compaction+"\tmissed 1\toverreach 0\n")
 }
 
@@ -250,6 +257,136 @@ func TestCompactionCommandReplayItems(t *testing.T) {
 			assert.Zero(t, missed)
 			assert.Zero(t, overreach)
 			assert.Equal(t, tc.want.stdout, stdout.String())
+		})
+	}
+}
+
+func TestRunKnowledgeReplayFailures(t *testing.T) {
+	t.Parallel()
+	type args struct {
+		id      string
+		blocked string
+		model   bool
+	}
+	tcs := []struct {
+		name string
+		args args
+		want string
+	}{
+		{name: "id required", want: "replay: an id is required"},
+		{name: "ledger cannot open", args: args{id: "git-c", blocked: "knowledge.jsonl"}, want: "knowledge file"},
+		{name: "trace store cannot open", args: args{id: "git-c", blocked: "traces.jsonl"}, want: "trace file"},
+		{name: "feedback store cannot open", args: args{id: "git-c", blocked: "feedback.jsonl"}, want: "feedback file"},
+		{name: "item does not exist", args: args{id: "missing"}, want: "no current"},
+		{name: "model refuses the judgment", args: args{id: "git-c", model: true}, want: llm.ErrClaudeFailed.Error()},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			at := time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC)
+			getenv, now, _, _ := replaySetup(t, at)
+			if tc.args.blocked != "" {
+				path := filepath.Join(getenv(envRecordDir), tc.args.blocked)
+				require.NoError(t, os.WriteFile(path+".tmp", nil, 0o600))
+				require.NoError(t, os.Remove(path+".lock"))
+				require.NoError(t, os.Mkdir(path+".lock", 0o700))
+			}
+			client := llmmock.NewMockClient(gomock.NewController(t))
+			if tc.args.model {
+				client.EXPECT().Complete(gomock.Any(), gomock.Any()).Return(llm.Response{}, llm.ErrClaudeFailed)
+			}
+			args := []string{"replay"}
+			if tc.args.id != "" {
+				args = append(args, tc.args.id)
+			}
+			var stdout, stderr bytes.Buffer
+			code := runKnowledge(args, getenv, client, now, atTerminal, &stdout, &stderr)
+			assert.Equal(t, 1, code)
+			assert.Empty(t, stdout.String())
+			assert.Contains(t, stderr.String(), tc.want)
+		})
+	}
+}
+
+func TestRunKnowledgeWaitingReplayFailures(t *testing.T) {
+	t.Parallel()
+	tcs := []struct {
+		name string
+		open bool
+	}{
+		{name: "trace store cannot open", open: true},
+		{name: "trace records cannot be read"},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			at := time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC)
+			getenv, now, _, _ := replaySetup(t, at)
+			path := filepath.Join(getenv(envRecordDir), "traces.jsonl")
+			if tc.open {
+				require.NoError(t, os.WriteFile(path+".tmp", nil, 0o600))
+				require.NoError(t, os.Remove(path+".lock"))
+				require.NoError(t, os.Mkdir(path+".lock", 0o700))
+			} else {
+				require.NoError(t, os.Remove(path))
+				require.NoError(t, os.Mkdir(path, 0o700))
+			}
+			var stdout, stderr bytes.Buffer
+			code := runKnowledge([]string{"waiting", "--producer", "session", "--label", "repo=nodloop"},
+				getenv, nil, now, atTerminal, &stdout, &stderr)
+			assert.Equal(t, 1, code)
+			assert.Empty(t, stdout.String())
+			assert.Contains(t, stderr.String(), "trace file")
+		})
+	}
+}
+
+func TestRunKnowledgeCheckReplayFailures(t *testing.T) {
+	t.Parallel()
+	tcs := []struct {
+		name string
+		err  error
+	}{
+		{name: "model failed", err: llm.ErrClaudeFailed},
+		{name: "model timed out", err: context.DeadlineExceeded},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			at := time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC)
+			getenv, now, corrected, _ := replaySetup(t, at)
+			var stderr bytes.Buffer
+			commands := [][]string{
+				{"propose", "--id", "git-second", "--kind", "judgment", "--content", "Avoid changing folders", "--from", corrected},
+				{"approve", "git-c", "--version", "1", "--approver", "ann"},
+				{"approve", "git-second", "--version", "1", "--approver", "ann"},
+			}
+			for _, args := range commands {
+				require.Equal(t, 0, runKnowledge(args, getenv, nil, now, atTerminal, &bytes.Buffer{}, &stderr), stderr.String())
+			}
+			client := llmmock.NewMockClient(gomock.NewController(t))
+			draft := `{"items":[{"id":"git-c","kind":"judgment","content":"Use git -C without changing folders",` +
+				`"from":["git-c","git-second"],"producer":"session","labels":{"repo":["nodloop"]}}]}`
+			coverage := `{"items":[{"old":"git-c","covered_by":["git-c"]},` +
+				`{"old":"git-second","covered_by":["git-c"]}]}`
+			gomock.InOrder(
+				client.EXPECT().Complete(gomock.Any(), gomock.Any()).Return(llm.Response{Output: json.RawMessage(draft)}, nil),
+				client.EXPECT().Complete(gomock.Any(), gomock.Any()).Return(llm.Response{Output: json.RawMessage(coverage)}, nil),
+				client.EXPECT().Complete(gomock.Any(), gomock.Any()).Return(llm.Response{}, tc.err),
+			)
+			var compacted bytes.Buffer
+			require.Equal(t, 0, runKnowledge([]string{"compact", "git-c"}, getenv, client, now,
+				atTerminal, &compacted, &stderr), stderr.String())
+			lines := strings.Split(compacted.String(), "\n")
+			require.GreaterOrEqual(t, len(lines), 2)
+			compaction, found := strings.CutPrefix(lines[1], "compaction\t")
+			require.True(t, found, compacted.String())
+			var stdout bytes.Buffer
+			code := runKnowledge([]string{"check", compaction, "--replay"}, getenv, client, now,
+				atTerminal, &stdout, &stderr)
+			assert.Equal(t, 1, code)
+			assert.Contains(t, stderr.String(), tc.err.Error())
+			assert.NotContains(t, stdout.String(), "replay\tcompaction")
 		})
 	}
 }

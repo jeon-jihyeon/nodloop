@@ -185,34 +185,45 @@ func TestStoresReportLoadFails(t *testing.T) {
 
 func TestSnapshotReplays(t *testing.T) {
 	failed := `{"id":"a","version":1,"cases":[{"expect":"breaks"},{"expect":"keeps"},{"expect":"keeps"}],"missed":0,"overreach":1}`
-	passed := `{"id":"a","version":1,"cases":[{"expect":"breaks"}],"missed":0,"overreach":0}`
+	passed := `{"id":"a","version":1,"cases":[{"expect":"breaks"},{"expect":"keeps"}],"missed":0,"overreach":0}`
+	partial := `{"id":"a","version":1,"cases":[{"expect":"breaks"}],"missed":0,"overreach":0}`
 	type replayed struct {
 		output string
 		err    string
+	}
+	type want struct {
+		// Rows without their time which is the time of the newest replay that did not fail
+		rows     []loop.ReplayRow
+		outcomes []string
 	}
 	tcs := []struct {
 		name string
 		// Replay traces oldest first
 		// Each comes a clock step after the one before
 		args []replayed
-		// Rows without their time which is the time of the newest replay that did not fail
-		want []loop.ReplayRow
+		want want
 	}{
-		{"no replay has no row", nil, []loop.ReplayRow{}},
+		{"no replay has no row", nil, want{[]loop.ReplayRow{}, []string{}}},
 		{
 			"the newest replay of a version wins",
 			[]replayed{{output: failed}, {output: passed}},
-			[]loop.ReplayRow{{ID: "a", Version: 1, Passed: true, Corrected: 1}},
+			want{[]loop.ReplayRow{{ID: "a", Version: 1, Passed: true, Corrected: 1, Approved: 1}}, []string{"passed"}},
 		},
 		{
 			"cases count by what they expect",
 			[]replayed{{output: failed}},
-			[]loop.ReplayRow{{ID: "a", Version: 1, Corrected: 1, Approved: 2, Overreach: 1}},
+			want{[]loop.ReplayRow{{ID: "a", Version: 1, Corrected: 1, Approved: 2, Overreach: 1}}, []string{"failed"}},
 		},
-		{"an output that does not decode is left out", []replayed{{output: `"text"`}}, []loop.ReplayRow{}},
-		{"a failed replay is left out", []replayed{{output: failed}, {err: "replay: the judgment is incomplete"}}, []loop.ReplayRow{
-			{ID: "a", Version: 1, Corrected: 1, Approved: 2, Overreach: 1},
-		}},
+		{
+			"an axis with no case is partial and never passed",
+			[]replayed{{output: partial}},
+			want{[]loop.ReplayRow{{ID: "a", Version: 1, Corrected: 1}}, []string{"partial"}},
+		},
+		{"an output that does not decode is left out", []replayed{{output: `"text"`}}, want{[]loop.ReplayRow{}, []string{}}},
+		{"a failed replay is left out", []replayed{{output: failed}, {err: "replay: the judgment is incomplete"}},
+			want{[]loop.ReplayRow{
+				{ID: "a", Version: 1, Corrected: 1, Approved: 2, Overreach: 1},
+			}, []string{"failed"}}},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
@@ -238,10 +249,14 @@ func TestSnapshotReplays(t *testing.T) {
 			snap, err := loop.Stores{Traces: st.Traces, Verdicts: st.Feedback, Items: st.Ledger}.Snapshot(ctx, loop.ReportReplay)
 			require.NoError(t, err)
 
-			got := snap.Replays()
+			rows := snap.Replays()
 
-			for i := range tc.want {
-				tc.want[i].Time = newest
+			got := want{rows: rows, outcomes: []string{}}
+			for _, row := range rows {
+				got.outcomes = append(got.outcomes, row.Outcome())
+			}
+			for i := range tc.want.rows {
+				tc.want.rows[i].Time = newest
 			}
 			assert.Equal(t, tc.want, got)
 		})
