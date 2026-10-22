@@ -350,7 +350,7 @@ export interface RefillRecord {
   schema_version: 1;
 }
 
-/** The start of a turn of a session */
+/** The start of a turn of a session with its context item references */
 export interface TurnRecord {
   record_kind: "turn";
   record_id: string;
@@ -361,7 +361,12 @@ export interface TurnRecord {
   ref?: string;
   time: string;
   model?: string;
-  input: Record<string, unknown>;
+  input: {
+    context?: {
+      id: string;
+      version: number;
+    }[] | null;
+  };
   error?: string;
   usage: {
     input_tokens: number;

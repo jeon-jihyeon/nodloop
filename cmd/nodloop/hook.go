@@ -164,31 +164,36 @@ type hookCommand struct {
 // 1. a failed read of the runs still adds the items
 // 2. a corrupt line in the records leaves out that record and the rest still reach the prompt
 // 3. a turn of a session the holdout draws gets the note and no item
-// 4. the newest answer of the session with the run before it and the newest refill tell which items are in the context already
-// 5. the start of the turn is recorded first so the stop knows how long the turn took
+// 4. the context refs of the newest turn or a newer refill tell which items are in the context already
+// A retired one among them gets a notice and leaves the refs the turn records
+// 5. the turn keeps the time the hook started so the stop knows how long the turn took
+// A failed read of the items still records the turn with no refs
 // 6. the note and the reaction point name only an answer completed after the preceding turn began
 // A run a stop hook continued answers the stop and never the person
 // 7. the versions the item hold keeps from the session are left out of every turn
 // 8. a first word that names a choice of the question shown after that answer is never judged
 // The capture records it as the person's answer from the transcript after the turn
 func (c hookCommand) prompt(ctx context.Context, sessionID, message string, labels trace.Labels) error {
-	turnErr := c.recordTurn(ctx, sessionID)
+	started := c.app.now()
 	all, allErr := c.all(ctx)
-	if allErr != nil && !errors.Is(allErr, knowledgefile.ErrCorrupt) {
-		return allErr
-	}
-	recent, runsErr := c.recent(ctx, sessionID, trace.NameRefill, trace.NameTurn)
-	answered := recent.runs().answered()
-	previous := recent.before(recent.latestTurn())
-	if turnErr != nil {
-		previous = trace.Trace{}
-	}
-	refill := recent.newest(trace.NameRefill, previous.Time)
 	items := hookItems(all.For(sessionProducer, labels))
 	if c.holdout.WithholdsRun(sessionProducer, sessionID) {
 		items = nil
 	}
 	held := c.hold.Held(items.fitting(), sessionProducer, sessionID)
+	if allErr != nil && !errors.Is(allErr, knowledgefile.ErrCorrupt) {
+		return errors.Join(allErr, c.recordTurn(ctx, sessionID, turnInput{}, started))
+	}
+	recent, runsErr := c.recent(ctx, sessionID, trace.NameRefill, trace.NameTurn)
+	refill := recent.newest(trace.NameRefill, time.Time{})
+	prior := promptRefs(recent.contextRefs(all, refill))
+	retired := prior.retired(all)
+	refs := prior.continued(retired, items.fitting().Without(held).Refs())
+	turnErr := c.recordTurn(ctx, sessionID, turnInput{Context: &refs}, started)
+	previous := recent.before(started)
+	if turnErr != nil {
+		previous = trace.Trace{}
+	}
 	replied, replyErr := c.reply(ctx, sessionID, previous, message)
 	var recorded feedback.Verdict
 	var reactErr error
@@ -197,7 +202,8 @@ func (c hookCommand) prompt(ctx context.Context, sessionID, message string, labe
 	}
 	note := c.note(sessionID, previous)
 	note.recorded, note.replied = recorded, replied
-	text := items.context(answered.inContext(knowledge.Set(items), refill), held, note)
+	note.invalidated = prior.invalidated(retired)
+	text := items.context(prior, held, note)
 	runsErr = errors.Join(turnErr, allErr, runsErr, replyErr, reactErr)
 	if text == "" {
 		return runsErr
@@ -225,14 +231,15 @@ var refillSources = []string{"compact", "clear"}
 
 // Every fitting item of the place again after a compaction or a clear emptied the context
 // 1. a host without a prompt hook gets every fitting item from each session start since no other hook adds them
-// 2. on a host with a prompt hook the items added are recorded as a refill of the session so the next prompt adds none of them again
+// 2. on a host with a prompt hook every reset records a refill even when no item remains
+// An empty refill prevents a retired version from surviving the reset boundary in the session bookkeeping
 // A clear starts a new session id with no run so without the refill that prompt would add every item a second time
 func (c hookCommand) start(ctx context.Context, sessionID, source string, labels trace.Labels) error {
 	if c.host.prompts() && !slices.Contains(refillSources, source) {
 		return nil
 	}
 	added, err := c.addItems(ctx, "SessionStart", sessionID, labels)
-	if !c.host.prompts() || sessionID == "" || len(added) == 0 {
+	if !c.host.prompts() || sessionID == "" {
 		return err
 	}
 	return errors.Join(err, c.recordRefill(ctx, sessionID, added))
@@ -264,9 +271,9 @@ func (c hookCommand) addItems(ctx context.Context, event, sessionID string, labe
 	return items.fitting().Without(held), err
 }
 
-// The start of a turn of the session as a turn trace with no text
+// The start of a turn of the session as a turn trace with the item refs of its context and no text
 // A turn without a session id could never be told from the turns of other sessions so it records none
-func (c hookCommand) recordTurn(ctx context.Context, sessionID string) error {
+func (c hookCommand) recordTurn(ctx context.Context, sessionID string, in turnInput, now time.Time) error {
 	if sessionID == "" {
 		return nil
 	}
@@ -274,8 +281,9 @@ func (c hookCommand) recordTurn(ctx context.Context, sessionID string) error {
 	if err != nil {
 		return err
 	}
-	now := c.app.now()
-	tr := trace.Trace{ID: trace.NewID(now), Name: trace.NameTurn, SessionID: sessionID, Time: now, Input: json.RawMessage("{}")}
+	// Item refs of ids and versions always encode
+	input, _ := json.Marshal(in)
+	tr := trace.Trace{ID: trace.NewID(now), Name: trace.NameTurn, SessionID: sessionID, Time: now, Input: input}
 	return store.Append(ctx, tr.Record())
 }
 
@@ -576,8 +584,10 @@ func (items hookItems) context(inContext, held []knowledge.Ref, note sessionNote
 			fmt.Fprintf(&b, "- %d more items left out over the size cap\n", left)
 		}
 	}
-	if text := note.text(); utf8.RuneCountInString(b.String())+utf8.RuneCountInString(text) <= contextRunes {
-		b.WriteString(text)
+	for _, text := range []string{note.invalidated, note.text()} {
+		if utf8.RuneCountInString(b.String())+utf8.RuneCountInString(text) <= contextRunes {
+			b.WriteString(text)
+		}
 	}
 	return b.String()
 }
@@ -606,6 +616,8 @@ type sessionNote struct {
 	recorded feedback.Verdict
 	// The choice the first word named of the question shown after that answer so the message judges nothing
 	replied curate.Choice
+	// The notice of retired items the context may still hold
+	invalidated string
 }
 
 // Only words that judge the previous answer count as an inferred verdict
