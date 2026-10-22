@@ -77,6 +77,7 @@
         "output.attempts.draft",
         "output.attempts.critique",
         "output.attempts.error",
+        "output.excerpt",
         "error"
       ]
     },

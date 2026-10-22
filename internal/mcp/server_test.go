@@ -2,6 +2,7 @@ package mcp_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sync/atomic"
 	"testing"
@@ -498,6 +499,45 @@ func TestServerProposeExtraction(t *testing.T) {
 			assert.Equal(t, tc.want.candidate, idOf(got.Candidate.ID, id))
 			assert.Equal(t, tc.want.related, idOf(got.Related.ID, id))
 			assert.Equal(t, tc.want.corroborated, got.Corroborated)
+		})
+	}
+}
+
+func TestServerProposeExtractionExcerpt(t *testing.T) {
+	tcs := []struct {
+		name string
+		args string
+		want string
+	}{
+		{"a quoted output", "cd repo && git status", "cd repo && git status"},
+		{"a quoted edit", "git -C repo status", "git -C repo status"},
+		{"an unrelated excerpt", "an unrelated answer", ""},
+		{"no excerpt", "", ""},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ctx := context.Background()
+			stores := testkit.Open(t)
+			c := connect(t, stores)
+			runs := editedRuns(t, c)
+			var got struct {
+				Candidate idOnly `json:"candidate"`
+			}
+
+			err := c.Call(t, "propose_extraction", map[string]any{
+				"from": runs[0], "relation": "add", "kind": "judgment", "content": lesson,
+				"keys": []string{"repo"}, "critique": passing, "excerpt": tc.args,
+			}, &got)
+
+			require.NoError(t, err)
+			assert.NotEmpty(t, got.Candidate.ID)
+			traces, err := stores.Traces.List(ctx, record.TraceFilter{Name: string(trace.NameExtract)})
+			require.NoError(t, err)
+			require.Len(t, traces, 1)
+			var out extract.Record
+			require.NoError(t, json.Unmarshal(traces[0].Output, &out))
+			assert.Equal(t, tc.want, out.Excerpt)
 		})
 	}
 }

@@ -67,6 +67,9 @@ type Record struct {
 	// What a duplicate or a conflict or an update names
 	// The status tells an item from a candidate so the next prompt can name a conflict
 	Related *Related `json:"related,omitempty"`
+	// The part of the output the correction is about that the draft of the candidate quoted
+	// A question about the version shows it so the person sees what was corrected
+	Excerpt string `json:"excerpt,omitempty"`
 }
 
 // The version an extraction named as it stood then
@@ -107,6 +110,7 @@ func (rec Record) end(res Result, err error) Record {
 	}
 	if res.Candidate != nil {
 		rec.Candidate = &knowledge.Ref{ID: res.Candidate.ID, Version: res.Candidate.Version}
+		rec.Excerpt = res.Excerpt
 	}
 	if res.Related != nil {
 		rec.Related = &Related{ID: res.Related.ID, Version: res.Related.Version, Status: res.Related.Status}

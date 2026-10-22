@@ -921,6 +921,80 @@ func anyOf(lessons []string) []any {
 	return out
 }
 
+// A question about a version quotes the part of the answer the extraction that drafted it kept
+// 1. an extraction the store lacks or that kept none or does not decode quotes nothing and the question still asks
+// 2. so does a version no extraction drafted
+// 3. a withdrawal quotes the words of its signal and no excerpt
+// 4. a failed read of the extraction fails the stop
+func TestIntervenerAskExcerpt(t *testing.T) {
+	ctx := context.Background()
+	type args struct {
+		// The extraction the version names
+		extract string
+		kind    curate.ChangeKind
+		gets    testkit.Reads
+	}
+	type want struct {
+		excerpt string
+		quoted  bool
+		err     error
+	}
+	add, withdraw := curate.ChangeAdd, curate.ChangeWithdraw
+	tcs := []struct {
+		name string
+		args args
+		want want
+	}{
+		{"an extraction that kept an excerpt", args{"x-kept", add, testkit.Reads{Allowed: 9}},
+			want{"cd repo && git status", true, nil}},
+		{"an extraction that kept none", args{"x-none", add, testkit.Reads{Allowed: 9}}, want{"", false, nil}},
+		{"an extraction the store lacks", args{"x-gone", add, testkit.Reads{Allowed: 9}}, want{"", false, nil}},
+		{"an extraction whose output does not decode", args{"x-text", add, testkit.Reads{Allowed: 9}}, want{"", false, nil}},
+		{"a trace of another kind", args{"x-other", add, testkit.Reads{Allowed: 9}}, want{"", false, nil}},
+		{"a version no extraction drafted", args{"", add, testkit.Reads{Allowed: 9}}, want{"", false, nil}},
+		{"a withdrawal", args{"x-kept", withdraw, testkit.Reads{Allowed: 9}}, want{"", false, nil}},
+		{"a failed read of the extraction", args{"x-kept", add, testkit.Reads{Err: assert.AnError}}, want{"",
+			false, assert.AnError}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			d := newDesk(t)
+			k := lesson("k-quoted", 1, "Run git with -C", acme("acme"), knowledge.StatusCandidate, "")
+			k.Extract = tc.args.extract
+			require.NoError(t, testkit.Err(d.stores.Ledger.Import(ctx, []knowledge.Knowledge{k})))
+			for id, out := range map[string]string{
+				"x-kept": `{"conclusion":"proposed","excerpt":"cd repo && git status"}`,
+				"x-none": `{"conclusion":"proposed"}`, "x-text": `"text"`,
+			} {
+				x := trace.Trace{ID: id, Name: trace.NameExtract, Subject: "model", Ref: "r-k-quoted", Time: written,
+					Output: json.RawMessage(out)}
+				require.NoError(t, d.stores.Traces.Append(ctx, x.Record()))
+			}
+			other := trace.Trace{
+				ID: "x-other", Name: trace.NameRun, Time: written,
+				Output: json.RawMessage(`{"excerpt":"a different record"}`),
+			}
+			require.NoError(t, d.stores.Traces.Append(ctx, other.Record()))
+			c := curate.Change{Kind: tc.args.kind, ID: "k-quoted", Version: 1, Anchor: 1}
+			if tc.args.kind == withdraw {
+				c.Signal = "c-1"
+			}
+			decide := d.asking(t, "r-k-quoted", c, curate.RulePersonItem)
+			traces := &testkit.FlakyTraces{Store: d.stores.Traces, Gets: tc.args.gets}
+			iv := curate.NewIntervener(d.stores.Ledger, traces, curate.InterveneSetting{}, d.stores.Clock.Now)
+			a := d.stopIn(t, "s-new", "acme", true)
+			a.Mark.Due = []curate.Due{{Kind: curate.QuestionDirection, Decide: decide, At: written}}
+
+			got, err := iv.Ask(ctx, a)
+
+			assert.ErrorIs(t, err, tc.want.err)
+			assert.Equal(t, tc.want, want{got.Question.Excerpt, strings.Contains(got.Question.Text(),
+				`the part corrected "cd repo && git status"`), err})
+		})
+	}
+}
+
 // A stop with no words to read prepares what the change says alone
 func TestIntervenerAskWithoutWords(t *testing.T) {
 	d := newDesk(t)

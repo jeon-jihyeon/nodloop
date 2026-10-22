@@ -169,6 +169,7 @@ export interface ExtractRecord {
         kind: string;
         content: string;
         keys?: string[] | null;
+        excerpt?: string;
       };
       critique?: {
         states: boolean;
@@ -191,6 +192,7 @@ export interface ExtractRecord {
       version: number;
       status: "candidate" | "approved" | "retired" | "superseded";
     } | null;
+    excerpt?: string;
   };
   error?: string;
   usage: {

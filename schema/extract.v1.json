@@ -94,6 +94,10 @@
                       "type": "string"
                     },
                     "description": "label keys of the run the lesson needs. Empty reaches every run of the producer"
+                  },
+                  "excerpt": {
+                    "type": "string",
+                    "description": "the shortest part of the output the correction is about quoted word for word in at most 200 characters"
                   }
                 },
                 "required": [
@@ -201,6 +205,9 @@
             "version",
             "status"
           ]
+        },
+        "excerpt": {
+          "type": "string"
         }
       },
       "required": [

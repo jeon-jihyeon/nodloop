@@ -52,26 +52,26 @@ func TestEventExpose(t *testing.T) {
 		{
 			"an audit question names its key, the change, its choices and the run it followed",
 			args{pushed(), audit},
-			want{`{"kind":"audit","key":"a7k2","change":{"id":"k-1","version":1},"surface":"additional_context","rules":"2",` +
+			want{`{"kind":"audit","key":"a7k2","change":{"id":"k-1","version":1},"surface":"additional_context","rules":"3",` +
 				`"choices":["same","undo"],"text":"` + hmac + `","lines":["` + hmac + `","` + hmac + `"],"round":1,"run":"run-1"}`, nil},
 		},
 		{
 			"a notice asks nothing",
 			args{pushed(), notice},
-			want{`{"kind":"notice","surface":"system_message","rules":"2","text":"` + hmac + `","round":1}`, nil},
+			want{`{"kind":"notice","surface":"system_message","rules":"3","text":"` + hmac + `","round":1}`, nil},
 		},
 		{
 			"a proposal the person asked for carries no probability",
 			args{manual, with(audit, func(x *curate.Exposure) {
 				x.Kind, x.Choices = curate.QuestionDirection, []curate.Choice{"keep", "drop"}
 			})},
-			want{`{"kind":"direction","key":"a7k2","change":{"id":"k-1","version":1},"surface":"additional_context","rules":"2",` +
+			want{`{"kind":"direction","key":"a7k2","change":{"id":"k-1","version":1},"surface":"additional_context","rules":"3",` +
 				`"choices":["keep","drop"],"text":"` + hmac + `","lines":["` + hmac + `","` + hmac + `"],"round":1,"run":"run-1"}`, nil},
 		},
 		{
 			"a question records the runes of its text at the most it may show",
 			args{pushed(), with(audit, func(x *curate.Exposure) { x.Runes = curate.MaxRunes })},
-			want{`{"kind":"audit","key":"a7k2","change":{"id":"k-1","version":1},"surface":"additional_context","rules":"2",` +
+			want{`{"kind":"audit","key":"a7k2","change":{"id":"k-1","version":1},"surface":"additional_context","rules":"3",` +
 				`"choices":["same","undo"],"text":"` + hmac + `","lines":["` + hmac + `","` + hmac + `"],"round":1,"run":"run-1","runes":600}`, nil},
 		},
 		{"a text past the runes a question may show is refused", args{pushed(), with(audit, func(x *curate.Exposure) { x.Runes = curate.MaxRunes + 1 })}, want{err: curate.ErrExposeInvalid}},
@@ -291,9 +291,28 @@ func TestQuestionText(t *testing.T) {
 			},
 		},
 		{
+			"the part corrected quoted after the person's words",
+			args{with(func(q *curate.Question) {
+				q.Lessons, q.Words = []string{"Name the failing test first"}, []string{"you skipped it again"}
+				q.Excerpt, q.Prepared = "go test\n./...", []string{"no related lesson yet"}
+			})},
+			want{
+				"One decision for you: add the lesson \"Name the failing test first\" in repo acme\n" +
+					"Why you: it reaches a place you have not decided on\n" +
+					"Prepared: your words \"you skipped it again\" · the part corrected \"go test ./...\" · " +
+					"no related lesson yet\nReply keep or drop",
+				"Reply keep or drop", 255,
+			},
+		},
+		{
 			"long quotes shrink together and the reply line shows",
 			args{with(func(q *curate.Question) { q.Lessons, q.Words = []string{long, long}, []string{long} })},
 			want{"One decision for you: add the lesson \"run the tests", "Reply keep or drop", 586},
+		},
+		{
+			"a long excerpt shrinks with the other quotes",
+			args{with(func(q *curate.Question) { q.Lessons, q.Words, q.Excerpt = []string{long, long}, []string{long}, long })},
+			want{"One decision for you: add the lesson \"run the tests", "Reply keep or drop", 590},
 		},
 		{
 			"words that do not fit at the shortest quotes are cut before the reply line",

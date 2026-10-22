@@ -685,6 +685,115 @@ func TestExtractorProposeRecord(t *testing.T) {
 	}
 }
 
+// The excerpt a draft quotes reaches the record only when it quotes the output or the edit within 200 runes
+// One that quotes neither leaves the record without one and the candidate is still proposed
+func TestProposeExcerpt(t *testing.T) {
+	long := strings.Repeat("the cache key misses the tenant ", 8)
+	multibyte := strings.Repeat("🙂", 200)
+	type args struct {
+		excerpt string
+		// The output of a run of its own and the fixture run when empty
+		output string
+	}
+	type want struct {
+		excerpt  string
+		proposed bool
+	}
+	tcs := []struct {
+		name string
+		args args
+		want want
+	}{
+		{"a part of the output", args{"cd repo && git status", ""}, want{"cd repo && git status", true}},
+		{"a part of the edited output", args{"git -C repo status", ""}, want{"git -C repo status", true}},
+		{"a part across a line break with its white space folded", args{"git  status\nI changed into", ""},
+			want{"git status I changed into", true}},
+		{"a quote the texts lack", args{"rm -rf repo", ""}, want{"", true}},
+		{"a part of the output over 200 runes", args{long, long}, want{"", true}},
+		{"a part of the output at 200 runes", args{long[:200], long}, want{strings.TrimSpace(long[:200]), true}},
+		{"a multibyte excerpt at 200 runes", args{multibyte, multibyte}, want{multibyte, true}},
+		{"a multibyte excerpt over 200 runes", args{multibyte + "🙂", multibyte + "🙂"}, want{"", true}},
+		{"no excerpt", args{"", ""}, want{"", true}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ctx := context.Background()
+			s, e, runID := corrected(t)
+			if tc.args.output != "" {
+				runID = rejectedRun(t, s, tc.args.output)
+			}
+			r, err := e.Reaction(ctx, runID)
+			require.NoError(t, err)
+			draft := extract.Draft{
+				Relation: extract.RelationAdd, Kind: knowledge.KindJudgment,
+				Content: "Run git with -C <dir> instead of changing into it",
+				Excerpt: tc.args.excerpt,
+			}
+
+			got, err := e.Propose(ctx, r, draft, pass, "")
+
+			require.NoError(t, err)
+			rec, _ := recorded(t, s, extract.PathConversation, runID)
+			assert.Equal(t, tc.want, want{rec.Excerpt, got.Candidate != nil})
+			assert.Equal(t, tc.args.excerpt, rec.Attempts[0].Draft.Excerpt, "the attempt keeps the draft as written")
+		})
+	}
+}
+
+func TestProposeDuplicateExcerpt(t *testing.T) {
+	type want struct {
+		excerpt   string
+		candidate bool
+	}
+	tcs := []struct {
+		name string
+		args string
+		want want
+	}{
+		{"an approved duplicate carries no candidate excerpt", "git-c", want{}},
+		{"a waiting duplicate keeps the quoted correction", "quote", want{"cd repo && git status", true}},
+		{"a retired duplicate keeps the quoted correction", "dropped", want{"cd repo && git status", true}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ctx := context.Background()
+			s, e, runID := corrected(t)
+			r, err := e.Reaction(ctx, runID)
+			require.NoError(t, err)
+			related := slices.Concat(r.Reached, r.Waiting, r.Retired)
+			item, ok := related.Find(tc.args)
+			require.True(t, ok)
+			draft := extract.Draft{
+				Relation: extract.RelationDuplicate, RelatesTo: item.ID, Kind: item.Kind,
+				Content: item.Content, Excerpt: "cd repo && git status",
+			}
+
+			got, err := e.Propose(ctx, r, draft, pass, "")
+
+			require.NoError(t, err)
+			rec, _ := recorded(t, s, extract.PathConversation, runID)
+			assert.Equal(t, tc.want, want{rec.Excerpt, got.Candidate != nil})
+		})
+	}
+}
+
+// A run of the repo with the output that a person rejected
+func rejectedRun(t *testing.T, s testkit.Stores, output string) string {
+	t.Helper()
+	ctx := context.Background()
+	out, err := json.Marshal(output)
+	require.NoError(t, err)
+	run, err := trace.NewRun("session", "", trace.Labels{"repo": {"nodloop"}}, nil, out, s.Clock.Now())
+	require.NoError(t, err)
+	require.NoError(t, s.Traces.Append(ctx, run.Record()))
+	fb, err := feedback.New(run.ID, feedback.VerdictReject, "", "the key misses the tenant", nil, "ann", s.Clock.Now())
+	require.NoError(t, err)
+	require.NoError(t, s.Feedback.Append(ctx, fb.Record()))
+	return run.ID
+}
+
 // Each attempt the plan of the critic point judged names the classify trace that holds its answers
 // An attempt code refused before any critic call names none
 func TestExtractorExtractPlanCritic(t *testing.T) {
