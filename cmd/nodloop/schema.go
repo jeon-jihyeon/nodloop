@@ -118,12 +118,15 @@ var publishedKinds = kindTable{
 		reflect.TypeFor[curate.Change](), reflect.TypeFor[curate.Decision](),
 		[]string{
 			"ref", "source", "draw.cycle_id", "input.id", "input.version", "input.compaction", "input.old", "input.extract", "input.signal",
-			"input.anchor", "input.proposal", "output.judge",
+			"input.anchor", "input.proposal", "output.judge", "output.triage.classify", "output.triage.grant", "output.delegation",
 		},
 		[]string{}).withEnvelope("draw", "source").withRef(trace.NameRun),
 	traceKind(trace.NameKnob, "The knobs, the seed and the judge of a cycle at its start or at a narrowing inside it",
 		reflect.TypeFor[curate.KnobEvent](), nil,
-		[]string{"subject", "input.cycle_id", "input.policy_version", "input.before", "input.judge.sets"}, []string{}),
+		[]string{
+			"subject", "input.cycle_id", "input.policy_version", "input.before", "input.judge.sets",
+			"input.changes.grant", "input.knobs.delegation_paused",
+		}, []string{}),
 	traceKind(trace.NameAnchor, "One version of the judgment of the person on record that curate reads",
 		reflect.TypeFor[curate.AnchorVersion](), nil, []string{"input.version", "input.refs", "input.cause"}, []string{"input.files.path"}),
 	traceKind(trace.NameExpose, "A question or a notice shown to the person",

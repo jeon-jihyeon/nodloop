@@ -123,6 +123,12 @@ func (r RunScope) widens(old RunScope) bool {
 	return false
 }
 
+// Whether every run r reaches lies within the limit
+// A scope without a producer is within nothing so an empty limit grants nothing
+func (r RunScope) Within(limit RunScope) bool {
+	return r.Producer != "" && !r.widens(limit)
+}
+
 // Fails with ErrScopeUnobserved naming each key and value that no recorded run of the producer carries
 // An item scoped to one of them could never apply
 func (r RunScope) Recorded(vocab trace.Labels) error {

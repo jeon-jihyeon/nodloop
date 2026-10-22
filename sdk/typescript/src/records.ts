@@ -533,7 +533,7 @@ export interface DecideRecord {
   };
   output?: {
     tier: number;
-    rule_code?: "same_as_item" | "same_as_candidate" | "no_evidence" | "temp_scope" | "person_item" | "scope_wider" | "veto" | "room" | "kind_closed" | "paused" | "proposal" | "drift" | "judge_against" | "judge_undecided" | "judge_split";
+    rule_code?: "same_as_item" | "same_as_candidate" | "no_evidence" | "temp_scope" | "person_item" | "scope_wider" | "veto" | "room" | "kind_closed" | "paused" | "proposal" | "drift" | "judge_against" | "judge_undecided" | "judge_split" | "delegated" | "triage_protected";
     judge?: string;
     outcome?: "conform" | "against" | "undecided" | "split";
     vote?: number | null;
@@ -543,6 +543,20 @@ export interface DecideRecord {
     reason?: "duplicate" | "no_evidence" | "temp_scope" | "conflict" | "words" | "compaction" | "person";
     failure?: "hard" | "repairable" | "underexplored" | "unpromising";
     reopen?: "other_session" | "permanent_place" | "next_pass" | "person_only";
+    triage?: {
+      policy: string;
+      classify?: string;
+      nature: "preference" | "safety" | "organization" | "unknown";
+      mixed: boolean;
+      reversibility: "H" | "M" | "L" | "unknown";
+      source: "complete" | "incomplete" | "missing" | "scope";
+      protected: "none" | "safety" | "organization" | "mixed" | "conflict" | "artifact" | "unknown";
+      lasting: boolean;
+      faithful: boolean;
+      conflict: boolean;
+      grant?: string;
+    } | null;
+    delegation?: string;
   };
   error?: string;
   usage: {
@@ -607,6 +621,7 @@ export interface KnobRecord {
         p1: number;
         h: number;
       };
+      delegation_paused?: string[] | null;
     };
     judge: {
       backend?: string;
@@ -625,7 +640,7 @@ export interface KnobRecord {
     cause: "start" | "narrow";
     before?: string;
     changes?: {
-      rule: "posterior" | "alarm" | "raise" | "lower" | "person";
+      rule: "posterior" | "alarm" | "raise" | "lower" | "person" | "delegation";
       opening?: {
         kind: "add" | "update" | "join" | "drop" | "withdraw" | "compaction" | "reanchor" | "widen" | "activate" | "intervention";
         bin?: "b1" | "b2" | "b3" | "b4";
@@ -634,6 +649,7 @@ export interface KnobRecord {
       differ?: number;
       p?: number;
       knob?: string;
+      grant?: string;
     }[] | null;
   };
   error?: string;

@@ -124,15 +124,16 @@ func (n Numbers) gauge(o Opening) Gauge {
 type KnobRule string
 
 const (
-	KnobPosterior KnobRule = "posterior" // the posterior put the differ rate of a kind and bin above the target
-	KnobAlarm     KnobRule = "alarm"     // the CUSUM alarmed with a differ of the kind and bin since it last stood at zero
-	KnobRaise     KnobRule = "raise"     // a narrowing or a judge shift doubled the tier 1 audit p
-	KnobLower     KnobRule = "lower"     // every open kind and bin met its bound so the tier 1 audit p went down
-	KnobPerson    KnobRule = "person"    // a person's knob intervention raised an audit p at once
+	KnobPosterior  KnobRule = "posterior"  // the posterior put the differ rate of a kind and bin above the target
+	KnobAlarm      KnobRule = "alarm"      // the CUSUM alarmed with a differ of the kind and bin since it last stood at zero
+	KnobRaise      KnobRule = "raise"      // a narrowing or a judge shift doubled the tier 1 audit p
+	KnobLower      KnobRule = "lower"      // every open kind and bin met its bound so the tier 1 audit p went down
+	KnobPerson     KnobRule = "person"     // a person's knob intervention raised an audit p at once
+	KnobDelegation KnobRule = "delegation" // an overturned delegated change stopped its grant
 )
 
 func KnobRules() []KnobRule {
-	return []KnobRule{KnobPosterior, KnobAlarm, KnobRaise, KnobLower, KnobPerson}
+	return []KnobRule{KnobPosterior, KnobAlarm, KnobRaise, KnobLower, KnobPerson, KnobDelegation}
 }
 
 // One move of a knob with the numbers behind it as the knob event records it
@@ -146,7 +147,8 @@ type KnobChange struct {
 	// The audit p a raise, a lower or a person set
 	P float64 `json:"p,omitempty"`
 	// The knob a person raised at once
-	Knob KnobName `json:"knob,omitempty"`
+	Knob  KnobName `json:"knob,omitempty"`
+	Grant string   `json:"grant,omitempty"`
 }
 
 // A widening or the activation the gate offers the person as a question
@@ -210,6 +212,20 @@ func (k Knobs) Start(n Numbers, set float64) Move {
 	}
 	m.offer(k, n)
 	return m
+}
+
+// Stops each revoked grant the knobs do not hold yet with one change each
+// A stop raises no audit p since no judge answer moved
+func (m *Move) stop(revoked []string) {
+	m.Knobs.DelegationPaused = slices.Clone(m.Knobs.DelegationPaused)
+	for _, grant := range revoked {
+		if slices.Contains(m.Knobs.DelegationPaused, grant) {
+			continue
+		}
+		m.Knobs.DelegationPaused = append(m.Knobs.DelegationPaused, grant)
+		m.Changes = append(m.Changes, KnobChange{Rule: KnobDelegation, Grant: grant})
+	}
+	slices.Sort(m.Knobs.DelegationPaused)
 }
 
 func (m *Move) alarm(n Numbers) {

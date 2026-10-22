@@ -28,8 +28,9 @@ type Knobs struct {
 	// The audit p of each tier that carries out
 	Audit Audit `json:"audit,omitzero"`
 	// The differ rate tier 1 stays below and the error its bound allows
-	Target Target `json:"target,omitzero"`
-	CUSUM  CUSUM  `json:"cusum,omitzero"`
+	Target           Target   `json:"target,omitzero"`
+	CUSUM            CUSUM    `json:"cusum,omitzero"`
+	DelegationPaused []string `json:"delegation_paused,omitempty"`
 }
 
 // The audit p of a decision

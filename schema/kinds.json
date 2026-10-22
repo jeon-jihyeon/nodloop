@@ -225,7 +225,10 @@
         "input.signal",
         "input.anchor",
         "input.proposal",
-        "output.judge"
+        "output.judge",
+        "output.triage.classify",
+        "output.triage.grant",
+        "output.delegation"
       ],
       "text": []
     },
@@ -244,7 +247,9 @@
         "input.cycle_id",
         "input.policy_version",
         "input.before",
-        "input.judge.sets"
+        "input.judge.sets",
+        "input.changes.grant",
+        "input.knobs.delegation_paused"
       ],
       "text": []
     },

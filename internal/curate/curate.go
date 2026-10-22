@@ -74,12 +74,15 @@ const (
 	RuleJudgeAgainst    RuleCode = "judge_against"     // every judge member found it against an anchor line
 	RuleJudgeUndecided  RuleCode = "judge_undecided"   // every judge member found the anchor silent
 	RuleJudgeSplit      RuleCode = "judge_split"       // the judge members differ or one gave no answer
+	RuleDelegated       RuleCode = "delegated"         // an explicit delegation covers the new answer preference
+	RuleTriageProtected RuleCode = "triage_protected"  // a protected concern needs explicit review
 )
 
 func RuleCodes() []RuleCode {
 	return []RuleCode{
 		RuleSameAsItem, RuleSameAsCandidate, RuleNoEvidence, RuleTempScope, RulePersonItem, RuleScopeWider, RuleVeto, RuleRoom,
 		RuleKindClosed, RulePaused, RuleProposal, RuleDrift, RuleJudgeAgainst, RuleJudgeUndecided, RuleJudgeSplit,
+		RuleDelegated, RuleTriageProtected,
 	}
 }
 
@@ -211,9 +214,11 @@ type Decision struct {
 	Confidence *float64 `json:"confidence,omitempty"`
 	Action     Action   `json:"action"`
 	// Why a drop or a withdrawal retires with what may still teach and what brings it back
-	Reason  knowledge.Reason `json:"reason,omitempty"`
-	Failure FailureClass     `json:"failure,omitempty"`
-	Reopen  Reopen           `json:"reopen,omitempty"`
+	Reason     knowledge.Reason `json:"reason,omitempty"`
+	Failure    FailureClass     `json:"failure,omitempty"`
+	Reopen     Reopen           `json:"reopen,omitempty"`
+	Triage     *Triage          `json:"triage,omitempty"`
+	Delegation string           `json:"delegation,omitempty"`
 }
 
 // A drop or a withdrawal is never closed on one piece of evidence so it names its reason, failure class and reopen condition
@@ -225,6 +230,20 @@ func (d Decision) check() error {
 	retires := d.Action == ActionDrop || d.Action == ActionWithdraw
 	if retires && (d.Reason == "" || d.Failure == "" || d.Reopen == "") {
 		return fmt.Errorf("%w: a %s names its reason, failure class and reopen condition", ErrDecideInvalid, d.Action)
+	}
+	return d.checkTriage()
+}
+
+func (d Decision) checkTriage() error {
+	if d.Triage != nil && !d.Triage.valid() {
+		return fmt.Errorf("%w: invalid triage", ErrDecideInvalid)
+	}
+	if (d.RuleCode == RuleDelegated) != (d.Delegation != "") || d.Delegation != "" &&
+		(d.Action != ActionApply || d.Tier != 1 || d.Triage == nil || !d.Triage.eligible()) {
+		return fmt.Errorf("%w: a delegation belongs to an applied preference", ErrDecideInvalid)
+	}
+	if d.Action == ActionHold && d.Tier != topTier {
+		return fmt.Errorf("%w: a hold belongs to the person tier", ErrDecideInvalid)
 	}
 	return nil
 }
@@ -287,6 +306,8 @@ func (e Event) Decide(c Change, d Decision, failed error, now time.Time) (trace.
 		return trace.Trace{}, fmt.Errorf("%w: a decision of curate is pushed and drawn on its own id", ErrDecideInvalid)
 	case (d.Action == ActionRetry) != (failed != nil):
 		return trace.Trace{}, fmt.Errorf("%w: only a retry carries the error of its judge call", ErrDecideInvalid)
+	case d.Delegation != "" && (c.Kind != ChangeAdd || c.Version != 1):
+		return trace.Trace{}, fmt.Errorf("%w: a delegation applies only a new candidate", ErrDecideInvalid)
 	}
 	if err := errors.Join(c.check(), d.check()); err != nil {
 		return trace.Trace{}, err

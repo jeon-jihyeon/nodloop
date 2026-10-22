@@ -203,12 +203,16 @@ func (p *pass) caseOf(ctx context.Context, k knowledge.Knowledge, kind ChangeKin
 		change = fmt.Sprintf("replace [%s] %s\nwith [%s] %s\nscope: %s", cur.Kind, cur.Content, k.Kind, k.Content, k.Run)
 	}
 	anchor := []string{}
+	missing := false
 	for _, item := range place.Items {
 		anchor = append(anchor, fmt.Sprintf("[%s] %s", item.Kind, item.Content))
 	}
 	for _, f := range slices.Concat(p.s.Anchor.Designated(), place.Loaded) {
 		if text, err := p.s.Read(f.Path); err == nil {
 			anchor = append(anchor, fmt.Sprintf("file %s\n%s", f.Path, text))
+			missing = missing || p.seal(text) != f.HMAC
+		} else {
+			missing = true
 		}
 	}
 	var verdicts feedback.Records
@@ -219,7 +223,8 @@ func (p *pass) caseOf(ctx context.Context, k knowledge.Knowledge, kind ChangeKin
 		}
 		verdicts = append(verdicts, feedback.RestoreAll(list)...)
 	}
-	return Case{Change: change, Anchor: anchor, Words: verdicts.Words(k.Evidence.FeedbackTraceIDs), Carried: p.carried(run)}, nil
+	return Case{Change: change, Anchor: anchor, Words: verdicts.Words(k.Evidence.FeedbackTraceIDs),
+		Carried: p.carried(run), AnchorMissing: missing}, nil
 }
 
 // The changes nodloop carried out since the anchor version that reach the run in the order they were made

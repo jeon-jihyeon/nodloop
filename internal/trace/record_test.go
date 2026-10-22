@@ -58,7 +58,7 @@ func TestNameSchemaVersion(t *testing.T) {
 	}{
 		{"an unchanged run schema", trace.NameRun, 1},
 		{"the new decision actions", trace.NameDecide, 2},
-		{"the judge backend and its model answered", trace.NameKnob, 2},
+		{"the delegation stop rule", trace.NameKnob, 2},
 		{"an unknown name does not invent a version", trace.Name("future"), 1},
 	}
 	for _, tc := range tcs {
