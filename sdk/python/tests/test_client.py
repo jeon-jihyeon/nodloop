@@ -304,13 +304,18 @@ async def test_outcome_and_report(binary: str, records: str) -> None:
     (Path(records) / "prune.json").write_text('{"at":"2020-01-02T00:00:00Z","cutoff":"2020-01-01T00:00:00Z"}')
     async with Client(records, binary) as c:
         run = await c.record("stream-bot", "lag comes from partition 7", labels=ACME)
-        await c.outcome(run, "confirmed", confirmed_cause="partition 7 was hot", note="checked the broker", reviewer="ann")
+        await c.outcome(run, "confirmed", confirmed_cause="partition 7 was hot", note="checked the broker", reviewer="ann", actor="code")
+        outcomes = await c.records("outcome")
+        assert outcomes.records[0]["actor"] == "code"
+        assert "proof" not in outcomes.records[0]
         health = await c.report("health")
         loop = await c.report("loop")
         with pytest.raises(ToolError):
             await c.outcome(run, "refuted", confirmed_cause="partition 7 was hot", reviewer="ann")
         with pytest.raises(ToolError, match="a reviewer is required"):
             await c.outcome(run, "refuted")
+        with pytest.raises(ToolError, match="actor"):
+            await c.call("outcome", {"trace_id": run, "result": "confirmed", "reviewer": "ann", "actor": "future"})
 
     assert isinstance(health.report, (list, dict)) and loop.report["totals"]["runs"] == 1
     assert loop.since == "2020-01-01T00:00:00Z"

@@ -94,7 +94,7 @@ func newEffectRecords(t *testing.T, retention string, k knobbed) effectRecords {
 		fb.TraceID, fb.Time = r.ids[days], pruneNow.Add(-time.Hour)
 		require.NoError(t, verdicts.Append(ctx, fb.Record()))
 	}
-	o, err := feedback.NewOutcome(r.ids[35], feedback.ResultConfirmed, "", "", "ann", pruneNow.Add(-time.Hour))
+	o, err := feedback.NewOutcome(r.ids[35], feedback.ResultConfirmed, "", "", "ann", "", pruneNow.Add(-time.Hour))
 	require.NoError(t, err)
 	require.NoError(t, outcomes.Append(ctx, o.Record()))
 	items, err := knowledgefile.New(records)

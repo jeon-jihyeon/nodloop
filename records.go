@@ -33,6 +33,7 @@ type (
 	Verdict    = feedback.Verdict
 	ReasonCode = feedback.ReasonCode
 	Result     = feedback.Result
+	Actor      = feedback.Actor
 	Kind       = knowledge.Kind
 	Status     = knowledge.Status
 	// What an intervention does as against the Action of a vetted tool call
@@ -57,6 +58,11 @@ const (
 	ResultConfirmed    = feedback.ResultConfirmed    // the check held the output
 	ResultRefuted      = feedback.ResultRefuted      // the check showed the output wrong
 	ResultInconclusive = feedback.ResultInconclusive // the check settled nothing
+
+	ActorPerson  = feedback.ActorPerson  // a person's check
+	ActorCode    = feedback.ActorCode    // a deterministic check
+	ActorModel   = feedback.ActorModel   // a model's evaluation
+	ActorUnknown = feedback.ActorUnknown // no evaluator recorded
 
 	KindJudgment = knowledge.KindJudgment // what to do or not do
 	KindMeaning  = knowledge.KindMeaning  // how to read something in this place
@@ -228,6 +234,9 @@ type Outcome struct {
 	Note string
 	// Who checked, required like the reviewer of a judgment
 	Reviewer string
+	// What evaluated the check and empty when the caller does not say
+	// A person actor proves no person so the outcome carries no proof
+	Actor Actor
 }
 
 // Records the outcome of a run that exists
@@ -235,7 +244,7 @@ func (c *Client) Outcome(ctx context.Context, o Outcome) error {
 	if err := c.checkRun(ctx, o.Run); err != nil {
 		return err
 	}
-	out, err := feedback.NewOutcome(o.Run, o.Result, o.ConfirmedCause, o.Note, o.Reviewer, c.now())
+	out, err := feedback.NewOutcome(o.Run, o.Result, o.ConfirmedCause, o.Note, o.Reviewer, o.Actor, c.now())
 	if err != nil {
 		return err
 	}

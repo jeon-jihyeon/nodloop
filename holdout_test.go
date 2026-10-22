@@ -237,6 +237,40 @@ func TestClientOutcome(t *testing.T) {
 	}
 }
 
+func TestClientOutcomeActorGrantsNoAuthority(t *testing.T) {
+	tcs := []struct {
+		name string
+		args nodloop.Actor
+	}{
+		{"legacy", ""}, {"person", nodloop.ActorPerson}, {"code", nodloop.ActorCode},
+		{"model", nodloop.ActorModel}, {"unknown", nodloop.ActorUnknown},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			c := open(t)
+			ctx := t.Context()
+			run, err := c.Record(ctx, nodloop.Run{Producer: "acme", Output: []byte("answer")})
+			require.NoError(t, err)
+			require.NoError(t, c.Outcome(ctx, nodloop.Outcome{
+				Run: run, Result: nodloop.ResultConfirmed, Reviewer: "ann", Actor: tc.args,
+			}))
+			page, err := c.Records(ctx, nodloop.Query{Kind: "outcome"})
+			require.NoError(t, err)
+			require.Len(t, page.Records, 1)
+			var recorded struct{ Actor, Proof string }
+			require.NoError(t, json.Unmarshal(page.Records[0], &recorded))
+			assert.Equal(t, string(tc.args), recorded.Actor)
+			assert.Empty(t, recorded.Proof)
+			_, err = c.Propose(ctx, nodloop.Proposal{Kind: nodloop.KindJudgment, Content: "rule", From: run})
+			assert.ErrorIs(t, err, nodloop.ErrNotCorrected)
+			items, err := c.Items(ctx, "acme", nil)
+			require.NoError(t, err)
+			assert.Empty(t, items)
+		})
+	}
+}
+
 // A directory a service pruned under WithRetention keeps the cutoff so a client without retention reads the same window
 func TestClientReportReadsTheWindowOfTheLastPrune(t *testing.T) {
 	ctx := context.Background()

@@ -191,6 +191,7 @@ func typeSchemas() map[reflect.Type]*jsonschema.Schema {
 		reflect.TypeFor[time.Time]():           {Type: "string", Format: "date-time"},
 		reflect.TypeFor[feedback.Verdict]():    enum(feedback.Verdicts()),
 		reflect.TypeFor[feedback.Result]():     enum(feedback.Results()),
+		reflect.TypeFor[feedback.Actor]():      enum(feedback.Actors()),
 		reflect.TypeFor[trace.Proof]():         enum(trace.Proofs()),
 		reflect.TypeFor[trace.Authority]():     enum(trace.Authorities()),
 		reflect.TypeFor[trace.Action]():        enum(trace.Actions()),

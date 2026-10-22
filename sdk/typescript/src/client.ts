@@ -319,16 +319,19 @@ export class Client {
    * Records what a real check found for a run
    * A different fact from the verdict on the output and confirmedCause only goes with confirmed
    * reviewer names who checked and is required over stdio while a server key names itself
+   * actor names what kind of evaluator checked
+   * It never proves a person since only the transport does
    */
   async outcome(
     run: string,
     result: "confirmed" | "refuted" | "inconclusive",
-    options: { confirmedCause?: string; note?: string; reviewer?: string } = {},
+    options: { confirmedCause?: string; note?: string; reviewer?: string; actor?: "person" | "code" | "model" | "unknown" } = {},
   ): Promise<void> {
     const args: Record<string, unknown> = { trace_id: run, result };
     if (options.confirmedCause) args.confirmed_cause = options.confirmedCause;
     if (options.note) args.note = options.note;
     if (options.reviewer) args.reviewer = options.reviewer;
+    if (options.actor) args.actor = options.actor;
     await this.call("outcome", args);
   }
 

@@ -260,7 +260,7 @@ func schemaFor[T any](types map[reflect.Type]*jsonschema.Schema) *jsonschema.Sch
 func answers() map[reflect.Type]*jsonschema.Schema {
 	values := &jsonschema.Schema{Types: []string{"null", "array"}, Items: &jsonschema.Schema{Type: "string"}}
 	return map[reflect.Type]*jsonschema.Schema{
-		reflect.TypeFor[json.RawMessage](): {},
+		reflect.TypeFor[json.RawMessage](): {Types: []string{"null", "boolean", "object", "array", "number", "string"}},
 		reflect.TypeFor[trace.Labels]():    {Types: []string{"null", "object"}, AdditionalProperties: values},
 		reflect.TypeFor[map[string]any]():  {Types: []string{"null", "object"}},
 	}
@@ -285,7 +285,12 @@ func enums() map[reflect.Type]*jsonschema.Schema {
 	for _, c := range trace.Choices() {
 		choices = append(choices, string(c))
 	}
+	actors := make([]any, 0, len(feedback.Actors()))
+	for _, a := range feedback.Actors() {
+		actors = append(actors, string(a))
+	}
 	return map[reflect.Type]*jsonschema.Schema{
+		reflect.TypeFor[feedback.Actor]():      {Type: "string", Enum: actors},
 		reflect.TypeFor[feedback.ReasonCode](): {Type: "string", Enum: codes},
 		reflect.TypeFor[loop.ReportName]():     {Type: "string", Enum: reports},
 		reflect.TypeFor[recordKind]():          {Type: "string", Enum: recordKinds()},
@@ -418,6 +423,7 @@ type outcomeInput struct {
 	ConfirmedCause string          `json:"confirmed_cause,omitempty" jsonschema:"the cause that held, in the reviewer's words"`
 	Note           string          `json:"note,omitempty" jsonschema:"what the check showed beyond the result, such as why it was inconclusive"`
 	Reviewer       string          `json:"reviewer,omitempty" jsonschema:"who checked: the person's name. Required over stdio and the key name by default under a server key. A key a person holds records its own name for any name but session. The agent server of the plugin records session whatever it says"`
+	Actor          feedback.Actor  `json:"actor,omitempty" jsonschema:"who evaluated the check: person, code, model or unknown. Empty reads as model for session, as person under a key that proves a person and else as unknown. A person claim proves no person"`
 }
 
 type outcomeAnswer struct {
@@ -430,10 +436,13 @@ func (s *Server) outcome(ctx context.Context, _ *sdk.CallToolRequest, in outcome
 	if _, err := s.checkRun(ctx, in.TraceID); err != nil {
 		return nil, outcomeAnswer{}, err
 	}
-	o, err := feedback.NewOutcome(in.TraceID, in.Result, in.ConfirmedCause, in.Note, s.reviewer(in.Reviewer), s.now())
+	reviewer := s.reviewer(in.Reviewer)
+	actor := in.Actor.Declared(s.proof(), reviewer)
+	o, err := feedback.NewOutcome(in.TraceID, in.Result, in.ConfirmedCause, in.Note, reviewer, actor, s.now())
 	if err != nil {
 		return nil, outcomeAnswer{}, err
 	}
+	o = o.WithProof(s.proof())
 	if err = s.outcomes.Append(ctx, o.Record()); err != nil {
 		return nil, outcomeAnswer{}, err
 	}

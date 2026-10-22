@@ -939,6 +939,8 @@ export interface OutcomeRecord {
   confirmed_cause?: string;
   note?: string;
   reviewer: string;
+  actor?: "person" | "code" | "model" | "unknown";
+  proof?: "key" | "terminal" | "elicitation" | "reply" | "none";
   schema_version: 1;
 }
 

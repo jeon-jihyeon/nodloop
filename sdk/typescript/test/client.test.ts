@@ -329,10 +329,18 @@ test("an outcome is recorded on a run and a report reads by name with its window
   const c = await Client.open({ recordDir: records, binary: binary() });
   try {
     const run = await c.record({ producer: "stream-bot", output: "lag comes from partition 7", labels: acme });
-    await c.outcome(run, "confirmed", { confirmedCause: "partition 7 was hot", note: "checked the broker", reviewer: "ann" });
+    await c.outcome(run, "confirmed", {
+      confirmedCause: "partition 7 was hot", note: "checked the broker", reviewer: "ann", actor: "code",
+    });
+    const outcomes = await c.records("outcome");
+    assert.equal(outcomes.records[0].actor, "code");
+    assert.equal(outcomes.records[0].proof, undefined);
     const loop = await c.report("loop");
     await assert.rejects(c.outcome(run, "refuted", { confirmedCause: "partition 7 was hot", reviewer: "ann" }), ToolError);
     await assert.rejects(c.outcome(run, "refuted"), (e) => e instanceof ToolError && /a reviewer is required/.test(e.message));
+    await assert.rejects(c.call("outcome", {
+      trace_id: run, result: "confirmed", reviewer: "ann", actor: "future",
+    }), ToolError);
 
     assert.equal(loop.report.totals.runs, 1);
     assert.equal(loop.since, "2020-01-01T00:00:00Z");

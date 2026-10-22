@@ -580,7 +580,9 @@ func TestNewRedactsSessionRecords(t *testing.T) {
 			require.NoError(t, err)
 			person, err := feedback.New("t1", feedback.VerdictReject, "", tc.args, nil, "sam", now)
 			require.NoError(t, err)
-			outcome, err := feedback.NewOutcome("t1", feedback.ResultConfirmed, tc.args, tc.args, feedback.ReviewerSession, now)
+			outcome, err := feedback.NewOutcome(
+				"t1", feedback.ResultConfirmed, tc.args, tc.args, feedback.ReviewerSession, "", now,
+			)
 			require.NoError(t, err)
 
 			assert.Equal(t, []string{tc.want, tc.want}, []string{session.Reason, captured.Reason})

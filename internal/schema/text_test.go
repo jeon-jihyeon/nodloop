@@ -67,7 +67,10 @@ func TestKindProperties(t *testing.T) {
 	for _, p := range props {
 		names = append(names, p.Name)
 	}
-	assert.Equal(t, []string{"record_kind", "record_id", "trace_id", "time", "result", "confirmed_cause", "note", "reviewer", "schema_version"}, names)
+	assert.Equal(t, []string{
+		"record_kind", "record_id", "trace_id", "time", "result", "confirmed_cause", "note", "reviewer", "actor", "proof",
+		"schema_version",
+	}, names)
 	assert.JSONEq(t, `{"type":"string","format":"date-time"}`, string(props[3].Schema))
 }
 

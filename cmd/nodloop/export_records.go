@@ -363,9 +363,14 @@ func verdictEvaluation(v feedback.Feedback, sessionID string) otel.Evaluation {
 }
 
 func outcomeEvaluation(o feedback.Outcome, sessionID string) otel.Evaluation {
+	annotator := map[feedback.Actor]otel.Annotator{
+		feedback.ActorPerson: otel.AnnotatorHuman, feedback.ActorCode: otel.AnnotatorCode,
+		feedback.ActorModel: otel.AnnotatorLLM,
+	}[o.Evaluator()]
 	return otel.Evaluation{
 		Name: otel.EvaluationOutcome, Time: o.Time, SessionID: sessionID, Label: string(o.Result),
-		Explanation: cmp.Or(o.ConfirmedCause, o.Note), Reviewer: o.Reviewer, Annotator: otel.AnnotatorHuman,
+		Explanation: cmp.Or(o.ConfirmedCause, o.Note), Reviewer: o.Reviewer, Annotator: annotator,
+		Actor: string(o.Evaluator()), Proof: string(o.Proof),
 		Span: otel.OutcomeSpan(o.TraceID, o.Time), Target: otel.RunSpan(o.TraceID),
 	}
 }

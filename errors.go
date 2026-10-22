@@ -28,6 +28,10 @@ var (
 	ErrReportUnknown = loop.ErrReportUnknown
 	// An Outcome whose result is not one of the results
 	ErrResultUnknown = feedback.ErrResultUnknown
+	// An Outcome whose actor is not one of the actors
+	ErrActorUnknown = feedback.ErrActorUnknown
+	// An Outcome with a person actor under reviewer session
+	ErrActorUnexpected = feedback.ErrActorUnexpected
 	// A Judgment or an Outcome whose run id names no recorded run
 	ErrRunNotFound = record.ErrTraceNotFound
 	// A Run whose Duration is below zero

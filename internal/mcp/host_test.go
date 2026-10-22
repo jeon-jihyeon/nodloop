@@ -2,6 +2,7 @@ package mcp_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"slices"
 	"sync"
@@ -14,6 +15,36 @@ import (
 	"github.com/jeon-jihyeon/nodloop/internal/mcp"
 	"github.com/jeon-jihyeon/nodloop/internal/testkit"
 )
+
+func TestHostOutputJSONSchemas(t *testing.T) {
+	tcs := []struct {
+		name string
+		args [2]string
+	}{
+		{"compaction schema", [2]string{"compaction", "schema"}},
+		{"run output", [2]string{"extraction", "output"}},
+		{"edited output", [2]string{"extraction", "edited"}},
+		{"extraction schema", [2]string{"extraction", "schema"}},
+		{"intervention record", [2]string{"intervene", "intervention"}},
+		{"report payload", [2]string{"report", "report"}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			c := testkit.Connect(t, serve(testkit.Open(t), mcp.Caller{}))
+			schemas := c.OutputSchemas(t)
+			tool, ok := schemas[tc.args[0]].(map[string]any)
+			require.True(t, ok)
+			props, ok := tool["properties"].(map[string]any)
+			require.True(t, ok)
+			value, ok := props[tc.args[1]].(map[string]any)
+			require.True(t, ok, "nested schemas must remain objects for strict consumers")
+			encoded, err := json.Marshal(value)
+			require.NoError(t, err)
+			assert.JSONEq(t, `{"type":["null","boolean","object","array","number","string"]}`, string(encoded))
+		})
+	}
+}
 
 // Without a record dir every tool answers the open error
 func TestHostOpenFails(t *testing.T) {

@@ -93,7 +93,7 @@ func newRollupRecords(t *testing.T) rollupRecords {
 	r.judge(t, "named", feedback.Feedback{Verdict: feedback.VerdictReject, ReasonCode: feedback.ReasonFact, Reviewer: "ci", Proof: trace.ProofNone})
 	r.judge(t, "held", feedback.Feedback{Verdict: feedback.VerdictEdit, ReasonCode: form, Reviewer: "ann", Proof: trace.ProofKey, Audit: true})
 	r.judge(t, "next cycle", feedback.Feedback{Verdict: feedback.VerdictReject, ReasonCode: form, Reviewer: "ann", Proof: trace.ProofKey})
-	o, err := feedback.NewOutcome(r.ids["refuted"], feedback.ResultRefuted, "", "", "ann", cycleDay(30))
+	o, err := feedback.NewOutcome(r.ids["refuted"], feedback.ResultRefuted, "", "", "ann", "", cycleDay(30))
 	require.NoError(t, err)
 	require.NoError(t, r.st.Outcomes.Append(ctx, o.Record()))
 	_, _, err = r.st.Ledger.Propose(ctx, knowledge.Knowledge{

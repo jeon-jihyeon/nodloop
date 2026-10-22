@@ -83,7 +83,7 @@ type EffectRow struct {
 	// The queue draws them per arm so they stay free of what people chose to judge
 	AuditJudged    int `json:"audit_judged"`
 	AuditCorrected int `json:"audit_corrected"`
-	// The latest outcome a person recorded on the runs
+	// Latest observations of the runs across all evaluator actors
 	Confirmed int `json:"confirmed"`
 	Refuted   int `json:"refuted"`
 	// The fields below are the same on both rows of a producer
@@ -129,7 +129,7 @@ func (r Runs) tally(items knowledge.Set, outcomes feedback.Outcomes, rolled Roll
 		evidence[knowledge.Ref{ID: k.ID, Version: k.Version}] = k.Evidence.FeedbackTraceIDs
 	}
 	latest := map[string]feedback.Outcome{}
-	for _, o := range outcomes.Human().Latest() {
+	for _, o := range outcomes.Latest() {
 		latest[o.TraceID] = o
 	}
 	t, next := effectTally{}, 0
