@@ -10,6 +10,8 @@ var (
 	ErrEditedUnexpected     = errors.New("feedback: only an edit verdict carries an edited output")
 	ErrResultUnknown        = errors.New("feedback: result must be confirmed or refuted or inconclusive")
 	ErrCauseUnexpected      = errors.New("feedback: only a confirmed result names a confirmed cause")
+	ErrActorUnknown         = errors.New("feedback: actor must be person or code or model or unknown")
+	ErrActorUnexpected      = errors.New("feedback: an inferred reviewer cannot declare a person actor")
 	ErrReasonCodeUnknown    = errors.New("feedback: reason code must be fact or approach or scope or form or other")
 	ErrReasonCodeUnexpected = errors.New("feedback: only an edit or reject verdict carries a reason code")
 	// A missing name read as a person's verdict before and silently stopped the extraction of an inferred correction

@@ -55,7 +55,7 @@ func (f Feedback) RecordID() string {
 func RestoreOutcome(r record.Outcome) Outcome {
 	return Outcome{
 		TraceID: r.TraceID, Time: r.Time, Result: Result(r.Result), ConfirmedCause: r.ConfirmedCause, Note: r.Note,
-		Reviewer: r.Reviewer,
+		Reviewer: r.Reviewer, Actor: Actor(r.Actor), Proof: trace.Proof(r.Proof),
 	}
 }
 
@@ -75,6 +75,6 @@ func RestoreOutcomes(rs []record.Outcome) Outcomes {
 func (o Outcome) Record() record.Outcome {
 	return record.Outcome{
 		TraceID: o.TraceID, Time: o.Time, Result: string(o.Result), ConfirmedCause: o.ConfirmedCause, Note: o.Note,
-		Reviewer: o.Reviewer, SchemaVersion: OutcomeVersion,
+		Reviewer: o.Reviewer, Actor: string(o.Actor), Proof: string(o.Proof), SchemaVersion: OutcomeVersion,
 	}
 }

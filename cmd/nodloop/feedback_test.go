@@ -159,3 +159,91 @@ func TestRunFeedbackReviewerReserved(t *testing.T) {
 		})
 	}
 }
+
+func TestRunFeedbackOutcomeActor(t *testing.T) {
+	type args struct {
+		actor string
+		proof trace.Proof
+	}
+	type want struct {
+		actor, proof  string
+		code, records int
+	}
+	tcs := []struct {
+		name string
+		args args
+		want want
+	}{
+		{"a script has unknown provenance", args{"", trace.ProofNone}, want{"", "", 0, 1}},
+		{"a terminal defaults to person", args{"", atTerminal}, want{"person", "terminal", 0, 1}},
+		{"a code check keeps no terminal proof", args{"code", atTerminal}, want{"code", "", 0, 1}},
+		{"a model check keeps no terminal proof", args{"model", atTerminal}, want{"model", "", 0, 1}},
+		{"a person's claim proves nobody", args{"person", trace.ProofNone}, want{"person", "none", 0, 1}},
+		{"explicit unknown stays unknown at a terminal", args{"unknown", atTerminal}, want{"unknown", "", 0, 1}},
+		{"invalid actors record nothing", args{"future", atTerminal}, want{"", "", 1, 0}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir, records := t.TempDir(), t.TempDir()
+			getenv := envOf(map[string]string{"HOME": dir, envRecordDir: records})
+			now := func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
+			out := filepath.Join(dir, "output.json")
+			require.NoError(t, os.WriteFile(out, []byte(`{"answer":"ok"}`), 0600))
+			var id, stderr bytes.Buffer
+			require.Equal(t, 0, runRun([]string{"record", "--producer", "session", "--output", out}, getenv, now, &id, &stderr))
+			flags := []string{"outcome", "--trace", strings.TrimSpace(id.String()), "--result", "confirmed", "--reviewer", "ann"}
+			flags = append(flags, "--actor", tc.args.actor)
+			code := runFeedback(flags, getenv, now, tc.args.proof, &bytes.Buffer{}, &stderr)
+			store, err := feedbackfile.NewOutcomeStore(records)
+			require.NoError(t, err)
+			found, err := store.List(t.Context(), "")
+			require.NoError(t, err)
+			var actor, proof string
+			for _, o := range found {
+				actor, proof = o.Actor, o.Proof
+			}
+			assert.Equal(t, tc.want, want{actor, proof, code, len(found)})
+		})
+	}
+}
+
+func TestRunFeedbackOutcomeFailures(t *testing.T) {
+	type args struct {
+		flags     []string
+		directory string
+	}
+	tcs := []struct {
+		name string
+		args args
+		want string
+	}{
+		{"missing trace", args{[]string{"--result", "confirmed"}, ""}, "--trace and a --result"},
+		{"missing result", args{[]string{"--trace", "{run}"}, ""}, "--trace and a --result"},
+		{"run not found", args{[]string{"--trace", "absent", "--result", "confirmed"}, ""}, "not found"},
+		{"outcome store cannot open", args{[]string{"--trace", "{run}", "--result", "confirmed"}, "outcomes.jsonl.bak"},
+			"feedback file"},
+		{"outcome cannot append", args{[]string{"--trace", "{run}", "--result", "confirmed"}, "outcomes.jsonl"},
+			"append failed"},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			home, records := t.TempDir(), t.TempDir()
+			getenv := envOf(map[string]string{"HOME": home, envRecordDir: records})
+			now := func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
+			output := filepath.Join(home, "output.json")
+			require.NoError(t, os.WriteFile(output, []byte(`"answer"`), 0600))
+			var id, stderr bytes.Buffer
+			require.Equal(t, 0, runRun([]string{"record", "--producer", "acme", "--output", output}, getenv, now, &id, &stderr))
+			require.NoError(t, os.MkdirAll(filepath.Join(records, tc.args.directory), 0700))
+			flags := []string{"outcome", "--reviewer", "ann"}
+			for _, flag := range tc.args.flags {
+				flags = append(flags, strings.ReplaceAll(flag, "{run}", strings.TrimSpace(id.String())))
+			}
+			code := runFeedback(flags, getenv, now, trace.ProofNone, &bytes.Buffer{}, &stderr)
+			assert.Equal(t, 1, code)
+			assert.Contains(t, stderr.String(), tc.want)
+		})
+	}
+}

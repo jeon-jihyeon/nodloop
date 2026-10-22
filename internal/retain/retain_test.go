@@ -112,7 +112,7 @@ func fixture(t *testing.T) (testkit.Stores, map[string]string) {
 	judge(t, st, ids["judged"], feedback.VerdictApprove, "ann")
 	judge(t, st, ids["inferred"], feedback.VerdictReject, feedback.ReviewerSession)
 	judge(t, st, ids["withdrawn"], feedback.VerdictWithdraw, "ann")
-	o, err := feedback.NewOutcome(ids["checked"], feedback.ResultRefuted, "", "", "ann", now)
+	o, err := feedback.NewOutcome(ids["checked"], feedback.ResultRefuted, "", "", "ann", "", now)
 	require.NoError(t, err)
 	require.NoError(t, st.Outcomes.Append(ctx, o.Record()))
 	propose(t, st, "a", knowledge.Evidence{FeedbackTraceIDs: []string{ids["taught"]}})

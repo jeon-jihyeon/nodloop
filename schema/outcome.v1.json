@@ -36,6 +36,25 @@
     "reviewer": {
       "type": "string"
     },
+    "actor": {
+      "type": "string",
+      "enum": [
+        "person",
+        "code",
+        "model",
+        "unknown"
+      ]
+    },
+    "proof": {
+      "type": "string",
+      "enum": [
+        "key",
+        "terminal",
+        "elicitation",
+        "reply",
+        "none"
+      ]
+    },
     "schema_version": {
       "type": "integer",
       "const": 1

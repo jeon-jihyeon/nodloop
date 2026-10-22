@@ -5,9 +5,144 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/jeon-jihyeon/nodloop/internal/feedback"
+	"github.com/jeon-jihyeon/nodloop/internal/record"
+	"github.com/jeon-jihyeon/nodloop/internal/trace"
 )
+
+func TestOutcomeEvaluator(t *testing.T) {
+	type want struct {
+		actor            feedback.Actor
+		implicit, proven bool
+	}
+	tcs := []struct {
+		name string
+		args record.Outcome
+		want want
+	}{
+		{"legacy named is unknown", record.Outcome{Reviewer: "ann"}, want{feedback.ActorUnknown, true, false}},
+		{"legacy session is a model", record.Outcome{Reviewer: "session"}, want{feedback.ActorModel, true, false}},
+		{"legacy capture is a model", record.Outcome{Reviewer: "nodloop"}, want{feedback.ActorModel, true, false}},
+		{"legacy proof alone names no evaluator", record.Outcome{Reviewer: "ann", Proof: "key"},
+			want{feedback.ActorUnknown, true, false}},
+		{"future actor remains unknown", record.Outcome{Reviewer: "ann", Actor: "future", Proof: "key"},
+			want{feedback.ActorUnknown, true, false}},
+		{"person claim proves nobody", record.Outcome{Reviewer: "ann", Actor: "person"},
+			want{feedback.ActorPerson, false, false}},
+		{"person key proves the person", record.Outcome{Reviewer: "ann", Actor: "person", Proof: "key"},
+			want{feedback.ActorPerson, false, true}},
+		{"code with a copied proof is no person", record.Outcome{Reviewer: "ann", Actor: "code", Proof: "key"},
+			want{feedback.ActorCode, true, false}},
+		{"inferred person claim is never proven", record.Outcome{Reviewer: "session", Actor: "person", Proof: "key"},
+			want{feedback.ActorModel, true, false}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := feedback.RestoreOutcome(tc.args)
+			assert.Equal(t, tc.want, want{got.Evaluator(), got.Implicit(), got.Proven()})
+			assert.Equal(t, tc.args.Actor, got.Record().Actor)
+		})
+	}
+}
+
+func TestNewOutcomeActor(t *testing.T) {
+	type args struct {
+		actor    feedback.Actor
+		reviewer string
+	}
+	type want struct {
+		err   error
+		actor feedback.Actor
+		text  string
+	}
+	tcs := []struct {
+		name string
+		args args
+		want want
+	}{
+		{"a legacy name stays unknown", args{"", "ann"}, want{nil, feedback.ActorUnknown, "token=[redacted]"}},
+		{"session defaults to model", args{"", "session"}, want{nil, feedback.ActorModel, "token=[redacted]"}},
+		{"code is explicit", args{feedback.ActorCode, "ann"}, want{nil, feedback.ActorCode, "token=[redacted]"}},
+		{"model is explicit", args{feedback.ActorModel, "ann"}, want{nil, feedback.ActorModel, "token=[redacted]"}},
+		{"unknown is explicit", args{feedback.ActorUnknown, "ann"}, want{nil, feedback.ActorUnknown, "token=[redacted]"}},
+		{"person keeps their text", args{feedback.ActorPerson, "ann"}, want{nil, feedback.ActorPerson, "token=examplevalue"}},
+		{"unknown enum is refused", args{"future", "ann"}, want{feedback.ErrActorUnknown, feedback.ActorUnknown, ""}},
+		{"inferred person claim is refused", args{feedback.ActorPerson, "session"},
+			want{feedback.ErrActorUnexpected, feedback.ActorUnknown, ""}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := feedback.NewOutcome("r1", feedback.ResultConfirmed, "token=examplevalue", "token=examplevalue",
+				tc.args.reviewer, tc.args.actor, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+			assert.ErrorIs(t, err, tc.want.err)
+			assert.Equal(t, tc.want.actor, got.Evaluator())
+			assert.Equal(t, tc.want.text, got.Note)
+			assert.Equal(t, tc.want.text, got.ConfirmedCause)
+		})
+	}
+}
+
+func TestActorDeclared(t *testing.T) {
+	type args struct {
+		actor    feedback.Actor
+		proof    trace.Proof
+		reviewer string
+	}
+	tcs := []struct {
+		name string
+		args args
+		want feedback.Actor
+	}{
+		{"a terminal reads as a person", args{"", trace.ProofTerminal, "ann"}, feedback.ActorPerson},
+		{"a key reads as a person", args{"", trace.ProofKey, "ann"}, feedback.ActorPerson},
+		{"no proof names nobody", args{"", trace.ProofNone, "ann"}, ""},
+		{"an inferred reviewer stays unnamed under a key", args{"", trace.ProofKey, feedback.ReviewerSession}, ""},
+		{"a named actor stays as named", args{feedback.ActorCode, trace.ProofKey, "ann"}, feedback.ActorCode},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.want, tc.args.actor.Declared(tc.args.proof, tc.args.reviewer))
+		})
+	}
+}
+
+func TestOutcomeProof(t *testing.T) {
+	type args struct {
+		actor feedback.Actor
+		proof trace.Proof
+	}
+	type want struct {
+		proof  trace.Proof
+		proven bool
+	}
+	tcs := []struct {
+		name string
+		args args
+		want want
+	}{
+		{"a terminal proves a person", args{feedback.ActorPerson, trace.ProofTerminal}, want{trace.ProofTerminal, true}},
+		{"a key proves a person", args{feedback.ActorPerson, trace.ProofKey}, want{trace.ProofKey, true}},
+		{"a person without proof stays unproven", args{feedback.ActorPerson, trace.ProofNone}, want{trace.ProofNone, false}},
+		{"an unknown proof proves nobody", args{feedback.ActorPerson, "future"}, want{"future", false}},
+		{"a code check has no person proof", args{feedback.ActorCode, trace.ProofKey}, want{"", false}},
+		{"a model has no person proof", args{feedback.ActorModel, trace.ProofTerminal}, want{"", false}},
+		{"a legacy outcome has no person proof", args{"", trace.ProofKey}, want{"", false}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := feedback.NewOutcome("r1", feedback.ResultConfirmed, "", "", "ann", tc.args.actor, time.Time{})
+			require.NoError(t, err)
+			got = got.WithProof(tc.args.proof)
+			assert.Equal(t, tc.want, want{got.Proof, got.Proven()})
+		})
+	}
+}
 
 func TestResultValid(t *testing.T) {
 	tcs := []struct {
@@ -92,7 +227,7 @@ func TestNewOutcome(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			got, err := feedback.NewOutcome(
-				tc.args.traceID, tc.args.result, tc.args.confirmedCause, "note", tc.args.reviewer, now,
+				tc.args.traceID, tc.args.result, tc.args.confirmedCause, "note", tc.args.reviewer, "", now,
 			)
 			assert.ErrorIs(t, err, tc.want.err)
 			assert.Equal(t, tc.want.outcome, got)
@@ -108,8 +243,8 @@ func TestOutcomeImplicit(t *testing.T) {
 	}{
 		{"session reviewer is implicit", feedback.ReviewerSession, true},
 		{"nodloop reviewer is implicit", feedback.ReviewerNodloop, true},
-		{"author reviewer of earlier releases is a person", "author", false},
-		{"named reviewer is a person", "sam", false},
+		{"legacy author does not prove a person", "author", true},
+		{"a named reviewer alone does not prove a person", "ann", true},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {

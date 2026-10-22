@@ -79,11 +79,11 @@ func (r entry) statedOnly(versions map[knowledge.Ref]knowledge.Knowledge) bool {
 
 // The runs as the records tell them joined once
 // 1. every run without error joins with the versions its input names, a run whose input does not read applied none
-// 2. the verdict and the outcome of a run are the latest ones a person gave
+// 2. verdicts keep named judgments apart from inferred ones and outcomes keep the latest observation from any evaluator
 type History struct {
 	// Newest first as the store lists them
 	entries []entry
-	// Latest human records per trace id
+	// Latest named verdicts and latest observations per trace id
 	verdicts map[string]feedback.Feedback
 	outcomes map[string]feedback.Outcome
 	// Trace ids of the runs without error that have any feedback or any outcome
@@ -184,7 +184,7 @@ func New(traces trace.Traces, verdicts feedback.Records, outcomes feedback.Outco
 	for _, fb := range verdicts.Human().Latest() {
 		h.verdicts[fb.TraceID] = fb
 	}
-	for _, o := range outcomes.Human().Latest() {
+	for _, o := range outcomes.Latest() {
 		h.outcomes[o.TraceID] = o
 	}
 	return h

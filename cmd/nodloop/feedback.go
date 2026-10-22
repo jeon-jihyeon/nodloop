@@ -19,9 +19,9 @@ import (
 // Flags of the feedback subcommands
 // Each action reads the ones it needs
 type feedbackFlags struct {
-	traceID, verdict, reviewer, code, reason, edited, result, cause, note string
-	limit                                                                 int
-	audit                                                                 bool
+	traceID, verdict, reviewer, code, reason, edited, result, cause, note, actor string
+	limit                                                                        int
+	audit                                                                        bool
 }
 
 func (f *feedbackFlags) bind(fs *flag.FlagSet) {
@@ -36,6 +36,7 @@ func (f *feedbackFlags) bind(fs *flag.FlagSet) {
 	fs.StringVar(&f.result, "result", "", "outcome: confirmed, refuted or inconclusive")
 	fs.StringVar(&f.cause, "cause", "", "outcome: the cause that was confirmed")
 	fs.StringVar(&f.note, "note", "", "outcome: free text")
+	fs.StringVar(&f.actor, "actor", "", "outcome: person, code, model or unknown; a name alone proves no person")
 	fs.BoolVar(&f.audit, "audit", false, "add: run selected by random audit")
 }
 
@@ -64,7 +65,7 @@ func runFeedback(args []string, getenv func(string) string, now func() time.Time
 	if err != nil {
 		return fail(stderr, "feedback", err)
 	}
-	cmd := feedbackCommand{app: a, out: stdout, audit: flags.audit, proof: proof}
+	cmd := feedbackCommand{app: a, out: stdout, audit: flags.audit, proof: proof, actor: feedback.Actor(flags.actor)}
 	ctx := context.Background()
 	switch args[0] {
 	case "list":
@@ -88,6 +89,7 @@ type feedbackCommand struct {
 	out   io.Writer
 	audit bool
 	proof trace.Proof
+	actor feedback.Actor
 }
 
 func (c feedbackCommand) list(ctx context.Context, f record.FeedbackFilter) error {
@@ -152,10 +154,11 @@ func (c feedbackCommand) outcome(
 	if traceID == "" || result == "" {
 		return fmt.Errorf("outcome: --trace and a --result of confirmed, refuted or inconclusive %w", errRequired)
 	}
-	o, err := feedback.NewOutcome(traceID, result, cause, note, reviewer, c.app.now())
+	o, err := feedback.NewOutcome(traceID, result, cause, note, reviewer, c.actor.Declared(c.proof, reviewer), c.app.now())
 	if err != nil {
 		return err
 	}
+	o = o.WithProof(c.proof)
 	if err := c.app.checkRuns(ctx, o.TraceID); err != nil {
 		return err
 	}

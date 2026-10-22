@@ -10,6 +10,8 @@ type Outcome struct {
 	ConfirmedCause string    `json:"confirmed_cause,omitempty"`
 	Note           string    `json:"note,omitempty"`
 	Reviewer       string    `json:"reviewer"`
+	Actor          string    `json:"actor,omitempty"`
+	Proof          string    `json:"proof,omitempty"`
 	// The version of the published schema outcome
 	// A line of an earlier release lacks it and reads as version 1
 	SchemaVersion int `json:"schema_version,omitempty"`

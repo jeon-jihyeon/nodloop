@@ -58,9 +58,12 @@ type Evaluation struct {
 	Edited     string
 	ReasonCode string
 	// Who judged: the reviewer of a verdict or an outcome, the person of an answer or an intervention, the approver of a decision
-	Reviewer  string
+	Reviewer string
+	// Empty leaves the annotator kind out as for an outcome of unknown evaluator
 	Annotator Annotator
-	// What proved the caller a person on a verdict, an answer or an intervention
+	// The evaluator an outcome declared and empty on every other evaluation
+	Actor string
+	// What proved the caller a person independently of the declared evaluator
 	Proof string
 	// The span of the evaluation itself from its key
 	Span SpanRef
@@ -115,8 +118,10 @@ type Decision struct {
 func (e Evaluation) attributes(content bool, prefix string) []attribute {
 	attrs := []attribute{
 		str("gen_ai.evaluation.name", string(e.Name)), str("gen_ai.evaluation.score.label", e.Label),
-		str(prefix+"name", string(e.Name)), str(prefix+"label", e.Label), str(prefix+"annotator_kind", string(e.Annotator)),
+		str(prefix+"name", string(e.Name)), str(prefix+"label", e.Label),
 	}
+	attrs = appendStr(attrs, prefix+"annotator_kind", string(e.Annotator))
+	attrs = appendStr(attrs, "nodloop.actor", e.Actor)
 	if score, ok := e.score(); ok {
 		attrs = append(attrs, double("gen_ai.evaluation.score.value", score), double(prefix+"score", score))
 	}

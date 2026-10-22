@@ -22,6 +22,7 @@ func runTrace(args []string, getenv func(string) string, now func() time.Time, s
 	records.bind(fs)
 	var f record.TraceFilter
 	name := fs.String("name", "", "trace name such as run")
+	jsonOutput := fs.Bool("json", false, "list: JSON metadata only with precise time and no recorded text")
 	fs.StringVar(&f.SessionID, "session", "", "session id")
 	fs.StringVar(&f.Subject, "subject", "", "subject such as a task or file name")
 	fs.IntVar(&f.Limit, "limit", 0, "newest n traces. 0 means all")
@@ -46,7 +47,7 @@ func runTrace(args []string, getenv func(string) string, now func() time.Time, s
 	if err != nil {
 		return fail(stderr, "trace", err)
 	}
-	cmd := traceCommand{store: store, out: stdout}
+	cmd := traceCommand{store: store, out: stdout, json: *jsonOutput}
 	ctx := context.Background()
 	switch args[0] {
 	case "list":
@@ -65,12 +66,27 @@ func runTrace(args []string, getenv func(string) string, now func() time.Time, s
 type traceCommand struct {
 	store *tracefile.Store
 	out   io.Writer
+	json  bool
 }
 
 func (c traceCommand) list(ctx context.Context, f record.TraceFilter) error {
+	f.WithoutOutput = true
 	traces, err := c.store.List(ctx, f)
 	if err != nil {
 		return err
+	}
+	if c.json {
+		type metadata struct {
+			ID        string    `json:"id"`
+			Time      time.Time `json:"time"`
+			Name      string    `json:"name"`
+			SessionID string    `json:"session_id"`
+		}
+		rows := make([]metadata, 0, len(traces))
+		for _, t := range traces {
+			rows = append(rows, metadata{ID: t.ID, Time: t.Time, Name: t.Name, SessionID: t.SessionID})
+		}
+		return json.NewEncoder(c.out).Encode(rows)
 	}
 	for _, t := range trace.RestoreAll(traces) {
 		fmt.Fprintf(c.out, "%s\t%s\t%s\t%s\t$%.4f\n", t.ID, t.Time.Format(time.RFC3339), t.Name, t.Subject, t.Usage.CostUSD)
@@ -86,10 +102,8 @@ func (c traceCommand) show(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	b, err := json.MarshalIndent(trace.Restore(t), "", "  ")
-	if err != nil {
-		return err
-	}
-	fmt.Fprintln(c.out, string(b))
-	return nil
+	// Stored JSON values and times were decoded successfully so they encode again
+	b, _ := json.MarshalIndent(trace.Restore(t), "", "  ")
+	_, err = c.out.Write(append(b, '\n'))
+	return err
 }

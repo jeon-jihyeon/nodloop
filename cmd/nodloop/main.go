@@ -170,8 +170,8 @@ commands:
                             per cycle and tier, overturns and repeat corrections, the CUSUM, the judge shift and the effect
                             of each lesson nodloop approved against the sessions the item hold kept it from
                             --json on loop, effect, extract, critic, replay and curation prints the report as one JSON value
-  trace list [--name <n>] [--session <id>] [--subject <s>] [--limit <n>]
-                            List traces newest first
+  trace list [--name <n>] [--session <id>] [--subject <s>] [--limit <n>] [--json]
+                            List traces newest first. --json prints only id, time, name and session id
   trace show <id>           Print one trace as JSON
   schema [<kind>]           Print the published JSON Schema of the newest version of a record kind, or every kind with
                             its newest version and the file it is stored in. Every record carries schema_version, and a

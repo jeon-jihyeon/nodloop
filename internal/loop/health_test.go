@@ -1,6 +1,7 @@
 package loop_test
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -12,6 +13,61 @@ import (
 	"github.com/jeon-jihyeon/nodloop/internal/loop"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
 )
+
+func TestHistoryOutcomeActors(t *testing.T) {
+	type args struct {
+		actor feedback.Actor
+		newer bool
+	}
+	type want struct {
+		confirmed, refuted, inconclusive int
+		retire, promote                  bool
+	}
+	tcs := []struct {
+		name string
+		args args
+		want want
+	}{
+		{"legacy observation is retained", args{"", false}, want{0, 1, 0, true, false}},
+		{"code observation is retained", args{feedback.ActorCode, false}, want{0, 1, 0, true, false}},
+		{"model observation is retained", args{feedback.ActorModel, false}, want{0, 1, 0, true, false}},
+		{"person observation is retained", args{feedback.ActorPerson, false}, want{0, 1, 0, true, false}},
+		{"machine inconclusive clears a previous refutation", args{feedback.ActorCode, true}, want{0, 0, 1, false, false}},
+		{"legacy inconclusive clears a previous refutation", args{"", true}, want{0, 0, 1, false, false}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ref := knowledge.Ref{ID: "git-c", Version: 1}
+			run := sessionRun(t, "r1", 1, "nodloop", ref)
+			input := knowledge.RunInput{Applied: []knowledge.Ref{ref}, Drawn: true, Unit: "unit", Share: 0.5}
+			var err error
+			run.Input, err = json.Marshal(input)
+			require.NoError(t, err)
+			checks := feedback.Outcomes{{
+				TraceID: "r1", Result: feedback.ResultRefuted, Time: monday, Reviewer: "ann", Actor: tc.args.actor,
+			}}
+			if tc.args.newer {
+				checks = append(checks, feedback.Outcome{
+					TraceID: "r1", Result: feedback.ResultInconclusive, Time: monday.Add(time.Hour),
+					Reviewer: "ann", Actor: tc.args.actor,
+				})
+			}
+			runs := trace.Traces{run}
+			h := loop.New(runs, nil, checks, knowledge.Set{runItem("git-c", 1)}, time.Time{})
+			rows := h.Health(monday)
+			require.Len(t, rows, 1)
+			row := rows[0]
+			assert.Equal(t, tc.want, want{
+				row.Confirmed, row.Refuted, row.Inconclusive, row.RetireCandidate, row.PromotionCandidate,
+			})
+			effect := loop.NewRuns(runs, nil).Effect(nil, checks, nil, time.Time{})
+			require.Len(t, effect, 2)
+			assert.Equal(t, tc.want.refuted, effect[0].Refuted)
+			assert.Len(t, h.RefutedTraces(ref.ID, ref.Version), tc.want.refuted)
+		})
+	}
+}
 
 func TestHistoryHealth(t *testing.T) {
 	gitC := knowledge.Ref{ID: "git-c", Version: 1}

@@ -1384,6 +1384,8 @@ class OutcomeRecord(_OutcomeRecordRequired, total=False):
 
     confirmed_cause: str
     note: str
+    actor: Literal["person", "code", "model", "unknown"]
+    proof: Literal["key", "terminal", "elicitation", "reply", "none"]
 
 
 class _KnowledgeRecordRunRequired(TypedDict):

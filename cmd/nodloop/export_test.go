@@ -130,7 +130,9 @@ func exportFixture(t *testing.T) string {
 	require.NoError(t, verdicts.Append(t.Context(), fb.Record()))
 	outcomes, err := a.outcomes()
 	require.NoError(t, err)
-	o, err := feedback.NewOutcome(run.ID, feedback.ResultConfirmed, "a slow consumer", "", "ann", exportAt.Add(2*time.Minute))
+	o, err := feedback.NewOutcome(
+		run.ID, feedback.ResultConfirmed, "a slow consumer", "", "ann", "", exportAt.Add(2*time.Minute),
+	)
 	require.NoError(t, err)
 	require.NoError(t, outcomes.Append(t.Context(), o.Record()))
 	return records
@@ -268,7 +270,7 @@ func exportKinds(t *testing.T) (string, exportedIDs) {
 	require.NoError(t, verdicts.Append(ctx, fb.Record()))
 	outcomes, err := a.outcomes()
 	require.NoError(t, err)
-	o, err := feedback.NewOutcome(run.ID, feedback.ResultConfirmed, "", "checked", "ann", at.Add(3*time.Minute))
+	o, err := feedback.NewOutcome(run.ID, feedback.ResultConfirmed, "", "checked", "ann", "", at.Add(3*time.Minute))
 	require.NoError(t, err)
 	require.NoError(t, outcomes.Append(ctx, o.Record()))
 	at = at.Add(5 * time.Minute)

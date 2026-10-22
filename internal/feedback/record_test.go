@@ -83,7 +83,7 @@ func TestOutcomeRecord(t *testing.T) {
 			"every field",
 			feedback.Outcome{
 				TraceID: "t1", Time: at, Result: feedback.ResultConfirmed, ConfirmedCause: "disk full", Note: "checked",
-				Reviewer: "author",
+				Reviewer: "ann", Actor: feedback.ActorPerson, Proof: trace.ProofKey,
 			},
 		},
 		{"only the required fields", feedback.Outcome{TraceID: "t2", Time: at, Result: feedback.ResultRefuted, Reviewer: "author"}},
@@ -157,7 +157,7 @@ func TestRecordsValidate(t *testing.T) {
 	require.NoError(t, err)
 	captured, err := feedback.NewCaptured("t1", feedback.VerdictReject, feedback.ReasonOther, "no, quote the window", at)
 	require.NoError(t, err)
-	checked, err := feedback.NewOutcome("t1", feedback.ResultConfirmed, "disk full", "checked", "ann", at)
+	checked, err := feedback.NewOutcome("t1", feedback.ResultConfirmed, "disk full", "checked", "ann", "", at)
 	require.NoError(t, err)
 
 	verdict := schema.Validate("verdict", edited.WithProof(trace.ProofTerminal).Record())

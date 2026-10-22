@@ -330,15 +330,26 @@ class Client:
             args["edited_output"] = edited
         await self.call("feedback", args)
 
-    async def outcome(self, run: str, result: Result, confirmed_cause: str = "", note: str = "", reviewer: str = "") -> None:
+    async def outcome(
+        self,
+        run: str,
+        result: Result,
+        confirmed_cause: str = "",
+        note: str = "",
+        reviewer: str = "",
+        *,
+        actor: Literal["person", "code", "model", "unknown"] | None = None,
+    ) -> None:
         """Records what a real check found for a run: confirmed, refuted or inconclusive
 
         A different fact from the verdict on the output
         confirmed_cause only goes with confirmed
         reviewer names who checked and is required over stdio while a server key names itself
+        actor names what kind of evaluator checked
+        It never proves a person since only the transport does
         """
         args: dict[str, Any] = {"trace_id": run, "result": result}
-        for key, value in (("confirmed_cause", confirmed_cause), ("note", note), ("reviewer", reviewer)):
+        for key, value in (("confirmed_cause", confirmed_cause), ("note", note), ("reviewer", reviewer), ("actor", actor)):
             if value:
                 args[key] = value
         await self.call("outcome", args)
