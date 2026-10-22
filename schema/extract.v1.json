@@ -208,6 +208,82 @@
         },
         "excerpt": {
           "type": "string"
+        },
+        "triage": {
+          "type": [
+            "null",
+            "object"
+          ],
+          "properties": {
+            "policy": {
+              "type": "string"
+            },
+            "classify": {
+              "type": "string"
+            },
+            "nature": {
+              "type": "string",
+              "enum": [
+                "preference",
+                "safety",
+                "organization",
+                "unknown"
+              ]
+            },
+            "mixed": {
+              "type": "boolean"
+            },
+            "reversibility": {
+              "type": "string",
+              "enum": [
+                "H",
+                "M",
+                "L",
+                "unknown"
+              ]
+            },
+            "source": {
+              "type": "string",
+              "enum": [
+                "complete",
+                "incomplete",
+                "missing",
+                "scope"
+              ]
+            },
+            "protected": {
+              "type": "string",
+              "enum": [
+                "none",
+                "safety",
+                "organization",
+                "mixed",
+                "conflict",
+                "artifact",
+                "unknown"
+              ]
+            },
+            "lasting": {
+              "type": "boolean"
+            },
+            "faithful": {
+              "type": "boolean"
+            },
+            "conflict": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "policy",
+            "nature",
+            "mixed",
+            "reversibility",
+            "source",
+            "protected",
+            "lasting",
+            "faithful",
+            "conflict"
+          ]
         }
       },
       "required": [

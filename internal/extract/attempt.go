@@ -6,6 +6,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/jeon-jihyeon/nodloop/internal/classify"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
 )
@@ -42,6 +43,8 @@ const (
 
 // One draft and what was said of it
 type Attempt struct {
+	// The triage of the critic call kept until the record names it once for the extraction
+	triage   *classify.Triage
 	Draft    Draft     `json:"draft"`
 	Critique *Critique `json:"critique,omitempty"`
 	// The classify trace of the critic point that judged the draft
@@ -70,6 +73,9 @@ type Record struct {
 	// The part of the output the correction is about that the draft of the candidate quoted
 	// A question about the version shows it so the person sees what was corrected
 	Excerpt string `json:"excerpt,omitempty"`
+	// What the critic said of the lesson of a proposal under the triage policy with source missing
+	// It describes the lesson and grants no approval
+	Triage *classify.Triage `json:"triage,omitempty"`
 }
 
 // The version an extraction named as it stood then
@@ -111,6 +117,15 @@ func (rec Record) end(res Result, err error) Record {
 	if res.Candidate != nil {
 		rec.Candidate = &knowledge.Ref{ID: res.Candidate.ID, Version: res.Candidate.Version}
 		rec.Excerpt = res.Excerpt
+	}
+	// Only a proposal carries the triage of its last attempt and curate proves the source again
+	if rec.Conclusion == ConclusionProposed && len(rec.Attempts) > 0 {
+		a := rec.Attempts[len(rec.Attempts)-1]
+		if a.triage != nil {
+			t := *a.triage
+			t.Policy, t.Classify, t.Source = classify.TriagePolicy, a.Classify, classify.SourceMissing
+			rec.Triage = &t
+		}
 	}
 	if res.Related != nil {
 		rec.Related = &Related{ID: res.Related.ID, Version: res.Related.Version, Status: res.Related.Status}

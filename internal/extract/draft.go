@@ -48,7 +48,21 @@ const CriticSchema = `{
     "states": {"type": "boolean"},
     "holds": {"type": "boolean"},
     "fits": {"type": "boolean"},
-    "why": {"type": "string"}
+    "why": {"type": "string"},
+    "triage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["nature", "mixed", "reversibility", "protected", "lasting", "faithful", "conflict"],
+      "properties": {
+        "nature": {"type": "string", "enum": ["preference", "safety", "organization", "unknown"]},
+        "mixed": {"type": "boolean"},
+        "reversibility": {"type": "string", "enum": ["H", "M", "L", "unknown"]},
+        "protected": {"type": "string", "enum": ["none", "safety", "organization", "mixed", "conflict", "artifact", "unknown"]},
+        "lasting": {"type": "boolean"},
+        "faithful": {"type": "boolean"},
+        "conflict": {"type": "boolean"}
+      }
+    }
   }
 }`
 

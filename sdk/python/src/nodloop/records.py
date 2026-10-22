@@ -274,6 +274,22 @@ class ExtractRecordOutputRelated(TypedDict):
     status: Literal["candidate", "approved", "retired", "superseded"]
 
 
+class _ExtractRecordOutputTriageRequired(TypedDict):
+    policy: str
+    nature: Literal["preference", "safety", "organization", "unknown"]
+    mixed: bool
+    reversibility: Literal["H", "M", "L", "unknown"]
+    source: Literal["complete", "incomplete", "missing", "scope"]
+    protected: Literal["none", "safety", "organization", "mixed", "conflict", "artifact", "unknown"]
+    lasting: bool
+    faithful: bool
+    conflict: bool
+
+
+class ExtractRecordOutputTriage(_ExtractRecordOutputTriageRequired, total=False):
+    classify: str
+
+
 class _ExtractRecordOutputRequired(TypedDict):
     attempts: list[ExtractRecordOutputAttempts] | None
     conclusion: str
@@ -283,6 +299,7 @@ class ExtractRecordOutput(_ExtractRecordOutputRequired, total=False):
     candidate: ExtractRecordOutputCandidate | None
     related: ExtractRecordOutputRelated | None
     excerpt: str
+    triage: ExtractRecordOutputTriage | None
 
 
 class _ExtractRecordUsageRequired(TypedDict):

@@ -75,6 +75,7 @@ type Ruling struct {
 	// Empty when the trace failed to append
 	TraceID string
 	Answers Answers
+	Triage  *Triage
 }
 
 // Answers the request and records every member asked in one classify trace
@@ -115,7 +116,7 @@ func (p *Plan) Rule(ctx context.Context, req Request) (Ruling, error) {
 	if failed := p.record(ctx, tr, err); failed != nil {
 		return Ruling{Answers: reply.Answers}, errors.Join(err, failed)
 	}
-	return Ruling{TraceID: tr.ID, Answers: reply.Answers}, err
+	return Ruling{TraceID: tr.ID, Answers: reply.Answers, Triage: reply.Triage}, err
 }
 
 // The reply of the member with its answers checked against the questions and the record of what it answered

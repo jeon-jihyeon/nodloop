@@ -71,7 +71,8 @@
         "input.verdict_id",
         "output.attempts.classify",
         "output.candidate",
-        "output.related"
+        "output.related",
+        "output.triage.classify"
       ],
       "text": [
         "output.attempts.draft",

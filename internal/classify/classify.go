@@ -121,6 +121,7 @@ type Classifier interface {
 // Answers with the model and the effort behind them
 type Reply struct {
 	Answers Answers
+	Triage  *Triage
 	// The model the backend answered with and else the model asked
 	Model string
 	// The effort the member asked and empty when it pinned none

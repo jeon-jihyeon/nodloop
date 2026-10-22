@@ -841,7 +841,9 @@ func TestExtractorExtractPlanCritic(t *testing.T) {
 				return llm.Response{Output: json.RawMessage(next)}, nil
 			})
 			builtin := classifymock.NewMockClassifier(gomock.NewController(t))
-			builtin.EXPECT().Classify(gomock.Any(), gomock.Any()).AnyTimes().Return(nil, tc.args.builtin)
+			if tc.args.status != 0 {
+				builtin.EXPECT().Classify(gomock.Any(), gomock.Any()).Times(1).Return(nil, tc.args.builtin)
+			}
 			critic := classify.NewPlan(classify.PointCritic, classify.Member{Name: "laya", Classifier: classify.NewHTTP(classify.Endpoint{URL: srv.URL}, "", time.Second)},
 				classify.Member{Name: "claude", Classifier: builtin}, s.Traces, func(text string) string { return text }, s.Clock.Now)
 
@@ -855,6 +857,73 @@ func TestExtractorExtractPlanCritic(t *testing.T) {
 			named, ids := classifiesOf(rec), oldestFirst(classified)
 			assert.Equal(t, tc.want.named, namesOf(named))
 			assert.Equal(t, ids, slices.DeleteFunc(named, func(id string) bool { return id == "" }), "the attempts name the classify traces in their order")
+		})
+	}
+}
+
+func TestExtractorTriage(t *testing.T) {
+	type args struct {
+		triage string
+		bare   bool
+	}
+	type want struct {
+		triage classify.Triage
+		// The triage names the classify trace of the attempt
+		named      bool
+		classified int
+	}
+	valid := `,"triage":{"nature":"preference","mixed":false,"reversibility":"H","protected":"none",` +
+		`"lasting":true,"faithful":true,"conflict":false}`
+	preference := classify.Triage{
+		Policy: "1", Source: "missing", Nature: "preference", Reversibility: "H", Protected: "none", Lasting: true, Faithful: true,
+	}
+	tcs := []struct {
+		name string
+		args args
+		want want
+	}{
+		{"typed metadata follows the deciding critic", args{triage: valid}, want{preference, true, 1}},
+		{"a bare critic uses the existing extraction provenance", args{triage: valid, bare: true}, want{preference, false, 0}},
+		{"legacy metadata does not call the fallback", args{}, want{classified: 1}},
+		{"invalid metadata does not call the fallback", args{triage: `,"triage":{"nature":"preference"}`}, want{classified: 1}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ctx := context.Background()
+			s, e, runID := corrected(t)
+			client := llmmock.NewMockClient(gomock.NewController(t))
+			client.EXPECT().Complete(gomock.Any(), gomock.Any()).Times(1).Return(llm.Response{Output: json.RawMessage(
+				`{"relation":"add","kind":"judgment","content":"Run git with -C <dir> instead of changing into it","keys":["repo"]}`)}, nil)
+			criticClient := llmmock.NewMockClient(gomock.NewController(t))
+			criticClient.EXPECT().Complete(gomock.Any(), gomock.Any()).Times(1).Return(llm.Response{Output: json.RawMessage(
+				`{"states":true,"holds":true,"fits":true,"why":"ok"` + tc.args.triage + `}`)}, nil)
+			fallback := classifymock.NewMockClassifier(gomock.NewController(t))
+			var critic extract.Classifier = classify.NewPlan(classify.PointCritic,
+				classify.Member{Name: "critic", Classifier: extract.NewClaudeCritic(criticClient, "")},
+				classify.Member{Name: "fallback", Classifier: fallback}, s.Traces, func(text string) string { return text }, s.Clock.Now)
+			if tc.args.bare {
+				critic = extract.NewClaudeCritic(criticClient, "")
+			}
+
+			got, err := e.Extract(ctx, extract.NewClaudeDrafter(llm.NewMeter(client), ""), critic, runID, "")
+
+			require.NoError(t, err)
+			rec, _ := recorded(t, s, extract.PathModel, runID)
+			require.Equal(t, extract.ConclusionProposed, rec.Conclusion)
+			require.NotNil(t, got.Candidate)
+			assert.Equal(t, &knowledge.Ref{ID: got.Candidate.ID, Version: got.Candidate.Version}, rec.Candidate)
+			require.Len(t, rec.Attempts, 1)
+			assert.Equal(t, got.Candidate.Content, rec.Attempts[0].Draft.Content)
+			classified, err := s.Traces.List(ctx, record.TraceFilter{Name: string(trace.NameClassify)})
+			require.NoError(t, err)
+			var triage classify.Triage
+			if rec.Triage != nil {
+				triage = *rec.Triage
+			}
+			named := triage.Classify != "" && triage.Classify == rec.Attempts[0].Classify
+			triage.Classify = ""
+			assert.Equal(t, tc.want, want{triage, named, len(classified)})
 		})
 	}
 }

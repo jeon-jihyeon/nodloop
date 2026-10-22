@@ -223,6 +223,7 @@ func (r Reaction) review(ctx context.Context, critic Classifier, d Draft) (Attem
 	c := newCritique(ruling.Answers)
 	a, err := r.judge(d, &c)
 	a.Classify = ruling.TraceID
+	a.triage = ruling.Triage
 	return a, err
 }
 
@@ -236,6 +237,10 @@ type Ruler interface {
 func rule(ctx context.Context, critic Classifier, req classify.Request) (classify.Ruling, error) {
 	if r, ok := critic.(Ruler); ok {
 		return r.Rule(ctx, req)
+	}
+	if r, ok := critic.(classify.Replier); ok {
+		reply, err := r.Reply(ctx, req)
+		return classify.Ruling{Answers: reply.Answers, Triage: reply.Triage}, err
 	}
 	answers, err := critic.Classify(ctx, req)
 	return classify.Ruling{Answers: answers}, err
