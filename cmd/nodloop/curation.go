@@ -65,6 +65,10 @@ func (c loopCommand) curation(r loop.CurationReport) {
 			e.Cycle, e.Tier, e.Answered, e.Differ, e.NoAnswer, interval(e.Rate, e.RateLow, e.RateHigh), number(e.Kish), number(e.Worst))
 	}
 	c.overturns(r.Overturns)
+	for _, row := range r.Delegated {
+		fmt.Fprintf(c.out, "delegated\tgrant %s\tapply decisions %d\tdrawn %d\texposed %d\tanswers %d\tundos %d\tmanual %d\tmanual undos %d\tstopped %t\n",
+			row.Grant, row.ApplyDecisions, row.Drawn, row.Exposed, row.Answers, row.Overturned, row.Manual, row.ManualOverturned, row.Stopped)
+	}
 	c.judge(r.CUSUM, r.Shift)
 	for _, it := range r.Items {
 		fmt.Fprintf(c.out, "item\t%s\tv%d\tunits %d\tincluded %d judged %d rate %s\theld %d judged %d rate %s\tdifference %s\n",

@@ -25,6 +25,10 @@ type unit struct {
 // Units in the order of their answers
 type units []unit
 
+func (us units) withoutDelegated() units {
+	return slices.DeleteFunc(slices.Clone(us), func(u unit) bool { return u.decide.out.RuleCode == ruleDelegated })
+}
+
 // The units of the pushed questions about decisions of curate
 // 1. a record the person asked for or gave by command and a choice of an agent never count since no draw stands behind them
 // 2. a question about an agent proposal, a widening or the activation and a notice sample no judgment of curate
@@ -117,12 +121,12 @@ func (e events) kinds(asked units, shifts []ShiftRow) []KindRow {
 	knob, _ := e.knob()
 	t := kindTally{rows: map[KindBin]*KindRow{}, knob: knob, start: e.configStart(), shifts: shifts}
 	for _, d := range e.decides {
-		if d.cycle() >= t.start {
+		if d.out.RuleCode != ruleDelegated && d.cycle() >= t.start {
 			t.row(d.kindBin()).decide(d)
 		}
 	}
 	for _, x := range e.exposes {
-		if d, ok := e.pushed(x); ok && d.cycle() >= t.start {
+		if d, ok := e.pushed(x); ok && d.out.RuleCode != ruleDelegated && d.cycle() >= t.start {
 			t.row(d.kindBin()).Exposed++
 		}
 	}
@@ -310,12 +314,12 @@ func (e events) shadow(asked units) ShadowReport {
 	start := e.configStart()
 	rows := shadowRows{}
 	for _, d := range e.decides {
-		if d.out.Action == actionShadow && d.cycle() >= start {
+		if d.out.RuleCode != ruleDelegated && d.out.Action == actionShadow && d.cycle() >= start {
 			rows.of(d.in.Kind).Decided++
 		}
 	}
 	for _, x := range e.exposes {
-		if d, ok := e.pushed(x); ok && x.in.Kind == questionShadow && d.cycle() >= start {
+		if d, ok := e.pushed(x); ok && d.out.RuleCode != ruleDelegated && x.in.Kind == questionShadow && d.cycle() >= start {
 			rows.of(d.in.Kind).ask(x)
 		}
 	}
