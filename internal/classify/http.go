@@ -24,11 +24,17 @@ type HTTP struct {
 	client *http.Client
 }
 
-// A redirect is answered as the status it carries
+// 1. a redirect is answered as the status it carries
 // Following a 307 or a 308 would send the person's words or the anchor to an endpoint no point names
+// 2. the client owns its transport so another client cannot close its idle connections
 func NewHTTP(endpoint Endpoint, key string, timeout time.Duration) *HTTP {
+	// A program that replaced the default transport still gets a transport of its own
+	transport := &http.Transport{Proxy: http.ProxyFromEnvironment}
+	if base, ok := http.DefaultTransport.(*http.Transport); ok && base != nil {
+		transport = base.Clone()
+	}
 	return &HTTP{endpoint: endpoint, key: key, client: &http.Client{
-		Timeout: timeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+		Transport: transport, Timeout: timeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}}
 }
 

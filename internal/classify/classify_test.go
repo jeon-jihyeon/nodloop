@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -757,6 +758,50 @@ func TestEndpointClassifier(t *testing.T) {
 
 			require.NoError(t, err)
 			assert.Equal(t, tc.want, *auth)
+		})
+	}
+}
+
+// DefaultTransport is process wide so these cases stay serial
+func TestNewHTTPTransport(t *testing.T) {
+	type want struct {
+		answers classify.Answers
+		err     error
+	}
+	answered := classify.Answers{"holds": {Yes: 1}, "states": {Yes: 1}}
+	blocked := &http.Transport{Proxy: func(*http.Request) (*url.URL, error) { return nil, assert.AnError }}
+	tcs := []struct {
+		name string
+		args http.RoundTripper
+		want want
+	}{
+		{"a standard transport", &http.Transport{}, want{answered, nil}},
+		{"a standard transport keeps its proxy", blocked, want{err: assert.AnError}},
+		{
+			"a custom transport", http.NewFileTransport(http.Dir(t.TempDir())),
+			want{answered, nil},
+		},
+		{"a nil transport", nil, want{answered, nil}},
+		{"a typed nil transport", (*http.Transport)(nil), want{answered, nil}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			original := http.DefaultTransport
+			http.DefaultTransport = tc.args
+			defer func() { http.DefaultTransport = original }()
+
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = w.Write([]byte(`{"answers":{"holds":{"noul":1},"states":{"noul":1}}}`))
+			}))
+			t.Cleanup(server.Close)
+			client := classify.NewHTTP(classify.Endpoint{URL: server.URL}, "", time.Second)
+			if base, ok := tc.args.(*http.Transport); ok && base != nil {
+				base.Proxy = func(*http.Request) (*url.URL, error) { return nil, context.Canceled }
+			}
+			got, err := client.Classify(context.Background(),
+				classify.Request{State: "the draft", Questions: questions})
+			assert.ErrorIs(t, err, tc.want.err)
+			assert.Equal(t, tc.want.answers, got)
 		})
 	}
 }

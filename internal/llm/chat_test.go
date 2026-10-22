@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -449,6 +450,47 @@ func TestConfigCheck(t *testing.T) {
 			if err != nil {
 				assert.NotContains(t, err.Error(), "k1")
 			}
+		})
+	}
+}
+
+// DefaultTransport is process wide so these cases stay serial
+func TestNewChatCompletionsTransport(t *testing.T) {
+	type want struct {
+		output string
+		err    error
+	}
+	blocked := &http.Transport{Proxy: func(*http.Request) (*url.URL, error) { return nil, assert.AnError }}
+	tcs := []struct {
+		name string
+		args http.RoundTripper
+		want want
+	}{
+		{"a standard transport", &http.Transport{}, want{`{"answer":42}`, nil}},
+		{"a standard transport keeps its proxy", blocked, want{err: assert.AnError}},
+		{"a custom transport", http.NewFileTransport(http.Dir(t.TempDir())), want{`{"answer":42}`, nil}},
+		{"a nil transport", nil, want{`{"answer":42}`, nil}},
+		{"a typed nil transport", (*http.Transport)(nil), want{`{"answer":42}`, nil}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			original := http.DefaultTransport
+			http.DefaultTransport = tc.args
+			defer func() { http.DefaultTransport = original }()
+
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = w.Write([]byte(completion(`{"answer":42}`, 1, 1, 0, 0)))
+			}))
+			t.Cleanup(server.Close)
+			client := llm.NewChatCompletions(server.URL, "m", "", time.Second, steppingClock())
+			if base, ok := tc.args.(*http.Transport); ok && base != nil {
+				base.Proxy = func(*http.Request) (*url.URL, error) { return nil, context.Canceled }
+			}
+			got, err := client.Complete(context.Background(), llm.Request{
+				Prompt: "hello", Schema: json.RawMessage(answerSchema),
+			})
+			assert.ErrorIs(t, err, tc.want.err)
+			assert.Equal(t, tc.want.output, string(got.Output))
 		})
 	}
 }
