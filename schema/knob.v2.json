@@ -149,6 +149,15 @@
                 "p1",
                 "h"
               ]
+            },
+            "delegation_paused": {
+              "type": [
+                "null",
+                "array"
+              ],
+              "items": {
+                "type": "string"
+              }
             }
           },
           "required": [
@@ -245,7 +254,8 @@
                   "alarm",
                   "raise",
                   "lower",
-                  "person"
+                  "person",
+                  "delegation"
                 ]
               },
               "opening": {
@@ -293,6 +303,9 @@
                 "type": "number"
               },
               "knob": {
+                "type": "string"
+              },
+              "grant": {
                 "type": "string"
               }
             },

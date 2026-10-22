@@ -162,7 +162,9 @@
             "drift",
             "judge_against",
             "judge_undecided",
-            "judge_split"
+            "judge_split",
+            "delegated",
+            "triage_protected"
           ]
         },
         "judge": {
@@ -240,6 +242,88 @@
             "next_pass",
             "person_only"
           ]
+        },
+        "triage": {
+          "type": [
+            "null",
+            "object"
+          ],
+          "properties": {
+            "policy": {
+              "type": "string"
+            },
+            "classify": {
+              "type": "string"
+            },
+            "nature": {
+              "type": "string",
+              "enum": [
+                "preference",
+                "safety",
+                "organization",
+                "unknown"
+              ]
+            },
+            "mixed": {
+              "type": "boolean"
+            },
+            "reversibility": {
+              "type": "string",
+              "enum": [
+                "H",
+                "M",
+                "L",
+                "unknown"
+              ]
+            },
+            "source": {
+              "type": "string",
+              "enum": [
+                "complete",
+                "incomplete",
+                "missing",
+                "scope"
+              ]
+            },
+            "protected": {
+              "type": "string",
+              "enum": [
+                "none",
+                "safety",
+                "organization",
+                "mixed",
+                "conflict",
+                "artifact",
+                "unknown"
+              ]
+            },
+            "lasting": {
+              "type": "boolean"
+            },
+            "faithful": {
+              "type": "boolean"
+            },
+            "conflict": {
+              "type": "boolean"
+            },
+            "grant": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "policy",
+            "nature",
+            "mixed",
+            "reversibility",
+            "source",
+            "protected",
+            "lasting",
+            "faithful",
+            "conflict"
+          ]
+        },
+        "delegation": {
+          "type": "string"
         }
       },
       "required": [

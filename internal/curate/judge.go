@@ -1,4 +1,4 @@
-// Package curate carries out what the person's recorded judgment settles and prepares a question for the rest
+// Package curate sorts prepared changes by recorded judgment and explicit delegation
 package curate
 
 import (
@@ -241,6 +241,9 @@ type Case struct {
 	Words []string `json:"words"`
 	// Every change nodloop carried out in the place since the anchor version as the lesson it approved or retired
 	Carried []string `json:"carried"`
+	// A direction file the judge could not read or that changed since the anchor sealed it
+	// Silence of the judge then proves no absence of conflict so no delegation rests on it
+	AnchorMissing bool `json:"-"`
 }
 
 // A case of strings always encodes
@@ -269,6 +272,8 @@ type Judgment struct {
 	// The errors of the members that gave no answer
 	// A pass leaves the change for the next pass once on it before it decides the split
 	Err error
+	// Every member answered and was sure the change is not against the anchor
+	NoConflict bool
 }
 
 type Panel interface {
@@ -322,11 +327,25 @@ func (vs Votes) Answered() string {
 // What the votes recorded in the classify trace of the id found
 // The export reads the same from a trace that a pass read from the call
 func (vs Votes) Judgment(traceID string) Judgment {
-	judged := Judgment{Outcome: vs.Outcome(), Share: vs.Share(), Bin: vs.Bin(), Trace: traceID, Err: vs.Err()}
+	judged := Judgment{Outcome: vs.Outcome(), Share: vs.Share(), Bin: vs.Bin(), Trace: traceID, Err: vs.Err(),
+		NoConflict: vs.noConflict()}
 	if mean, ok := vs.Confidence(); ok {
 		judged.Confidence = &mean
 	}
 	return judged
+}
+
+func (vs Votes) noConflict() bool {
+	if len(vs) == 0 {
+		return false
+	}
+	for _, v := range vs {
+		a, ok := v.Answers["against"]
+		if v.Err != nil || !ok || !a.Sure() || a.True() {
+			return false
+		}
+	}
+	return true
 }
 
 // One decision of the person a variant shows as an example

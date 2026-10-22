@@ -769,6 +769,23 @@ class DecideRecordInput(_DecideRecordInputRequired, total=False):
     proposal: str
 
 
+class _DecideRecordOutputTriageRequired(TypedDict):
+    policy: str
+    nature: Literal["preference", "safety", "organization", "unknown"]
+    mixed: bool
+    reversibility: Literal["H", "M", "L", "unknown"]
+    source: Literal["complete", "incomplete", "missing", "scope"]
+    protected: Literal["none", "safety", "organization", "mixed", "conflict", "artifact", "unknown"]
+    lasting: bool
+    faithful: bool
+    conflict: bool
+
+
+class DecideRecordOutputTriage(_DecideRecordOutputTriageRequired, total=False):
+    classify: str
+    grant: str
+
+
 class _DecideRecordOutputRequired(TypedDict):
     tier: int
     action: Literal["apply", "withdraw", "drop", "join", "ask", "shadow", "retry", "hold"]
@@ -791,6 +808,8 @@ class DecideRecordOutput(_DecideRecordOutputRequired, total=False):
         "judge_against",
         "judge_undecided",
         "judge_split",
+        "delegated",
+        "triage_protected",
     ]
     judge: str
     outcome: Literal["conform", "against", "undecided", "split"]
@@ -800,6 +819,8 @@ class DecideRecordOutput(_DecideRecordOutputRequired, total=False):
     reason: Literal["duplicate", "no_evidence", "temp_scope", "conflict", "words", "compaction", "person"]
     failure: Literal["hard", "repairable", "underexplored", "unpromising"]
     reopen: Literal["other_session", "permanent_place", "next_pass", "person_only"]
+    triage: DecideRecordOutputTriage | None
+    delegation: str
 
 
 class _DecideRecordUsageRequired(TypedDict):
@@ -890,6 +911,7 @@ class KnobRecordInputKnobs(_KnobRecordInputKnobsRequired, total=False):
     audit: KnobRecordInputKnobsAudit
     target: KnobRecordInputKnobsTarget
     cusum: KnobRecordInputKnobsCusum
+    delegation_paused: list[str] | None
 
 
 class KnobRecordInputJudgeSets(TypedDict):
@@ -921,7 +943,7 @@ class KnobRecordInputChangesOpening(_KnobRecordInputChangesOpeningRequired, tota
 
 
 class _KnobRecordInputChangesRequired(TypedDict):
-    rule: Literal["posterior", "alarm", "raise", "lower", "person"]
+    rule: Literal["posterior", "alarm", "raise", "lower", "person", "delegation"]
 
 
 class KnobRecordInputChanges(_KnobRecordInputChangesRequired, total=False):
@@ -930,6 +952,7 @@ class KnobRecordInputChanges(_KnobRecordInputChangesRequired, total=False):
     differ: int
     p: float
     knob: str
+    grant: str
 
 
 class _KnobRecordInputRequired(TypedDict):

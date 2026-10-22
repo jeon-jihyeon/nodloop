@@ -71,6 +71,9 @@ type Setting struct {
 	// 1. called at most once and only when the knobs can move on it so a pass with nothing new reads no report
 	// 2. nil reads no numbers
 	Numbers func(ctx context.Context) (Numbers, error)
+	// The grants of config.json the pass started with
+	// A grant removed later takes effect at the next pass
+	Delegations []Delegation
 }
 
 // One decide as a pass made it or reads it back
@@ -247,19 +250,22 @@ func (p *pass) reload(ctx context.Context) error {
 // An alarm comes from an answer so a pass with no answer after the newest knob event reads no numbers
 // 2. the first pass of a cycle hands them to Start and appends the knob event of the cycle with the move and its offers
 // 3. a cycle that starts a new judge configuration reads no number since every answer was given under another judge
+// 4. a grant a person revoked stops at once in either case whatever the judge configuration
 func (p *pass) cycle(ctx context.Context, knobs knobTraces, answers trace.Traces) error {
 	now := p.now()
+	revoked := p.revoked()
 	if ev, id, ok := knobs.current(now); ok {
 		p.event = ev
 		newest := knobs[0].Time
-		if !slices.ContainsFunc(answers, func(a trace.Trace) bool { return a.Time.After(newest) }) {
-			return nil
-		}
-		numbers, err := p.numbers(ctx)
-		if err != nil {
-			return err
+		var numbers Numbers
+		if slices.ContainsFunc(answers, func(a trace.Trace) bool { return a.Time.After(newest) }) {
+			var err error
+			if numbers, err = p.numbers(ctx); err != nil {
+				return err
+			}
 		}
 		move := ev.Knobs.Alarm(numbers)
+		move.stop(revoked)
 		if len(move.Changes) == 0 {
 			return nil
 		}
@@ -280,6 +286,7 @@ func (p *pass) cycle(ctx context.Context, knobs knobTraces, answers trace.Traces
 		}
 	}
 	move := ev.Knobs.Start(numbers, p.ints.setBy(KnobAuditTier1))
+	move.stop(revoked)
 	return p.append(ctx, ev, move, now)
 }
 
@@ -343,6 +350,7 @@ func (p *pass) offered(ctx context.Context) error {
 // Carries out the decides a crash left before their ledger write in the order they were made
 // 1. a version no longer in the state the decide found was decided since so it stays as it is
 // 2. the decisions the records name are read once since every decide of the records is checked at every pass
+// 3. an unexecuted delegation returns to candidate checks instead of inheriting old permission
 func (p *pass) recover(ctx context.Context) error {
 	named := map[string]bool{}
 	for _, k := range p.all {
@@ -350,7 +358,7 @@ func (p *pass) recover(ctx context.Context) error {
 	}
 	var errs []error
 	for _, d := range slices.Backward(p.decides) {
-		if d.Decision.carries() && !named[d.ID] && p.waits(d) {
+		if d.Decision.RuleCode != RuleDelegated && d.Decision.carries() && !named[d.ID] && p.waits(d) {
 			errs = append(errs, p.carry(ctx, d))
 		}
 	}
@@ -519,6 +527,8 @@ type ruling struct {
 	decision Decision
 	// The error of the judge call a retry carries
 	failed error
+	// The judge found no conflict on an anchor it read whole so a delegated decision may stand
+	noConflict bool
 }
 
 // Whether the candidate version is due a decision and whether its last one was a retry
@@ -526,6 +536,8 @@ type ruling struct {
 // 2. a retry after a judge call that failed
 // 3. a version corroborate joined new evidence to after its decide or after the person dismissed its question
 // 4. a version decided in shadow that no answer settled once the shadow ended
+// 5. an unexecuted delegated decision needs current permission and source checks
+// 6. a new explicit grant reopens an eligible hold or shadow once
 // A dismissed question stays closed without new evidence so nodloop never carries it out
 func (p *pass) pending(k knowledge.Knowledge, latest map[string]Decided) (retried, due bool) {
 	d, ok := latest[(Decided{Change: Change{ID: k.ID, Version: k.Version}}).subject()]
@@ -537,6 +549,10 @@ func (p *pass) pending(k knowledge.Knowledge, latest map[string]Decided) (retrie
 		return false, k.Time.After(dismissed)
 	case d.Decision.Action == ActionRetry:
 		return true, true
+	case d.Decision.RuleCode == RuleDelegated && k.Status == knowledge.StatusCandidate:
+		return false, true
+	case (d.Decision.Action == ActionHold || d.Decision.Action == ActionShadow) && p.newlyDelegated(k, d.Decision):
+		return false, true
 	case k.Time.After(d.Time):
 		return false, true
 	}
@@ -597,11 +613,35 @@ func (p *pass) sort(ctx context.Context, k knowledge.Knowledge, ref string, retr
 		return ruling{}, err
 	}
 	place := p.place(run)
+	if err := p.triageDecision(ctx, k, place, &r); err != nil {
+		return ruling{}, err
+	}
 	if rule, asks := p.asks(k, run, place); asks {
-		r.decision = Decision{Tier: topTier, RuleCode: rule, Action: ActionHold}
+		if rule == RuleScopeWider && r.decision.RuleCode == RuleDelegated && !p.anchorFiles(place) {
+			return r, nil
+		}
+		r.decision.Tier, r.decision.RuleCode, r.decision.Action, r.decision.Delegation = topTier, rule, ActionHold, ""
 		return r, nil
 	}
-	return r, p.judged(ctx, &r, k, ref, run, place, retried)
+	err = p.directed(ctx, &r, k, ref, run, place, retried)
+	return r, err
+}
+
+func (p *pass) directed(ctx context.Context, r *ruling, k knowledge.Knowledge, ref string,
+	run trace.Trace, place AnchorPlace, retried bool,
+) error {
+	if r.decision.RuleCode == RuleTriageProtected {
+		return nil
+	}
+	delegated := r.decision
+	t := r.decision.Triage
+	err := p.judged(ctx, r, k, ref, run, place, retried)
+	r.decision.Triage = t
+	if delegated.RuleCode == RuleDelegated && err == nil && r.failed == nil && r.noConflict {
+		delegated.Judge = r.decision.Judge
+		r.decision = delegated
+	}
+	return err
 }
 
 // The judge on the change and the tier its outcome gives
@@ -623,6 +663,7 @@ func (p *pass) judged(ctx context.Context, r *ruling, k knowledge.Knowledge, ref
 		return err
 	}
 	r.failed = j.Err
+	r.noConflict = j.NoConflict && j.Err == nil && !cs.AnchorMissing
 	if r.failed != nil && !retried {
 		r.decision = Decision{Tier: 1, Judge: j.Trace, Action: ActionRetry, Failure: FailureRepairable, Reopen: ReopenNextPass}
 		return nil
@@ -713,6 +754,8 @@ func (p *pass) carry(ctx context.Context, d Decided) error {
 	c, action := d.Change, d.Decision.Action
 	var err error
 	switch {
+	case action == ActionApply && d.Decision.RuleCode == RuleDelegated && c.Kind == ChangeAdd:
+		err = p.delegated(ctx, d)
 	case action == ActionApply && (c.Kind == ChangeAdd || c.Kind == ChangeUpdate):
 		_, err = p.ledger.Apply(ctx, c.ID, c.Version, d.ID)
 	case action == ActionWithdraw && c.Kind == ChangeWithdraw:

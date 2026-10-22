@@ -260,6 +260,31 @@ func TestLedgerRunFolder(t *testing.T) {
 	assert.Len(t, compactable.Items, 1, "the item that waits for approval and the item of another producer stay out")
 }
 
+func TestRunScopeWithin(t *testing.T) {
+	repo := knowledge.RunScope{Producer: "acme", Labels: trace.Labels{"repo": {"o/svc"}}}
+	type args struct {
+		scope, limit knowledge.RunScope
+	}
+	tcs := []struct {
+		name string
+		args args
+		want bool
+	}{
+		{"the same scope", args{repo, repo}, true},
+		{"a narrower scope", args{knowledge.RunScope{Producer: "acme", Labels: trace.Labels{"repo": {"o/svc"}, "task": {"t1"}}}, repo}, true},
+		{"a scope of every place", args{knowledge.RunScope{Producer: "acme"}, repo}, false},
+		{"another producer", args{knowledge.RunScope{Producer: "other", Labels: repo.Labels}, repo}, false},
+		{"a lifted exception", args{repo, knowledge.RunScope{Producer: "acme", Except: trace.Labels{"task": {"t1"}}}}, false},
+		{"no producer", args{knowledge.RunScope{}, knowledge.RunScope{}}, false},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.want, tc.args.scope.Within(tc.args.limit))
+		})
+	}
+}
+
 func TestRunScopeRecorded(t *testing.T) {
 	vocab := trace.Labels{"repo": {"nodloop"}, "task": {"commit"}}
 	tcs := []struct {
