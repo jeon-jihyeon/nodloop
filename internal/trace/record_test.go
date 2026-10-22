@@ -41,11 +41,30 @@ func TestTraceRecord(t *testing.T) {
 			t.Parallel()
 			model, err := json.Marshal(tc.args)
 			require.NoError(t, err)
-			want := fmt.Sprintf(`%s,"schema_version":%d}`, model[:len(model)-1], trace.SchemaVersion)
+			want := fmt.Sprintf(`%s,"schema_version":%d}`, model[:len(model)-1], tc.args.Name.SchemaVersion())
 			got, err := json.Marshal(tc.args.Record())
 			require.NoError(t, err)
 			assert.Equal(t, want, string(got), "the line encodes to the bytes of the trace and the version of its schema")
 			assert.Equal(t, tc.args, trace.Restore(tc.args.Record()))
+		})
+	}
+}
+
+func TestNameSchemaVersion(t *testing.T) {
+	tcs := []struct {
+		name string
+		args trace.Name
+		want int
+	}{
+		{"an unchanged run schema", trace.NameRun, 1},
+		{"an unchanged decide schema", trace.NameDecide, 1},
+		{"the judge backend and its model answered", trace.NameKnob, 2},
+		{"an unknown name does not invent a version", trace.Name("future"), 1},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.want, tc.args.SchemaVersion())
 		})
 	}
 }

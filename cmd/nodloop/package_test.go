@@ -195,7 +195,7 @@ func TestExportPackage(t *testing.T) {
 	require.NoError(t, err)
 	var names []string
 	for _, k := range ix.Kinds {
-		names = append(names, k.Name+".v1")
+		names = append(names, fmt.Sprintf("%s.v%d", k.Name, k.Version))
 	}
 
 	code, stdout, stderr := r.export(t, at.Add(time.Minute), "--out", folder)

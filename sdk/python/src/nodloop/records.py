@@ -880,8 +880,10 @@ class _KnobRecordInputJudgeRequired(TypedDict):
 
 
 class KnobRecordInputJudge(_KnobRecordInputJudgeRequired, total=False):
+    backend: str
     kept: int
     refused: int
+    answered: str
 
 
 class _KnobRecordInputChangesOpeningRequired(TypedDict):
@@ -940,7 +942,7 @@ class _KnobRecordRequired(TypedDict):
     input: KnobRecordInput
     usage: KnobRecordUsage
     duration_ms: int
-    schema_version: Literal[1]
+    schema_version: Literal[2]
 
 
 class KnobRecord(_KnobRecordRequired, total=False):

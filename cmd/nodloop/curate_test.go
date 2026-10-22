@@ -329,8 +329,8 @@ func TestRunKnowledgeCurateDaily(t *testing.T) {
 	assert.Len(t, mark.Due, 1)
 }
 
-// The judge of a chat backend runs its model, an endpoint set for the judge point joins the claude variants
-// and the variants read the files the person designates
+// The judge of a chat backend runs its model with no effort and records both
+// An endpoint set for the judge point joins the claude variants and the variants read the files the person designates
 func TestRunKnowledgeCurateJudge(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"answers":{"decided":{"noul":0.9},"against":{"noul":0.02}}}`))
@@ -348,7 +348,7 @@ func TestRunKnowledgeCurateJudge(t *testing.T) {
 	var prompts []string
 	client := llmmock.NewMockClient(gomock.NewController(t))
 	client.EXPECT().Complete(gomock.Any(), gomock.Any()).Times(3).DoAndReturn(func(_ context.Context, req llm.Request) (llm.Response, error) {
-		prompts = append(prompts, req.Prompt+" model "+req.Model)
+		prompts = append(prompts, req.Prompt+" model "+req.Model+" effort "+req.Effort)
 		return llm.Response{Output: json.RawMessage(`{"decided":{"probability":0.9},"against":{"probability":0.02}}`)}, nil
 	})
 	var stdout bytes.Buffer
@@ -359,9 +359,16 @@ func TestRunKnowledgeCurateJudge(t *testing.T) {
 	assert.Equal(t, "shadow\tadd\tk-add\tv1\ttier 1\tconform\n", stdout.String())
 	require.Len(t, prompts, 3)
 	assert.Contains(t, prompts[0], `"file `+plan+`\nLint before tests"`)
-	assert.True(t, strings.HasSuffix(prompts[0], " model acme-model"), prompts[0])
+	assert.True(t, strings.HasSuffix(prompts[0], " model acme-model effort "), prompts[0])
 	store, err := tracefile.New(records)
 	require.NoError(t, err)
+	knobs, err := store.List(context.Background(), record.TraceFilter{Name: string(trace.NameKnob)})
+	require.NoError(t, err)
+	require.Len(t, knobs, 1)
+	ev, ok := curate.RestoreKnob(trace.Restore(knobs[0]))
+	require.True(t, ok)
+	assert.Equal(t, [3]string{"chat", "acme-model", ""}, [3]string{string(ev.Judge.Backend), ev.Judge.Model,
+		ev.Judge.Effort})
 	classified, err := store.List(context.Background(), record.TraceFilter{Name: string(trace.NameClassify), Subject: "judge"})
 	require.NoError(t, err)
 	require.Len(t, classified, 1)
@@ -438,7 +445,9 @@ func TestRunKnowledgeCurateFails(t *testing.T) {
 		// The record directory lies below a regular file
 		underFile bool
 		// The drafter answers what does not decode
-		badDraft bool
+		badDraft      bool
+		badClassifier bool
+		feedbackOpen  bool
 	}
 	type want struct {
 		code           int
@@ -455,6 +464,9 @@ func TestRunKnowledgeCurateFails(t *testing.T) {
 		{"a correction the drafter cannot draft", args{flags: []string{"curate", "--daily"}, badDraft: true}, want{0, "\tnot extracted: ", ""}},
 		{"a daily pass whose prune mark cannot be read", args{flags: []string{"curate", "--daily"}, pruneDir: true}, want{1, "", "marker"}},
 		{"a record directory that cannot be made", args{flags: []string{"curate"}, underFile: true}, want{1, "", "not a directory"}},
+		{"an invalid judge endpoint", args{flags: []string{"curate"}, badClassifier: true},
+			want{1, "", "expected an absolute http or https URL"}},
+		{"feedback store cannot open", args{flags: []string{"curate"}, feedbackOpen: true}, want{1, "", "feedback file"}},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
@@ -470,6 +482,17 @@ func TestRunKnowledgeCurateFails(t *testing.T) {
 			}
 			if tc.args.pruneDir {
 				require.NoError(t, os.Mkdir(filepath.Join(records, "prune.json"), 0o755))
+			}
+			if tc.args.badClassifier {
+				require.NoError(t, homeDir(getenv("HOME")).config().Save(map[string]any{
+					"decision_points": map[string]any{"judge": map[string]string{"url": "invalid"}},
+				}))
+			}
+			if tc.args.feedbackOpen {
+				path := filepath.Join(records, "feedback.jsonl")
+				require.NoError(t, os.WriteFile(path+".tmp", nil, 0o600))
+				require.NoError(t, os.Remove(path+".lock"))
+				require.NoError(t, os.Mkdir(path+".lock", 0o700))
 			}
 			if tc.args.underFile {
 				file := filepath.Join(t.TempDir(), "file")

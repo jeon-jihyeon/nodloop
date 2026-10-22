@@ -126,9 +126,11 @@ func TestJudgeJudge(t *testing.T) {
 			for _, r := range tc.args {
 				client.EXPECT().Complete(gomock.Any(), gomock.Any()).Return(llm.Response{Output: r.output, Model: "claude-sonnet-5-5"}, r.err)
 			}
-			members, err := curate.JudgeConfig{}.Next(sonnetJudge, decisions(), start).Members(client, decisions())
+			cfg := curate.JudgeConfig{}.Next(sonnetJudge, decisions(), "", start)
+			members, err := cfg.Members(client, decisions())
 			require.NoError(t, err)
-			judge := curate.NewJudge(classify.NewPanel(classify.PointJudge, members, stores.Traces, seal, stores.Clock.Now))
+			panel := classify.NewPanel(classify.PointJudge, members, stores.Traces, seal, stores.Clock.Now)
+			judge := curate.NewJudge(panel, cfg.Answered)
 			state, err := json.Marshal(change)
 			require.NoError(t, err)
 
@@ -154,15 +156,108 @@ func TestJudgeJudge(t *testing.T) {
 	}
 }
 
+// A judge whose claude members answered with another model than the configuration records fails as a member would
+// The outcome the members found stays so the trace and the export read what they answered
+func TestJudgeJudgeMoved(t *testing.T) {
+	type args struct {
+		recorded string
+		models   []string
+	}
+	type want struct {
+		outcome curate.Outcome
+		err     error
+	}
+	tcs := []struct {
+		name string
+		args args
+		want want
+	}{
+		{"no recorded model", args{"", []string{"m1", "m1", "m1"}}, want{curate.OutcomeConform, nil}},
+		{"the recorded model", args{"m1", []string{"m1", "m1", "m1"}}, want{curate.OutcomeConform, nil}},
+		{"every member moved", args{"m1", []string{"m2", "m2", "m2"}},
+			want{curate.OutcomeConform, curate.ErrJudgeMoved}},
+		{"the second member moved", args{"m1", []string{"m1", "m2", "m1"}},
+			want{curate.OutcomeConform, curate.ErrJudgeMoved}},
+		{"the last member moved", args{"m1", []string{"m1", "m1", "m2"}},
+			want{curate.OutcomeConform, curate.ErrJudgeMoved}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			stores := testkit.Open(t)
+			client := llmmock.NewMockClient(gomock.NewController(t))
+			calls := make([]any, 0, len(tc.args.models))
+			for _, model := range tc.args.models {
+				calls = append(calls, client.EXPECT().Complete(gomock.Any(), gomock.Any()).
+					Return(llm.Response{Output: answer(0.9, 0.05), Model: model}, nil))
+			}
+			gomock.InOrder(calls...)
+			cfg := curate.JudgeConfig{}.Next(sonnetJudge, nil, "", start)
+			cfg.Answered = tc.args.recorded
+			members, err := cfg.Members(client, nil)
+			require.NoError(t, err)
+			panel := classify.NewPanel(classify.PointJudge, members, stores.Traces, seal, stores.Clock.Now)
+			judge := curate.NewJudge(panel, cfg.Answered)
+
+			got, err := judge.Judge(context.Background(), "run-1", change)
+
+			require.NoError(t, err)
+			assert.Equal(t, tc.want.outcome, got.Outcome)
+			assert.ErrorIs(t, got.Err, tc.want.err)
+		})
+	}
+}
+
+// The model the first claude member that answered names
+func TestVotesAnswered(t *testing.T) {
+	answered := classify.Vote{Member: "claude:2", Reply: classify.Reply{Model: "claude-sonnet-5-5"}}
+	tcs := []struct {
+		name string
+		args curate.Votes
+		want string
+	}{
+		{"no vote names no model", nil, ""},
+		{"a failed member names the model it asked and no answer", curate.Votes{
+			{Member: "claude:1", Reply: classify.Reply{Model: "judge"}, Err: assert.AnError}, answered,
+		}, "claude-sonnet-5-5"},
+		{"an endpoint of another family is no claude member", curate.Votes{
+			{Member: "laya", Reply: classify.Reply{Model: "laya-2"}}, answered,
+		}, "claude-sonnet-5-5"},
+		{"an endpoint host named claude is no variant", curate.Votes{
+			{Member: "claude:8000", Reply: classify.Reply{Model: "laya-2"}}, answered,
+		}, "claude-sonnet-5-5"},
+		{"a member outside the variant set is ignored", curate.Votes{
+			{Member: "claude:4", Reply: classify.Reply{Model: "laya-2"}}, answered,
+		}, "claude-sonnet-5-5"},
+		{"an endpoint sharing a variant name is ignored", curate.Votes{
+			{Member: "claude:1", Err: assert.AnError},
+			{Member: "claude:2", Err: assert.AnError},
+			{Member: "claude:3", Err: assert.AnError},
+			{Member: "claude:1", Reply: classify.Reply{Model: "laya-2"}},
+		}, ""},
+		{"a member that names no model is skipped", curate.Votes{{Member: "claude:1"}, answered}, "claude-sonnet-5-5"},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := tc.args.Answered()
+
+			assert.Equal(t, tc.want, got)
+		})
+	}
+}
+
 // A judgment no record holds is never read
 func TestJudgeJudgeAppendFails(t *testing.T) {
 	stores := testkit.Open(t)
 	client := llmmock.NewMockClient(gomock.NewController(t))
 	client.EXPECT().Complete(gomock.Any(), gomock.Any()).Return(llm.Response{Output: answer(0.9, 0.05)}, nil).Times(3)
-	members, err := curate.JudgeConfig{}.Next(sonnetJudge, nil, start).Members(client, nil)
+	cfg := curate.JudgeConfig{}.Next(sonnetJudge, nil, "", start)
+	members, err := cfg.Members(client, nil)
 	require.NoError(t, err)
 	traces := &testkit.FlakyTraces{Store: stores.Traces, Appends: testkit.Reads{Err: assert.AnError}}
-	judge := curate.NewJudge(classify.NewPanel(classify.PointJudge, members, traces, seal, stores.Clock.Now))
+	judge := curate.NewJudge(classify.NewPanel(classify.PointJudge, members, traces, seal, stores.Clock.Now), cfg.Answered)
 
 	got, err := judge.Judge(context.Background(), "run-1", change)
 
@@ -193,7 +288,8 @@ func TestJudgeConfigMembers(t *testing.T) {
 	}).Times(3)
 	members, err := cfg.Members(client, decisions())
 	require.NoError(t, err)
-	judge := curate.NewJudge(classify.NewPanel(classify.PointJudge, members, stores.Traces, seal, stores.Clock.Now))
+	panel := classify.NewPanel(classify.PointJudge, members, stores.Traces, seal, stores.Clock.Now)
+	judge := curate.NewJudge(panel, cfg.Answered)
 
 	_, err = judge.Judge(context.Background(), "run-1", change)
 
@@ -263,7 +359,7 @@ func TestClaudeJudgePromptFraming(t *testing.T) {
 				prompt = req.Prompt
 				return llm.Response{Output: answer(0.8, 0.1)}, nil
 			})
-			members, err := curate.JudgeConfig{}.Next(sonnetJudge, nil, start).Members(client, nil)
+			members, err := curate.JudgeConfig{}.Next(sonnetJudge, nil, "", start).Members(client, nil)
 			require.NoError(t, err)
 			state, err := json.Marshal(tc.args)
 			require.NoError(t, err)
@@ -307,6 +403,8 @@ func TestJudgeConfigNext(t *testing.T) {
 	}
 	older := kept
 	older.Prompt = "0"
+	answered := kept
+	answered.Answered = "claude-sonnet-5-5"
 	with := func(change func(*curate.JudgeSettings)) curate.JudgeSettings {
 		s := sonnetJudge
 		change(&s)
@@ -315,40 +413,87 @@ func TestJudgeConfigNext(t *testing.T) {
 	started := func(model, effort string, sets [][]knowledge.Ref, kept, refused int) curate.JudgeConfig {
 		return curate.JudgeConfig{Model: model, Effort: effort, Prompt: curate.PromptVersion, Start: start, Sets: sets, Kept: kept, Refused: refused}
 	}
+	moved := started("sonnet", "high", drawnAtStart, 4, 2)
+	moved.Answered = "claude-sonnet-5-4"
+	chat := started("qwen3", "", drawnAtStart, 4, 2)
+	chat.Backend = llm.BackendChat
+	pinned := curate.JudgeConfig{
+		Model: "sonnet", Effort: "high", Prompt: curate.PromptVersion, Start: earlier, Kept: 4, Refused: 2,
+		Sets: curate.Shots(decisions()).Draw(earlier, 4, 2), Answered: "claude-sonnet-5-4",
+	}
 	type args struct {
 		config   curate.JudgeConfig
 		settings curate.JudgeSettings
+		// The model the judge of the cycle before answered with
+		answered string
+	}
+	type want struct {
+		config curate.JudgeConfig
+		starts bool
 	}
 	tcs := []struct {
 		name string
 		args args
-		want curate.JudgeConfig
+		want want
 	}{
 		{"a first judge starts now with sets drawn from the decisions before now",
-			args{curate.JudgeConfig{}, sonnetJudge}, started("sonnet", "high", drawnAtStart, 4, 2)},
-		{"the same settings keep the configuration and its sets however many decisions came since", args{kept, sonnetJudge}, kept},
+			args{curate.JudgeConfig{}, sonnetJudge, ""}, want{started("sonnet", "high", drawnAtStart, 4, 2), true}},
+		{"the same settings keep the configuration and its sets however many decisions came since", args{kept,
+			sonnetJudge, ""}, want{kept, false}},
 		{"another model is a new judge",
-			args{kept, with(func(s *curate.JudgeSettings) { s.Model = "opus" })}, started("opus", "high", drawnAtStart, 4, 2)},
+			args{kept, with(func(s *curate.JudgeSettings) { s.Model = "opus" }), ""}, want{started("opus", "high",
+				drawnAtStart, 4, 2), true}},
 		{"another effort is a new judge",
-			args{kept, with(func(s *curate.JudgeSettings) { s.Effort = "max" })}, started("sonnet", "max", drawnAtStart, 4, 2)},
+			args{kept, with(func(s *curate.JudgeSettings) { s.Effort = "max" }), ""}, want{started("sonnet", "max",
+				drawnAtStart, 4, 2), true}},
+		{"a chat backend is a new judge that records no effort",
+			args{kept, with(func(s *curate.JudgeSettings) {
+				s.Backend, s.Model, s.Effort = llm.BackendChat, "qwen3",
+					""
+			}), ""}, want{chat, true}},
 		{"other sizes of the sets are a new judge",
-			args{kept, with(func(s *curate.JudgeSettings) { s.Kept, s.Refused = 1, 0 })},
-			started("sonnet", "high", [][]knowledge.Ref{{ref("k-a2")}, {ref("k-a4")}, {ref("k-a6")}}, 1, 0)},
-		{"a configuration of another prompt version is a new judge", args{older, sonnetJudge}, started("sonnet", "high", drawnAtStart, 4, 2)},
-		{"a start pinned at the start of the configuration keeps it", args{kept, with(func(s *curate.JudgeSettings) { s.Start = earlier })}, kept},
+			args{kept, with(func(s *curate.JudgeSettings) { s.Kept, s.Refused = 1, 0 }), ""},
+			want{started("sonnet", "high", [][]knowledge.Ref{{ref("k-a2")}, {ref("k-a4")}, {ref("k-a6")}}, 1, 0), true}},
+		{"a configuration of another prompt version is a new judge", args{older, sonnetJudge, ""},
+			want{started("sonnet", "high", drawnAtStart, 4, 2), true}},
+		{"a start pinned at the start of the configuration keeps it", args{kept,
+			with(func(s *curate.JudgeSettings) { s.Start = earlier }), ""},
+			want{kept, false}},
 		{
 			"another pinned start is a new judge whose sets are what that start draws",
-			args{kept, with(func(s *curate.JudgeSettings) { s.Start = start.Add(24 * time.Hour) })},
-			curate.JudgeConfig{
+			args{kept, with(func(s *curate.JudgeSettings) { s.Start = start.Add(24 * time.Hour) }), ""},
+			want{curate.JudgeConfig{
 				Model: "sonnet", Effort: "high", Prompt: curate.PromptVersion, Start: start.Add(24 * time.Hour), Kept: 4, Refused: 2,
 				Sets: curate.Shots(decisions()).Draw(start.Add(24*time.Hour), 4, 2),
-			},
+			}, true},
 		},
+		{"a configuration that recorded no answer takes the model answered and goes on", args{kept, sonnetJudge,
+			"claude-sonnet-5-5"},
+			want{answered, false}},
+		{"the model the configuration recorded keeps it", args{answered, sonnetJudge, "claude-sonnet-5-5"},
+			want{answered, false}},
+		{"a cycle whose judge answered nothing keeps the model recorded", args{answered, sonnetJudge, ""},
+			want{answered, false}},
+		{"another model behind the same name is a new judge that records it", args{answered, sonnetJudge,
+			"claude-sonnet-5-4"},
+			want{moved, true}},
+		{"another model under a pinned start draws the sets of that start", args{answered,
+			with(func(s *curate.JudgeSettings) { s.Start = earlier }), "claude-sonnet-5-4"},
+			want{pinned, true}},
+		{"a change of the settings records no model the old judge answered",
+			args{answered, with(func(s *curate.JudgeSettings) { s.Model = "opus" }),
+				"claude-sonnet-5-4"}, want{started("opus", "high", drawnAtStart, 4, 2), true}},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			assert.Equal(t, tc.want, tc.args.config.Next(tc.args.settings, decisions(), start))
+
+			got := want{
+				tc.args.config.Next(tc.args.settings, decisions(), tc.args.answered, start),
+				tc.args.config.Starts(tc.args.settings, tc.args.answered),
+			}
+
+			assert.Equal(t, tc.want, got)
 		})
 	}
 }
@@ -462,7 +607,7 @@ func TestClaudeJudgeReply(t *testing.T) {
 			client := llmmock.NewMockClient(gomock.NewController(t))
 			client.EXPECT().Complete(gomock.Any(), gomock.Any()).
 				Return(llm.Response{Output: tc.args.output, Model: "claude-sonnet-5-5"}, tc.args.err).Times(tc.args.calls)
-			members, err := curate.JudgeConfig{}.Next(sonnetJudge, nil, start).Members(client, nil)
+			members, err := curate.JudgeConfig{}.Next(sonnetJudge, nil, "", start).Members(client, nil)
 			require.NoError(t, err)
 			judge, ok := members[0].Classifier.(classify.Replier)
 			require.True(t, ok)
@@ -495,7 +640,7 @@ func TestClaudeJudgeTimeout(t *testing.T) {
 				left = time.Until(deadline)
 				return llm.Response{Output: answer(0.8, 0.1)}, nil
 			})
-			members, err := curate.JudgeConfig{}.Next(sonnetJudge, nil, start).Members(client, nil)
+			members, err := curate.JudgeConfig{}.Next(sonnetJudge, nil, "", start).Members(client, nil)
 			require.NoError(t, err)
 			ctx := context.Background()
 			if tc.args > 0 {
@@ -516,7 +661,7 @@ func TestClaudeJudgeTimeout(t *testing.T) {
 func TestClaudeJudgeClassify(t *testing.T) {
 	client := llmmock.NewMockClient(gomock.NewController(t))
 	client.EXPECT().Complete(gomock.Any(), gomock.Any()).Return(llm.Response{Output: answer(0.8, 0.1)}, nil)
-	members, err := curate.JudgeConfig{}.Next(sonnetJudge, nil, start).Members(client, nil)
+	members, err := curate.JudgeConfig{}.Next(sonnetJudge, nil, "", start).Members(client, nil)
 	require.NoError(t, err)
 
 	got, err := members[0].Classifier.Classify(context.Background(), classify.Request{State: `{"change":"add: x"}`, Questions: curate.JudgeQuestions})

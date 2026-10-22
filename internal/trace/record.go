@@ -23,15 +23,21 @@ func RestoreAll(rs []record.Trace) Traces {
 	return out
 }
 
-// The version of the published schema of every name
-// A breaking change of one name gives that name a version of its own and keeps the file of the old one
+// Names without a breaking change keep the first published schema
 const SchemaVersion = 1
+
+func (n Name) SchemaVersion() int {
+	if n == NameKnob {
+		return 2
+	}
+	return SchemaVersion
+}
 
 // The line a store writes for the trace under the current version of its schema
 func (t Trace) Record() record.Trace {
 	return record.Trace{
 		ID: t.ID, Name: string(t.Name), SessionID: t.SessionID, Subject: t.Subject, Ref: t.Ref, Time: t.Time, Model: t.Model,
 		Input: t.Input, Output: t.Output, Error: t.Error, Usage: record.Usage(t.Usage), DurationMS: t.DurationMS, Tags: t.Tags,
-		Producer: t.Producer, Labels: t.Labels, Draw: (*record.Draw)(t.Draw), Source: string(t.Source), SchemaVersion: SchemaVersion,
+		Producer: t.Producer, Labels: t.Labels, Draw: (*record.Draw)(t.Draw), Source: string(t.Source), SchemaVersion: t.Name.SchemaVersion(),
 	}
 }

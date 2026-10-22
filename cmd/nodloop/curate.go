@@ -111,6 +111,7 @@ func (f knowledgeFlags) extractGaps(ctx context.Context, a app, client llm.Clien
 // They come from the events of the judge configuration of now and its preceding cycle
 // The file store still scans older lines to find late appends
 // 3. the judge runs the model --model names or else the model of a chat endpoint or else the default of curate
+// A chat endpoint records its backend and the effort it carries so no effort it never sent stands on record
 // 4. an endpoint set for the judge point joins the claude variants as a member of another model family
 func (f knowledgeFlags) curator(ctx context.Context, a app, client llm.Client, getenv func(string) string) (*curate.Curator, curate.Setting, error) {
 	state, err := anchorCommand{app: a, out: io.Discard}.refresh(ctx)
@@ -139,7 +140,7 @@ func (f knowledgeFlags) curator(ctx context.Context, a app, client llm.Client, g
 	}
 	judge := curate.DefaultJudge
 	if a.cfg.llm.Backend == llm.BackendChat {
-		judge.Model = a.cfg.llm.Model
+		judge.Backend, judge.Model, judge.Effort = llm.BackendChat, a.cfg.llm.Model, ""
 	}
 	judge.Model = cmp.Or(f.model, judge.Model)
 	var seed [16]byte

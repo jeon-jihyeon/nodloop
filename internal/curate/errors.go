@@ -7,6 +7,8 @@ var (
 	ErrCaseInvalid = errors.New("curate: judge state is not a case")
 	// A judge answer that does not decode
 	ErrAnswerInvalid = errors.New("curate: judge answer is not valid")
+	// The claude members answered with another model than the judge configuration records
+	ErrJudgeMoved = errors.New("curate: the judge answered with another model than its configuration")
 	// A few-shot set names a decision the records no longer hold
 	ErrShotUnknown = errors.New("curate: few-shot decision not found")
 	// curate.json exists and cannot be read, written or released

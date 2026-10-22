@@ -70,7 +70,7 @@ func (r *curationRecords) knob(week int, effort string, judgeStart time.Time) {
 
 // The knob event of the start of the cycle with the start knobs the change gives under the default judge a pass keeps
 func (r *curationRecords) knobs(week int, change func(*curate.Knobs)) {
-	r.knobEvent(week, curate.JudgeConfig{}.Next(curate.DefaultJudge, nil, curationMonday), change)
+	r.knobEvent(week, curate.JudgeConfig{}.Next(curate.DefaultJudge, nil, "", curationMonday), change)
 }
 
 func (r *curationRecords) knobEvent(week int, judge curate.JudgeConfig, change func(*curate.Knobs)) {

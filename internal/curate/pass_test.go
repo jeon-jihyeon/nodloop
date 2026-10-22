@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 
+	"github.com/jeon-jihyeon/nodloop/internal/classify"
 	"github.com/jeon-jihyeon/nodloop/internal/curate"
 	"github.com/jeon-jihyeon/nodloop/internal/feedback"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
@@ -511,7 +512,7 @@ func (b bench) knobs(t *testing.T, change func(*curate.Knobs)) {
 	t.Helper()
 	ev := curate.KnobEvent{
 		CycleID: "2026-09-21", Start: time.Date(2026, 9, 21, 0, 0, 0, 0, time.UTC), Seed: "5eed", Cause: curate.KnobStart,
-		Judge: curate.JudgeConfig{}.Next(sonnetJudge, nil, written), Knobs: curate.StartKnobs(),
+		Judge: curate.JudgeConfig{}.Next(sonnetJudge, nil, "", written), Knobs: curate.StartKnobs(),
 	}
 	change(&ev.Knobs)
 	tr, err := ev.Trace("0.10.0", written)
@@ -1131,7 +1132,7 @@ func (b bench) cycleKnobs(t *testing.T, monday time.Time, settings curate.JudgeS
 	t.Helper()
 	ev := curate.KnobEvent{
 		CycleID: monday.Format(trace.CycleDate), Start: monday, Seed: "5eed", Cause: curate.KnobStart,
-		Judge: curate.JudgeConfig{}.Next(settings, nil, written), Knobs: curate.StartKnobs(),
+		Judge: curate.JudgeConfig{}.Next(settings, nil, "", written), Knobs: curate.StartKnobs(),
 	}
 	change(&ev.Knobs)
 	tr, err := ev.Trace("0.10.0", written)
@@ -1276,6 +1277,109 @@ func TestCuratorPassKnobs(t *testing.T) {
 				appended, got.Event.Before == onRecord && got.Event.Cause == curate.KnobNarrow, got.Event.Knobs.Open, got.Event.Knobs.Audit.Tier1,
 				decisionsOf(got.Decided), due, reads,
 			})
+		})
+	}
+}
+
+// A cycle start reads the model a claude member of the judge answered with on the newest decide of the cycle that ends
+// 1. a configuration that recorded none takes it and goes on so the numbers of loop still move the knobs
+// 2. another model behind the same name starts a new configuration that records it and reads no number
+// 3. a classify trace the store lacks and a member that failed name no model so the decide before them is read
+// 4. a failed read of a classify trace fails the pass before its knob event
+func TestCuratorPassJudgeModel(t *testing.T) {
+	ctx := context.Background()
+	// One judged decide of the cycle that ends
+	type judged struct {
+		member classify.Asked
+		// Whether its classify trace is on record
+		kept bool
+	}
+	type args struct {
+		// The model the knob event on record names
+		recorded string
+		// Oldest first
+		decides []judged
+		gets    testkit.Reads
+	}
+	type want struct {
+		answered string
+		// Whether the configuration started at the pass
+		started bool
+		reads   int
+		err     error
+	}
+	reads := testkit.Reads{Allowed: 100}
+	sonnet := judged{classify.Asked{Name: "claude:1", Model: "claude-sonnet-5-5"}, true}
+	moved := judged{classify.Asked{Name: "claude:1", Model: "claude-sonnet-5-4"}, true}
+	failed := judged{classify.Asked{Name: "claude:1", Model: "sonnet", Error: "classify: member failed"}, true}
+	gone := judged{sonnet.member, false}
+	tcs := []struct {
+		name string
+		args args
+		want want
+	}{
+		{"a configuration that recorded no model takes the one answered", args{"", []judged{sonnet}, reads},
+			want{"claude-sonnet-5-5", false, 1, nil}},
+		{"the model recorded answered again keeps the configuration", args{"claude-sonnet-5-5", []judged{sonnet},
+			reads}, want{"claude-sonnet-5-5", false, 1, nil}},
+		{"another model starts a new configuration that records it", args{"claude-sonnet-5-5", []judged{moved},
+			reads}, want{"claude-sonnet-5-4", true, 0, nil}},
+		{"a newer answer of the model recorded wins over an older move", args{"claude-sonnet-5-5", []judged{moved,
+			sonnet}, reads}, want{"claude-sonnet-5-5", false, 1, nil}},
+		{"a member that failed lets the decide before it name the model", args{"claude-sonnet-5-5",
+			[]judged{moved, failed}, reads}, want{"claude-sonnet-5-4", true, 0, nil}},
+		{"a classify trace the store lacks lets the decide before it name the model", args{"claude-sonnet-5-5",
+			[]judged{moved, gone}, reads},
+			want{"claude-sonnet-5-4", true, 0, nil}},
+		{"a failed read of a classify trace fails the pass", args{"claude-sonnet-5-5", []judged{sonnet},
+			testkit.Reads{Err: assert.AnError}},
+			want{"", false, 0, assert.AnError}},
+		{"no decide that names a model keeps the one recorded", args{"claude-sonnet-5-5", []judged{failed, gone},
+			reads}, want{"claude-sonnet-5-5", false, 1, nil}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			b := newBench(t, nil, nil, nil)
+			monday := time.Date(2026, 9, 7, 0, 0, 0, 0, time.UTC)
+			ev := curate.KnobEvent{
+				CycleID: monday.Format(trace.CycleDate), Start: monday, Seed: "5eed", Cause: curate.KnobStart,
+				Judge: curate.JudgeConfig{}.Next(sonnetJudge, nil, "", written), Knobs: curate.StartKnobs(),
+			}
+			ev.Judge.Answered = tc.args.recorded
+			knob, err := ev.Trace("0.10.0", written)
+			require.NoError(t, err)
+			require.NoError(t, b.stores.Traces.Append(ctx, knob.Record()))
+			for i, j := range tc.args.decides {
+				at, ballotID, decideID := written.Add(time.Duration(i+1)*time.Hour), fmt.Sprintf("c-judge%d",
+					i), fmt.Sprintf("d-judged%d", i)
+				if j.kept {
+					out, err := json.Marshal(classify.TraceOutput{Members: []classify.Asked{j.member}})
+					require.NoError(t, err)
+					ballot := trace.Trace{ID: ballotID, Name: trace.NameClassify, Subject: string(classify.PointJudge),
+						Ref: "r-x", Time: at, Output: out}
+					require.NoError(t, b.stores.Traces.Append(ctx, ballot.Record()))
+				}
+				draw := trace.NewDraw("2026-09-07", "0.10.0+1a2b3c4d", "5eed", decideID, "audit", 0)
+				decide, err := curate.Event{ID: decideID, Ref: "r-x", Source: trace.SourcePush, Draw: draw}.Decide(
+					curate.Change{Kind: curate.ChangeAdd, ID: "k-x", Version: 1, Anchor: 1},
+					curate.Decision{Tier: 2, Action: curate.ActionAsk, Judge: ballotID, Outcome: curate.OutcomeSplit}, nil, at)
+				require.NoError(t, err)
+				require.NoError(t, b.stores.Traces.Append(ctx, decide.Record()))
+			}
+			setting := b.setting(t)
+			numbers := 0
+			setting.Numbers = func(context.Context) (curate.Numbers, error) {
+				numbers++
+				return curate.Numbers{}, nil
+			}
+			traces := &testkit.FlakyTraces{Store: b.stores.Traces, Gets: tc.args.gets}
+			curator := curate.New(b.stores.Ledger, traces, b.stores.Feedback, b.client, nil, seal, b.stores.Clock.Now)
+
+			got, err := curator.Pass(ctx, setting)
+
+			assert.Equal(t, tc.want, want{got.Event.Judge.Answered,
+				!got.Event.Judge.Start.IsZero() && !got.Event.Judge.Start.Equal(written), numbers, err})
 		})
 	}
 }

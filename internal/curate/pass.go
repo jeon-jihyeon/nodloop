@@ -266,7 +266,11 @@ func (p *pass) cycle(ctx context.Context, knobs knobTraces, answers trace.Traces
 		ev.Cause, ev.Before = KnobNarrow, id
 		return p.append(ctx, ev, move, now)
 	}
-	ev, started := knobs.next(now, p.s.Seed, p.s.Judge, p.s.Anchor.Shots(p.s.Judge.StartAt(now)))
+	answered, err := p.judgeModel(ctx, knobs.started())
+	if err != nil {
+		return err
+	}
+	ev, started := knobs.next(now, p.s.Seed, p.s.Judge, answered, p.s.Anchor.Shots(p.s.Judge.StartAt(now)))
 	ev.Knobs = p.ints.Knobs(ev.Knobs, knobs.started())
 	var numbers Numbers
 	if !started {
@@ -275,7 +279,31 @@ func (p *pass) cycle(ctx context.Context, knobs knobTraces, answers trace.Traces
 			return err
 		}
 	}
-	return p.append(ctx, ev, ev.Knobs.Start(numbers, p.ints.setBy(KnobAuditTier1)), now)
+	move := ev.Knobs.Start(numbers, p.ints.setBy(KnobAuditTier1))
+	return p.append(ctx, ev, move, now)
+}
+
+// The model a claude member of the judge answered with on the newest decide judged since the start of the cycle that ends
+// 1. a decide before that start may have been judged under another configuration
+// 2. a classify trace the store lacks and one where no claude member answered name no model so an older decide is read
+func (p *pass) judgeModel(ctx context.Context, since time.Time) (string, error) {
+	for _, d := range p.decides {
+		if d.Decision.Judge == "" || !d.Time.After(since) {
+			continue
+		}
+		found, err := p.traces.Get(ctx, d.Decision.Judge)
+		if errors.Is(err, record.ErrTraceNotFound) {
+			continue
+		}
+		if err != nil {
+			return "", err
+		}
+		ballot, _ := classify.RestoreBallot(trace.Restore(found))
+		if model := Votes(ballot.Votes).Answered(); model != "" {
+			return model, nil
+		}
+	}
+	return "", nil
 }
 
 // The numbers the setting reads and none without a reader
@@ -617,7 +645,8 @@ func (p *pass) judging() (*Judge, error) {
 	if err != nil {
 		return nil, err
 	}
-	p.judge = NewJudge(classify.NewPanel(classify.PointJudge, slices.Concat(members, p.endpoints), p.traces, p.seal, p.now))
+	panel := classify.NewPanel(classify.PointJudge, slices.Concat(members, p.endpoints), p.traces, p.seal, p.now)
+	p.judge = NewJudge(panel, p.event.Judge.Answered)
 	return p.judge, nil
 }
 
