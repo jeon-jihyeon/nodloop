@@ -274,12 +274,18 @@ func (iv *Intervener) question(ctx context.Context, a Asking, s state, due Due, 
 	q := Question{Kind: due.Kind, Choices: d.Choices(), Why: s.why(due.Kind, d)}
 	k, err := s.all.Version(d.Change.ID, d.Change.Version)
 	known := err == nil
-	runs := k.Evidence.FeedbackTraceIDs
-	if d.Change.Kind == ChangeWithdraw {
-		runs = []string{d.Ref}
-	}
-	if known && a.Words != nil {
-		if q.Words, err = a.Words(ctx, runs); err != nil {
+	if known {
+		runs, extraction := k.Evidence.FeedbackTraceIDs, k.Extract
+		// A withdrawal concerns its signal rather than the correction that drafted the version
+		if d.Change.Kind == ChangeWithdraw {
+			runs, extraction = []string{d.Ref}, ""
+		}
+		if a.Words != nil {
+			if q.Words, err = a.Words(ctx, runs); err != nil {
+				return Question{}, err
+			}
+		}
+		if q.Excerpt, err = iv.excerpt(ctx, extraction); err != nil {
 			return Question{}, err
 		}
 	}
@@ -300,10 +306,32 @@ func (iv *Intervener) question(ctx context.Context, a Asking, s state, due Due, 
 	if d.Change.Kind == ChangeCompaction || d.Decision.RuleCode == RuleRoom {
 		q.Prepared = append(q.Prepared, iv.coverageWords(ctx, s, d))
 	}
-	if len(q.Words)+len(q.Prepared) == 0 {
+	if len(q.Words)+len(q.Prepared)+len(q.Excerpt) == 0 {
 		q.Prepared = []string{"drafted from a correction"}
 	}
 	return q, nil
+}
+
+// The part of the answer the extraction that drafted the version quoted and empty for none
+// A trace the store lacks or one that names no excerpt shows none so the question still asks
+func (iv *Intervener) excerpt(ctx context.Context, extract string) (string, error) {
+	if extract == "" {
+		return "", nil
+	}
+	found, err := iv.traces.Get(ctx, extract)
+	if errors.Is(err, record.ErrTraceNotFound) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	var out struct {
+		Excerpt string `json:"excerpt"`
+	}
+	if found.Name != string(trace.NameExtract) || json.Unmarshal(found.Output, &out) != nil {
+		return "", nil
+	}
+	return out.Excerpt, nil
 }
 
 // Why the change needs the person in the words of SPEC-curate Questions

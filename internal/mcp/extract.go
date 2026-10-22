@@ -70,6 +70,7 @@ type proposeExtractionInput struct {
 	Kind      knowledge.Kind   `json:"kind" jsonschema:"meaning or judgment"`
 	Content   string           `json:"content" jsonschema:"one sentence of what the correction taught. For an update the whole new text of the item"`
 	Keys      []string         `json:"keys,omitempty" jsonschema:"label keys of the run the lesson needs. Empty reaches every run of the producer such as a way the user wants answers written"`
+	Excerpt   string           `json:"excerpt,omitempty" jsonschema:"the shortest part of the output the correction is about quoted word for word in at most 200 characters"`
 	Critique  extract.Critique `json:"critique" jsonschema:"your answers to the critic questions read as a second reader of the draft"`
 	Author    string           `json:"author,omitempty" jsonschema:"who drafted. claude by default because the conversation drafts"`
 }
@@ -83,7 +84,7 @@ func (s *Server) proposeExtraction(
 		return nil, proposeExtractionAnswer{}, err
 	}
 	res, err := s.extractor.Propose(ctx, r, extract.Draft{
-		Relation: in.Relation, RelatesTo: in.RelatesTo, Kind: in.Kind, Content: in.Content, Keys: in.Keys,
+		Relation: in.Relation, RelatesTo: in.RelatesTo, Kind: in.Kind, Content: in.Content, Keys: in.Keys, Excerpt: in.Excerpt,
 	}, in.Critique, cmp.Or(in.Author, defaultAuthor))
 	if err != nil {
 		return nil, proposeExtractionAnswer{}, err

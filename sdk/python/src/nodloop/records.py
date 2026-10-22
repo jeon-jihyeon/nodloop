@@ -244,6 +244,7 @@ class _ExtractRecordOutputAttemptsDraftRequired(TypedDict):
 class ExtractRecordOutputAttemptsDraft(_ExtractRecordOutputAttemptsDraftRequired, total=False):
     relates_to: str
     keys: list[str] | None
+    excerpt: str
 
 
 class ExtractRecordOutputAttemptsCritique(TypedDict):
@@ -281,6 +282,7 @@ class _ExtractRecordOutputRequired(TypedDict):
 class ExtractRecordOutput(_ExtractRecordOutputRequired, total=False):
     candidate: ExtractRecordOutputCandidate | None
     related: ExtractRecordOutputRelated | None
+    excerpt: str
 
 
 class _ExtractRecordUsageRequired(TypedDict):

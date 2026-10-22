@@ -69,6 +69,8 @@ type Reaction struct {
 type Result struct {
 	Relation Relation
 	Content  string
+	// The excerpt of the draft the code checks kept
+	Excerpt string
 	// The related version the draft names
 	Related *knowledge.Knowledge
 	// The candidate proposed from a draft
@@ -274,7 +276,7 @@ func (e *Extractor) Propose(ctx context.Context, r Reaction, d Draft, c Critique
 // 2. a duplicate of an approved item proposes nothing since the item already says it
 // 3. every other draft proposes a candidate that names the extract trace of the extraction
 func (e *Extractor) propose(ctx context.Context, r Reaction, d Draft, x extraction) (Result, error) {
-	res := Result{Relation: d.Relation, Content: d.Content}
+	res := Result{Relation: d.Relation, Content: d.Content, Excerpt: d.quoted(text(r.Run.Output), text(r.Verdict.Edited))}
 	related, ok := r.related(d.RelatesTo)
 	if ok {
 		res.Related = &related

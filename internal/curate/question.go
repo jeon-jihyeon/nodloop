@@ -124,7 +124,7 @@ func (d Decided) asks() (QuestionKind, bool) {
 
 // The version of the question rules and wording an expose records
 // A changed wording is measured again before it ships so each one gets a version
-const QuestionRules = "2"
+const QuestionRules = "3"
 
 // The start of the AskUserQuestion header that names a question of the stop by its key
 const AskHeader = "nodloop "
@@ -258,6 +258,8 @@ type Question struct {
 	Why string
 	// The person's own words that started the change
 	Words []string
+	// The part of the answer the correction is about as the extraction quoted it
+	Excerpt string
 	// What else was prepared as short phrases
 	Prepared []string
 }
@@ -272,7 +274,7 @@ const (
 )
 
 // The question in the lines of SPEC-curate Questions within MaxRunes
-// 1. the quoted lessons and words shrink together until the text fits
+// 1. all quotes shrink together until the text fits
 // 2. lines that still do not fit are cut before the reply line so the reply line always shows
 func (q Question) Text() string {
 	reply := replyLine(q.Choices[0], q.Choices[1])
@@ -295,12 +297,19 @@ func (q Question) body(limit int) string {
 	for _, l := range q.Lessons {
 		lessons = append(lessons, quoted(l, limit))
 	}
-	prepared := make([]string, 0, len(q.Words)+len(q.Prepared))
+	prepared := make([]string, 0, len(q.Words)+len(q.Prepared)+1)
 	for _, w := range q.Words {
 		prepared = append(prepared, "your words "+quoted(w, limit))
 	}
+	if q.Excerpt != "" {
+		prepared = append(prepared, "the part corrected "+quoted(q.Excerpt, limit))
+	}
 	prepared = append(prepared, q.Prepared...)
-	return fmt.Sprintf("One decision for you: %s\nWhy you: %s\nPrepared: %s", fmt.Sprintf(q.Change, lessons...), q.Why, strings.Join(prepared, " · "))
+	change := q.Change
+	if len(lessons) > 0 {
+		change = fmt.Sprintf(change, lessons...)
+	}
+	return fmt.Sprintf("One decision for you: %s\nWhy you: %s\nPrepared: %s", change, q.Why, strings.Join(prepared, " · "))
 }
 
 // The text on one line in quotes cut at the runes with the cut marked
