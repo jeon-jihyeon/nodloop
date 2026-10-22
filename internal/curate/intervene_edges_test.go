@@ -179,7 +179,7 @@ func TestIntervenerOverturn(t *testing.T) {
 	b := newBench(t, answer(0.9, 0.8), []knowledge.Knowledge{lesson("k-against", 1, "Skip the tests", acme("acme"), knowledge.StatusCandidate, "")}, nil)
 	first, err := b.curator().Pass(ctx, b.setting(t))
 	require.NoError(t, err)
-	require.Equal(t, []string{"add k-against v1 ask judge_against 2"}, decisionsOf(first.Decided))
+	require.Equal(t, []string{"add k-against v1 hold judge_against 2"}, decisionsOf(first.Decided))
 
 	got, err := b.intervener(nil).Intervene(ctx, curate.Request{Action: trace.ActionAnswer, Target: first.Decided[0].ID, Choice: trace.ChoiceKeep}, person)
 

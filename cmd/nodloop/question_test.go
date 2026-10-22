@@ -19,6 +19,7 @@ import (
 	knowledgefile "github.com/jeon-jihyeon/nodloop/internal/knowledge/file"
 	"github.com/jeon-jihyeon/nodloop/internal/record"
 	"github.com/jeon-jihyeon/nodloop/internal/schema"
+	"github.com/jeon-jihyeon/nodloop/internal/textkey"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
 	tracefile "github.com/jeon-jihyeon/nodloop/internal/trace/file"
 )
@@ -67,9 +68,62 @@ func (b questionBench) getenv(k string) string {
 func (b questionBench) hook(t *testing.T, action, host, stdin, repo string, start starter) (stdout, stderr string) {
 	t.Helper()
 	var out, errOut bytes.Buffer
-	code := runHook([]string{action, "--host", host}, b.getenv, start, b.now, strings.NewReader(hookFixture(t, stdin, repo)), &out, &errOut)
+	code := runHook([]string{action, "--host", host}, b.getenv, start, b.now, strings.NewReader(b.input(t, stdin, repo)), &out, &errOut)
 	require.Equal(t, 0, code)
 	return out.String(), errOut.String()
+}
+
+func (b questionBench) input(t *testing.T, input, repo string) string {
+	t.Helper()
+	input = hookFixture(t, input, repo)
+	var in hookInput
+	require.NoError(t, json.Unmarshal([]byte(input), &in))
+	path := filepath.Join(b.getenv("HOME"), ".claude", "projects", "acme", in.SessionID+".jsonl")
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o700))
+	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+		require.NoError(t, os.WriteFile(path, nil, 0o600))
+	}
+	return strings.ReplaceAll(input, "{transcript}", filepath.ToSlash(path))
+}
+
+func proposeQuestion(t *testing.T, b questionBench) {
+	t.Helper()
+	var out, stderr bytes.Buffer
+	payload := `{"action":"judge","target":"k-add:1","choice":"keep","session":"s1"}`
+	code := runIntervene([]string{"--payload", "-"}, b.getenv, b.now, trace.ProofNone, strings.NewReader(payload), &out, &stderr)
+	require.Equal(t, 0, code, stderr.String())
+}
+
+func (b questionBench) legacy(t *testing.T) {
+	t.Helper()
+	b.hook(t, "stop", "claude-code", questionStop, b.svc, noStart)
+	a := app{cfg: config{recordDir: b.records}, now: b.now}
+	ledger, err := a.ledger()
+	require.NoError(t, err)
+	all, err := ledger.All(context.Background())
+	require.NoError(t, err)
+	mark, err := curate.ReadMark(b.records)
+	require.NoError(t, err)
+	store, err := a.traces()
+	require.NoError(t, err)
+	k, err := all.Version("k-wide", 1)
+	require.NoError(t, err)
+	draw := trace.NewDraw(mark.CycleID, mark.PolicyVersion, mark.Seed, "d-legacy", "direction", 1)
+	decision, err := (curate.Event{ID: "d-legacy", Ref: k.Evidence.FeedbackTraceIDs[0], Source: trace.SourcePush, Draw: draw}).Decide(
+		curate.Change{Kind: curate.ChangeAdd, ID: k.ID, Version: k.Version},
+		curate.Decision{Tier: 2, RuleCode: curate.RuleScopeWider, Action: curate.ActionAsk}, nil, b.now())
+	require.NoError(t, err)
+	require.NoError(t, store.Append(context.Background(), decision.Record()))
+	mark.Due = []curate.Due{{Kind: curate.QuestionDirection, Decide: decision.ID, Change: curate.ChangeAdd, Ref: knowledge.Ref{ID: k.ID, Version: 1}}}
+	key, err := textkey.Load(b.records)
+	require.NoError(t, err)
+	iv, err := a.intervener()
+	require.NoError(t, err)
+	shown, err := iv.Ask(context.Background(), curate.Asking{
+		Session: "s1", Run: b.traces(t, trace.NameRun)[0].ID, Mark: mark, All: all, Pushed: true, Seal: key.Sum,
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, shown.Expose.ID)
 }
 
 // The traces of the name newest first
@@ -108,131 +162,89 @@ func stopAnswer(t *testing.T, stdout string) (text, decision string) {
 	return answer.Output.Context, answer.Decision
 }
 
-const questionStop = `{"session_id":"s1","cwd":"{repo}","last_assistant_message":"done"}`
+const questionStop = `{"session_id":"s1","cwd":"{repo}","last_assistant_message":"done","transcript_path":"{transcript}"}`
 
-// The start of the block of the question about k-wide
-const wideQuestion = "nodloop question for you\nOne decision for you: add the lesson \"Use the staging cluster\" in repo svc\n"
-
-// Claude Code asks the one question due for the place at the end of the first answer of a session
-// It continues the turn on Stop additionalContext with no decision
+// An ordinary candidate never interrupts the session
 func TestRunHookStopQuestion(t *testing.T) {
-	b := newQuestionBench(t, "")
-
-	first, firstErr := b.hook(t, "stop", "claude-code", questionStop, b.svc, noStart)
-	second, secondErr := b.hook(t, "stop", "claude-code", questionStop, b.svc, noStart)
-
-	text, decision := stopAnswer(t, first)
-	expose, x := b.exposed(t)
-	assert.Empty(t, firstErr+secondErr)
-	assert.Empty(t, second, "one question per session")
-	assert.Empty(t, decision)
-	assert.True(t, strings.HasPrefix(text, wideQuestion), text)
-	assert.Contains(t, text, `AskUserQuestion call with header "nodloop `+x.Key+`", the two options keep with the description "Apply the change"`)
-	assert.LessOrEqual(t, len("nodloop "+x.Key), 12, "the header AskUserQuestion allows")
-	assert.Len(t, b.traces(t, trace.NameExpose), 1)
-	assert.Equal(t, []any{"s1", curate.QuestionDirection, trace.SourcePush}, []any{expose.SessionID, x.Kind, expose.Source})
-	assert.Len(t, b.traces(t, trace.NameRun), 5, "the three runs of the bench and those of the stops")
-	assert.NoError(t, schema.Validate(string(trace.NameExpose), expose.Record()))
+	tcs := []struct{ name, input string }{
+		{"a host transcript leaves unrequested candidates pending", questionStop},
+		{"a missing transcript shows nothing", `{"session_id":"s1","cwd":"{repo}","last_assistant_message":"done"}`},
+		{"a continued turn shows nothing", `{"session_id":"s1","cwd":"{repo}","last_assistant_message":"done","stop_hook_active":true}`},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			b := newQuestionBench(t, "")
+			first, firstErr := b.hook(t, "stop", "claude-code", tc.input, b.svc, noStart)
+			second, secondErr := b.hook(t, "stop", "claude-code", tc.input, b.svc, noStart)
+			assert.Empty(t, first+second)
+			assert.Empty(t, firstErr+secondErr)
+			assert.Empty(t, b.traces(t, trace.NameExpose))
+			assert.Empty(t, b.traces(t, trace.NameAnswer))
+		})
+	}
 }
 
-// A writer that reads the exposes of the records when the stop writes its answer
-type exposeWitness struct {
-	t     *testing.T
-	b     questionBench
-	out   bytes.Buffer
-	found int
-}
-
-func (w *exposeWitness) Write(p []byte) (int, error) {
-	w.found = len(w.b.traces(w.t, trace.NameExpose))
-	return w.out.Write(p)
-}
-
-// The expose is on record before the stop prints the question with the run the question followed and the runes of its text
+// Preparation alone spends no exposure or retry round
 func TestRunHookStopQuestionExpose(t *testing.T) {
-	b := newQuestionBench(t, "")
-	w := &exposeWitness{t: t, b: b}
+	b := newQuestionBench(t, "manual")
+	proposeQuestion(t, b)
+	var out bytes.Buffer
 	var stderr bytes.Buffer
-
-	code := runHook([]string{"stop"}, b.getenv, noStart, b.now, strings.NewReader(hookFixture(t, questionStop, b.svc)), w, &stderr)
-
+	input := b.input(t, questionStop, b.acme)
+	code := runHook([]string{"stop"}, b.getenv, noStart, b.now, strings.NewReader(input), &out, &stderr)
 	require.Equal(t, 0, code, stderr.String())
-	assert.Equal(t, 1, w.found)
-	expose, x := b.exposed(t)
-	runs := b.traces(t, trace.NameRun)
-	text, _ := stopAnswer(t, w.out.String())
-	assert.Equal(t, []any{runs[0].ID, 1}, []any{x.Run, x.Round})
-	assert.Positive(t, x.Runes)
-	assert.Less(t, x.Runes, len([]rune(text)), "the runes of the question alone")
-	assert.Equal(t, 1.0, *expose.Draw.P)
+	text, decision := stopAnswer(t, out.String())
+	assert.Empty(t, decision)
+	assert.Contains(t, text, "AskUserQuestion")
+	assert.Contains(t, text, "without asking a substitute question")
+	assert.Empty(t, b.traces(t, trace.NameExpose))
+	assert.Empty(t, b.traces(t, trace.NameAnswer))
+}
+
+// A proposal is prepared only where the capture can read the tool call that asks it
+func TestRunHookStopQuestionUntranscribed(t *testing.T) {
+	b := newQuestionBench(t, "manual")
+	proposeQuestion(t, b)
+
+	out, failed := b.hook(t, "stop", "claude-code", `{"session_id":"s1","cwd":"{repo}","last_assistant_message":"done"}`, b.acme, noStart)
+
+	assert.Empty(t, failed)
+	assert.NotContains(t, out, "AskUserQuestion")
+	assert.Empty(t, b.traces(t, trace.NameExpose))
 }
 
 // The stop talks to the person only when everything before it went through and only through the one path of the place and mode
-// 1. a question needs a completed turn in its place under an inferring mode
-// 2. a failed start of the background work asks nothing
-// 3. a proposal the session made through the manual path is asked in manual mode too
+// A requested manual proposal needs a completed turn and a kept transcript
 func TestRunHookStopQuestionRules(t *testing.T) {
 	type args struct {
-		stop, repo string
-		// session_mode of config.json and none when empty
-		mode  string
-		start starter
-		// Records written before the stop
-		setup func(t *testing.T, b questionBench)
-	}
-	type want struct {
-		start  string
-		stderr string
-	}
-	propose := func(t *testing.T, b questionBench) {
-		var out, stderr bytes.Buffer
-		payload := `{"action":"judge","target":"k-add:1","choice":"keep","session":"s1"}`
-		code := runIntervene([]string{"--payload", "-"}, b.getenv, b.now, trace.ProofNone, strings.NewReader(payload), &out, &stderr)
-		require.Equal(t, 0, code, stderr.String())
-	}
-	// An answered question remains in curate.json until its next pass
-	answered := func(t *testing.T, b questionBench) {
-		b.hook(t, "stop", "claude-code", strings.Replace(questionStop, "s1", "s0", 1), b.svc, noStart)
-		runs := b.traces(t, trace.NameRun)
-		iv, err := (app{cfg: config{recordDir: b.records}, now: b.now}).intervener()
-		require.NoError(t, err)
-		replied, err := iv.Reply(context.Background(), curate.Reply{Session: "s0", Run: runs[0].ID, Word: "keep", Person: unnamedPerson})
-		require.NoError(t, err)
-		require.NotEmpty(t, replied.Answer)
-	}
-	corrupt := func(t *testing.T, b questionBench) {
-		hookAppend(t, filepath.Join(b.records, "traces.jsonl"), "{\n")
+		input, mode string
+		proposal    bool
 	}
 	tcs := []struct {
 		name string
 		args args
-		want want
+		want bool
 	}{
-		{"a turn a stop hook continued asks nothing", args{`{"session_id":"s1","cwd":"{repo}","last_assistant_message":"done","stop_hook_active":true}`, "svc", "", noStart, nil},
-			want{"", ""}},
-		{"a place no question reaches asks nothing", args{questionStop, "work", "", noStart, nil}, want{"", ""}},
-		{"manual mode pushes nothing", args{questionStop, "svc", "manual", noStart, nil}, want{"", ""}},
-		{"a failed start asks nothing", args{questionStop, "svc", "", func([]string) error { return errors.New("no process") }, nil}, want{"", "no process"}},
-		{"manual mode asks the proposal the session made", args{questionStop, "acme", "manual", noStart, propose},
-			want{"nodloop question for you\nOne decision for you: keep the lesson \"Name the failing test first\"\n", ""}},
-		{"a question another session answered asks nothing", args{questionStop, "svc", "", noStart, answered}, want{"", ""}},
-		{"exposes that cannot be read ask nothing and say why", args{questionStop, "svc", "", noStart, corrupt}, want{"", "corrupt"}},
+		{"manual request prepares one question", args{questionStop, "manual", true}, true},
+		{"deferred manual request prepares one question", args{questionStop, "", true}, true},
+		{"no request leaves candidates pending", args{questionStop, "", false}, false},
+		{"no transcript leaves a manual proposal pending", args{`{"session_id":"s1","cwd":"{repo}","last_assistant_message":"done"}`, "manual", true}, false},
+		{"another session leaves a manual proposal pending", args{strings.Replace(questionStop, "s1", "s2", 1), "manual", true}, false},
+		{"a continued turn prepares no question", args{`{"session_id":"s1","cwd":"{repo}","last_assistant_message":"done","stop_hook_active":true}`, "manual", true}, false},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			b := newQuestionBench(t, tc.args.mode)
-			if tc.args.setup != nil {
-				tc.args.setup(t, b)
+			if tc.args.proposal {
+				proposeQuestion(t, b)
 			}
-			repo := map[string]string{"svc": b.svc, "acme": b.acme, "work": b.work}[tc.args.repo]
-
-			stdout, stderr := b.hook(t, "stop", "claude-code", tc.args.stop, repo, tc.args.start)
-
+			stdout, stderr := b.hook(t, "stop", "claude-code", tc.args.input, b.acme, noStart)
 			text, _ := stopAnswer(t, stdout)
-			assert.True(t, strings.HasPrefix(text, tc.want.start), text)
-			assert.Equal(t, tc.want.start == "", text == "")
-			assert.Contains(t, stderr, tc.want.stderr)
+			assert.Empty(t, stderr)
+			assert.Equal(t, tc.want, text != "")
+			assert.Empty(t, b.traces(t, trace.NameExpose))
 		})
 	}
 }
@@ -265,8 +277,7 @@ func TestRunHookPromptReply(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			b := newQuestionBench(t, "")
-			stdout, _ := b.hook(t, "stop", "claude-code", questionStop, b.svc, noStart)
-			require.NotEmpty(t, stdout)
+			b.legacy(t)
 			if tc.args.between {
 				b.hook(t, "prompt", "claude-code", `{"session_id":"s1","cwd":"{repo}","prompt":"go on"}`, b.svc, noStart)
 				b.hook(t, "stop", "claude-code", questionStop, b.svc, noStart)
@@ -300,7 +311,7 @@ func questionAnswers(t *testing.T, b questionBench) []string {
 // The answer names the expose it answers and the ledger record names the answer under the person
 func TestRunHookReplyCaptured(t *testing.T) {
 	b := newQuestionBench(t, "")
-	b.hook(t, "stop", "claude-code", questionStop, b.svc, noStart)
+	b.legacy(t)
 	expose, _ := b.exposed(t)
 	b.hook(t, "prompt", "claude-code", `{"session_id":"s1","cwd":"{repo}","prompt":"keep, and show the cluster list"}`, b.svc, noStart)
 	dir := filepath.Join(b.getenv("HOME"), ".claude", "projects", "-work-svc")
@@ -344,7 +355,8 @@ func TestRunHookStopNotice(t *testing.T) {
 	require.Equal(t, 0, runKnowledge([]string{"curate"}, b.getenv, curateClient(t), func() time.Time { return curateNow.Add(time.Minute) }, trace.ProofNone,
 		&bytes.Buffer{}, &stderr), stderr.String())
 
-	first, firstErr := b.hook(t, "stop", "claude-code", questionStop, b.acme, noStart)
+	untranscribed := `{"session_id":"s1","cwd":"{repo}","last_assistant_message":"done"}`
+	first, firstErr := b.hook(t, "stop", "claude-code", untranscribed, b.acme, noStart)
 	second, _ := b.hook(t, "stop", "claude-code", questionStop, b.acme, noStart)
 	codex, _ := b.hook(t, "stop", "codex", strings.Replace(questionStop, "s1", "s2", 1), b.acme, noStart)
 
@@ -375,6 +387,7 @@ func TestRunHookStopQuestionFails(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			b := newQuestionBench(t, "")
+			proposeQuestion(t, b)
 			path := filepath.Join(b.records, tc.args.file)
 			require.NoError(t, os.RemoveAll(path))
 			require.NoError(t, os.Mkdir(path, 0o700))
@@ -390,40 +403,27 @@ func TestRunHookStopQuestionFails(t *testing.T) {
 }
 
 // A stop that curate.json and the exposes of its session leave nothing to show asks curate nothing and makes no key
-// So a broken key fails no such stop while it fails the first stop of a session that asks
+// A broken key therefore affects a manual proposal and no ordinary candidate
 func TestRunHookStopAsksCurateOnlyWhenDue(t *testing.T) {
-	type args struct {
-		repo string
-		// session_mode of config.json and none when empty
-		mode string
-		// The session asked its question at a stop before
-		asked bool
-	}
 	tcs := []struct {
-		name string
-		args args
-		want string
+		name     string
+		proposal bool
+		want     string
 	}{
-		{"the first stop of a session reaches curate", args{"svc", "", false}, "nodloop hook: "},
-		{"a session that was asked its question does not", args{"svc", "", true}, ""},
-		{"a place no question reaches does not", args{"work", "", false}, ""},
-		{"a mode that pushes nothing does not", args{"svc", "manual", false}, ""},
+		{"unrequested candidates never reach the question reader", false, ""},
+		{"a manual proposal reaches the question reader", true, "nodloop hook: "},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			b := newQuestionBench(t, tc.args.mode)
-			repo := map[string]string{"svc": b.svc, "work": b.work}[tc.args.repo]
-			if tc.args.asked {
-				stdout, _ := b.hook(t, "stop", "claude-code", questionStop, repo, noStart)
-				require.NotEmpty(t, stdout)
+			b := newQuestionBench(t, "manual")
+			if tc.proposal {
+				proposeQuestion(t, b)
 			}
 			key := filepath.Join(b.records, "hmac.key")
 			require.NoError(t, os.RemoveAll(key))
 			require.NoError(t, os.Mkdir(key, 0o700))
-
-			stdout, stderr := b.hook(t, "stop", "claude-code", questionStop, repo, noStart)
-
+			stdout, stderr := b.hook(t, "stop", "claude-code", questionStop, b.acme, noStart)
 			assert.Empty(t, stdout)
 			assert.Contains(t, stderr, tc.want)
 			assert.Equal(t, tc.want == "", stderr == "")
@@ -475,27 +475,20 @@ func TestSessionExposes(t *testing.T) {
 // 1. a proposal is due only in the session that made it
 // 2. a question curate pushes is due where its place admits the place of the stop and everywhere without a place
 func TestDueQuestions(t *testing.T) {
-	acme := knowledge.RunScope{Producer: sessionProducer, Labels: trace.Labels{"repo": {"acme"}}}
-	place := knowledge.RunScope{Producer: sessionProducer, Labels: trace.Labels{"repo": {"acme"}, "dir": {"."}}}
-	type want struct {
-		proposed, reaching bool
-	}
 	tcs := []struct {
 		name string
 		args dueQuestions
-		want want
+		want bool
 	}{
-		{"a proposal of the session", dueQuestions{{Proposal: "i1", Session: "s1"}}, want{true, false}},
-		{"a proposal of another session", dueQuestions{{Proposal: "i1", Session: "s2"}}, want{false, false}},
-		{"a question of the place", dueQuestions{{Place: &acme}}, want{false, true}},
-		{"a question of every place", dueQuestions{{}}, want{false, true}},
-		{"a question of another place", dueQuestions{{Place: &knowledge.RunScope{Producer: sessionProducer, Labels: trace.Labels{"repo": {"svc"}}}}}, want{false, false}},
-		{"nothing due", nil, want{}},
+		{"a proposal of the session", dueQuestions{{Proposal: "i1", Session: "s1"}}, true},
+		{"a proposal of another session", dueQuestions{{Proposal: "i1", Session: "s2"}}, false},
+		{"an ordinary direction is not a manual request", dueQuestions{{Kind: curate.QuestionDirection}}, false},
+		{"nothing due", nil, false},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			assert.Equal(t, tc.want, want{tc.args.proposed("s1"), tc.args.reaching(place)})
+			assert.Equal(t, tc.want, tc.args.proposed("s1"))
 		})
 	}
 }

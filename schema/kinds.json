@@ -204,12 +204,13 @@
     },
     {
       "kind": "decide",
-      "version": 1,
+      "version": 2,
       "versions": [
-        1
+        1,
+        2
       ],
       "store": "traces.jsonl",
-      "schema": "https://github.com/jeon-jihyeon/nodloop/schema/decide.v1.json",
+      "schema": "https://github.com/jeon-jihyeon/nodloop/schema/decide.v2.json",
       "description": "One change curate judged with the audit draw of the decision",
       "links": [
         "ref",

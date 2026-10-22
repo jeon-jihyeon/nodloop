@@ -282,7 +282,7 @@ func (s state) question(in *trace.Intervention) error {
 	_, retried := s.unrecorded(id, in.Choice)
 	choices := d.Choices()
 	switch {
-	case !ok || !asks:
+	case !ok || !asks && d.Decision.Action != ActionHold:
 		return fmt.Errorf("%w: %q names no question", ErrTargetInvalid, in.Target)
 	case s.answered(id) && !retried || dismissed:
 		return fmt.Errorf("%w: the question %q is closed", ErrTargetInvalid, in.Target)

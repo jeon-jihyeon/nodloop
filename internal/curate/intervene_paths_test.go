@@ -432,7 +432,7 @@ func TestIntervenerMerge(t *testing.T) {
 			}, nil)
 			first, err := b.curator().Pass(ctx, b.setting(t))
 			require.NoError(t, err)
-			require.Equal(t, []string{"add k-more v1 ask room 2"}, decisionsOf(first.Decided))
+			require.Equal(t, []string{"add k-more v1 hold room 2"}, decisionsOf(first.Decided))
 			iv := b.intervener(nil)
 			merge := curate.Request{Action: trace.ActionAnswer, Target: first.Decided[0].ID, Choice: trace.ChoiceMerge}
 			_, err = iv.Intervene(ctx, merge, person)

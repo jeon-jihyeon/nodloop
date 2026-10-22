@@ -464,7 +464,7 @@ func (c hookCommand) stop(ctx context.Context, sessionID string, labels trace.La
 	}
 	failed = errors.Join(failed, c.capture(sessionID, t, continued), c.prune(ctx), c.consolidate(all), c.curate())
 	if failed == nil && !continued && sessionID != "" {
-		failed = c.talk(ctx, sessionID, knowledge.RunScope{Producer: sessionProducer, Labels: labels}, run.ID, all)
+		failed = c.talk(ctx, sessionID, knowledge.RunScope{Producer: sessionProducer, Labels: labels}, run.ID, all, t)
 	}
 	return errors.Join(corrupt, failed)
 }

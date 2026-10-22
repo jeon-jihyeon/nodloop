@@ -49,6 +49,19 @@ func newDesk(t *testing.T) desk {
 	b.knobs(t, func(k *curate.Knobs) { k.Audit = curate.Audit{Tier0: 1, Tier1: 1} })
 	first, err := b.curator().Pass(ctx, b.setting(t))
 	require.NoError(t, err)
+	// Legacy direction questions still need reply and reverse coverage
+	for i, d := range first.Decided {
+		if d.Change.ID != "k-ask" {
+			continue
+		}
+		id := (desk{bench: b, first: first}).asking(t, d.Ref, d.Change, curate.RuleScopeWider)
+		tr, err := b.stores.Traces.Get(ctx, id)
+		require.NoError(t, err)
+		first.Decided[i], _ = curate.RestoreDecide(trace.Restore(tr))
+		first.Due = append(first.Due, curate.Due{Kind: curate.QuestionDirection, Decide: id,
+			Change: d.Change.Kind, Ref: knowledge.Ref{ID: d.Change.ID, Version: d.Change.Version},
+			Rule: curate.RuleScopeWider, Run: d.Ref, Place: acme("svc"), At: d.Time})
+	}
 	marker := curate.NewMarker(b.stores.Dir)
 	held, err := marker.Hold()
 	require.NoError(t, err)

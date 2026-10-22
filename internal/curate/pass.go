@@ -577,7 +577,7 @@ func (p *pass) proposals(ctx context.Context) error {
 
 // The change a candidate version makes and the decision of its tier
 // 1. tier 0 code rules carry out what the record already settles
-// 2. tier 2 code rules send what only the person decides to a question before any judge call
+// 2. tier 2 code rules hold what only the person decides before any judge call
 // 3. the judge predicts the rest
 func (p *pass) sort(ctx context.Context, k knowledge.Knowledge, ref string, retried bool) (ruling, error) {
 	r := ruling{change: Change{Kind: p.kindOf(k), ID: k.ID, Version: k.Version, Extract: k.Extract, Anchor: p.s.Version.Version}}
@@ -598,7 +598,7 @@ func (p *pass) sort(ctx context.Context, k knowledge.Knowledge, ref string, retr
 	}
 	place := p.place(run)
 	if rule, asks := p.asks(k, run, place); asks {
-		r.decision = Decision{Tier: topTier, RuleCode: rule, Action: ActionAsk}
+		r.decision = Decision{Tier: topTier, RuleCode: rule, Action: ActionHold}
 		return r, nil
 	}
 	return r, p.judged(ctx, &r, k, ref, run, place, retried)
@@ -684,6 +684,9 @@ func (p *pass) place(run trace.Trace) AnchorPlace {
 // Records the decide of the change and carries out its ledger write
 // The decide lands first so a crash between the two leaves it for the next pass
 func (p *pass) settle(ctx context.Context, ref string, r ruling) error {
+	if r.decision.Action == ActionAsk && r.change.Kind.versioned() {
+		r.decision.Action = ActionHold
+	}
 	now := p.now()
 	id := trace.NewID(now)
 	ev := Event{ID: id, Ref: ref, Source: trace.SourcePush, Draw: p.event.AuditDraw(id, p.event.Knobs.audits(r.decision))}

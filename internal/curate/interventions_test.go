@@ -119,7 +119,7 @@ func TestCuratorPassInterventions(t *testing.T) {
 			args{request: func(string) curate.Request {
 				return curate.Request{Action: trace.ActionPause, Target: string(curate.ChangeAdd)}
 			}},
-			want{[]string{"add k-late v1 ask paused 2"}, true},
+			want{[]string{"add k-late v1 hold paused 2"}, true},
 		},
 		{
 			"a pause of a scope that does not cover the candidate leaves it to the judge",

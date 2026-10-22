@@ -27,7 +27,7 @@ func RestoreAll(rs []record.Trace) Traces {
 const SchemaVersion = 1
 
 func (n Name) SchemaVersion() int {
-	if n == NameKnob {
+	if n == NameDecide || n == NameKnob {
 		return 2
 	}
 	return SchemaVersion

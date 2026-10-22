@@ -527,7 +527,7 @@ export interface DecideRecord {
     vote?: number | null;
     bin?: "b1" | "b2" | "b3" | "b4";
     confidence?: number | null;
-    action: "apply" | "withdraw" | "drop" | "join" | "ask" | "shadow" | "retry";
+    action: "apply" | "withdraw" | "drop" | "join" | "ask" | "shadow" | "retry" | "hold";
     reason?: "duplicate" | "no_evidence" | "temp_scope" | "conflict" | "words" | "compaction" | "person";
     failure?: "hard" | "repairable" | "underexplored" | "unpromising";
     reopen?: "other_session" | "permanent_place" | "next_pass" | "person_only";
@@ -555,7 +555,7 @@ export interface DecideRecord {
     drawn: boolean;
   } | null;
   source?: "push" | "manual" | "command";
-  schema_version: 1;
+  schema_version: 2;
 }
 
 /** The knobs, the seed and the judge of a cycle at its start or at a narrowing inside it */

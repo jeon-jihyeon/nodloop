@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -17,13 +19,18 @@ import (
 )
 
 // The one stop path that talks to the person after the run of the turn was recorded
-// 1. a question curate prepared through Stop additionalContext after its expose is on record
+// 1. a requested manual question prepared through Stop additionalContext without recording exposure
 // 2. otherwise a notice of what curate carried out in the place through Stop systemMessage
-// 3. curate is asked only for what the stop may still show so a stop after the question and the notice of its session makes no key
-func (c hookCommand) talk(ctx context.Context, sessionID string, place knowledge.RunScope, run string, all knowledge.Set) error {
+// 3. unrequested candidates reach no question reader or key
+// 4. a question is prepared only where the capture can read its tool call from the transcript while a notice needs none
+func (c hookCommand) talk(ctx context.Context, sessionID string, place knowledge.RunScope, run string, all knowledge.Set, t transcript) error {
 	asks, notices, err := c.showable(ctx, sessionID, place, all)
 	if err != nil || !asks && !notices {
 		return err
+	}
+	asks = asks && c.observable(t, sessionID)
+	if !asks && !notices {
+		return nil
 	}
 	iv, err := c.app.intervener()
 	if err != nil {
@@ -34,9 +41,9 @@ func (c hookCommand) talk(ctx context.Context, sessionID string, place knowledge
 	if err != nil {
 		return err
 	}
-	a := curate.Asking{Session: sessionID, Run: run, Place: place, Pushed: c.mode.infers(), Mark: c.mark, All: all, Seal: key.Sum, Words: c.words}
+	a := curate.Asking{Session: sessionID, Run: run, Place: place, Mark: c.mark, All: all, Seal: key.Sum, Words: c.words}
 	if asks {
-		asked, err := iv.Ask(ctx, a)
+		asked, err := iv.Prepare(ctx, a)
 		if err != nil || asked.Question.Key != "" {
 			return errors.Join(err, c.ask(asked.Question))
 		}
@@ -54,23 +61,33 @@ func (c hookCommand) talk(ctx context.Context, sessionID string, place knowledge
 // Whether the stop of the session may still show a question and a notice
 // 1. a host whose replies code cannot read is shown nothing so every question stays due
 // 2. curate reads every question and answer on record so curate.json and the exposes of the session decide first
-// A stop after the one question and the one notice of its session reads one window of its exposes and no other record of curate
+// An unrequested candidate triggers no question read while a requested proposal stays due until observed
 // 3. exposes that cannot be read show nothing and the stop reports why
 func (c hookCommand) showable(ctx context.Context, sessionID string, place knowledge.RunScope, all knowledge.Set) (asks, notices bool, err error) {
 	if !c.host.talks() {
 		return false, false, nil
 	}
 	due := dueQuestions(c.mark.Due)
-	proposed, reaching := due.proposed(sessionID), c.mode.infers() && due.reaching(place)
+	proposed := due.proposed(sessionID)
 	notices = curate.Noticeable(all, place)
-	if !proposed && !reaching && !notices {
+	if !proposed && !notices {
 		return false, false, nil
 	}
 	shown, err := c.app.exposes(ctx, sessionID, c.app.now().Add(-sessionWindow))
 	if err != nil {
 		return false, false, err
 	}
-	return proposed || reaching && !shown.pushed(), notices && !shown.noticed(), nil
+	return proposed, notices && !shown.noticed(), nil
+}
+
+// Whether the capture can read a question tool call of the session from the transcript the host keeps
+// A transcript is necessary for observing a question but never proves that its tool is available
+func (c hookCommand) observable(t transcript, session string) bool {
+	if t == "" || c.rules.config == "" || t.kept(filePath(filepath.Join(string(c.rules.config), "projects")), session) != nil {
+		return false
+	}
+	info, err := os.Stat(string(t))
+	return err == nil && info.Mode().IsRegular()
 }
 
 // The question as Stop additionalContext and nothing for none
@@ -125,13 +142,6 @@ type dueQuestions []curate.Due
 // Its stop asks it whatever was asked before since the person asked for it
 func (ds dueQuestions) proposed(session string) bool {
 	return slices.ContainsFunc(ds, func(d curate.Due) bool { return d.Proposal != "" && d.Session == session })
-}
-
-// Whether one curate pushes reaches the place
-func (ds dueQuestions) reaching(place knowledge.RunScope) bool {
-	return slices.ContainsFunc(ds, func(d curate.Due) bool {
-		return d.Proposal == "" && (d.Place == nil || d.Place.Admits(place.Producer, place.Labels))
-	})
 }
 
 // The exposes of one session newest first
