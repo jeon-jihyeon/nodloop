@@ -1223,6 +1223,14 @@ func TestIntervenerAskPolicyInForce(t *testing.T) {
 	}, nil)
 	first, err := b.curator().Pass(ctx, b.setting(t))
 	require.NoError(t, err)
+	legacy, err := (curate.Event{ID: "d-legacy", Ref: "r-k-ask", Source: trace.SourcePush,
+		Draw: trace.NewDraw(first.Event.CycleID, first.Event.PolicyVersion, "seed", "d-legacy", "audit", 1)}).Decide(
+		curate.Change{Kind: curate.ChangeAdd, ID: "k-ask", Version: 1},
+		curate.Decision{Tier: 2, RuleCode: curate.RuleScopeWider, Action: curate.ActionAsk}, nil, written)
+	require.NoError(t, err)
+	require.NoError(t, b.stores.Traces.Append(ctx, legacy.Record()))
+	first.Due = append(first.Due, curate.Due{Kind: curate.QuestionDirection, Decide: legacy.ID, Change: curate.ChangeAdd,
+		Ref: knowledge.Ref{ID: "k-ask", Version: 1}, Place: acme("svc")})
 	marker := curate.NewMarker(b.stores.Dir)
 	held, err := marker.Hold()
 	require.NoError(t, err)

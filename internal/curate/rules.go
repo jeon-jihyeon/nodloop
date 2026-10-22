@@ -106,19 +106,17 @@ func (p *pass) corrected(ctx context.Context, k knowledge.Knowledge) (bool, erro
 // The tier 2 rule of a candidate whose change only the person decides
 // Checked before any judge call since the hardest judgment is whether an earlier approval covers the change
 // 1. person_item when it replaces a version a person approved or was built on one a person decided
-// 2. scope_wider when no single version a person approved reaches every run its scope reaches
-// 3. veto when it or the version it replaces carries a veto
-// 4. room when its approval needs a compaction so its one question carries the prepared compaction
-// 5. drift when versions nodloop approved in the place reach the lessons a person approved there
-// 6. paused when a pause of the person covers its kind or its scope so no judge runs on it
+// 2. veto when it or the version it replaces carries a veto
+// 3. room when its approval needs a compaction before review
+// 4. drift when versions nodloop approved in the place reach the lessons a person approved there
+// 5. paused when a pause of the person covers its kind or its scope so no judge runs on it
+// 6. scope_wider when no single version a person approved reaches every run its scope reaches
 // The candidate comes from the set so Room finds its version and every folder it reads
 func (p *pass) asks(k knowledge.Knowledge, run trace.Trace, place AnchorPlace) (RuleCode, bool) {
 	cur, replaces := p.all.Approved().Find(k.ID)
 	switch {
 	case replaces && cur.Approver != knowledge.ApproverNodloop || k.Base > 0 && p.personDecided(k.ID, k.Base):
 		return RulePersonItem, true
-	case !p.all.PersonReaches(*k.Run):
-		return RuleScopeWider, true
 	case k.Veto != nil || replaces && cur.Veto != nil:
 		return RuleVeto, true
 	}
@@ -130,6 +128,8 @@ func (p *pass) asks(k knowledge.Knowledge, run trace.Trace, place AnchorPlace) (
 		return RuleDrift, true
 	case p.ints.Paused(p.kindOf(k), *k.Run):
 		return RulePaused, true
+	case !p.all.PersonReaches(*k.Run):
+		return RuleScopeWider, true
 	}
 	return "", false
 }

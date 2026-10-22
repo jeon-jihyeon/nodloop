@@ -158,7 +158,7 @@ func TestRunHookHosts(t *testing.T) {
 	}
 }
 
-// A host whose replies code cannot read is shown no question and the question stays due for the next Claude Code session
+// A host without observable questions spends no round and later sessions leave unrequested candidates pending
 // 1. no expose is recorded so the stop spends no round of the question
 // 2. Codex records its run and Cursor and Copilot record none
 func TestRunHookStopQuestionHosts(t *testing.T) {
@@ -187,12 +187,11 @@ func TestRunHookStopQuestionHosts(t *testing.T) {
 			later, laterErr := b.hook(t, "stop", "claude-code", strings.Replace(questionStop, "s1", "s2", 1), b.svc, noStart)
 
 			text, _ := stopAnswer(t, later)
-			expose, _ := b.exposed(t)
 			assert.Empty(t, shownErr+laterErr)
 			assert.Empty(t, shown)
 			assert.Zero(t, exposes)
-			assert.True(t, strings.HasPrefix(text, wideQuestion), text)
-			assert.Equal(t, "s2", expose.SessionID)
+			assert.Empty(t, text)
+			assert.Empty(t, b.traces(t, trace.NameExpose))
 			assert.Len(t, b.traces(t, trace.NameRun), tc.want+4)
 		})
 	}

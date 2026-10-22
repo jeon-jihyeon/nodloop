@@ -754,7 +754,7 @@ class DecideRecordInput(_DecideRecordInputRequired, total=False):
 
 class _DecideRecordOutputRequired(TypedDict):
     tier: int
-    action: Literal["apply", "withdraw", "drop", "join", "ask", "shadow", "retry"]
+    action: Literal["apply", "withdraw", "drop", "join", "ask", "shadow", "retry", "hold"]
 
 
 class DecideRecordOutput(_DecideRecordOutputRequired, total=False):
@@ -819,7 +819,7 @@ class _DecideRecordRequired(TypedDict):
     input: DecideRecordInput
     usage: DecideRecordUsage
     duration_ms: int
-    schema_version: Literal[1]
+    schema_version: Literal[2]
 
 
 class DecideRecord(_DecideRecordRequired, total=False):

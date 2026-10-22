@@ -343,9 +343,9 @@ func (q Question) Block() string {
 	return fmt.Sprintf("%s\n%s\nAsk this in one AskUserQuestion call with header \"%s%s\", "+
 		"the two options %s with the description \"%s\" and %s with the description \"%s\", "+
 		"and as its question the lines from One decision to Prepared copied word for word, keeping every quote. "+
-		"Where that tool does not exist, end your answer with those lines and the reply keys %s or %s. "+
+		"If that tool is unavailable, finish this turn without asking a substitute question. The proposal stays pending. "+
 		"Record nothing and decide nothing yourself.",
-		questionHeading, q.Text(), AskHeader, q.Key, first, choiceDescriptions[first], second, choiceDescriptions[second], first, second)
+		questionHeading, q.Text(), AskHeader, q.Key, first, choiceDescriptions[first], second, choiceDescriptions[second])
 }
 
 // The characters of a question key

@@ -158,7 +158,7 @@ func TestRunKnowledgeCurate(t *testing.T) {
 	assert.Equal(t, 0, firstCode, stderr.String())
 	assert.Equal(t, 0, secondCode, stderr.String())
 	assert.ElementsMatch(t, []string{
-		"drop\tdrop\tk-dup\tv1\ttier 0\tsame_as_item", "shadow\tadd\tk-add\tv1\ttier 1\tconform", "ask\tadd\tk-wide\tv1\ttier 2\tscope_wider",
+		"drop\tdrop\tk-dup\tv1\ttier 0\tsame_as_item", "shadow\tadd\tk-add\tv1\ttier 1\tconform", "hold\tadd\tk-wide\tv1\ttier 2\tscope_wider",
 	}, strings.Split(strings.TrimSpace(first.String()), "\n"))
 	assert.Equal(t, "apply\tadd\tk-add\tv1\ttier 1\tconform\n", second.String())
 	assert.Equal(t, []string{"k-add v1 candidate", "k-dup v1 retired nodloop duplicate", "k-person v1 approved ann", "k-wide v1 candidate"}, firstStatuses)
@@ -174,7 +174,7 @@ func TestRunKnowledgeCurate(t *testing.T) {
 		}
 		kinds[d.Ref.ID] = d.Kind
 	}
-	assert.Equal(t, map[string]curate.QuestionKind{"k-add": curate.QuestionShadow, "k-wide": curate.QuestionDirection}, kinds)
+	assert.Equal(t, map[string]curate.QuestionKind{"k-add": curate.QuestionShadow}, kinds)
 	assert.Equal(t, drawn, audits, "the drop is due as an audit exactly when its draw drew it")
 	rules, err := os.ReadFile(filepath.Join(records, "approved.md"))
 	require.NoError(t, err)

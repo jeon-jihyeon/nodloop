@@ -243,6 +243,11 @@ func (c captureCommand) read(ctx context.Context, session string, t transcript, 
 		return captureOutput{}, errors.Join(corrupt, err)
 	}
 	reader.shown = sessionExposes(window.of(trace.NameExpose))
+	observed, observeErr := c.observe(ctx, session, part.questions, window)
+	if observeErr != nil {
+		return captureOutput{}, errors.Join(corrupt, observeErr)
+	}
+	reader.shown = append(reader.shown, observed...)
 	out, failed := reader.judge(ctx, part.messages.after(runs.started(first)), window)
 	tr, err := part.input.trace(session, out, c.app.now())
 	if err == nil {
@@ -579,8 +584,9 @@ func (t transcript) kept(projects filePath, session string) error {
 
 // The part of a transcript read from an offset with the messages the person typed in it
 type transcriptPart struct {
-	input    captureInput
-	messages personMessages
+	input     captureInput
+	messages  personMessages
+	questions []capturedQuestion
 }
 
 // The messages after the offset and the offset after the last whole line
@@ -632,6 +638,7 @@ func (t transcript) read(from int64) (transcriptPart, error) {
 			delete(waiting, id)
 		}
 		calls := e.calls()
+		part.questions = append(part.questions, calls.observed(e.Timestamp, start)...)
 		maps.Copy(asked, calls)
 		for id := range calls {
 			if calls.stops(id) {
@@ -656,6 +663,7 @@ func (p transcriptPart) before(waiting map[string]transcriptCut) transcriptPart 
 			p.input.To, p.messages = c.to, p.messages[:c.messages]
 		}
 	}
+	p.questions = slices.DeleteFunc(p.questions, func(q capturedQuestion) bool { return q.offset > p.input.To })
 	return p
 }
 

@@ -211,32 +211,32 @@ func TestCuratorPassTiers(t *testing.T) {
 		{
 			"a scope no lesson a person approved reaches asks the person",
 			args{lessons: []knowledge.Knowledge{lesson("k-other", 1, "Use the staging cluster", acme("svc"), candidate, "")}},
-			want{[]string{"add k-other v1 ask scope_wider 2"}, []string{"k-other v1 candidate"}},
+			want{[]string{"add k-other v1 hold scope_wider 2"}, []string{"k-other v1 candidate"}},
 		},
 		{
 			"the next version of a lesson a person approved asks the person",
 			args{lessons: []knowledge.Knowledge{next}},
-			want{[]string{"update k-person v2 ask person_item 2"}, []string{"k-person v2 candidate"}},
+			want{[]string{"update k-person v2 hold person_item 2"}, []string{"k-person v2 candidate"}},
 		},
 		{
 			"a candidate with a veto asks the person",
 			args{lessons: []knowledge.Knowledge{vetoed}},
-			want{[]string{"add k-veto v1 ask veto 2"}, []string{"k-veto v1 candidate"}},
+			want{[]string{"add k-veto v1 hold veto 2"}, []string{"k-veto v1 candidate"}},
 		},
 		{
 			"an add the judge finds against asks the person",
 			args{lessons: []knowledge.Knowledge{lesson("k-against", 1, "Skip the tests", acme("acme"), candidate, "")}, answer: answer(0.9, 0.8)},
-			want{[]string{"add k-against v1 ask judge_against 2"}, []string{"k-against v1 candidate"}},
+			want{[]string{"add k-against v1 hold judge_against 2"}, []string{"k-against v1 candidate"}},
 		},
 		{
 			"an add the judge finds the anchor silent on asks the person",
 			args{lessons: []knowledge.Knowledge{lesson("k-silent", 1, "Use tabs", acme("acme"), candidate, "")}, answer: answer(0.2, 0.1)},
-			want{[]string{"add k-silent v1 ask judge_undecided 2"}, []string{"k-silent v1 candidate"}},
+			want{[]string{"add k-silent v1 hold judge_undecided 2"}, []string{"k-silent v1 candidate"}},
 		},
 		{
 			"an add the judge finds conform in a bin not yet open asks the person",
 			args{lessons: []knowledge.Knowledge{lesson("k-b2", 1, "Run the linter too", acme("acme"), candidate, "")}, answer: answer(0.9, 0.1)},
-			want{[]string{"add k-b2 v1 ask kind_closed 2"}, []string{"k-b2 v1 candidate"}},
+			want{[]string{"add k-b2 v1 hold kind_closed 2"}, []string{"k-b2 v1 candidate"}},
 		},
 		{
 			"an approval that needs room asks the person with the compaction",
@@ -244,7 +244,7 @@ func TestCuratorPassTiers(t *testing.T) {
 				lesson("k-big1", 1, "first "+big, acme("big"), approved, "ann"), lesson("k-big2", 1, "second "+big, acme("big"), approved, "ann"),
 				lesson("k-more", 1, "third "+big, acme("big"), candidate, ""),
 			}},
-			want{[]string{"add k-more v1 ask room 2"}, []string{"k-big1 v1 approved ann", "k-big2 v1 approved ann", "k-more v1 candidate"}},
+			want{[]string{"add k-more v1 hold room 2"}, []string{"k-big1 v1 approved ann", "k-big2 v1 approved ann", "k-more v1 candidate"}},
 		},
 		{
 			"a place where lessons nodloop approved reach the person's asks to reanchor first",
@@ -252,7 +252,7 @@ func TestCuratorPassTiers(t *testing.T) {
 				lesson("k-carried", 1, "Squash before a merge", acme("acme"), approved, knowledge.ApproverNodloop),
 				lesson("k-drift", 1, "Rebase before a push", acme("acme"), candidate, ""),
 			}},
-			want{[]string{"add k-drift v1 ask drift 2"}, []string{"k-carried v1 approved nodloop", "k-drift v1 candidate"}},
+			want{[]string{"add k-drift v1 hold drift 2"}, []string{"k-carried v1 approved nodloop", "k-drift v1 candidate"}},
 		},
 	}
 	for _, tc := range tcs {
@@ -437,7 +437,7 @@ func TestCuratorPassRetry(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, []string{"add k-add v1 retry  1"}, decisionsOf(first.Decided))
-	assert.Equal(t, []string{"add k-add v1 ask judge_split 2"}, decisionsOf(second.Decided))
+	assert.Equal(t, []string{"add k-add v1 hold judge_split 2"}, decisionsOf(second.Decided))
 	assert.Empty(t, third.Decided)
 	retried, err := b.stores.Traces.Get(ctx, first.Decided[0].ID)
 	require.NoError(t, err)
@@ -531,10 +531,9 @@ func TestCuratorPassWithdrawalClosed(t *testing.T) {
 	got, err := b.curator().Pass(context.Background(), b.setting(t))
 
 	require.NoError(t, err)
-	assert.Equal(t, []string{"withdraw k-carried v1 ask kind_closed 2"}, decisionsOf(got.Decided))
+	assert.Equal(t, []string{"withdraw k-carried v1 hold kind_closed 2"}, decisionsOf(got.Decided))
 	assert.Equal(t, []string{"k-carried v1 approved nodloop"}, statuses(t, b))
-	require.Len(t, got.Due, 1)
-	assert.Equal(t, curate.QuestionDirection, got.Due[0].Kind)
+	assert.Empty(t, got.Due)
 }
 
 // A conflict an extraction found with a version nodloop approved is a withdrawal decided in shadow and carried out once the shadow ended
@@ -585,24 +584,20 @@ func TestCuratorPassWords(t *testing.T) {
 
 	first, err := b.curator().Pass(ctx, b.setting(t))
 	require.NoError(t, err)
-	// No audit draws the withdrawal so the question of the person's lesson is the only one due
+	// No audit draws the withdrawal and the protected version stays held
 	b.narrow(t, first.Event, func(k *curate.Knobs) { k.Activated, k.Audit = true, curate.Audit{} })
 	second, err := b.curator().Pass(ctx, b.setting(t))
 	require.NoError(t, err)
 	third, err := b.curator().Pass(ctx, b.setting(t))
 	require.NoError(t, err)
 
-	assert.Equal(t, []string{"withdraw k-carried v1 shadow  1", "withdraw k-person v1 ask person_item 2"}, decisionsOf(first.Decided))
+	assert.Equal(t, []string{"withdraw k-carried v1 shadow  1", "withdraw k-person v1 hold person_item 2"}, decisionsOf(first.Decided))
 	require.Equal(t, []string{"withdraw k-carried v1 withdraw  1"}, decisionsOf(second.Decided))
 	assert.Empty(t, third.Decided)
 	assert.Equal(t, "c-words", second.Decided[0].Change.Signal)
 	assert.Equal(t, "r-k-carried", second.Decided[0].Ref)
 	assert.Equal(t, []string{"k-carried v1 retired nodloop words"}, statuses(t, b))
-	require.Len(t, third.Due, 1)
-	assert.Equal(t, curate.Due{
-		Kind: curate.QuestionDirection, Decide: third.Due[0].Decide, Change: curate.ChangeWithdraw, Ref: knowledge.Ref{ID: "k-person", Version: 1},
-		Rule: curate.RulePersonItem, Run: "r-k-carried", Place: acme("acme"), At: third.Due[0].At,
-	}, third.Due[0])
+	assert.Empty(t, third.Due)
 }
 
 // Each decide that leaves a question lists it due once in the order it was decided until an answer or a person's decision settles it
@@ -642,7 +637,6 @@ func TestCuratorPassDue(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, []due{
-		{curate.QuestionDirection, "k-ask v1", curate.RuleScopeWider, "r-k-ask", "runs of session. repo=svc"},
 		{curate.QuestionAudit, "k-dup v1", curate.RuleSameAsItem, "r-k-dup", "runs of session. repo=acme"},
 		{curate.QuestionShadow, "k-shadow v1", "", "r-k-shadow", "runs of session. repo=acme"},
 	}, view(first.Due))
@@ -732,7 +726,7 @@ func TestCuratorPassEvidence(t *testing.T) {
 		{"a candidate of an earlier release scoped to no run waits as before", args{nil, false, []knowledge.Knowledge{unscoped}}, want{[]string{}, []string{}}},
 		{
 			"a version built on one a person retired asks the person", args{[]knowledge.Knowledge{retired, turned}, false, nil},
-			want{[]string{"add k-turned v2 ask person_item 2"}, []string{"r-turned"}},
+			want{[]string{"add k-turned v2 hold person_item 2"}, []string{"r-turned"}},
 		},
 	}
 	ctx := context.Background()
@@ -1471,7 +1465,7 @@ func TestCuratorPassJudgeReads(t *testing.T) {
 	got, err := b.curator().Pass(ctx, setting)
 
 	require.NoError(t, err)
-	require.Equal(t, []string{"update k-carried v2 ask kind_closed 2"}, decisionsOf(got.Decided))
+	require.Equal(t, []string{"update k-carried v2 hold kind_closed 2"}, decisionsOf(got.Decided))
 	require.Len(t, prompts, 3)
 	change := "replace [meaning] Squash before a merge\nwith [meaning] Squash and rebase before a merge\nscope: runs of session. repo=acme"
 	quoted, err := json.Marshal(change)

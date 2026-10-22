@@ -100,10 +100,11 @@ const (
 	ActionAsk      Action = "ask"      // a question is prepared for the person
 	ActionShadow   Action = "shadow"   // decided in shadow and left waiting
 	ActionRetry    Action = "retry"    // a judge call failed so the next pass decides the change
+	ActionHold     Action = "hold"     // a candidate stays unapproved for explicit review
 )
 
 func Actions() []Action {
-	return []Action{ActionApply, ActionWithdraw, ActionDrop, ActionJoin, ActionAsk, ActionShadow, ActionRetry}
+	return []Action{ActionApply, ActionWithdraw, ActionDrop, ActionJoin, ActionAsk, ActionShadow, ActionRetry, ActionHold}
 }
 
 // Why a change curate refused may still not teach

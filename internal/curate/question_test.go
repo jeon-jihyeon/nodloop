@@ -346,6 +346,21 @@ func TestQuestionBlock(t *testing.T) {
 		`Ask this in one AskUserQuestion call with header "nodloop k7q2", `+
 		`the two options keep with the description "Apply the change" and drop with the description "Leave the change out", `+
 		"and as its question the lines from One decision to Prepared copied word for word, keeping every quote. "+
-		"Where that tool does not exist, end your answer with those lines and the reply keys keep or drop. "+
+		"If that tool is unavailable, finish this turn without asking a substitute question. The proposal stays pending. "+
 		"Record nothing and decide nothing yourself.", got)
+}
+
+func TestQuestionLiteralChange(t *testing.T) {
+	tcs := []struct{ name, change string }{
+		{"a percent in a requested proposal stays literal", `keep the lesson "Show 100% of the result"`},
+		{"a formatting token in a requested proposal stays literal", `keep the lesson "Preserve %s in the example"`},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			q := curate.Question{Change: tc.change, Choices: [2]curate.Choice{curate.ChoiceYes, curate.ChoiceNotYet}}
+			assert.Contains(t, q.Text(), "One decision for you: "+tc.change)
+			assert.NotContains(t, q.Text(), "%!")
+		})
+	}
 }

@@ -57,7 +57,7 @@ func TestNameSchemaVersion(t *testing.T) {
 		want int
 	}{
 		{"an unchanged run schema", trace.NameRun, 1},
-		{"an unchanged decide schema", trace.NameDecide, 1},
+		{"the new decision actions", trace.NameDecide, 2},
 		{"the judge backend and its model answered", trace.NameKnob, 2},
 		{"an unknown name does not invent a version", trace.Name("future"), 1},
 	}

@@ -691,11 +691,10 @@ func TestRunSessionCaptureSignal(t *testing.T) {
 
 	require.Equal(t, 0, code, stderr)
 	assert.Zero(t, calls.draft)
-	assert.Contains(t, stdout, "ask\twithdraw\tgit-c\tv1\ttier 2\tperson_item\n")
+	assert.Contains(t, stdout, "hold\twithdraw\tgit-c\tv1\ttier 2\tperson_item\n")
 	mark, err := curate.ReadMark(b.records)
 	require.NoError(t, err)
-	require.Len(t, mark.Due, 1)
-	assert.Equal(t, curate.ChangeWithdraw, mark.Due[0].Change)
+	assert.Empty(t, mark.Due)
 	assert.Contains(t, calls.system, "stops_git-c_v1: The user's message asks the assistant to stop following this lesson it was given: "+
 		"Run git -C <dir> instead of changing into the directory")
 	assert.Contains(t, calls.schema, `"required":["approves","corrects","stops_git-c_v1"]`)

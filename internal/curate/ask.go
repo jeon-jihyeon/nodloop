@@ -233,6 +233,20 @@ func (iv *Intervener) ownFirst(ctx context.Context, session string, direction []
 // 1. its key is unique among the questions no answer closed
 // 2. its round counts the sessions that showed it before
 func (iv *Intervener) show(ctx context.Context, a Asking, s state, due Due, draw trace.Draw, source trace.Source) (Shown, error) {
+	shown, err := iv.prepared(ctx, a, s, due, draw, source)
+	if err != nil {
+		return Shown{}, err
+	}
+	if err := iv.traces.Append(ctx, shown.Expose.Record()); err != nil {
+		return Shown{}, err
+	}
+	return shown, nil
+}
+
+func (iv *Intervener) prepared(ctx context.Context, a Asking, s state, due Due, draw trace.Draw, source trace.Source) (Shown, error) {
+	if a.Seal == nil {
+		return Shown{}, fmt.Errorf("%w: a question needs the record key", ErrExposeInvalid)
+	}
 	d := s.decides[due.Decide]
 	q, err := iv.question(ctx, a, s, due, d)
 	if err != nil {
@@ -249,9 +263,6 @@ func (iv *Intervener) show(ctx context.Context, a Asking, s state, due Due, draw
 	}
 	tr, err := Event{Session: a.Session, Ref: d.ID, Source: source, Draw: draw}.Expose(x, iv.now())
 	if err != nil {
-		return Shown{}, err
-	}
-	if err := iv.traces.Append(ctx, tr.Record()); err != nil {
 		return Shown{}, err
 	}
 	return Shown{Question: q, Expose: tr}, nil
