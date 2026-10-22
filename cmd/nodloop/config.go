@@ -40,7 +40,8 @@ type config struct {
 	// The files the person designates as direction
 	anchor []string
 	// The model client of config.json so the judge of curate names the model of a chat endpoint
-	llm llm.Config
+	llm      llm.Config
+	curation userconfig.Curation
 }
 
 // The record directory as the flag, then NODLOOP_RECORD_DIR, then config.json, then the default under home
@@ -60,7 +61,7 @@ func resolveConfig(getenv func(string) string, recordDir string) (config, error)
 	return config{
 		recordDir: records, home: h, classifiers: uc.classifierConfig, holdout: knowledge.Holdout(uc.Holdout),
 		retention: retain.Days(uc.Retention), sessionMode: uc.SessionMode, otel: uc.OTel, approver: uc.Approver, anchor: uc.Anchor.Files,
-		llm: uc.LLM,
+		llm: uc.LLM, curation: uc.Curation,
 	}, nil
 }
 
@@ -76,6 +77,9 @@ func (c config) recordArgs() string {
 // The settings are approver and holdout and retention and session_mode
 // config alone lists every setting with its value and where the value came from
 func runConfig(args []string, getenv func(string) string, proof trace.Proof, stdout, stderr io.Writer) int {
+	if len(args) > 0 && args[0] == "delegation" {
+		return runDelegation(args[1:], getenv, proof, stdout, stderr)
+	}
 	h := homeDir(getenv("HOME"))
 	if h == "" {
 		return fail(stderr, "config", errHomeUnknown)
@@ -152,12 +156,17 @@ func (c configCommand) list(getenv func(string) string) error {
 	if uc.Retention != 0 {
 		days = strconv.Itoa(uc.Retention)
 	}
+	grants := ""
+	if len(uc.Curation.Delegations) > 0 {
+		grants = strconv.Itoa(len(uc.Curation.Delegations))
+	}
 	rows := []struct{ name, env, configured, value string }{
 		{"record_dir", envRecordDir, uc.RecordDir, records},
 		{"session_mode", "", uc.SessionMode, session},
 		{"approver", "", uc.Approver, uc.Approver},
 		{"holdout", "", share, cmp.Or(share, "0")},
 		{"retention", "", days, cmp.Or(days, "0")},
+		{"curation", "", grants, "grants=" + cmp.Or(grants, "0")},
 		{"decision_points", "", uc.pointsText(), ""},
 		{"llm", "", backend, cmp.Or(backend, string(llm.BackendClaude))},
 		{"claude binary", envClaudeBin, "", cmp.Or(getenv(envClaudeBin), llm.DefaultBin)},

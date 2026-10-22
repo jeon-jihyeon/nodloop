@@ -190,7 +190,7 @@ func TestRunConfigList(t *testing.T) {
 		{
 			"nothing saved lists the defaults",
 			args{"", nil},
-			"record_dir\t<home>/.nodloop/records\tdefault\nsession_mode\tdeferred\tdefault\napprover\t-\tdefault\nholdout\t0\tdefault\nretention\t0\tdefault\n" +
+			"record_dir\t<home>/.nodloop/records\tdefault\nsession_mode\tdeferred\tdefault\napprover\t-\tdefault\nholdout\t0\tdefault\nretention\t0\tdefault\ncuration\tgrants=0\tdefault\n" +
 				"decision_points\t-\tdefault\nllm\tclaude\tdefault\nclaude binary\tclaude\tdefault\nmodel\tsonnet\tdefault\notel\t-\tdefault\n",
 		},
 		{
@@ -201,34 +201,34 @@ func TestRunConfigList(t *testing.T) {
 					`"decisions":{"critic":{"mode":"single","members":["local"]}},"server":{"keys":[{"name":"ci","tenant":"acme","role":"producer","sha256":"x"}]}}`,
 				map[string]string{envRecordDir: "/env", "NODLOOP_SESSION": "off", envLLMModel: "opus"},
 			},
-			"record_dir\t/env\tNODLOOP_RECORD_DIR\nsession_mode\tmanual\tconfig.json\napprover\tann\tconfig.json\nholdout\t0.1\tconfig.json\nretention\t30\tconfig.json\n" +
+			"record_dir\t/env\tNODLOOP_RECORD_DIR\nsession_mode\tmanual\tconfig.json\napprover\tann\tconfig.json\nholdout\t0.1\tconfig.json\nretention\t30\tconfig.json\ncuration\tgrants=0\tdefault\n" +
 				"decision_points\tcritic\tconfig.json\nllm\tclaude\tdefault\nclaude binary\tclaude\tdefault\n" +
 				"model\topus\tNODLOOP_LLM_MODEL\notel\thttp://192.0.2.1:4318\tconfig.json\n",
 		},
 		{
 			"a chat backend names its endpoint and its model and NODLOOP_LLM_MODEL stays with claude",
 			args{`{"llm":{"backend":"chat","base_url":"http://localhost:11434/v1","model":"qwen3"}}`, map[string]string{envLLMModel: "opus"}},
-			"record_dir\t<home>/.nodloop/records\tdefault\nsession_mode\tdeferred\tdefault\napprover\t-\tdefault\nholdout\t0\tdefault\nretention\t0\tdefault\n" +
+			"record_dir\t<home>/.nodloop/records\tdefault\nsession_mode\tdeferred\tdefault\napprover\t-\tdefault\nholdout\t0\tdefault\nretention\t0\tdefault\ncuration\tgrants=0\tdefault\n" +
 				"decision_points\t-\tdefault\nllm\tchat http://localhost:11434/v1\tconfig.json\nclaude binary\tclaude\tdefault\nmodel\tqwen3\tconfig.json\notel\t-\tdefault\n",
 		},
 		{
 			"a claude model of config.json is the model without NODLOOP_LLM_MODEL",
 			args{`{"llm":{"backend":"claude","model":"haiku"}}`, nil},
-			"record_dir\t<home>/.nodloop/records\tdefault\nsession_mode\tdeferred\tdefault\napprover\t-\tdefault\nholdout\t0\tdefault\nretention\t0\tdefault\n" +
+			"record_dir\t<home>/.nodloop/records\tdefault\nsession_mode\tdeferred\tdefault\napprover\t-\tdefault\nholdout\t0\tdefault\nretention\t0\tdefault\ncuration\tgrants=0\tdefault\n" +
 				"decision_points\t-\tdefault\nllm\tclaude\tconfig.json\nclaude binary\tclaude\tdefault\nmodel\thaiku\tconfig.json\notel\t-\tdefault\n",
 		},
 		{
 			"an invalid backend URL never prints its token",
 			args{`{"llm":{"backend":"chat","base_url":"http://bad host/v1?key=k1","model":"qwen3"}}`, nil},
 			"record_dir\t<home>/.nodloop/records\tdefault\nsession_mode\tdeferred\tdefault\napprover\t-\tdefault\n" +
-				"holdout\t0\tdefault\nretention\t0\tdefault\ndecision_points\t-\tdefault\n" +
+				"holdout\t0\tdefault\nretention\t0\tdefault\ncuration\tgrants=0\tdefault\ndecision_points\t-\tdefault\n" +
 				"llm\tllm: base_url is not an absolute http or https URL\tconfig.json\n" +
 				"claude binary\tclaude\tdefault\nmodel\tqwen3\tconfig.json\notel\t-\tdefault\n",
 		},
 		{
 			"an unreadable classifier setup shows its error in its row",
 			args{`{"classifiers":{"a":{"url":"http://a"},"b":{"url":"http://b"}},"decisions":{"critic":{"mode":"parallel","members":["a","b"]}}}`, nil},
-			"record_dir\t<home>/.nodloop/records\tdefault\nsession_mode\tdeferred\tdefault\napprover\t-\tdefault\nholdout\t0\tdefault\nretention\t0\tdefault\n" +
+			"record_dir\t<home>/.nodloop/records\tdefault\nsession_mode\tdeferred\tdefault\napprover\t-\tdefault\nholdout\t0\tdefault\nretention\t0\tdefault\ncuration\tgrants=0\tdefault\n" +
 				"decision_points\tclassifier setup no longer run: decisions.critic in config.json asks [a b]. " +
 				"Run nodloop classifier set critic --url <url> to ask one endpoint before claude\tconfig.json\n" +
 				"llm\tclaude\tdefault\nclaude binary\tclaude\tdefault\nmodel\tsonnet\tdefault\notel\t-\tdefault\n",
@@ -238,7 +238,7 @@ func TestRunConfigList(t *testing.T) {
 			args{`{"session_mode":"later"}`, nil},
 			"record_dir\t<home>/.nodloop/records\tdefault\n" +
 				"session_mode\tunknown session mode: session_mode in config.json is \"later\". Use deferred, manual or off\tconfig.json\n" +
-				"approver\t-\tdefault\nholdout\t0\tdefault\nretention\t0\tdefault\ndecision_points\t-\tdefault\nllm\tclaude\tdefault\nclaude binary\tclaude\tdefault\nmodel\tsonnet\tdefault\notel\t-\tdefault\n",
+				"approver\t-\tdefault\nholdout\t0\tdefault\nretention\t0\tdefault\ncuration\tgrants=0\tdefault\ndecision_points\t-\tdefault\nllm\tclaude\tdefault\nclaude binary\tclaude\tdefault\nmodel\tsonnet\tdefault\notel\t-\tdefault\n",
 		},
 	}
 	for _, tc := range tcs {

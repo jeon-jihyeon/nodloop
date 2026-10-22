@@ -229,6 +229,9 @@ commands:
                             Print or save how a conversation records the verdicts it infers: deferred, manual or off.
                             deferred by default and no variable overrides it. Only an interactive terminal outside an
                             agent session saves one
+  config delegation [add|remove] --producer <p> [--label key=value ... | --everywhere]
+                            List or explicitly delegate new answer preferences in a recorded scope. Only the person's
+                            terminal can add, renew or remove a grant. A renewed scope gets a new grant
   anchor [add <path> | remove <path>]
                             List what nodloop reads as your judgment on record in every place: the lessons you approved,
                             the files you designate and the CLAUDE.md and rules files your sessions there loaded, and
