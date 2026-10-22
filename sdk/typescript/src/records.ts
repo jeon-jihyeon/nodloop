@@ -193,6 +193,18 @@ export interface ExtractRecord {
       status: "candidate" | "approved" | "retired" | "superseded";
     } | null;
     excerpt?: string;
+    triage?: {
+      policy: string;
+      classify?: string;
+      nature: "preference" | "safety" | "organization" | "unknown";
+      mixed: boolean;
+      reversibility: "H" | "M" | "L" | "unknown";
+      source: "complete" | "incomplete" | "missing" | "scope";
+      protected: "none" | "safety" | "organization" | "mixed" | "conflict" | "artifact" | "unknown";
+      lasting: boolean;
+      faithful: boolean;
+      conflict: boolean;
+    } | null;
   };
   error?: string;
   usage: {
