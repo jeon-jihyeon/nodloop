@@ -238,20 +238,27 @@ type interventionRecord struct {
 
 // The judge configuration a knob event records
 type judgeConfig struct {
-	Model  string            `json:"model"`
-	Effort string            `json:"effort"`
-	Prompt string            `json:"prompt"`
-	Start  time.Time         `json:"start"`
-	Sets   [][]knowledge.Ref `json:"sets"`
+	// Empty for `claude -p`
+	Backend string            `json:"backend"`
+	Model   string            `json:"model"`
+	Effort  string            `json:"effort"`
+	Prompt  string            `json:"prompt"`
+	Start   time.Time         `json:"start"`
+	Sets    [][]knowledge.Ref `json:"sets"`
 	// The approvals and the retires each set may hold
 	Kept    int `json:"kept"`
 	Refused int `json:"refused"`
+	// The model the judge answered with and empty until curate read one
+	Answered string `json:"answered"`
 }
 
-// A change of the model, the effort, the prompt version, the sizes of the sets or the few-shot sets is another judge
+// A new configuration on any change to the judge settings or the few shot sets
+// So is another model answered where both name one since curate fills an empty one and keeps the configuration
 func (c judgeConfig) same(other judgeConfig) bool {
-	return c.Model == other.Model && c.Effort == other.Effort && c.Prompt == other.Prompt && c.Start.Equal(other.Start) &&
-		c.Kept == other.Kept && c.Refused == other.Refused && slices.EqualFunc(c.Sets, other.Sets, slices.Equal[[]knowledge.Ref])
+	answered := c.Answered == other.Answered || c.Answered == "" || other.Answered == ""
+	return c.Backend == other.Backend && c.Model == other.Model && c.Effort == other.Effort && c.Prompt == other.Prompt &&
+		c.Start.Equal(other.Start) && c.Kept == other.Kept && c.Refused == other.Refused &&
+		slices.EqualFunc(c.Sets, other.Sets, slices.Equal[[]knowledge.Ref]) && answered
 }
 
 type knobInput struct {

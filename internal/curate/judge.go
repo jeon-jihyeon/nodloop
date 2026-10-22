@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"math"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -27,6 +28,9 @@ const PromptVersion = "3"
 // A default effort the host changes would move the answers with nothing on record
 const JudgeEffort = "high"
 
+// The name of a claude member before its variant number
+const claudeMember = "claude:"
+
 // Prompt variants of the claude judge
 // Claude returns no logprob and its newer models refuse a non default temperature so resolution comes from varied prompts
 const variants = 3
@@ -38,6 +42,8 @@ const JudgeTimeout = 60 * time.Second
 // What a judge configuration starts from
 // A change of any of them is a new judge whose bound and posteriors start again
 type JudgeSettings struct {
+	// The llm backend the judge calls and empty for `claude -p`
+	Backend llm.Backend
 	// A model id and never an alias whose model the host may move
 	Model  string
 	Effort string
@@ -121,6 +127,11 @@ const (
 )
 
 type vote classify.Vote
+
+// An endpoint can share a variant name so only the configured leading slots identify the variants
+func (v vote) claude(at int) bool {
+	return at < variants && v.Member == claudeMember+strconv.Itoa(at+1)
+}
 
 // against wins over decided since a change against a standing decision is never in line with it
 func (v vote) finding() finding {
@@ -267,21 +278,45 @@ type Panel interface {
 // The judge point of curate over the panel of its members
 type Judge struct {
 	panel Panel
+	// The answering model retained by the configuration
+	answered string
 }
 
-func NewJudge(panel Panel) *Judge {
-	return &Judge{panel: panel}
+func NewJudge(panel Panel, answered string) *Judge {
+	return &Judge{panel: panel, answered: answered}
 }
 
 // Asks every member about one change and reads the outcome from their votes
 // 1. ref is the run the change cites so the classify trace lives as long as that evidence
 // 2. a trace that fails to append fails the judgment since a decide names the trace of its judge
+// 3. claude members that answered with another model than the configuration records fail it as a member would
+// Nothing is carried out on a judge the configuration does not name and the next cycle start starts its configuration
 func (j *Judge) Judge(ctx context.Context, ref string, c Case) (Judgment, error) {
 	ballot, err := j.panel.Classify(ctx, classify.Request{Ref: ref, State: c.state(), Questions: JudgeQuestions})
 	if err != nil {
 		return Judgment{}, err
 	}
-	return Votes(ballot.Votes).Judgment(ballot.TraceID), nil
+	votes := Votes(ballot.Votes)
+	judged := votes.Judgment(ballot.TraceID)
+	for i, v := range votes {
+		if vote(v).claude(i) && v.Err == nil &&
+			j.answered != "" && v.Model != "" && v.Model != j.answered {
+			judged.Err = errors.Join(judged.Err, fmt.Errorf("%w: %s under %s", ErrJudgeMoved, v.Model, j.answered))
+			break
+		}
+	}
+	return judged, nil
+}
+
+// The model the first claude member that answered names and empty when none answered
+// A member that failed names the model it asked so only an answer tells which model judged
+func (vs Votes) Answered() string {
+	for i, v := range vs {
+		if vote(v).claude(i) && v.Err == nil && v.Model != "" {
+			return v.Model
+		}
+	}
+	return ""
 }
 
 // What the votes recorded in the classify trace of the id found
@@ -389,8 +424,11 @@ func (ss Shots) lines() lines {
 }
 
 // One judge configuration as the knob event of a cycle records it
-// A change of the model, the effort, the prompt version or the sizes of the sets is a new judge whose bound and posteriors start again
+// A new configuration on any change to the judge settings or the answering model
+// Fresh bound and posteriors for that configuration
 type JudgeConfig struct {
+	// The llm backend and empty for `claude -p`
+	Backend llm.Backend `json:"backend,omitempty"`
 	// The model of the llm backend
 	Model  string `json:"model"`
 	Effort string `json:"effort"`
@@ -403,28 +441,50 @@ type JudgeConfig struct {
 	// The approvals and the retires each set may hold
 	Kept    int `json:"kept,omitempty"`
 	Refused int `json:"refused,omitempty"`
+	// The model the claude members answered with
+	// A proxy alias or a backend can move the model behind one name so the name asked is not the judge
+	// Empty until a cycle start read an answer of the configuration
+	Answered string `json:"answered,omitempty"`
 }
 
-// The configuration a judge of the settings runs under at now
+// The configuration a judge of the settings that answered with the model runs under at now
 // 1. the same settings under the same prompt version keep the configuration and its few-shot sets however many decisions came since
-// 2. any change starts a new one with sets drawn from the decisions before the pinned start or else before now
+// An empty answered model of the configuration takes the one answered
+// 2. any change of the settings starts a new one with sets drawn from the decisions before the pinned start or else before now
 // The decisions are the pool as it stood at that start so a later decision never moves a set
-func (c JudgeConfig) Next(s JudgeSettings, decisions Shots, now time.Time) JudgeConfig {
-	if c.keeps(s) {
+// 3. another model answered under the same settings starts a new one that records it
+func (c JudgeConfig) Next(s JudgeSettings, decisions Shots, answered string, now time.Time) JudgeConfig {
+	keeps := c.keeps(s)
+	if keeps && !c.moved(answered) {
+		c.Answered = cmp.Or(c.Answered, answered)
 		return c
+	}
+	if !keeps {
+		answered = ""
 	}
 	start := s.StartAt(now)
 	return JudgeConfig{
-		Model: s.Model, Effort: s.Effort, Prompt: PromptVersion, Start: start, Sets: decisions.Draw(start, s.Kept, s.Refused), Kept: s.Kept,
-		Refused: s.Refused,
+		Backend: s.Backend, Model: s.Model, Effort: s.Effort, Prompt: PromptVersion, Start: start, Sets: decisions.Draw(start, s.Kept, s.Refused),
+		Kept: s.Kept, Refused: s.Refused, Answered: answered,
 	}
+}
+
+// Whether a judge of the settings that answered with the model starts a new configuration
+func (c JudgeConfig) Starts(s JudgeSettings, answered string) bool {
+	return !c.keeps(s) || c.moved(answered)
 }
 
 // Whether a judge of the settings goes on under the configuration
 // A configuration that never started keeps nothing
 func (c JudgeConfig) keeps(s JudgeSettings) bool {
-	same := c.Model == s.Model && c.Effort == s.Effort && c.Kept == s.Kept && c.Refused == s.Refused
+	same := c.Backend == s.Backend && c.Model == s.Model && c.Effort == s.Effort && c.Kept == s.Kept && c.Refused == s.Refused
 	return !c.Start.IsZero() && same && c.Prompt == PromptVersion && (s.Start.IsZero() || s.Start.Equal(c.Start))
+}
+
+// Whether the model answered differs from the one the configuration recorded
+// An empty one on either side names no model
+func (c JudgeConfig) moved(answered string) bool {
+	return c.Answered != "" && answered != "" && answered != c.Answered
 }
 
 // The claude members of the configuration with one variant and its few-shot set each
@@ -437,7 +497,7 @@ func (c JudgeConfig) Members(client llm.Client, decisions Shots) ([]classify.Mem
 			return nil, err
 		}
 		members = append(members, classify.Member{
-			Name:       fmt.Sprintf("claude:%d", i+1),
+			Name:       fmt.Sprintf("%s%d", claudeMember, i+1),
 			Classifier: ClaudeJudge{client: client, model: c.Model, effort: c.Effort, variant: i, shots: shots},
 		})
 	}

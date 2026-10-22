@@ -156,9 +156,10 @@ func (ts knobTraces) current(now time.Time) (KnobEvent, string, bool) {
 
 // The knob event a pass at now starts the cycle with and whether a judge configuration starts with it
 // 1. the cycle starts where the knob traces mark the one that holds now or at 00:00 UTC on the Monday of now before the first
-// 2. it carries the knobs of the newest event before it or the start knobs and its judge on or starts one from the settings
-// 3. the seed is new so no draw of the cycle can be known before it starts
-func (ts knobTraces) next(now time.Time, seed string, settings JudgeSettings, shots Shots) (KnobEvent, bool) {
+// 2. it carries the knobs of the newest event before it or the start knobs
+// 3. it carries its judge on or starts one from the settings and the model the judge of the cycle before answered with
+// 4. the seed is new so no draw of the cycle can be known before it starts
+func (ts knobTraces) next(now time.Time, seed string, settings JudgeSettings, answered string, shots Shots) (KnobEvent, bool) {
 	start := monday(now)
 	if open, ok := trace.Traces(ts).Cycles(now).Open(now); ok {
 		start = open.Start
@@ -171,8 +172,8 @@ func (ts knobTraces) next(now time.Time, seed string, settings JudgeSettings, sh
 			break
 		}
 	}
-	ev.Judge = before.Judge.Next(settings, shots, now)
-	return ev, !before.Judge.keeps(settings)
+	ev.Judge = before.Judge.Next(settings, shots, answered, now)
+	return ev, before.Judge.Starts(settings, answered)
 }
 
 // When the newest cycle started and the zero time before the first

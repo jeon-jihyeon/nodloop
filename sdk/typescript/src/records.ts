@@ -592,6 +592,7 @@ export interface KnobRecord {
       };
     };
     judge: {
+      backend?: string;
       model: string;
       effort: string;
       prompt: string;
@@ -602,6 +603,7 @@ export interface KnobRecord {
       }[] | null)[] | null;
       kept?: number;
       refused?: number;
+      answered?: string;
     };
     cause: "start" | "narrow";
     before?: string;
@@ -630,7 +632,7 @@ export interface KnobRecord {
   tags?: string[] | null;
   producer?: string;
   labels?: Record<string, string[] | null>;
-  schema_version: 1;
+  schema_version: 2;
 }
 
 /** One version of the judgment of the person on record that curate reads */

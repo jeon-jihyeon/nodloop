@@ -228,12 +228,13 @@
     },
     {
       "kind": "knob",
-      "version": 1,
+      "version": 2,
       "versions": [
-        1
+        1,
+        2
       ],
       "store": "traces.jsonl",
-      "schema": "https://github.com/jeon-jihyeon/nodloop/schema/knob.v1.json",
+      "schema": "https://github.com/jeon-jihyeon/nodloop/schema/knob.v2.json",
       "description": "The knobs, the seed and the judge of a cycle at its start or at a narrowing inside it",
       "links": [
         "subject",

@@ -1,0 +1,391 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/jeon-jihyeon/nodloop/schema/knob.v2.json",
+  "title": "knob",
+  "description": "The knobs, the seed and the judge of a cycle at its start or at a narrowing inside it",
+  "type": "object",
+  "properties": {
+    "record_kind": {
+      "type": "string",
+      "const": "knob"
+    },
+    "record_id": {
+      "type": "string"
+    },
+    "id": {
+      "type": "string"
+    },
+    "name": {
+      "type": "string",
+      "const": "knob"
+    },
+    "session_id": {
+      "type": "string"
+    },
+    "subject": {
+      "type": "string"
+    },
+    "ref": {
+      "type": "string"
+    },
+    "time": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "model": {
+      "type": "string"
+    },
+    "input": {
+      "type": "object",
+      "properties": {
+        "cycle_id": {
+          "type": "string"
+        },
+        "start": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "policy_version": {
+          "type": "string"
+        },
+        "seed": {
+          "type": "string"
+        },
+        "knobs": {
+          "type": "object",
+          "properties": {
+            "activated": {
+              "type": "boolean"
+            },
+            "item_hold": {
+              "type": "number"
+            },
+            "cycle_weeks": {
+              "type": "integer"
+            },
+            "open": {
+              "type": [
+                "null",
+                "array"
+              ],
+              "items": {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "add",
+                      "update",
+                      "join",
+                      "drop",
+                      "withdraw",
+                      "compaction",
+                      "reanchor",
+                      "widen",
+                      "activate",
+                      "intervention"
+                    ]
+                  },
+                  "bin": {
+                    "type": "string",
+                    "enum": [
+                      "b1",
+                      "b2",
+                      "b3",
+                      "b4"
+                    ]
+                  }
+                },
+                "required": [
+                  "kind"
+                ]
+              }
+            },
+            "audit": {
+              "type": "object",
+              "properties": {
+                "tier0": {
+                  "type": "number"
+                },
+                "tier1": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "tier0",
+                "tier1"
+              ]
+            },
+            "target": {
+              "type": "object",
+              "properties": {
+                "rate": {
+                  "type": "number"
+                },
+                "alpha": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "rate",
+                "alpha"
+              ]
+            },
+            "cusum": {
+              "type": "object",
+              "properties": {
+                "p0": {
+                  "type": "number"
+                },
+                "p1": {
+                  "type": "number"
+                },
+                "h": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "p0",
+                "p1",
+                "h"
+              ]
+            }
+          },
+          "required": [
+            "activated",
+            "item_hold"
+          ]
+        },
+        "judge": {
+          "type": "object",
+          "properties": {
+            "backend": {
+              "type": "string"
+            },
+            "model": {
+              "type": "string"
+            },
+            "effort": {
+              "type": "string"
+            },
+            "prompt": {
+              "type": "string"
+            },
+            "start": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "sets": {
+              "type": [
+                "null",
+                "array"
+              ],
+              "items": {
+                "type": [
+                  "null",
+                  "array"
+                ],
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "version": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "version"
+                  ]
+                }
+              }
+            },
+            "kept": {
+              "type": "integer"
+            },
+            "refused": {
+              "type": "integer"
+            },
+            "answered": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "model",
+            "effort",
+            "prompt",
+            "start",
+            "sets"
+          ]
+        },
+        "cause": {
+          "type": "string",
+          "enum": [
+            "start",
+            "narrow"
+          ]
+        },
+        "before": {
+          "type": "string"
+        },
+        "changes": {
+          "type": [
+            "null",
+            "array"
+          ],
+          "items": {
+            "type": "object",
+            "properties": {
+              "rule": {
+                "type": "string",
+                "enum": [
+                  "posterior",
+                  "alarm",
+                  "raise",
+                  "lower",
+                  "person"
+                ]
+              },
+              "opening": {
+                "type": [
+                  "null",
+                  "object"
+                ],
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "add",
+                      "update",
+                      "join",
+                      "drop",
+                      "withdraw",
+                      "compaction",
+                      "reanchor",
+                      "widen",
+                      "activate",
+                      "intervention"
+                    ]
+                  },
+                  "bin": {
+                    "type": "string",
+                    "enum": [
+                      "b1",
+                      "b2",
+                      "b3",
+                      "b4"
+                    ]
+                  }
+                },
+                "required": [
+                  "kind"
+                ]
+              },
+              "answers": {
+                "type": "integer"
+              },
+              "differ": {
+                "type": "integer"
+              },
+              "p": {
+                "type": "number"
+              },
+              "knob": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "rule"
+            ]
+          }
+        }
+      },
+      "required": [
+        "cycle_id",
+        "start",
+        "policy_version",
+        "seed",
+        "knobs",
+        "judge",
+        "cause"
+      ]
+    },
+    "error": {
+      "type": "string"
+    },
+    "usage": {
+      "type": "object",
+      "properties": {
+        "input_tokens": {
+          "type": "integer"
+        },
+        "output_tokens": {
+          "type": "integer"
+        },
+        "thinking_tokens": {
+          "type": "integer"
+        },
+        "cache_read": {
+          "type": "integer"
+        },
+        "cache_create": {
+          "type": "integer"
+        },
+        "cost_usd": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "input_tokens",
+        "output_tokens",
+        "cache_read",
+        "cache_create",
+        "cost_usd"
+      ]
+    },
+    "duration_ms": {
+      "type": "integer"
+    },
+    "tags": {
+      "type": [
+        "null",
+        "array"
+      ],
+      "items": {
+        "type": "string"
+      }
+    },
+    "producer": {
+      "type": "string"
+    },
+    "labels": {
+      "type": "object",
+      "additionalProperties": {
+        "type": [
+          "null",
+          "array"
+        ],
+        "items": {
+          "type": "string"
+        }
+      }
+    },
+    "schema_version": {
+      "type": "integer",
+      "const": 2
+    }
+  },
+  "required": [
+    "record_kind",
+    "record_id",
+    "id",
+    "name",
+    "time",
+    "input",
+    "usage",
+    "duration_ms",
+    "schema_version"
+  ]
+}

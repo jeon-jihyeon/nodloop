@@ -72,7 +72,7 @@ func (k publishedKind) withRef(kind trace.Name) publishedKind {
 // The trace of a name with its input and output types
 func traceKind(name trace.Name, description string, input, output reflect.Type, links, text []string) publishedKind {
 	return publishedKind{
-		name: string(name), store: schema.StoreTraces, version: trace.SchemaVersion, description: description,
+		name: string(name), store: schema.StoreTraces, version: name.SchemaVersion(), description: description,
 		record: reflect.TypeFor[trace.Trace](), input: input, output: output, links: links, text: text,
 	}
 }
@@ -347,7 +347,7 @@ func (k publishedKind) entry() schema.Kind {
 
 // Every file go generate writes by name: the newest schema of each kind and the index
 // Files of older versions stay as they were since their Go types are gone
-func (kt kindTable) files() (map[string][]byte, error) {
+func (kt kindTable) files(history schema.Files) (map[string][]byte, error) {
 	files := map[string][]byte{}
 	var ix schema.Index
 	for _, k := range kt {
@@ -360,11 +360,40 @@ func (kt kindTable) files() (map[string][]byte, error) {
 			return nil, err
 		}
 		files[schema.FileName(k.name, k.version)] = b
+		old, err := k.history(history)
+		if err != nil {
+			return nil, err
+		}
+		maps.Copy(files, old)
 		ix.Kinds = append(ix.Kinds, k.entry())
 	}
 	// An index of strings and numbers always encodes
 	b, _ := json.Marshal(ix)
 	files[schema.IndexFile] = indented(b)
+	return files, nil
+}
+
+// The files of every earlier version of the kind byte for byte from the published history
+func (k publishedKind) history(history schema.Files) (map[string][]byte, error) {
+	if k.version <= 1 {
+		return nil, nil
+	}
+	ix, err := history.Index()
+	if err != nil {
+		return nil, err
+	}
+	old, err := ix.Kind(k.name)
+	if err != nil {
+		return nil, err
+	}
+	files := map[string][]byte{}
+	for v := 1; v < k.version; v++ {
+		b, err := old.File(v)
+		if err != nil {
+			return nil, err
+		}
+		files[schema.FileName(k.name, v)] = b
+	}
 	return files, nil
 }
 
@@ -432,7 +461,7 @@ func (c schemaCommand) show(name string) error {
 
 // Writes every file of the Go types of this build into the folder as the step of go generate
 func (c schemaCommand) write(dir string) error {
-	files, err := c.kinds.files()
+	files, err := c.kinds.files(c.files)
 	if err != nil {
 		return err
 	}

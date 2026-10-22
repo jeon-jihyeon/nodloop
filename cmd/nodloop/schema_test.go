@@ -26,7 +26,7 @@ import (
 
 // The files go generate writes from the Go types equal the published ones and nothing else is published
 func TestPublishedSchemaFiles(t *testing.T) {
-	files, err := publishedKinds.files()
+	files, err := publishedKinds.files(schema.Published)
 	require.NoError(t, err)
 	names, err := fs.Glob(published.Files, "*.json")
 	require.NoError(t, err)
@@ -112,7 +112,7 @@ func TestRunSchemaWrite(t *testing.T) {
 	want, err := fs.ReadFile(published.Files, "guard.v1.json")
 	require.NoError(t, err)
 	assert.Equal(t, string(want), string(written))
-	assert.Equal(t, "wrote 23 files to "+dir+"\n", stdout.String())
+	assert.Equal(t, "wrote 24 files to "+dir+"\n", stdout.String())
 	assert.Equal(t, 1, runSchema([]string{"--write", filepath.Join(dir, "missing")}, &bytes.Buffer{}, &bytes.Buffer{}))
 }
 
@@ -231,9 +231,49 @@ func TestKindTableFilesRefuses(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			_, err := kindTable{tc.args}.files()
+			_, err := kindTable{tc.args}.files(schema.Published)
 
 			assert.ErrorContains(t, err, tc.want)
+		})
+	}
+}
+
+func TestKindSchemaHistory(t *testing.T) {
+	index := []byte(`{"kinds":[{"kind":"decide","version":1,"versions":[1]}]}`)
+	old := []byte("{\"historical\":true}\n")
+	type args struct {
+		version int
+		files   fstest.MapFS
+	}
+	type want struct {
+		files map[string][]byte
+		err   error
+	}
+	tcs := []struct {
+		name string
+		args args
+		want want
+	}{
+		{"an unchanged schema needs no history", args{version: 1}, want{}},
+		{"a missing index refuses the generation", args{version: 2}, want{err: schema.ErrIndexInvalid}},
+		{"an absent kind refuses the generation", args{2, fstest.MapFS{schema.IndexFile: {Data: []byte(`{"kinds":[]}`)}}},
+			want{err: schema.ErrKindUnknown}},
+		{"a missing historical file refuses the generation", args{2, fstest.MapFS{schema.IndexFile: {Data: index}}},
+			want{err: schema.ErrIndexInvalid}},
+		{"history stays byte for byte", args{2, fstest.MapFS{schema.IndexFile: {Data: index}, "decide.v1.json": {Data: old}}},
+			want{files: map[string][]byte{"decide.v1.json": old}}},
+		{"a missing middle version refuses the generation", args{3, fstest.MapFS{schema.IndexFile: {Data: index}, "decide.v1.json": {Data: old}}},
+			want{err: schema.ErrVersionUnknown}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			k := publishedKind{name: "decide", version: tc.args.version}
+
+			got, err := k.history(schema.NewFiles(tc.args.files))
+
+			assert.ErrorIs(t, err, tc.want.err)
+			assert.Equal(t, tc.want.files, got)
 		})
 	}
 }

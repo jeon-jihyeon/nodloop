@@ -36,7 +36,7 @@ func TestLiveJudge(t *testing.T) {
 	meter := llm.NewMeter(llm.NewClaudeCLI(os.Getenv("NODLOOP_CLAUDE_BIN"), "", "", 0))
 	settings := curate.DefaultJudge
 	settings.Model = cmp.Or(os.Getenv("NODLOOP_LLM_MODEL"), "claude-sonnet-5-5")
-	cfg := curate.JudgeConfig{}.Next(settings, decisions, now)
+	cfg := curate.JudgeConfig{}.Next(settings, decisions, "", now)
 	members, err := cfg.Members(meter, decisions)
 	require.NoError(t, err)
 	traces, err := tracefile.New(t.TempDir())
@@ -45,7 +45,7 @@ func TestLiveJudge(t *testing.T) {
 		sum := sha256.Sum256([]byte(text))
 		return hex.EncodeToString(sum[:])
 	}
-	judge := curate.NewJudge(classify.NewPanel(classify.PointJudge, members, traces, seal, time.Now))
+	judge := curate.NewJudge(classify.NewPanel(classify.PointJudge, members, traces, seal, time.Now), cfg.Answered)
 
 	got, err := judge.Judge(ctx, "run-live", curate.Case{
 		Change: "add: run golangci-lint before go test when a Go file changed",

@@ -413,3 +413,54 @@ func TestCurationShiftSizes(t *testing.T) {
 		})
 	}
 }
+
+// Another backend or another model answered is another judge configuration
+// A cycle whose knob event names no model answered keeps the one it fills in at the next cycle start
+func TestCurationShiftAnswered(t *testing.T) {
+	type args struct {
+		// The judge fields of the knob events of the first and the second cycle
+		first, second map[string]string
+	}
+	type want struct {
+		changed, shift bool
+	}
+	tcs := []struct {
+		name string
+		args args
+		want want
+	}{
+		{"a model answered filled in keeps the judge", args{map[string]string{},
+			map[string]string{"answered": "m1"}}, want{false, false}},
+		{"the same model answered keeps the judge", args{map[string]string{"answered": "m1"},
+			map[string]string{"answered": "m1"}}, want{false, false}},
+		{"another model answered is another judge", args{map[string]string{"answered": "m1"},
+			map[string]string{"answered": "m2"}}, want{true, true}},
+		{"another backend is another judge", args{map[string]string{}, map[string]string{"backend": "chat"}},
+			want{true, true}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			judged := func(cycle int, fields map[string]string) trace.Trace {
+				tr := knobTrace(t, cycle, "high", cycleAt(0), true)
+				var input map[string]any
+				require.NoError(t, json.Unmarshal(tr.Input, &input))
+				judge, ok := input["judge"].(map[string]any)
+				require.True(t, ok)
+				for k, v := range fields {
+					judge[k] = v
+				}
+				tr.Input = mustJSON(t, input)
+				return tr
+			}
+
+			r := curationOf(t, []trace.Trace{judged(0, tc.args.first), judged(1, tc.args.second)}, nil,
+				cycleAt(1).AddDate(0, 0, 13))
+
+			// A report without a shift row reads as no shift
+			shifts := append([]loop.ShiftRow{{}}, r.Shift...)
+			shift := shifts[len(shifts)-1]
+			assert.Equal(t, tc.want, want{shift.Changed, shift.Shift})
+		})
+	}
+}
