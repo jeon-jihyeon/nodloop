@@ -117,7 +117,7 @@ func TestReplayerReplay(t *testing.T) {
 		{Run: s.near, Expect: replay.ExpectKeeps, Breaks: false, Why: "it already says valve"},
 		{Run: s.far, Expect: replay.ExpectKeeps, Breaks: true, Why: "IDV 11 would become a valve"},
 	}}, got, "cases come in the order of their run ids")
-	assert.False(t, got.Passed(), "a lesson that would change an approved output reaches too far")
+	assert.Equal(t, replay.OutcomeFailed, got.Outcome(), "a lesson that would change an approved output reaches too far")
 	assert.Contains(t, prompt, "[idv v1 meaning] Every IDV fault is a valve fault")
 	assert.NotContains(t, prompt, "IDV 14 there is a pump", "a run outside the scope is no case")
 	assert.NotContains(t, prompt, "a later answer", "a run after the version may have followed it so it is no case")
@@ -370,4 +370,39 @@ func TestReplayerReplayWithoutCases(t *testing.T) {
 	_, err = replay.New(st.Ledger, st.Traces, st.Feedback, client, "", st.Clock.Now).Replay(context.Background(), "lone", 0)
 
 	assert.ErrorIs(t, err, replay.ErrNoCases)
+}
+
+// An axis with no case is untested so only a judgment with cases on both axes reads passed
+func TestResultOutcome(t *testing.T) {
+	caught := replay.Case{Run: "r1", Expect: replay.ExpectBreaks, Breaks: true}
+	missed := replay.Case{Run: "r1", Expect: replay.ExpectBreaks}
+	kept := replay.Case{Run: "r2", Expect: replay.ExpectKeeps}
+	type want struct {
+		outcome             replay.Outcome
+		corrected, approved int
+	}
+	tcs := []struct {
+		name string
+		args replay.Result
+		want want
+	}{
+		{"no judged outputs", replay.Result{}, want{replay.OutcomePartial, 0, 0}},
+		{"both axes right", replay.Result{Cases: []replay.Case{caught, kept}}, want{replay.OutcomePassed, 1, 1}},
+		{"only corrected outputs", replay.Result{Cases: []replay.Case{caught}}, want{replay.OutcomePartial, 1, 0}},
+		{"only approved outputs", replay.Result{Cases: []replay.Case{kept}}, want{replay.OutcomePartial, 0, 1}},
+		{"a miss on the one axis judged", replay.Result{Cases: []replay.Case{missed}, Missed: 1},
+			want{replay.OutcomeFailed, 1, 0}},
+		{"an overreach beside a catch", replay.Result{Cases: []replay.Case{caught, {Run: "r3",
+			Expect: replay.ExpectKeeps, Breaks: true}}, Overreach: 1},
+			want{replay.OutcomeFailed, 1, 1}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := want{tc.args.Outcome(), tc.args.Corrected(), tc.args.Approved()}
+
+			assert.Equal(t, tc.want, got)
+		})
+	}
 }

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	"github.com/jeon-jihyeon/nodloop/internal/llm"
@@ -31,25 +32,27 @@ func (f knowledgeFlags) runReplay(ctx context.Context, id string, a app, client 
 	if err != nil {
 		return err
 	}
-	corrected, approved := 0, 0
 	for _, c := range res.Cases {
 		mark := "ok"
 		if !c.Passed() {
 			mark = "wrong"
 		}
-		if c.Expect == replay.ExpectBreaks {
-			corrected++
-		} else {
-			approved++
-		}
 		fmt.Fprintf(stdout, "%s\t%s\tbreaks %t\t%s\t%s\n", c.Run, c.Expect, c.Breaks, mark, c.Why)
 	}
-	fmt.Fprintf(stdout, "replay\t%s\tv%d\t%s\tmissed %d of %d\toverreach %d of %d\n",
-		res.ID, res.Version, res.Outcome(), res.Missed, corrected, res.Overreach, approved)
+	fmt.Fprintf(stdout, "replay\t%s\tv%d\t%s\n", res.ID, res.Version, replayOutcome(res, "\t"))
 	return nil
 }
 
-// The outcome of the newest replay of each version
+// The outcome with the cases each axis missed of those judged
+// An axis that judged no case reads 0 of 0 so the person sees what partial left untested
+func replayOutcome(res replay.Result, sep string) string {
+	return strings.Join([]string{
+		string(res.Outcome()), fmt.Sprintf("missed %d of %d", res.Missed, res.Corrected()),
+		fmt.Sprintf("overreach %d of %d", res.Overreach, res.Approved()),
+	}, sep)
+}
+
+// The summary of the newest replay of each version
 type lastReplays map[knowledge.Ref]string
 
 // Reads the replay traces once for every waiting item
@@ -75,16 +78,16 @@ func (c knowledgeCommand) lastReplays(ctx context.Context) (lastReplays, error) 
 		}
 		ref := knowledge.Ref{ID: res.ID, Version: res.Version}
 		if _, newer := out[ref]; !newer {
-			out[ref] = res.Outcome()
+			out[ref] = replayOutcome(res, " ")
 		}
 	}
 	return out, nil
 }
 
-// passed or failed or none when the version was never replayed
+// The outcome and counts of the newest replay of the version and none when it was never replayed
 func (l lastReplays) of(id string, version int) string {
-	if outcome, ok := l[knowledge.Ref{ID: id, Version: version}]; ok {
-		return outcome
+	if summary, ok := l[knowledge.Ref{ID: id, Version: version}]; ok {
+		return summary
 	}
 	return "none"
 }

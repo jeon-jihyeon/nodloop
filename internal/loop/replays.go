@@ -11,7 +11,8 @@ import (
 type ReplayRow struct {
 	ID      string `json:"id"`
 	Version int    `json:"version"`
-	Passed  bool   `json:"passed"`
+	// Both axes held a case and none went wrong
+	Passed bool `json:"passed"`
 	// Corrected outputs it cites and the ones it does not catch
 	Corrected int `json:"corrected"`
 	Missed    int `json:"missed"`
@@ -21,12 +22,19 @@ type ReplayRow struct {
 	Time      time.Time `json:"time"`
 }
 
-// passed or failed as a report line shows the replay
+// How a report line shows the replay by the rule of the replay package
+// loop never imports replay so the rule is read again from the counts here
+// 1. failed when a case went wrong
+// 2. partial when the corrected or the approved outputs judged number zero since that axis is untested
+// 3. passed otherwise
 func (r ReplayRow) Outcome() string {
-	if r.Passed {
-		return "passed"
+	switch {
+	case r.Missed > 0 || r.Overreach > 0:
+		return "failed"
+	case r.Corrected == 0 || r.Approved == 0:
+		return "partial"
 	}
-	return "failed"
+	return "passed"
 }
 
 // The output of a replay trace as the replay package writes it
@@ -56,10 +64,7 @@ func (s Snapshot) Replays() []ReplayRow {
 			continue
 		}
 		seen[key{rec.ID, rec.Version}] = true
-		row := ReplayRow{
-			ID: rec.ID, Version: rec.Version, Passed: rec.Missed == 0 && rec.Overreach == 0,
-			Missed: rec.Missed, Overreach: rec.Overreach, Time: tr.Time,
-		}
+		row := ReplayRow{ID: rec.ID, Version: rec.Version, Missed: rec.Missed, Overreach: rec.Overreach, Time: tr.Time}
 		for _, c := range rec.Cases {
 			if c.Expect == "breaks" {
 				row.Corrected++
@@ -67,6 +72,7 @@ func (s Snapshot) Replays() []ReplayRow {
 				row.Approved++
 			}
 		}
+		row.Passed = row.Outcome() == "passed"
 		rows = append(rows, row)
 	}
 	return rows
