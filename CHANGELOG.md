@@ -2,6 +2,27 @@
 
 Every release tag publishes the plugin, the darwin and linux binaries of `nodloop` and, from 0.7.0, `nodloop-server`, and both SDKs under one version. Versions before 0.6.0 reviewed incident data, which left this repository in 0.6.0.
 
+## 0.10.1 - 2026-10-22
+
+### Added
+- `config delegation [add|remove] --producer <p> [--label key=value ... | --everywhere]` grants new answer preferences in a recorded scope, and only a terminal of your own outside an agent session adds, renews or removes a grant. A renewed scope gets a new grant. curate applies the first version of a new, faithful and lasting preference within a grant as `nodloop` under rule `delegated` only when no code rule holds it and every judge member is sure it doesn't conflict with an anchor it read whole. An audit undo or a manual retire of a delegated version stops its grant for good. `config` lists how many grants are saved, and `report curation` adds a `delegated` row per grant that stays out of the judge's numbers
+- The critic describes each drafted lesson in a `triage` of nature, mixed, reversibility, protection, lasting, faithful and conflict, kept on the extract record of a proposal. curate proves its source again, and a lesson about safety, an organization rule, a stored artifact or anything past how answers read is held for you under rule `triage_protected` with no judge call
+- An outcome takes an `actor` of `person`, `code`, `model` or `unknown` through `feedback outcome --actor`, MCP, Go and both SDKs. Only a person actor keeps the proof of its call in `proof`, and the export sets the annotator kind and `nodloop.actor` from the actor
+- The drafter and `propose_extraction` take an `excerpt` of the corrected part of the output, and a question about the version quotes it
+- `trace list --json` prints only id, time, name and session id
+- Each turn records the items its context holds, and the next prompt tells the session to stop following an item retired since
+
+### Changed
+- A candidate only you decide gets the new action `hold` and stays out of the context until you review it from `/nodloop:nod`. The stop prepares only a proposal you asked for in that session, only where the capture can read the AskUserQuestion call, and the capture records the expose once it reads that call. Without AskUserQuestion the proposal stays pending
+- An outcome without an actor reads as `unknown`, so a named reviewer alone no longer counts as a person. Health and effect read the latest outcome from any evaluator
+- A replay with no corrected case or no approved case reads `partial`, and its lines print `missed n of m` and `overreach n of m`
+- The decide and knob schemas move to version 2 and their version 1 files stay as published. A knob event records the judge's `backend` and the model its members `answered` with, and another model starts a new judge configuration
+
+### Fixed
+- The classifier endpoint, the chat backend and the OTLP export each get a transport of their own, so one closing its idle connections no longer closes the others'
+- A chat backend no longer records a judge effort it never sent
+- MCP output schemas allow any JSON value where a tool returns raw JSON
+
 ## 0.10.0 - 2026-10-21
 
 ### Breaking
