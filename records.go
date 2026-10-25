@@ -303,8 +303,11 @@ type Item struct {
 	Content string
 	Status  Status
 	// The producer and labels a run must carry to receive it
-	Producer string
-	Labels   Labels
+	Producer   string
+	Labels     Labels
+	Except     Labels
+	ValidFrom  time.Time
+	ValidUntil time.Time
 }
 
 // The version to pass in Applied for a run that received the item
@@ -331,6 +334,7 @@ func newItems(set knowledge.Set) Items {
 		item := Item{ID: k.ID, Version: k.Version, Kind: k.Kind, Content: k.Content, Status: k.Status}
 		if k.Run != nil {
 			item.Producer, item.Labels = k.Run.Producer, k.Run.Labels
+			item.Except, item.ValidFrom, item.ValidUntil = k.Run.Except, k.Run.ValidFrom, k.Run.ValidUntil
 		}
 		out = append(out, item)
 	}
@@ -340,11 +344,15 @@ func newItems(set knowledge.Set) Items {
 // The approved items a run of the producer with the labels receives
 // Put them in the prompt of the run and pass their refs as Applied when recording it
 func (c *Client) Items(ctx context.Context, producer string, labels Labels) (Items, error) {
+	labels, err := labels.ForRun()
+	if err != nil {
+		return nil, err
+	}
 	all, err := c.ledger.All(ctx)
 	if err != nil {
 		return nil, err
 	}
-	return newItems(all.For(producer, labels)), nil
+	return newItems(all.ForAt(producer, labels, c.now())), nil
 }
 
 // What one run receives under the holdout
@@ -361,11 +369,15 @@ type Draw struct {
 // 1. the key is what the producer keeps for one run such as a window id and the draw hashes the producer with it
 // 2. an empty key or no WithHoldout never withholds so Items equals what Items returns
 func (c *Client) Draw(ctx context.Context, producer string, labels Labels, key string) (Draw, error) {
+	labels, err := labels.ForRun()
+	if err != nil {
+		return Draw{}, err
+	}
 	all, err := c.ledger.All(ctx)
 	if err != nil {
 		return Draw{}, err
 	}
-	items := all.For(producer, labels)
+	items := all.ForAt(producer, labels, c.now())
 	if !c.holdout.WithholdsRun(producer, key) {
 		return Draw{Items: newItems(items)}, nil
 	}
@@ -374,6 +386,10 @@ func (c *Client) Draw(ctx context.Context, producer string, labels Labels, key s
 
 // The candidates a run of the producer with the labels would receive once a person approves them
 func (c *Client) Waiting(ctx context.Context, producer string, labels Labels) (Items, error) {
+	labels, err := labels.ForRun()
+	if err != nil {
+		return nil, err
+	}
 	all, err := c.ledger.All(ctx)
 	if err != nil {
 		return nil, err
@@ -391,7 +407,9 @@ type Proposal struct {
 	Producer string
 	Labels   Labels
 	// Labels a run must not carry
-	Except Labels
+	Except     Labels
+	ValidFrom  time.Time
+	ValidUntil time.Time
 	// Recorded runs whose verdicts taught it
 	// At least one is needed when From names none
 	Runs []string
@@ -411,15 +429,22 @@ type Proposal struct {
 // 1. From must name a run whose latest verdict corrects it
 // 2. every label value must be one a recorded run of the producer carries unless NewLabels allows new ones
 func (c *Client) Propose(ctx context.Context, p Proposal) (Item, error) {
-	for _, id := range p.Runs {
-		if err := c.checkRun(ctx, id); err != nil {
-			return Item{}, err
-		}
-	}
 	draft := knowledge.Knowledge{
 		ID: p.ID, Kind: p.Kind, Content: p.Content, Author: cmp.Or(p.Author, knowledge.DefaultAuthor), NewLabels: p.NewLabels, Veto: p.Veto,
-		Run:      &knowledge.RunScope{Producer: p.Producer, Labels: p.Labels, Except: p.Except},
+		Run: &knowledge.RunScope{Producer: p.Producer, Labels: p.Labels, Except: p.Except,
+			ValidFrom: p.ValidFrom, ValidUntil: p.ValidUntil},
 		Evidence: knowledge.Evidence{FeedbackTraceIDs: p.Runs},
+	}
+	for _, id := range p.Runs {
+		found, err := c.traces.Get(ctx, id)
+		if err != nil {
+			return Item{}, err
+		}
+		run := trace.Restore(found)
+		if err := run.CheckRun(); err != nil {
+			return Item{}, err
+		}
+		draft.Evidence = draft.Evidence.Join(id, run.EvidenceUnit())
 	}
 	if p.From != "" {
 		var err error

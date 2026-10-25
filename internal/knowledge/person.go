@@ -154,6 +154,8 @@ func (s Set) applied(id string, version int, decision string, now time.Time) ([]
 	}
 	cur := s.current(id)
 	switch {
+	case k.Run != nil && k.Run.Timed():
+		return nil, fmt.Errorf("%w: effective time requires explicit review", ErrPersonDecides)
 	case k.Veto != nil:
 		return nil, fmt.Errorf("%w: %s v%d carries a veto", ErrPersonDecides, id, version)
 	case k.Base > 0 && s.personDecided(id, k.Base):
@@ -193,8 +195,8 @@ func (s Set) appliedCompaction(id, decision string, check Coverage, now time.Tim
 		}
 	}
 	for _, k := range c.Items {
-		if k.Veto != nil {
-			return nil, fmt.Errorf("%w: compaction %s drafts %s v%d with a veto", ErrPersonDecides, id, k.ID, k.Version)
+		if k.Veto != nil || k.Run != nil && k.Run.Timed() {
+			return nil, fmt.Errorf("%w: compaction %s drafts %s v%d with a veto or effective time", ErrPersonDecides, id, k.ID, k.Version)
 		}
 	}
 	records, err := s.compactionApproval(id, ApproverNodloop, check, now)

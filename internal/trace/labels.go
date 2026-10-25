@@ -1,6 +1,8 @@
 package trace
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"maps"
 	"slices"
@@ -13,21 +15,36 @@ type Labels map[string][]string
 const (
 	LabelHost        = "host"        // agent host rather than the place of the work
 	LabelCorrelation = "correlation" // external conversation or request id rather than knowledge scope
+	LabelEvent       = "event"       // caller supplied event grouping rather than an application condition
 )
 
-// The labels of the place without host and correlation metadata
+// The labels of the place without host and correlation and event metadata
 // A scope filled from a run takes these so a lesson approved in one host reaches the same place in every host
 // Nil stays nil
 func (l Labels) Place() Labels {
 	_, host := l[LabelHost]
 	_, correlation := l[LabelCorrelation]
-	if !host && !correlation {
+	_, event := l[LabelEvent]
+	if !host && !correlation && !event {
 		return l
 	}
 	out := maps.Clone(l)
 	delete(out, LabelHost)
 	delete(out, LabelCorrelation)
+	delete(out, LabelEvent)
 	return out
+}
+
+func (t Trace) EvidenceUnit() string {
+	kind, key := "run", t.ID
+	if t.SessionID != "" {
+		kind, key = "session", t.SessionID
+	}
+	if event := t.Labels[LabelEvent]; len(event) == 1 && event[0] != "" {
+		kind, key = "event", event[0]
+	}
+	hash := sha256.Sum256([]byte(t.Producer + "\x00" + kind + "\x00" + key))
+	return hex.EncodeToString(hash[:])
 }
 
 // The same labels with each value list sorted and deduplicated
@@ -58,7 +75,7 @@ func (l Labels) Normalized() (Labels, error) {
 
 // The labels of one run: normalized and one value per key
 // Two values under one key would let two items split by that key both reach the run while they never overlap
-func (l Labels) runLabels() (Labels, error) {
+func (l Labels) ForRun() (Labels, error) {
 	out, err := l.Normalized()
 	if err != nil {
 		return nil, err

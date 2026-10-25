@@ -120,7 +120,7 @@ func (e *Extractor) Reaction(ctx context.Context, runID string) (Reaction, error
 		return Reaction{}, err
 	}
 	return Reaction{
-		Run: run, Verdict: latest[0], Reached: all.For(run.Producer, run.Labels), Waiting: all.Waiting(run.Producer, run.Labels),
+		Run: run, Verdict: latest[0], Reached: all.ForAt(run.Producer, run.Labels, e.now()), Waiting: all.Waiting(run.Producer, run.Labels),
 		Retired: all.Retired(run.Producer, run.Labels),
 	}, nil
 }
@@ -313,7 +313,7 @@ func (e *Extractor) propose(ctx context.Context, r Reaction, d Draft, x extracti
 // 3. a duplicate of a retired version keeps all of it with its text and joins the run so a lesson dropped earlier comes back as it was
 // 4. a conflict keeps the contradicted scope and kind and veto with only the corrected run as evidence
 func (r Reaction) candidate(d Draft, related *knowledge.Knowledge) knowledge.Knowledge {
-	corrected := knowledge.Evidence{FeedbackTraceIDs: []string{r.Run.ID}}
+	corrected := (knowledge.Evidence{}).Join(r.Run.ID, r.Run.EvidenceUnit())
 	switch {
 	case related == nil:
 		scope := d.scope(r.Run)
@@ -323,11 +323,7 @@ func (r Reaction) candidate(d Draft, related *knowledge.Knowledge) knowledge.Kno
 			ID: related.ID, Kind: related.Kind, Content: d.Content, Run: related.Run, Veto: related.Veto, Drafted: true, Evidence: corrected,
 		}
 	}
-	evidence := related.Evidence
-	evidence.FeedbackTraceIDs = slices.Clone(evidence.FeedbackTraceIDs)
-	if !slices.Contains(evidence.FeedbackTraceIDs, r.Run.ID) {
-		evidence.FeedbackTraceIDs = append(evidence.FeedbackTraceIDs, r.Run.ID)
-	}
+	evidence := related.Evidence.Join(r.Run.ID, r.Run.EvidenceUnit())
 	content, drafted := d.Content, true
 	if d.Relation == RelationDuplicate {
 		content, drafted = related.Content, related.Drafted

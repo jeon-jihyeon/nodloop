@@ -359,6 +359,19 @@ func (p *pass) recover(ctx context.Context) error {
 	var errs []error
 	for _, d := range slices.Backward(p.decides) {
 		if d.Decision.RuleCode != RuleDelegated && d.Decision.carries() && !named[d.ID] && p.waits(d) {
+			if d.Decision.Action == ActionApply {
+				k, err := p.all.Version(d.Change.ID, d.Change.Version)
+				if err != nil {
+					return err
+				}
+				review, err := p.reviewRequired(ctx, k)
+				if err != nil {
+					return err
+				}
+				if review {
+					continue
+				}
+			}
 			errs = append(errs, p.carry(ctx, d))
 		}
 	}
@@ -381,7 +394,8 @@ func (p *pass) waits(d Decided) bool {
 	}
 	k, err := p.all.Version(d.Change.ID, d.Change.Version)
 	if d.Change.Kind == ChangeWithdraw {
-		return err == nil && k.Status == knowledge.StatusApproved && (k.Approver == knowledge.ApproverNodloop || d.Decision.Action == ActionAsk)
+		return d.Decision.Reason != knowledge.ReasonConflict && err == nil && k.Status == knowledge.StatusApproved &&
+			(k.Approver == knowledge.ApproverNodloop || d.Decision.Action == ActionAsk)
 	}
 	return err == nil && k.Status == knowledge.StatusCandidate
 }
@@ -390,8 +404,7 @@ func (p *pass) waits(d Decided) bool {
 type signal struct {
 	trace, run string
 	ref        knowledge.Ref
-	// conflict for an extraction and words for a capture
-	reason knowledge.Reason
+	reason     knowledge.Reason
 }
 
 // The withdrawals the signals of the window ask for in the order they were found
@@ -415,23 +428,13 @@ func (p *pass) withdrawals(ctx context.Context) error {
 	return errors.Join(errs...)
 }
 
-// The conflicts the extractions of the window found and the versions the captures read the person's words asking to drop
-// Extractions come first and each kind in the order it was recorded
+// The version specific stops the capture read from the person
 func (p *pass) signals(ctx context.Context) ([]signal, error) {
-	extracts, err := p.list(ctx, record.TraceFilter{Name: string(trace.NameExtract), Since: p.s.Window})
-	if err != nil {
-		return nil, err
-	}
 	captures, err := p.list(ctx, record.TraceFilter{Name: string(trace.NameCapture), Since: p.s.Window})
 	if err != nil {
 		return nil, err
 	}
 	var out []signal
-	for _, t := range slices.Backward(extracts) {
-		if ref, ok := conflicted(t); ok {
-			out = append(out, signal{trace: t.ID, run: t.Ref, ref: ref, reason: knowledge.ReasonConflict})
-		}
-	}
 	for _, t := range slices.Backward(captures) {
 		for _, s := range stopped(t) {
 			out = append(out, signal{trace: t.ID, run: s.Run, ref: s.Ref, reason: knowledge.ReasonWords})
@@ -441,16 +444,14 @@ func (p *pass) signals(ctx context.Context) ([]signal, error) {
 }
 
 // How the signal on its version is decided and false when it asks nothing of the pass
-// 1. a version nodloop approved is withdrawn under the knobs since that only returns the place to what the person confirmed
-// 2. the person's words on a version a person approved ask the person since only the person retires it
-// 3. a conflict with a version a person approved needs nothing here
-// The extraction drafted its next version and that version asks the person
-// So one correction never asks twice
-// 4. a version no longer approved has nothing to withdraw
+// Only a version specific stop can withdraw an earlier approval
+// A contradiction alone leaves the earlier context valid
 func (p *pass) signaled(s signal) (Decision, bool) {
 	k, err := p.all.Version(s.ref.ID, s.ref.Version)
 	switch {
 	case err != nil || k.Status != knowledge.StatusApproved:
+		return Decision{}, false
+	case s.reason != knowledge.ReasonWords:
 		return Decision{}, false
 	case k.Approver == knowledge.ApproverNodloop:
 		return p.event.Knobs.withdrawal(s.reason), true
@@ -549,7 +550,8 @@ func (p *pass) pending(k knowledge.Knowledge, latest map[string]Decided) (retrie
 		return false, k.Time.After(dismissed)
 	case d.Decision.Action == ActionRetry:
 		return true, true
-	case d.Decision.RuleCode == RuleDelegated && k.Status == knowledge.StatusCandidate:
+	case d.Decision.Action == ActionApply && (d.Change.Kind == ChangeAdd || d.Change.Kind == ChangeUpdate) &&
+		k.Status == knowledge.StatusCandidate:
 		return false, true
 	case (d.Decision.Action == ActionHold || d.Decision.Action == ActionShadow) && p.newlyDelegated(k, d.Decision):
 		return false, true
@@ -616,6 +618,15 @@ func (p *pass) sort(ctx context.Context, k knowledge.Knowledge, ref string, retr
 	if err := p.triageDecision(ctx, k, place, &r); err != nil {
 		return ruling{}, err
 	}
+	review, err := p.reviewRequired(ctx, k)
+	if err != nil {
+		return ruling{}, err
+	}
+	if review {
+		r.decision.Tier, r.decision.RuleCode, r.decision.Action = topTier, RuleTriageProtected, ActionHold
+		r.decision.Delegation = ""
+		return r, nil
+	}
 	if rule, asks := p.asks(k, run, place); asks {
 		if rule == RuleScopeWider && r.decision.RuleCode == RuleDelegated && !p.anchorFiles(place) {
 			return r, nil
@@ -625,6 +636,27 @@ func (p *pass) sort(ctx context.Context, k knowledge.Knowledge, ref string, retr
 	}
 	err = p.directed(ctx, &r, k, ref, run, place, retried)
 	return r, err
+}
+
+func (p *pass) reviewRequired(ctx context.Context, k knowledge.Knowledge) (bool, error) {
+	if k.Run != nil && k.Run.Timed() {
+		return true, nil
+	}
+	if k.Extract == "" {
+		return false, nil
+	}
+	found, err := p.traces.Get(ctx, k.Extract)
+	if errors.Is(err, record.ErrTraceNotFound) {
+		return true, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if found.Name != string(trace.NameExtract) {
+		return true, nil
+	}
+	_, conflict := conflicted(trace.Restore(found))
+	return conflict, nil
 }
 
 func (p *pass) directed(ctx context.Context, r *ruling, k knowledge.Knowledge, ref string,

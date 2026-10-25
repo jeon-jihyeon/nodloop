@@ -53,12 +53,12 @@ func TestRunHookRetiredContext(t *testing.T) {
 			stdout.Reset()
 			require.Equal(t, 0, runHook([]string{"prompt"}, getenv, noStart, now, bytes.NewReader(input), &stdout, &stderr))
 			assert.Empty(t, stderr.String())
-			assert.Equal(t, tc.want, strings.Contains(stdout.String(), "stop following retired items git-c v1"))
+			assert.Equal(t, tc.want, strings.Contains(stdout.String(), "stop following inactive items git-c v1"))
 			assert.NotContains(t, stdout.String(), "Use git -C")
 			require.Equal(t, 0, runHook([]string{"stop"}, getenv, noStart, now, bytes.NewReader(input), &stdout, &stderr))
 			stdout.Reset()
 			require.Equal(t, 0, runHook([]string{"prompt"}, getenv, noStart, now, bytes.NewReader(input), &stdout, &stderr))
-			assert.NotContains(t, stdout.String(), "stop following retired items")
+			assert.NotContains(t, stdout.String(), "stop following inactive items")
 		})
 	}
 }
@@ -119,8 +119,9 @@ func TestPromptContextInvalidation(t *testing.T) {
 		{"an empty context has no notice", args{}, ""},
 		{"an unknown version establishes no retirement", args{refs: promptRefs{one}}, ""},
 		{"an approved version needs no notice", args{promptRefs{one}, knowledge.Set{{ID: one.ID, Version: one.Version, Status: knowledge.StatusApproved}}}, ""},
-		{"a retired version is named without lesson text", args{promptRefs{one}, retired}, "nodloop: stop following retired items k1 v1"},
-		{"many retired versions stay in the note budget", args{many, all}, "nodloop: earlier items were retired"},
+		{"a retired version is named without lesson text", args{promptRefs{one}, retired},
+			"nodloop: stop following inactive items k1 v1"},
+		{"many retired versions stay in the note budget", args{many, all}, "nodloop: earlier items became inactive"},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {

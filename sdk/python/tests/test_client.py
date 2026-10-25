@@ -12,6 +12,26 @@ from nodloop.records import InterventionRecordInput
 # Approves a version as the person at a terminal of their own, the approve fixture of conftest
 Approve = Callable[..., None]
 
+
+@pytest.mark.parametrize("end", ["2030-10-02T02:00:00Z", "2030-10-02T02:00:00.5Z"])
+async def test_propose_keeps_explicit_validity(binary: str, records: str, end: str) -> None:
+    async with Client(records, binary) as c:
+        run = await c.record("acme", "acme", labels={"repo": ["acme"]})
+        await c.judge(run, "reject", reviewer="ann", reason="Keep the temporary condition")
+        proposed = await c.propose(
+            "judgment",
+            "Use the temporary presentation",
+            from_run=run,
+            valid_from="2030-10-02T01:00:00Z",
+            valid_until=end,
+        )
+        page = await c.records("knowledge")
+    assert proposed.status == "candidate"
+    assert "run" not in page.records[0]
+    assert page.records[0]["conditional_run"]["valid_from"] == "2030-10-02T01:00:00Z"
+    assert page.records[0]["conditional_run"]["valid_until"] == end
+
+
 ACME = {"tenant": ["acme"], "task": ["refund"]}
 NO_RM = {
     "tool": "Bash",
@@ -38,7 +58,8 @@ async def test_loop(binary: str, records: str, approve: Approve) -> None:
     assert before.items == []
     assert [i.id for i in acme.items] == ["refund-window"]
     assert acme.text.startswith("nodloop: corrections for work in this place that a person approved or nodloop carried out")
-    assert "- [refund-window v1 judgment] Quote the refund window before the steps" in acme.text
+    assert "[refund-window v1 judgment] Quote the refund window before the steps" in acme.text
+    assert "Scope: runs of support-bot. task=refund. tenant=acme" in acme.text
     assert globex.items == [] and globex.text == ""
     assert nxt
 

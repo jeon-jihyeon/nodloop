@@ -367,11 +367,18 @@ export class Client {
     producer?: string;
     labels?: Labels;
     newLabels?: boolean;
+    validFrom?: string;
+    validUntil?: string;
     id?: string;
     veto?: { tool: string; when: { field: string; match: string; unless?: string }[]; example: Record<string, unknown> };
   }): Promise<Candidate> {
-    const { newLabels, ...rest } = proposal;
-    return this.call("propose", newLabels ? { ...rest, new_labels: true } : rest);
+    const { newLabels, validFrom, validUntil, ...rest } = proposal;
+    return this.call("propose", {
+      ...rest,
+      ...(newLabels ? { new_labels: true } : {}),
+      ...(validFrom ? { valid_from: validFrom } : {}),
+      ...(validUntil ? { valid_until: validUntil } : {}),
+    });
   }
 
   /**

@@ -249,6 +249,11 @@ func (k publishedKind) schema() (*jsonschema.Schema, error) {
 			return nil, err
 		}
 	}
+	// The domain input keeps run while timed records use a separate wire scope
+	if k.store == schema.StoreKnowledge {
+		s.Properties["conditional_run"] = s.Properties["run"]
+		s.PropertyOrder = slices.Insert(s.PropertyOrder, slices.Index(s.PropertyOrder, "run")+1, "conditional_run")
+	}
 	s.Schema, s.ID, s.Title, s.Description = schema.Dialect, schema.Base+schema.FileName(k.name, k.version), k.name, k.description
 	s.Properties["record_kind"] = &jsonschema.Schema{Type: "string", Const: jsonschema.Ptr[any](k.name)}
 	s.Properties["record_id"] = &jsonschema.Schema{Type: "string"}

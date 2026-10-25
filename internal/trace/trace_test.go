@@ -320,8 +320,13 @@ func TestLabelsPlace(t *testing.T) {
 		{"labels without a host stay", trace.Labels{"repo": {"o"}}, trace.Labels{"repo": {"o"}}},
 		{"the host alone leaves none", trace.Labels{"host": {"cursor"}}, trace.Labels{}},
 		{"correlation is left out", trace.Labels{"tenant": {"acme"}, "correlation": {"conversation-7"}}, trace.Labels{"tenant": {"acme"}}},
+		{"event is left out", trace.Labels{"repo": {"acme"}, "event": {"C1"}}, trace.Labels{"repo": {"acme"}}},
+		{"event alone leaves none", trace.Labels{"event": {"C1"}}, trace.Labels{}},
+		{"all metadata leaves the place", trace.Labels{
+			"repo": {"acme"}, "host": {"codex"}, "correlation": {"C1"}, "event": {"C1"},
+		}, trace.Labels{"repo": {"acme"}}},
 		{"metadata alone leaves none", trace.Labels{"host": {"cursor"}, "correlation": {"conversation-7"}}, trace.Labels{}},
-		{"empty metadata values are left out", trace.Labels{"host": nil, "correlation": nil}, trace.Labels{}},
+		{"empty metadata values are left out", trace.Labels{"host": nil, "correlation": nil, "event": nil}, trace.Labels{}},
 		{"nil stays nil", nil, nil},
 	}
 	for _, tc := range tcs {

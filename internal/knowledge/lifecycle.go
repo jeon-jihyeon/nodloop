@@ -88,7 +88,8 @@ func (k Knowledge) narrowedRun(key string, values []string) (Knowledge, error) {
 	if key == "" || len(values) == 0 {
 		return Knowledge{}, fmt.Errorf("%w: no refuted value of %q", ErrNarrowInvalid, key)
 	}
-	run := RunScope{Producer: k.Run.Producer, Labels: maps.Clone(k.Run.Labels), Except: maps.Clone(k.Run.Except)}
+	run := *k.Run
+	run.Labels, run.Except = maps.Clone(run.Labels), maps.Clone(run.Except)
 	if run.Except == nil {
 		run.Except = trace.Labels{}
 	}

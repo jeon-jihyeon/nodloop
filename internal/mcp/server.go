@@ -451,16 +451,18 @@ func (s *Server) outcome(ctx context.Context, _ *sdk.CallToolRequest, in outcome
 }
 
 type proposeInput struct {
-	ID       string              `json:"id,omitempty" jsonschema:"stable kebab case id. A new version when it exists and it keeps nothing of the approved one so restate its scope. Generated when empty"`
-	Kind     knowledge.Kind      `json:"kind" jsonschema:"meaning for how to read something in this place or judgment for what to do or not do"`
-	Content  string              `json:"content" jsonschema:"the knowledge in one or a few sentences with units, conditions and exceptions kept"`
-	Producer string              `json:"producer,omitempty" jsonschema:"the producer whose runs it applies to. Filled from from when empty"`
-	Labels   map[string][]string `json:"labels,omitempty" jsonschema:"key to values a run must carry one of. Each must be a label a recorded run of the producer carries. Filled from from when empty"`
-	Except   map[string][]string `json:"except,omitempty" jsonschema:"key to values a run must not carry"`
-	TraceIDs []string            `json:"trace_ids,omitempty" jsonschema:"run trace ids whose feedback is the evidence"`
-	From     string              `json:"from,omitempty" jsonschema:"the trace id of a run the user corrected with edit or reject. Code fills producer, labels and evidence and the content is yours"`
-	Author   string              `json:"author,omitempty" jsonschema:"who proposed. claude by default because the conversation proposes"`
-	Veto     *vetoInput          `json:"veto,omitempty" jsonschema:"a tool call this judgment forbids. Approval makes it a guard veto that blocks the call. Only for kind judgment"`
+	ID         string              `json:"id,omitempty" jsonschema:"stable kebab case id. A new version when it exists and it keeps nothing of the approved one so restate its scope. Generated when empty"`
+	Kind       knowledge.Kind      `json:"kind" jsonschema:"meaning for how to read something in this place or judgment for what to do or not do"`
+	Content    string              `json:"content" jsonschema:"the knowledge in one or a few sentences with units, conditions and exceptions kept"`
+	Producer   string              `json:"producer,omitempty" jsonschema:"the producer whose runs it applies to. Filled from from when empty"`
+	Labels     map[string][]string `json:"labels,omitempty" jsonschema:"key to values a run must carry one of. Each must be a label a recorded run of the producer carries. Filled from from when empty"`
+	Except     map[string][]string `json:"except,omitempty" jsonschema:"key to values a run must not carry"`
+	ValidFrom  time.Time           `json:"valid_from,omitzero" jsonschema:"explicit effective start in RFC3339. Never infer a date from a temporary remark"`
+	ValidUntil time.Time           `json:"valid_until,omitzero" jsonschema:"explicit exclusive end in RFC3339. An expired exception stays in history"`
+	TraceIDs   []string            `json:"trace_ids,omitempty" jsonschema:"run trace ids whose feedback is the evidence"`
+	From       string              `json:"from,omitempty" jsonschema:"the trace id of a run the user corrected with edit or reject. Code fills producer, labels and evidence and the content is yours"`
+	Author     string              `json:"author,omitempty" jsonschema:"who proposed. claude by default because the conversation proposes"`
+	Veto       *vetoInput          `json:"veto,omitempty" jsonschema:"a tool call this judgment forbids. Approval makes it a guard veto that blocks the call. Only for kind judgment"`
 	// Lets a service name a tenant or another label value before its first run
 	NewLabels bool `json:"new_labels,omitempty" jsonschema:"true to allow label values no recorded run carries yet such as a new tenant"`
 }

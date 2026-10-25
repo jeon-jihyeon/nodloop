@@ -1450,12 +1450,34 @@ _KnowledgeRecordRunOptional = TypedDict(
     {
         "labels": dict[str, list[str] | None],
         "except": dict[str, list[str] | None],
+        "valid_from": str,
+        "valid_until": str,
     },
     total=False,
 )
 
 
 class KnowledgeRecordRun(_KnowledgeRecordRunRequired, _KnowledgeRecordRunOptional):
+    pass
+
+
+class _KnowledgeRecordConditionalRunRequired(TypedDict):
+    producer: str
+
+
+_KnowledgeRecordConditionalRunOptional = TypedDict(
+    "_KnowledgeRecordConditionalRunOptional",
+    {
+        "labels": dict[str, list[str] | None],
+        "except": dict[str, list[str] | None],
+        "valid_from": str,
+        "valid_until": str,
+    },
+    total=False,
+)
+
+
+class KnowledgeRecordConditionalRun(_KnowledgeRecordConditionalRunRequired, _KnowledgeRecordConditionalRunOptional):
     pass
 
 
@@ -1466,6 +1488,7 @@ class KnowledgeRecordEvidenceKnowledge(TypedDict):
 
 class KnowledgeRecordEvidence(TypedDict, total=False):
     feedback_trace_ids: list[str] | None
+    feedback_units: dict[str, str]
     outcome_trace_ids: list[str] | None
     paragraph_ids: list[str] | None
     knowledge: list[KnowledgeRecordEvidenceKnowledge] | None
@@ -1508,6 +1531,7 @@ class KnowledgeRecord(_KnowledgeRecordRequired, total=False):
 
     content: str
     run: KnowledgeRecordRun | None
+    conditional_run: KnowledgeRecordConditionalRun | None
     approver: str
     approved_at: str
     reviewed_at: str

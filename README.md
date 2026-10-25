@@ -24,7 +24,7 @@
 
 You correct an AI answer. The session ends. Next week, in the same repo, the same mistake is back.
 
-nodloop closes that loop. It records every answer along with where it was made, records your verdict on it, and turns the corrections you approve into lessons that the next prompt in that place receives. Nothing reaches a prompt until a person approves it, and a lesson only shows up where its scope says it belongs.
+nodloop closes that loop. It records every answer along with where it was made, records your verdict on it, and turns the corrections you approve into lessons that the next prompt in that place receives. An item reaches a prompt after your approval, when curate carries out your recorded judgment, or within your explicit narrow preference delegation, and a lesson only shows up where its scope says it belongs.
 
 ## Quickstart
 
@@ -57,7 +57,7 @@ A CLAUDE.md or a memory file works too. nodloop adds four things:
 
 | | Hand-kept notes | nodloop |
 |---|---|---|
-| Approval | whatever got written | only versions a named person approved, with full history |
+| Approval | whatever got written | person approvals and recorded decisions carried out under existing curate rules or explicit narrow preference delegation, with full history |
 | Scope | every session reads every line | a lesson reaches only the runs its labels match |
 | Measurement | none | for each lesson: the runs that got it, how many you approved, how many you had to correct again |
 | Enforcement | a polite request | the guard hook blocks a forbidden tool call before it runs |
@@ -79,7 +79,7 @@ Before you see a draft, a second model call checks it. It rejects drafts that ju
 | Command | What it does |
 |---|---|
 | `knowledge replay <id>` | Tests a draft against past answers: it should change the ones you corrected and leave the newest ten approved ones alone. Advisory only |
-| `knowledge compact`, `knowledge check` | When a run would carry more than five items, drafts a shorter set and checks that it loses no fact before you approve it |
+| `knowledge compact`, `knowledge check` | When an approval would exceed a run's 9000-rune budget, drafts a shorter set and checks that it loses no fact before you approve it |
 | `knowledge health`, `narrow`, `promote` | Flags items that keep getting corrected or haven't been used in 30 days, and proposes narrower or verified versions |
 | `report loop` | Shows where the loop stalls: runs, verdicts, corrections, drafts waiting and items approved, then per-item results |
 | `report effect` | With `config holdout 0.1`, one conversation in ten gets no items, so you can compare correction rates with and without them per producer, with intervals and a check that the arms split as drawn. Every run of one holdout key counts as one draw unit, so the turns of a conversation widen the intervals instead of passing for independent runs. A producer outside Claude Code joins by passing one holdout key per draw, such as `<service>:<hour>`, to `knowledge_for` and `run`, to `knowledge for` and `run record` with `--holdout-key`, or to `Draw` and `Run.HoldoutKey` in Go with `WithHoldout`. Runs that had items to receive but were recorded without the key count as undrawn |
@@ -197,7 +197,7 @@ macOS and Linux, or Windows through WSL. Python 3.10+ for the Python SDK. For Co
 
 ## Limits
 
-Session labels are the repo and directory, matched as exact strings, so an item scoped to a repo reaches every prompt there regardless of the task. We don't yet measure whether an item reached a run it shouldn't have. A verdict inferred from your words can be wrong, which is why it only ever drafts a candidate and never approves one.
+Session labels are the repo and directory, matched as exact strings, so an item scoped to a repo reaches every prompt there regardless of the task. We don't yet measure whether an item reached a run it shouldn't have. A verdict inferred from your words can be wrong and grants no authority on its own. Applying a lesson still requires your approval, an existing curate rule carrying out your recorded judgment, or your explicit narrow preference delegation.
 
 ## Versioning
 

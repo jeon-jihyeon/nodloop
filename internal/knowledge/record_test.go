@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
+	"github.com/jeon-jihyeon/nodloop/internal/record"
 	"github.com/jeon-jihyeon/nodloop/internal/trace"
 )
 
@@ -71,4 +72,65 @@ func TestKnowledgeRecord(t *testing.T) {
 func TestSetRecordsKeepNil(t *testing.T) {
 	assert.Nil(t, knowledge.RestoreAll(nil))
 	assert.Nil(t, knowledge.Set(nil).Records())
+}
+
+func TestKnowledgeRecordTimed(t *testing.T) {
+	at := time.Date(2026, 10, 2, 0, 0, 0, 0, time.UTC)
+	type args struct{ from, until time.Time }
+	tcs := []struct {
+		name string
+		args args
+	}{
+		{"start only", args{at, time.Time{}}},
+		{"end only", args{time.Time{}, at.Add(time.Hour)}},
+		{"both bounds", args{at, at.Add(time.Hour)}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			k := runItem("acme", &knowledge.RunScope{
+				Producer: "session", ValidFrom: tc.args.from, ValidUntil: tc.args.until,
+			})
+			r := k.Record()
+			assert.Nil(t, r.Run)
+			require.NotNil(t, r.ConditionalRun)
+			assert.Equal(t, tc.args.from, r.ConditionalRun.ValidFrom)
+			assert.Equal(t, tc.args.until, r.ConditionalRun.ValidUntil)
+			assert.Equal(t, k, knowledge.Restore(r))
+			encoded, err := json.Marshal(r)
+			require.NoError(t, err)
+			var legacy struct {
+				Run *record.RunScope `json:"run"`
+			}
+			require.NoError(t, json.Unmarshal(encoded, &legacy))
+			assert.Nil(t, legacy.Run)
+		})
+	}
+}
+
+func TestKnowledgeRestoreConditional(t *testing.T) {
+	at := time.Date(2026, 10, 2, 0, 0, 0, 0, time.UTC)
+	plain := &record.RunScope{Producer: "acme"}
+	timed := &record.RunScope{Producer: "acme", ValidFrom: at, ValidUntil: at.Add(time.Hour)}
+	type args struct{ run, conditional *record.RunScope }
+	tcs := []struct {
+		name string
+		args args
+		want int
+	}{
+		{"legacy timeless", args{plain, nil}, 1},
+		{"legacy timed input", args{timed, nil}, 1},
+		{"conditional timed", args{nil, timed}, 1},
+		{"ambiguous scopes", args{plain, timed}, 0},
+		{"unbounded conditional", args{nil, plain}, 0},
+		{"missing scope", args{nil, nil}, 0},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			k := knowledge.Restore(record.Knowledge{ID: "acme", Version: 1, Status: "approved",
+				Time: at, ApprovedAt: at, Run: tc.args.run, ConditionalRun: tc.args.conditional})
+			assert.Len(t, (knowledge.Set{k}).ForAt("acme", nil, at), tc.want)
+		})
+	}
 }

@@ -475,6 +475,7 @@ func TestCuratorPassDelegationScope(t *testing.T) {
 	specific := acme("svc", "task", "code")
 	host := acme("svc", "host", "example")
 	correlation := acme("svc", "correlation", "C1")
+	event := acme("svc", "event", "C1")
 	tcs := []struct {
 		name  string
 		scope *knowledge.RunScope
@@ -489,6 +490,7 @@ func TestCuratorPassDelegationScope(t *testing.T) {
 		{"a grant label the candidate leaves open", acme("svc"), *specific, curate.ActionHold},
 		{"a host scope cannot become a delegation", host, *host, curate.ActionHold},
 		{"a correlation scope cannot become a delegation", correlation, *correlation, curate.ActionHold},
+		{"an event scope cannot become a delegation", event, *event, curate.ActionHold},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {

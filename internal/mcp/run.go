@@ -141,11 +141,15 @@ func (s *Server) knowledgeFor(
 	if in.Producer == "" {
 		return nil, knowledgeForAnswer{}, trace.ErrProducerRequired
 	}
+	labels, err := trace.Labels(in.Labels).ForRun()
+	if err != nil {
+		return nil, knowledgeForAnswer{}, err
+	}
 	all, err := s.ledger.All(ctx)
 	if err != nil {
 		return nil, knowledgeForAnswer{}, err
 	}
-	items := all.For(in.Producer, in.Labels)
+	items := all.ForAt(in.Producer, labels, s.now())
 	var withheld []knowledge.Ref
 	if s.policy.Holdout.WithholdsRun(in.Producer, in.HoldoutKey) {
 		items, withheld = nil, items.Refs()
@@ -166,8 +170,16 @@ func (s *Server) knowledgeFor(
 // 2. labels given beside from replace the labels of the run
 // 3. every label must be one a recorded run of the producer carries
 func (s *Server) proposeRun(ctx context.Context, in proposeInput, draft knowledge.Knowledge, from *trace.Trace) (proposeAnswer, error) {
-	draft.Run = &knowledge.RunScope{Producer: in.Producer, Labels: in.Labels, Except: in.Except}
+	draft.Run = &knowledge.RunScope{Producer: in.Producer, Labels: in.Labels, Except: in.Except,
+		ValidFrom: in.ValidFrom, ValidUntil: in.ValidUntil}
 	draft.NewLabels = in.NewLabels
+	for _, id := range draft.Evidence.FeedbackTraceIDs {
+		found, err := s.traces.Get(ctx, id)
+		if err != nil {
+			return proposeAnswer{}, err
+		}
+		draft.Evidence = draft.Evidence.Join(id, trace.Restore(found).EvidenceUnit())
+	}
 	if from != nil {
 		verdicts, err := s.verdicts.List(ctx, record.FeedbackFilter{TraceID: from.ID})
 		if err != nil {

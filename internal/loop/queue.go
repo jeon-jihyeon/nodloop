@@ -87,7 +87,7 @@ func (h *History) rank(candidates []entry) []QueueItem {
 		if r.statedOnly(versions) {
 			item.signal(ReasonStatedOnly)
 		}
-		if len(h.knowledge.For(r.trace.Producer, r.trace.Labels)) == 0 {
+		if len(h.knowledge.ForAt(r.trace.Producer, r.trace.Labels, r.trace.Time)) == 0 {
 			item.signal(ReasonNoApprovedItem)
 		}
 		if len(r.received()) == 0 {

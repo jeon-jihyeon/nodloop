@@ -30,10 +30,10 @@ func (refs promptRefs) invalidated(retired map[knowledge.Ref]bool) string {
 	if len(names) == 0 {
 		return ""
 	}
-	text := "nodloop: stop following retired items " + strings.Join(names, ", ") +
+	text := "nodloop: stop following inactive items " + strings.Join(names, ", ") +
 		". Their text may remain until /compact or /clear. Prior outputs need separate correction.\n"
 	if utf8.RuneCountInString(text) > contextRunes-promptRunes {
-		return "nodloop: earlier items were retired. Check current knowledge before following earlier nodloop lessons. " +
+		return "nodloop: earlier items became inactive. Check current knowledge before following earlier nodloop lessons. " +
 			"Their text remains until /compact or /clear. Prior outputs need separate correction.\n"
 	}
 	return text
