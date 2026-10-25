@@ -2,6 +2,22 @@
 
 Every release tag publishes the plugin, the darwin and linux binaries of `nodloop` and, from 0.7.0, `nodloop-server`, and both SDKs under one version. Versions before 0.6.0 reviewed incident data, which left this repository in 0.6.0.
 
+## 0.10.2 - 2026-10-25
+
+### Added
+- Explicit validity windows on knowledge proposals through the CLI, MCP, Go and both SDKs. Approved timed lessons reach matching runs only within these bounds
+- Event grouping for corroboration, so repeated runs from one event count as one source of support
+
+### Changed
+- Go `Item` exposes `Except`, `ValidFrom` and `ValidUntil`. `Proposal` and both SDKs accept explicit validity bounds. Go callers using positional `Item` or `Proposal` literals need to update them
+- Timed candidates and unresolved extraction conflicts require explicit review. A contradiction alone preserves the earlier approval
+- Timed records use `conditional_run` without legacy `run`, so older readers leave them out. Rewriting them with an older version can discard those bounds
+
+### Fixed
+- Rune budget checks compare compatible contexts at every effective time boundary, including scheduled replacements and imported overfull runs
+- Session prompts invalidate lessons whose conditions or validity no longer apply while preserving the context recorded for an earlier turn
+- Reserved event metadata stays outside inferred lesson scopes and delegated places
+
 ## 0.10.1 - 2026-10-22
 
 ### Added
