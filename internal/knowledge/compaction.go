@@ -95,7 +95,7 @@ func (s Set) Compactable(anchor string) (Compactable, error) {
 	if k == nil || k.Status != StatusApproved || k.Run == nil {
 		return Compactable{}, fmt.Errorf("%w: %s has no approved version scoped to runs", ErrNotFound, anchor)
 	}
-	return Compactable{Items: append(Set{*k}, s.runCarried(k.ID, *k.Run)...)}, nil
+	return Compactable{Items: append(Set{*k}, s.Approved().runCarried(k.ID, *k.Run)...)}, nil
 }
 
 // The compaction an approval of one candidate needs to stay within RunChars
@@ -237,6 +237,11 @@ func (e Evidence) union(other Evidence) Evidence {
 		return out
 	}
 	e.FeedbackTraceIDs = add(e.FeedbackTraceIDs, other.FeedbackTraceIDs)
+	for _, id := range other.FeedbackTraceIDs {
+		if unit := other.FeedbackUnits[id]; unit != "" && e.FeedbackUnits[id] == "" {
+			e = e.Join(id, unit)
+		}
+	}
 	e.OutcomeTraceIDs = add(e.OutcomeTraceIDs, other.OutcomeTraceIDs)
 	e.ParagraphIDs = add(e.ParagraphIDs, other.ParagraphIDs)
 	return e

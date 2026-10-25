@@ -23,7 +23,7 @@ func (s Set) Rules() string {
 	for _, section := range ruleSections {
 		var lines []string
 		for _, k := range approved {
-			if k.Kind == section.kind && k.Run != nil {
+			if k.Kind == section.kind && k.Run != nil && !k.Run.Timed() {
 				lines = append(lines, k.rule())
 			}
 		}

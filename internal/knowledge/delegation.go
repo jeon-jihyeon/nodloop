@@ -38,7 +38,7 @@ func (s Set) delegated(id string, version int, decision string, scope RunScope, 
 	if err != nil {
 		return nil, err
 	}
-	if version != 1 || k.Base != 0 || k.Veto != nil || k.Run == nil || !k.Run.Within(scope) {
+	if version != 1 || k.Base != 0 || k.Veto != nil || k.Run == nil || k.Run.Timed() || !k.Run.Within(scope) {
 		return nil, fmt.Errorf("%w: a delegation covers only a new candidate within its scope", ErrPersonDecides)
 	}
 	for _, old := range s {

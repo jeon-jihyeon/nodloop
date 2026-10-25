@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"slices"
 	"time"
 
@@ -201,8 +202,15 @@ func (k Knowledge) validate() error {
 	if err := k.checkScope(); err != nil {
 		return err
 	}
+	return k.checkVeto()
+}
+
+func (k Knowledge) checkVeto() error {
 	if k.Veto == nil {
 		return nil
+	}
+	if k.Run.Timed() {
+		return fmt.Errorf("%w: a veto uses explicit retirement and cannot expire through run validity", ErrScopeInvalid)
 	}
 	if k.Kind != KindJudgment {
 		return ErrVetoKind
@@ -278,6 +286,9 @@ func (k Knowledge) ReachedSince() time.Time {
 	if k.ApprovedAt.IsZero() {
 		return k.Time
 	}
+	if k.Run != nil && k.Run.ValidFrom.After(k.ApprovedAt) {
+		return k.Run.ValidFrom
+	}
 	return k.ApprovedAt
 }
 
@@ -303,11 +314,36 @@ func (k Knowledge) outranks(status Status, version int) bool {
 }
 
 type Evidence struct {
-	FeedbackTraceIDs []string `json:"feedback_trace_ids,omitempty"`
-	OutcomeTraceIDs  []string `json:"outcome_trace_ids,omitempty"`
-	ParagraphIDs     []string `json:"paragraph_ids,omitempty"`
+	FeedbackTraceIDs []string          `json:"feedback_trace_ids,omitempty"`
+	FeedbackUnits    map[string]string `json:"feedback_units,omitempty"`
+	OutcomeTraceIDs  []string          `json:"outcome_trace_ids,omitempty"`
+	ParagraphIDs     []string          `json:"paragraph_ids,omitempty"`
 	// The old versions a compacted item replaces
 	Knowledge []Ref `json:"knowledge,omitempty"`
+}
+
+func (e Evidence) Join(id, unit string) Evidence {
+	if !slices.Contains(e.FeedbackTraceIDs, id) {
+		e.FeedbackTraceIDs = append(slices.Clone(e.FeedbackTraceIDs), id)
+	}
+	e.FeedbackUnits = maps.Clone(e.FeedbackUnits)
+	if e.FeedbackUnits == nil {
+		e.FeedbackUnits = map[string]string{}
+	}
+	e.FeedbackUnits[id] = unit
+	return e
+}
+
+func (e Evidence) Supports(unit string) bool {
+	return slices.ContainsFunc(e.FeedbackTraceIDs, func(id string) bool { return e.FeedbackUnits[id] == unit })
+}
+
+func (e Evidence) Support() int {
+	units := map[string]bool{}
+	for _, id := range e.FeedbackTraceIDs {
+		units[e.FeedbackUnits[id]] = true
+	}
+	return len(units)
 }
 
 // Every trace id the evidence names

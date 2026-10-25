@@ -28,6 +28,7 @@ import (
 // Flags of the knowledge subcommands
 // Each action reads the ones it needs
 type knowledgeFlags struct {
+	validFrom, validUntil                                             string
 	id, kind, content, basis, approver, author, status, traceID, file string
 	from, producer, key, model, holdoutKey                            string
 	version                                                           int
@@ -38,6 +39,8 @@ type knowledgeFlags struct {
 }
 
 func (f *knowledgeFlags) bind(fs *flag.FlagSet) {
+	fs.StringVar(&f.validFrom, "valid-from", "", "propose: explicit inclusive RFC3339 start")
+	fs.StringVar(&f.validUntil, "valid-until", "", "propose: explicit exclusive RFC3339 end")
 	fs.BoolVar(&f.stale, "stale", false, "list: only the approved versions past their review deadline")
 	fs.BoolVar(&f.replay, "replay", false, "check: also replay every new item of the compaction against its outputs")
 	fs.BoolVar(&f.everywhere, "everywhere", false, "approve: approve a candidate for every run of its producer")
@@ -78,6 +81,17 @@ func (f *knowledgeFlags) bind(fs *flag.FlagSet) {
 
 // The candidate the propose flags describe
 func (f knowledgeFlags) draft() (knowledge.Knowledge, error) {
+	var bounds [2]time.Time
+	for i, raw := range []string{f.validFrom, f.validUntil} {
+		if raw == "" {
+			continue
+		}
+		parsed, err := time.Parse(time.RFC3339Nano, raw)
+		if err != nil {
+			return knowledge.Knowledge{}, fmt.Errorf("validity: %w", err)
+		}
+		bounds[i] = parsed
+	}
 	feedbackIDs := []string(f.feedbackIDs)
 	if f.traceID != "" {
 		feedbackIDs = slices.Concat(feedbackIDs, []string{f.traceID})
@@ -92,7 +106,8 @@ func (f knowledgeFlags) draft() (knowledge.Knowledge, error) {
 		return knowledge.Knowledge{}, fmt.Errorf("propose: --evidence-outcome %w with --basis verified", errRequired)
 	}
 	return knowledge.Knowledge{
-		Run:       &knowledge.RunScope{Producer: f.producer, Labels: trace.Labels(f.labels), Except: trace.Labels(f.except)},
+		Run: &knowledge.RunScope{Producer: f.producer, Labels: trace.Labels(f.labels), Except: trace.Labels(f.except),
+			ValidFrom: bounds[0], ValidUntil: bounds[1]},
 		ID:        f.id,
 		Kind:      knowledge.Kind(f.kind),
 		Content:   f.content,
@@ -360,6 +375,17 @@ func (c knowledgeCommand) propose(ctx context.Context, draft knowledge.Knowledge
 	if err := c.check(ctx, draft); err != nil {
 		return err
 	}
+	store, err := c.app.traces()
+	if err != nil {
+		return err
+	}
+	for _, id := range draft.Evidence.FeedbackTraceIDs {
+		found, err := store.Get(ctx, id)
+		if err != nil {
+			return err
+		}
+		draft.Evidence = draft.Evidence.Join(id, trace.Restore(found).EvidenceUnit())
+	}
 	return c.add(ctx, draft)
 }
 
@@ -407,11 +433,15 @@ func (c knowledgeCommand) forRun(ctx context.Context, producer string, labels tr
 	if producer == "" {
 		return fmt.Errorf("for: --producer %w", errRequired)
 	}
+	labels, err := labels.ForRun()
+	if err != nil {
+		return err
+	}
 	all, err := c.ledger.All(ctx)
 	if err != nil {
 		return err
 	}
-	items := all.For(producer, labels)
+	items := all.ForAt(producer, labels, c.app.now())
 	if c.app.cfg.holdout.WithholdsRun(producer, holdoutKey) {
 		for _, ref := range items.Refs() {
 			fmt.Fprintf(c.out, "withheld\t%s\tv%d\n", ref.ID, ref.Version)

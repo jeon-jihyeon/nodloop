@@ -25,6 +25,9 @@ func TestSetWaiting(t *testing.T) {
 		k.Version, k.Status, k.Time = version, status, at.Add(time.Duration(minute)*time.Minute)
 		if len(runs) > 0 {
 			k.Evidence.FeedbackTraceIDs = runs
+			for _, id := range runs {
+				k.Evidence = k.Evidence.Join(id, (trace.Trace{ID: id}).EvidenceUnit())
+			}
 		}
 		if status != knowledge.StatusCandidate {
 			k.Approver = "ann"
@@ -166,6 +169,9 @@ func TestSetAllWaiting(t *testing.T) {
 	candidate := func(id string, run *knowledge.RunScope, runs ...string) knowledge.Knowledge {
 		k := runItem(id, run)
 		k.Version, k.Status, k.Evidence.FeedbackTraceIDs = 1, knowledge.StatusCandidate, runs
+		for _, id := range runs {
+			k.Evidence = k.Evidence.Join(id, (trace.Trace{ID: id}).EvidenceUnit())
+		}
 		return k
 	}
 	compacted := candidate("compacted", repoRun(), "r1")

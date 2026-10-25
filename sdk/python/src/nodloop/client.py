@@ -33,7 +33,7 @@ __all__ = [
 ]
 
 # The binary release the client fetches when no nodloop is installed
-VERSION = "0.10.1"
+VERSION = "0.10.2"
 
 
 # The reports report reads
@@ -390,6 +390,8 @@ class Client:
         new_labels: bool = False,
         item_id: str = "",
         veto: dict[str, Any] | None = None,
+        valid_from: str = "",
+        valid_until: str = "",
     ) -> Candidate:
         """Proposes a candidate a person approves later, from a corrected run or for a producer and labels
 
@@ -398,7 +400,13 @@ class Client:
         args: dict[str, Any] = {"kind": kind, "content": content}
         if veto:
             args["veto"] = veto
-        for key, value in (("from", from_run), ("producer", producer), ("id", item_id)):
+        for key, value in (
+            ("from", from_run),
+            ("producer", producer),
+            ("id", item_id),
+            ("valid_from", valid_from),
+            ("valid_until", valid_until),
+        ):
             if value:
                 args[key] = value
         if labels:

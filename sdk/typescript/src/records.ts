@@ -993,9 +993,19 @@ export interface KnowledgeRecord {
     producer: string;
     labels?: Record<string, string[] | null>;
     except?: Record<string, string[] | null>;
+    valid_from?: string;
+    valid_until?: string;
+  } | null;
+  conditional_run?: {
+    producer: string;
+    labels?: Record<string, string[] | null>;
+    except?: Record<string, string[] | null>;
+    valid_from?: string;
+    valid_until?: string;
   } | null;
   evidence: {
     feedback_trace_ids?: string[] | null;
+    feedback_units?: Record<string, string>;
     outcome_trace_ids?: string[] | null;
     paragraph_ids?: string[] | null;
     knowledge?: {

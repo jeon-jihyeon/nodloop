@@ -14,12 +14,21 @@ func Restore(r record.Knowledge) Knowledge {
 		Time: r.Time, Author: r.Author, Drafted: r.Drafted, NewLabels: r.NewLabels, Compaction: r.Compaction,
 		CompactionSize: r.CompactionSize,
 		Evidence: Evidence{
+			FeedbackUnits:    r.Evidence.FeedbackUnits,
 			FeedbackTraceIDs: r.Evidence.FeedbackTraceIDs, OutcomeTraceIDs: r.Evidence.OutcomeTraceIDs,
 			ParagraphIDs: r.Evidence.ParagraphIDs, Knowledge: restoreRefs(r.Evidence.Knowledge),
 		},
 	}
-	if r.Run != nil {
-		k.Run = &RunScope{Producer: r.Run.Producer, Labels: trace.Labels(r.Run.Labels), Except: trace.Labels(r.Run.Except)}
+	scope := r.Run
+	if r.ConditionalRun != nil {
+		scope = nil
+		if r.Run == nil && (!r.ConditionalRun.ValidFrom.IsZero() || !r.ConditionalRun.ValidUntil.IsZero()) {
+			scope = r.ConditionalRun
+		}
+	}
+	if scope != nil {
+		k.Run = &RunScope{Producer: scope.Producer, Labels: trace.Labels(scope.Labels), Except: trace.Labels(scope.Except),
+			ValidFrom: scope.ValidFrom, ValidUntil: scope.ValidUntil}
 	}
 	if r.Veto != nil {
 		k.Veto = &Veto{Tool: r.Veto.Tool, When: restoreConditions(r.Veto.When), Example: r.Veto.Example}
@@ -50,12 +59,17 @@ func (k Knowledge) Record() record.Knowledge {
 		Reason: string(k.Reason), Decision: k.Decision, Extract: k.Extract, Supersedes: k.Supersedes, Base: k.Base, Time: k.Time, Author: k.Author, Drafted: k.Drafted, NewLabels: k.NewLabels,
 		Compaction: k.Compaction, CompactionSize: k.CompactionSize, SchemaVersion: SchemaVersion,
 		Evidence: record.Evidence{
+			FeedbackUnits:    k.Evidence.FeedbackUnits,
 			FeedbackTraceIDs: k.Evidence.FeedbackTraceIDs, OutcomeTraceIDs: k.Evidence.OutcomeTraceIDs,
 			ParagraphIDs: k.Evidence.ParagraphIDs, Knowledge: refRecords(k.Evidence.Knowledge),
 		},
 	}
 	if k.Run != nil {
-		r.Run = &record.RunScope{Producer: k.Run.Producer, Labels: k.Run.Labels, Except: k.Run.Except}
+		r.Run = &record.RunScope{Producer: k.Run.Producer, Labels: k.Run.Labels, Except: k.Run.Except,
+			ValidFrom: k.Run.ValidFrom, ValidUntil: k.Run.ValidUntil}
+		if k.Run.Timed() {
+			r.ConditionalRun, r.Run = r.Run, nil
+		}
 	}
 	if k.Veto != nil {
 		r.Veto = &record.Veto{Tool: k.Veto.Tool, When: conditionRecords(k.Veto.When), Example: k.Veto.Example}

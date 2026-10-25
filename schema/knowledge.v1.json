@@ -60,6 +60,60 @@
               "type": "string"
             }
           }
+        },
+        "valid_from": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "valid_until": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "producer"
+      ]
+    },
+    "conditional_run": {
+      "type": [
+        "null",
+        "object"
+      ],
+      "properties": {
+        "producer": {
+          "type": "string"
+        },
+        "labels": {
+          "type": "object",
+          "additionalProperties": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "except": {
+          "type": "object",
+          "additionalProperties": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "valid_from": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "valid_until": {
+          "type": "string",
+          "format": "date-time"
         }
       },
       "required": [
@@ -75,6 +129,12 @@
             "array"
           ],
           "items": {
+            "type": "string"
+          }
+        },
+        "feedback_units": {
+          "type": "object",
+          "additionalProperties": {
             "type": "string"
           }
         },

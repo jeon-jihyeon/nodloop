@@ -10,6 +10,7 @@ type Knowledge struct {
 	Kind           string    `json:"kind"`
 	Content        string    `json:"content"`
 	Run            *RunScope `json:"run,omitempty"`
+	ConditionalRun *RunScope `json:"conditional_run,omitempty"`
 	Evidence       Evidence  `json:"evidence"`
 	Basis          string    `json:"basis"`
 	Status         string    `json:"status"`
@@ -34,16 +35,19 @@ type Knowledge struct {
 }
 
 type RunScope struct {
-	Producer string              `json:"producer"`
-	Labels   map[string][]string `json:"labels,omitempty"`
-	Except   map[string][]string `json:"except,omitempty"`
+	Producer   string              `json:"producer"`
+	Labels     map[string][]string `json:"labels,omitempty"`
+	Except     map[string][]string `json:"except,omitempty"`
+	ValidFrom  time.Time           `json:"valid_from,omitzero"`
+	ValidUntil time.Time           `json:"valid_until,omitzero"`
 }
 
 type Evidence struct {
-	FeedbackTraceIDs []string `json:"feedback_trace_ids,omitempty"`
-	OutcomeTraceIDs  []string `json:"outcome_trace_ids,omitempty"`
-	ParagraphIDs     []string `json:"paragraph_ids,omitempty"`
-	Knowledge        []Ref    `json:"knowledge,omitempty"`
+	FeedbackTraceIDs []string          `json:"feedback_trace_ids,omitempty"`
+	FeedbackUnits    map[string]string `json:"feedback_units,omitempty"`
+	OutcomeTraceIDs  []string          `json:"outcome_trace_ids,omitempty"`
+	ParagraphIDs     []string          `json:"paragraph_ids,omitempty"`
+	Knowledge        []Ref             `json:"knowledge,omitempty"`
 }
 
 type Ref struct {

@@ -520,8 +520,8 @@ func (b bench) knobs(t *testing.T, change func(*curate.Knobs)) {
 	require.NoError(t, b.stores.Traces.Append(context.Background(), tr.Record()))
 }
 
-// A withdrawal while the kind is closed asks the person since it asks no judge
-func TestCuratorPassWithdrawalClosed(t *testing.T) {
+// A conflict preserves the earlier approval while the withdrawal kind is closed
+func TestCuratorPassConflictClosed(t *testing.T) {
 	b := newBench(t, nil, []knowledge.Knowledge{
 		lesson("k-carried", 1, "Squash before a merge", acme("acme"), knowledge.StatusApproved, knowledge.ApproverNodloop),
 	}, nil)
@@ -531,13 +531,13 @@ func TestCuratorPassWithdrawalClosed(t *testing.T) {
 	got, err := b.curator().Pass(context.Background(), b.setting(t))
 
 	require.NoError(t, err)
-	assert.Equal(t, []string{"withdraw k-carried v1 hold kind_closed 2"}, decisionsOf(got.Decided))
+	assert.Empty(t, got.Decided)
 	assert.Equal(t, []string{"k-carried v1 approved nodloop"}, statuses(t, b))
 	assert.Empty(t, got.Due)
 }
 
-// A conflict an extraction found with a version nodloop approved is a withdrawal decided in shadow and carried out once the shadow ended
-func TestCuratorPassWithdrawal(t *testing.T) {
+// A contradiction preserves the earlier approval in shadow and after activation
+func TestCuratorPassConflictPreservesApproved(t *testing.T) {
 	ctx := context.Background()
 	b := newBench(t, nil, []knowledge.Knowledge{
 		lesson("k-carried", 1, "Squash before a merge", acme("acme"), knowledge.StatusApproved, knowledge.ApproverNodloop),
@@ -550,11 +550,10 @@ func TestCuratorPassWithdrawal(t *testing.T) {
 	second, err := b.curator().Pass(ctx, b.setting(t))
 	require.NoError(t, err)
 
-	assert.Equal(t, []string{"withdraw k-carried v1 shadow  1"}, decisionsOf(first.Decided))
-	require.Equal(t, []string{"withdraw k-carried v1 withdraw  1"}, decisionsOf(second.Decided))
-	assert.Equal(t, "e-k-carried", second.Decided[0].Change.Signal)
-	assert.Equal(t, []string{"k-carried v1 retired nodloop conflict"}, statuses(t, b))
-	assert.Equal(t, second.Decided[0].ID, b.decision(t, "k-carried", 1))
+	assert.Empty(t, first.Decided)
+	assert.Empty(t, second.Decided)
+	assert.Equal(t, []string{"k-carried v1 approved nodloop"}, statuses(t, b))
+	assert.Empty(t, b.decision(t, "k-carried", 1))
 }
 
 // A capture trace whose person's words asked to drop k-carried and the person's lesson beside one that does not decode
@@ -872,7 +871,7 @@ func TestCuratorPassFails(t *testing.T) {
 			want{curate.ErrDecideInvalid, []string{"k-carried v1 approved nodloop"}, 0},
 		},
 		{
-			"extractions that cannot be read fail the withdrawals and the candidates are still decided",
+			"captures that cannot be read fail the withdrawals and the candidates are still decided",
 			args{lessons: []knowledge.Knowledge{dup}, appends: -1, lists: 5, reads: -1, seed: "5eed"},
 			want{assert.AnError, []string{"k-dup v1 retired nodloop duplicate"}, 1},
 		},
@@ -891,11 +890,6 @@ func TestCuratorPassFails(t *testing.T) {
 				numbers: curate.Numbers{ShadowCycles: 2, ShadowMet: true},
 			},
 			want{assert.AnError, []string{"k-dup v1 candidate"}, 0},
-		},
-		{
-			"captures that cannot be read fail the withdrawals and the candidates are still decided",
-			args{lessons: []knowledge.Knowledge{dup}, appends: -1, lists: 6, reads: -1, seed: "5eed"},
-			want{assert.AnError, []string{"k-dup v1 retired nodloop duplicate"}, 1},
 		},
 	}
 	ctx := context.Background()

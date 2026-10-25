@@ -109,7 +109,7 @@ func (s Set) Clusters() []Set {
 // Negative when a waits before b
 func (a Knowledge) waitsBefore(b Knowledge) int {
 	return cmp.Or(
-		cmp.Compare(len(b.Evidence.FeedbackTraceIDs), len(a.Evidence.FeedbackTraceIDs)),
+		cmp.Compare(b.Evidence.Support(), a.Evidence.Support()),
 		b.Time.Compare(a.Time),
 		strings.Compare(a.ID, b.ID),
 	)
@@ -151,13 +151,13 @@ func (s Set) corroborate(id string, version int, run trace.Trace, verdicts feedb
 	if latest := verdicts.Latest(); len(latest) == 0 || !latest[0].Corrects() {
 		return nil, fmt.Errorf("%w: %s", ErrNotCorrected, run.ID)
 	}
-	if k.Run == nil || !k.Run.Admits(run.Producer, run.Labels) {
+	if k.Run == nil || !k.Run.Admits(run.Producer, run.Labels) || !k.Run.At(run.Time) {
 		return nil, fmt.Errorf("%w: %s v%d does not reach run %s", ErrScopeWidened, id, version, run.ID)
 	}
-	if slices.Contains(k.Evidence.FeedbackTraceIDs, run.ID) {
+	if slices.Contains(k.Evidence.FeedbackTraceIDs, run.ID) || k.Evidence.Supports(run.EvidenceUnit()) {
 		return nil, nil
 	}
-	k.Evidence.FeedbackTraceIDs = append(slices.Clone(k.Evidence.FeedbackTraceIDs), run.ID)
+	k.Evidence = k.Evidence.Join(run.ID, run.EvidenceUnit())
 	k.Time = now
 	return []Knowledge{k}, nil
 }

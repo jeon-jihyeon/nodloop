@@ -176,7 +176,8 @@ type hookCommand struct {
 func (c hookCommand) prompt(ctx context.Context, sessionID, message string, labels trace.Labels) error {
 	started := c.app.now()
 	all, allErr := c.all(ctx)
-	items := hookItems(all.For(sessionProducer, labels))
+	applicable := all.ForAt(sessionProducer, labels, started)
+	items := hookItems(applicable)
 	if c.holdout.WithholdsRun(sessionProducer, sessionID) {
 		items = nil
 	}
@@ -188,6 +189,12 @@ func (c hookCommand) prompt(ctx context.Context, sessionID, message string, labe
 	refill := recent.newest(trace.NameRefill, time.Time{})
 	prior := promptRefs(recent.contextRefs(all, refill))
 	retired := prior.retired(all)
+	active := applicable.Refs()
+	for _, ref := range prior {
+		if !slices.Contains(active, ref) {
+			retired[ref] = true
+		}
+	}
 	refs := prior.continued(retired, items.fitting().Without(held).Refs())
 	turnErr := c.recordTurn(ctx, sessionID, turnInput{Context: &refs}, started)
 	previous := recent.before(started)
@@ -259,7 +266,7 @@ func (c hookCommand) addItems(ctx context.Context, event, sessionID string, labe
 	if err != nil && !errors.Is(err, knowledgefile.ErrCorrupt) {
 		return nil, err
 	}
-	items := hookItems(all.For(sessionProducer, labels))
+	items := hookItems(all.ForAt(sessionProducer, labels, c.app.now()))
 	held := c.hold.Held(items.fitting(), sessionProducer, sessionID)
 	text := items.context(nil, held, sessionNote{})
 	if text == "" {
@@ -495,7 +502,11 @@ func (c hookCommand) capture(sessionID string, t transcript, continued bool) err
 func (c hookCommand) record(
 	ctx context.Context, sessionID string, labels trace.Labels, answer reply, all knowledge.Set, start time.Time, continued bool,
 ) (trace.Trace, error) {
-	shown := hookItems(all.For(sessionProducer, labels)).fitting()
+	at := start
+	if at.IsZero() {
+		at = c.app.now()
+	}
+	shown := hookItems(all.ForAt(sessionProducer, labels, at)).fitting()
 	applied := shown.Refs()
 	var withheld []knowledge.Ref
 	if c.holdout.WithholdsRun(sessionProducer, sessionID) {

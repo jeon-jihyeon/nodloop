@@ -38,7 +38,9 @@ The `plugin/bin/nodloop` launcher downloads a release archive from this reposito
 
 `checksums.txt` comes from the same release, so it shows an archive arrived whole, not who built it. Every archive also carries a build provenance attestation signed through GitHub Actions and an SPDX SBOM. `gh attestation verify nodloop_darwin_arm64.tar.gz --repo jeon-jihyeon/nodloop` checks that the archive was built by the release workflow of this repository from its tag.
 
-Model output is untrusted. A proposed knowledge item reaches a prompt only once a person approves it, which only a terminal of their own, a server key they hold, a form they accept or their own answer to a question of the stop proves. Once the person says yes to ending the shadow of curate, nodloop also approves a change its rules and judge find the person's recorded decisions already settle, and the person can undo it. That gate stops a model deciding by accident or on an instruction it read. It is a design property, not a security boundary. Do not rely on it to contain hostile model output.
+Model output is untrusted. A proposed item reaches a prompt after a person's recorded approval, after curate carries out an existing recorded decision, or under a separate explicit delegation. A delegation covers only a new answer presentation preference inside its scope, with complete direct source and no protected concern or conflict. Timed items and unresolved contradictions stay held for explicit review. Model confidence and agreement grant no authority.
+
+The terminal, server key, accepted form and captured reply are proof categories of the recorded contract. They do not independently establish that a human controlled the client. A client that accepts forms automatically and a process of the same user that writes records or config.json remain within the local trust boundary. Direct writes can forge approvals or delegation config. These gates reduce accidental decisions and are not containment for hostile model output. Do not rely on them as a security boundary.
 
 ## Supported versions
 

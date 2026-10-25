@@ -43,6 +43,7 @@ func criticRules() string {
 		"reversibility is H only for answer presentation, M for a stored artifact or code style, L for external actions or changes difficult to undo, and unknown when unclear. " +
 		"protected is safety, organization, mixed, conflict, artifact, or unknown when that prevents treating the lesson as personal answer presentation, and none otherwise. " +
 		"lasting means the correction establishes a standing preference rather than a task instruction. " +
+		"A question, hedge or thought aloud establishes no lasting intent; faithful preserves its strength and every context condition. " +
 		"faithful means the whole proposed lesson follows directly from the correction without adding behavior or broadening its scope. " +
 		"conflict is true when any shown rule or item disagrees. Use unknown and false when the data does not establish a lasting faithful preference. " +
 		"Triage describes the lesson and grants no approval authority.")

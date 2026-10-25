@@ -51,15 +51,16 @@ func (p *pass) revoked() []string {
 
 // The first grant of the pass that covers the candidate with its HMAC and false for none
 // 1. only the first version of a new id with an eligible preference is delegable
-// 2. a grant on host or correlation labels names one machine or one conversation and covers nothing
+// 2. a grant on observation metadata covers no place
 // 3. the HMAC seals the policy, the grant id and the canonical scope so a stopped grant stays stopped until a new id
 func (p *pass) delegation(k knowledge.Knowledge, t *Triage) (knowledge.RunScope, string, bool) {
-	if t == nil || !t.eligible() || k.Run == nil || k.Version != 1 || k.Base != 0 {
+	if t == nil || !t.eligible() || k.Run == nil || k.Run.Timed() || k.Version != 1 || k.Base != 0 {
 		return knowledge.RunScope{}, "", false
 	}
 	for _, grant := range p.s.Delegations {
 		limit := grant.Scope
 		if grant.ID == "" || len(limit.Labels[trace.LabelHost]) > 0 || len(limit.Labels[trace.LabelCorrelation]) > 0 ||
+			len(limit.Labels[trace.LabelEvent]) > 0 ||
 			!k.Run.Within(limit) {
 			continue
 		}

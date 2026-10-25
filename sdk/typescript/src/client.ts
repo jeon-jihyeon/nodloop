@@ -8,7 +8,7 @@ import { find } from "./binary.ts";
 import type { AnyRecord, InterventionRecord, RecordKind, Records } from "./records.ts";
 
 /** The binary release the client fetches when no nodloop is installed */
-export const version = "0.10.1";
+export const version = "0.10.2";
 
 export type Labels = Record<string, string[]>;
 
@@ -367,11 +367,18 @@ export class Client {
     producer?: string;
     labels?: Labels;
     newLabels?: boolean;
+    validFrom?: string;
+    validUntil?: string;
     id?: string;
     veto?: { tool: string; when: { field: string; match: string; unless?: string }[]; example: Record<string, unknown> };
   }): Promise<Candidate> {
-    const { newLabels, ...rest } = proposal;
-    return this.call("propose", newLabels ? { ...rest, new_labels: true } : rest);
+    const { newLabels, validFrom, validUntil, ...rest } = proposal;
+    return this.call("propose", {
+      ...rest,
+      ...(newLabels ? { new_labels: true } : {}),
+      ...(validFrom ? { valid_from: validFrom } : {}),
+      ...(validUntil ? { valid_until: validUntil } : {}),
+    });
   }
 
   /**

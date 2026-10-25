@@ -205,8 +205,7 @@ func (s Set) fits(before Set, item Knowledge) (Folder, bool) {
 	if item.Run == nil || item.Veto != nil {
 		return Folder{Carried: Set{}}, true
 	}
-	f := s.runFolder(item)
-	return f, f.Chars <= RunChars || f.Chars <= before.fullestRun("", *item.Run).runes()
+	return s.capacity(before, item)
 }
 
 // Runes of the texts a run receives
@@ -337,7 +336,9 @@ func (s Set) scoped(id string, version int, labels trace.Labels) (Knowledge, err
 	if err := k.checkScope(); err != nil {
 		return Knowledge{}, err
 	}
-	run, err := RunScope{Producer: k.Run.Producer, Labels: labels, Except: k.Run.Except}.normalized()
+	scope := *k.Run
+	scope.Labels = labels
+	run, err := scope.normalized()
 	if err != nil {
 		return Knowledge{}, err
 	}

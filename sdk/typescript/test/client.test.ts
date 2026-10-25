@@ -7,6 +7,27 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { acme, approve, binary, first, holdout, open, runs, second, seed, seedRecords, server } from "./setup.ts";
 
+for (const validUntil of ["2030-10-02T02:00:00Z", "2030-10-02T02:00:00.5Z"]) {
+  test(`a proposal keeps explicit validity ending at ${validUntil}`, async () => {
+    const c = await open();
+    try {
+      const run = await c.record({ producer: "acme", output: "acme", labels: { repo: ["acme"] } });
+      await c.judge(run, "reject", { reviewer: "ann", reason: "Keep the temporary condition" });
+      const proposed = await c.propose({
+        kind: "judgment", content: "Use the temporary presentation", from: run,
+        validFrom: "2030-10-02T01:00:00Z", validUntil,
+      });
+      const page = await c.records("knowledge");
+      assert.equal(proposed.status, "candidate");
+      assert.equal(page.records[0].run, undefined);
+      assert.equal(page.records[0].conditional_run?.valid_from, "2030-10-02T01:00:00Z");
+      assert.equal(page.records[0].conditional_run?.valid_until, validUntil);
+    } finally {
+      await c.close();
+    }
+  });
+}
+
 test("a corrected run teaches an item the same tenant receives once the person approved it and another tenant never does", async () => {
   const c = await open();
   try {

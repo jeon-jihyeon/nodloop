@@ -11,7 +11,74 @@ import (
 
 	"github.com/jeon-jihyeon/nodloop"
 	"github.com/jeon-jihyeon/nodloop/internal/schema"
+	"github.com/jeon-jihyeon/nodloop/internal/trace"
 )
+
+func TestClientItemsLabels(t *testing.T) {
+	t.Parallel()
+	tcs := []struct {
+		name string
+		args nodloop.Labels
+		want error
+	}{
+		{"empty labels", nil, nil},
+		{"repeated value", nodloop.Labels{"context": {"x", "x"}}, nil},
+		{"different alternatives", nodloop.Labels{"context": {"x", "y"}}, trace.ErrLabelValues},
+		{"empty value", nodloop.Labels{"context": {""}}, trace.ErrLabelEmpty},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			c, ctx := open(t), context.Background()
+			_, err := c.Items(ctx, "session", tc.args)
+			assert.ErrorIs(t, err, tc.want)
+		})
+	}
+}
+
+func TestClientDrawLabels(t *testing.T) {
+	t.Parallel()
+	tcs := []struct {
+		name string
+		args nodloop.Labels
+		want error
+	}{
+		{"empty labels", nil, nil},
+		{"repeated value", nodloop.Labels{"context": {"x", "x"}}, nil},
+		{"different alternatives", nodloop.Labels{"context": {"x", "y"}}, trace.ErrLabelValues},
+		{"empty value", nodloop.Labels{"context": {""}}, trace.ErrLabelEmpty},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			c, ctx := open(t), context.Background()
+			_, err := c.Draw(ctx, "session", tc.args, "C1")
+			assert.ErrorIs(t, err, tc.want)
+		})
+	}
+}
+
+func TestClientWaitingLabels(t *testing.T) {
+	t.Parallel()
+	tcs := []struct {
+		name string
+		args nodloop.Labels
+		want error
+	}{
+		{"empty labels", nil, nil},
+		{"repeated value", nodloop.Labels{"context": {"x", "x"}}, nil},
+		{"different alternatives", nodloop.Labels{"context": {"x", "y"}}, trace.ErrLabelValues},
+		{"empty value", nodloop.Labels{"context": {""}}, trace.ErrLabelEmpty},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			c, ctx := open(t), context.Background()
+			_, err := c.Waiting(ctx, "session", tc.args)
+			assert.ErrorIs(t, err, tc.want)
+		})
+	}
+}
 
 // The record_id of each record of a page in its order
 func recordIDs(t *testing.T, p nodloop.Page) []string {

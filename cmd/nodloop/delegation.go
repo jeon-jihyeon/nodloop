@@ -128,7 +128,7 @@ func (c delegationCommand) save(action string, d userconfig.Delegation) error {
 
 // The scope of a grant with its labels normalized
 // A grant names a producer and either labels or the explicit everywhere so no empty scope widens by accident
-// Host and correlation name one machine or one conversation and never a place
+// Observation metadata identifies a run rather than the place of the work
 func delegationScope(d userconfig.Delegation) (knowledge.RunScope, error) {
 	if d.Producer == "" || len(d.Labels) == 0 != d.Everywhere {
 		return knowledge.RunScope{}, fmt.Errorf("%w: name a producer and choose recorded labels or explicit everywhere", errRequired)
@@ -138,7 +138,7 @@ func delegationScope(d userconfig.Delegation) (knowledge.RunScope, error) {
 		return knowledge.RunScope{}, err
 	}
 	for key := range labels {
-		if key == trace.LabelHost || key == trace.LabelCorrelation {
+		if key == trace.LabelHost || key == trace.LabelCorrelation || key == trace.LabelEvent {
 			return knowledge.RunScope{}, fmt.Errorf("%w: %s is not a delegation scope", errLabelFlag, key)
 		}
 	}
