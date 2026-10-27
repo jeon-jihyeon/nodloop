@@ -591,6 +591,61 @@ class TurnRecord(_TurnRecordRequired, total=False):
     labels: dict[str, list[str] | None]
 
 
+class _CallsRecordInputCallsRequired(TypedDict):
+    tool: str
+
+
+class CallsRecordInputCalls(_CallsRecordInputCallsRequired, total=False):
+    command: str
+    file: str
+
+
+class _CallsRecordInputRequired(TypedDict):
+    at: str
+    calls: list[CallsRecordInputCalls] | None
+
+
+class CallsRecordInput(_CallsRecordInputRequired, total=False):
+    turn: str
+
+
+class _CallsRecordUsageRequired(TypedDict):
+    input_tokens: int
+    output_tokens: int
+    cache_read: int
+    cache_create: int
+    cost_usd: float
+
+
+class CallsRecordUsage(_CallsRecordUsageRequired, total=False):
+    thinking_tokens: int
+
+
+class _CallsRecordRequired(TypedDict):
+    record_kind: Literal["calls"]
+    record_id: str
+    id: str
+    name: Literal["calls"]
+    time: str
+    input: CallsRecordInput
+    usage: CallsRecordUsage
+    duration_ms: int
+    schema_version: Literal[1]
+
+
+class CallsRecord(_CallsRecordRequired, total=False):
+    """The shapes of tool calls no stop of a run, start of a turn or typed message falls between, with no argument text"""
+
+    session_id: str
+    subject: str
+    ref: str
+    model: str
+    error: str
+    tags: list[str] | None
+    producer: str
+    labels: dict[str, list[str] | None]
+
+
 class _CompactRecordUsageRequired(TypedDict):
     input_tokens: int
     output_tokens: int
@@ -1512,6 +1567,15 @@ class KnowledgeRecordVeto(_KnowledgeRecordVetoRequired, total=False):
     example: dict[str, Any]
 
 
+class _KnowledgeRecordCueRequired(TypedDict):
+    tool: str
+
+
+class KnowledgeRecordCue(_KnowledgeRecordCueRequired, total=False):
+    command: str
+    file: str
+
+
 class _KnowledgeRecordRequired(TypedDict):
     record_kind: Literal["knowledge"]
     record_id: str
@@ -1543,6 +1607,7 @@ class KnowledgeRecord(_KnowledgeRecordRequired, total=False):
     drafted: bool
     new_labels: bool
     veto: KnowledgeRecordVeto | None
+    cue: KnowledgeRecordCue | None
     compaction: str
     compaction_size: int
 
@@ -1574,6 +1639,7 @@ RecordKind = Literal[
     "consolidate",
     "refill",
     "turn",
+    "calls",
     "compact",
     "instructions",
     "capture",
@@ -1600,6 +1666,7 @@ AnyRecord = (
     | ConsolidateRecord
     | RefillRecord
     | TurnRecord
+    | CallsRecord
     | CompactRecord
     | InstructionsRecord
     | CaptureRecord

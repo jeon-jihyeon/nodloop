@@ -35,6 +35,7 @@ type knowledgeFlags struct {
 	feedbackIDs, outcomeIDs                                           listFlag
 	labels, except                                                    labelFlag
 	vetoTool, vetoField, vetoMatch, vetoUnless, vetoExample           string
+	cueTool, cueCommand, cueFile                                      string
 	stale, newLabels, replay, everywhere, daily                       bool
 }
 
@@ -73,6 +74,10 @@ func (f *knowledgeFlags) bind(fs *flag.FlagSet) {
 	fs.StringVar(&f.vetoUnless, "veto-unless", "", "propose: RE2 regexp that lets the call through")
 	fs.StringVar(&f.vetoExample, "veto-example", "",
 		`propose: a tool_input JSON object the veto must block such as {"command":"sed -i s/a/b/ f"}`)
+	fs.StringVar(&f.cueTool, "cue-tool", "",
+		"propose: the tool whose calls a judgment comes before, such as Bash. A plugin with the tool hook delivers it there instead of with the prompt")
+	fs.StringVar(&f.cueCommand, "cue-command", "", "propose: the words a command of the call starts with, such as git commit")
+	fs.StringVar(&f.cueFile, "cue-file", "", "propose: the file shape of the call, such as *_test.go")
 	fs.StringVar(&f.from, "from", "",
 		"propose and extract: a run a person corrected by edit or reject. propose fills producer, labels and evidence from it unless given")
 	fs.StringVar(&f.model, "model", "",
@@ -115,8 +120,17 @@ func (f knowledgeFlags) draft() (knowledge.Knowledge, error) {
 		Basis:     knowledge.Basis(f.basis),
 		Author:    f.author,
 		Veto:      v,
+		Cue:       f.cue(),
 		NewLabels: f.newLabels,
 	}, nil
+}
+
+// Nil without `--cue-tool` so a plain proposal carries no cue
+func (f knowledgeFlags) cue() *knowledge.Cue {
+	if f.cueTool == "" {
+		return nil
+	}
+	return &knowledge.Cue{Tool: f.cueTool, Command: f.cueCommand, File: f.cueFile}
 }
 
 // Nil without `--veto-tool` so a plain proposal carries no veto
@@ -495,6 +509,9 @@ func (c knowledgeCommand) add(ctx context.Context, draft knowledge.Knowledge) er
 		for _, w := range k.Veto.When {
 			fmt.Fprintf(c.out, "veto\t%s\t%s matches %s unless %q\n", k.Veto.Tool, w.Field, w.Match, w.Unless)
 		}
+	}
+	if k.Cue != nil {
+		fmt.Fprintf(c.out, "cue\t%s\n", k.Cue)
 	}
 	return c.folder(ctx, k.ID, k.Version)
 }

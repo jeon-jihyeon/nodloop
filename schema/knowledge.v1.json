@@ -286,6 +286,26 @@
         "when"
       ]
     },
+    "cue": {
+      "type": [
+        "null",
+        "object"
+      ],
+      "properties": {
+        "tool": {
+          "type": "string"
+        },
+        "command": {
+          "type": "string"
+        },
+        "file": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "tool"
+      ]
+    },
     "compaction": {
       "type": "string"
     },

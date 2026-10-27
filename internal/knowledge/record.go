@@ -33,6 +33,9 @@ func Restore(r record.Knowledge) Knowledge {
 	if r.Veto != nil {
 		k.Veto = &Veto{Tool: r.Veto.Tool, When: restoreConditions(r.Veto.When), Example: r.Veto.Example}
 	}
+	if r.Cue != nil {
+		k.Cue = &Cue{Tool: r.Cue.Tool, Command: r.Cue.Command, File: r.Cue.File}
+	}
 	return k
 }
 
@@ -73,6 +76,9 @@ func (k Knowledge) Record() record.Knowledge {
 	}
 	if k.Veto != nil {
 		r.Veto = &record.Veto{Tool: k.Veto.Tool, When: conditionRecords(k.Veto.When), Example: k.Veto.Example}
+	}
+	if k.Cue != nil {
+		r.Cue = &record.Cue{Tool: k.Cue.Tool, Command: k.Cue.Command, File: k.Cue.File}
 	}
 	return r
 }

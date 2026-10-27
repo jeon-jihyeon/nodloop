@@ -77,6 +77,20 @@ func TestKnowledgeValidate(t *testing.T) {
 		k.Veto = &knowledge.Veto{Tool: tool, When: sed.When, Example: sed.Example}
 		return k
 	}
+	cued := func(kind knowledge.Kind, cue knowledge.Cue) knowledge.Knowledge {
+		k := valid
+		k.Kind, k.Content, k.Cue = kind, "keep a commit title to one line", &cue
+		return k
+	}
+	commit := knowledge.Cue{Tool: "Bash", Command: "git commit"}
+	cueAndVeto := judgment
+	cueAndVeto.Cue = &commit
+	timedCue := cued(knowledge.KindJudgment, commit)
+	timedCue.Run = &knowledge.RunScope{
+		Producer:   "session",
+		Labels:     trace.Labels{"repo": {"nodloop"}},
+		ValidUntil: at.Add(time.Hour),
+	}
 	scoped := func(run *knowledge.RunScope) knowledge.Knowledge {
 		k := valid
 		k.Run = run
@@ -112,6 +126,20 @@ func TestKnowledgeValidate(t *testing.T) {
 		{"veto on the lower case tool of another agent passes", toolVeto("bash"), nil},
 		{"veto on a permission rule fails", toolVeto("Bash(sed -i:*)"), veto.ErrToolMalformed},
 		{"veto with one malformed tool in its list fails", toolVeto("Edit|Write(x)"), knowledge.ErrVetoInvalid},
+		{"judgment with a cue is valid", cued(knowledge.KindJudgment, commit), nil},
+		{"cue with a tool alone is valid", cued(knowledge.KindJudgment, knowledge.Cue{Tool: "mcp__acme__send"}), nil},
+		{"cue with a file shape is valid", cued(knowledge.KindJudgment, knowledge.Cue{Tool: "Edit", File: "*_test.go"}), nil},
+		{"cue on a meaning fails", cued(knowledge.KindMeaning, commit), knowledge.ErrCueKind},
+		{"cue beside a veto fails", cueAndVeto, knowledge.ErrCueVeto},
+		{"cue with an effective time fails", timedCue, knowledge.ErrCueVeto},
+		{"cue without a tool fails", cued(knowledge.KindJudgment, knowledge.Cue{Command: "git commit"}),
+			knowledge.ErrCueInvalid},
+		{"cue with four words fails", cued(knowledge.KindJudgment, knowledge.Cue{Tool: "Bash", Command: "gh pr create now"}),
+			knowledge.ErrCueInvalid},
+		{"cue with a value fails", cued(knowledge.KindJudgment, knowledge.Cue{Tool: "Bash", Command: "git checkout ann-1"}),
+			knowledge.ErrCueInvalid},
+		{"cue with a file name fails", cued(knowledge.KindJudgment, knowledge.Cue{Tool: "Edit", File: "CHANGELOG.md"}),
+			knowledge.ErrCueInvalid},
 		{
 			"run scope with labels and exceptions is valid",
 			scoped(&knowledge.RunScope{Producer: "session", Labels: trace.Labels{"repo": {"nodloop"}}, Except: trace.Labels{"task": {"docs"}}}),

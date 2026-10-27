@@ -90,12 +90,16 @@ func (cv Coverage) Passes(c Compaction) error {
 
 // The anchor and the approved items one run may carry with it
 // Fails with ErrNotFound unless the anchor has an approved version with a run scope
+// A cued item is never an old item since a merge would drop when it arrives
 func (s Set) Compactable(anchor string) (Compactable, error) {
 	k := s.current(anchor)
 	if k == nil || k.Status != StatusApproved || k.Run == nil {
 		return Compactable{}, fmt.Errorf("%w: %s has no approved version scoped to runs", ErrNotFound, anchor)
 	}
-	return Compactable{Items: append(Set{*k}, s.Approved().runCarried(k.ID, *k.Run)...)}, nil
+	if k.Cue != nil {
+		return Compactable{Items: Set{*k}}, nil
+	}
+	return Compactable{Items: append(Set{*k}, s.Approved().runCarried(k.ID, *k.Run).Uncued()...)}, nil
 }
 
 // The compaction an approval of one candidate needs to stay within RunChars

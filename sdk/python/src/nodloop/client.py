@@ -69,6 +69,10 @@ class Item:
     kind: str
     content: str
     scope: dict[str, Any] = field(default_factory=dict)
+    # The tool call the item comes before as tool and command and file
+    # None for an item that comes with the prompt
+    # A producer with no tool call hook adds it with the prompt like any other
+    cue: dict[str, str] | None = None
 
     @property
     def ref(self) -> dict[str, Any]:
@@ -262,7 +266,7 @@ class Client:
         if holdout_key:
             args["holdout_key"] = holdout_key
         answer = await self.call("knowledge_for", args)
-        items = [Item(i["id"], i["version"], i["kind"], i["content"], i.get("scope", {})) for i in answer.get("items") or []]
+        items = [Item(i["id"], i["version"], i["kind"], i["content"], i.get("scope", {}), i.get("cue")) for i in answer.get("items") or []]
         withheld = [Ref(r["id"], r["version"]) for r in answer.get("withheld") or []]
         return Knowledge(items, answer.get("context", ""), withheld)
 
@@ -392,14 +396,18 @@ class Client:
         veto: dict[str, Any] | None = None,
         valid_from: str = "",
         valid_until: str = "",
+        cue: dict[str, str] | None = None,
     ) -> Candidate:
         """Proposes a candidate a person approves later, from a corrected run or for a producer and labels
 
         veto names a tool call the judgment forbids as tool, when and example, as the MCP tool propose takes it
+        cue names the tool call the judgment comes before as tool, command and file, never beside a veto
         """
         args: dict[str, Any] = {"kind": kind, "content": content}
         if veto:
             args["veto"] = veto
+        if cue is not None:
+            args["cue"] = cue
         for key, value in (
             ("from", from_run),
             ("producer", producer),

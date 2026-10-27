@@ -40,5 +40,8 @@ func (k Knowledge) rule() string {
 	if k.Veto != nil {
 		line += ". The guard blocks the call it forbids"
 	}
+	if k.Cue != nil {
+		line += ". Cue: " + k.Cue.String()
+	}
 	return line
 }

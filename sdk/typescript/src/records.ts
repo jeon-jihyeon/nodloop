@@ -395,6 +395,42 @@ export interface TurnRecord {
   schema_version: 1;
 }
 
+/** The shapes of tool calls no stop of a run, start of a turn or typed message falls between, with no argument text */
+export interface CallsRecord {
+  record_kind: "calls";
+  record_id: string;
+  id: string;
+  name: "calls";
+  session_id?: string;
+  subject?: string;
+  ref?: string;
+  time: string;
+  model?: string;
+  input: {
+    at: string;
+    turn?: string;
+    calls: {
+      tool: string;
+      command?: string;
+      file?: string;
+    }[] | null;
+  };
+  error?: string;
+  usage: {
+    input_tokens: number;
+    output_tokens: number;
+    thinking_tokens?: number;
+    cache_read: number;
+    cache_create: number;
+    cost_usd: number;
+  };
+  duration_ms: number;
+  tags?: string[] | null;
+  producer?: string;
+  labels?: Record<string, string[] | null>;
+  schema_version: 1;
+}
+
 /** One drafting of a compaction through a model */
 export interface CompactRecord {
   record_kind: "compact";
@@ -1036,6 +1072,11 @@ export interface KnowledgeRecord {
     }[] | null;
     example?: Record<string, unknown>;
   } | null;
+  cue?: {
+    tool: string;
+    command?: string;
+    file?: string;
+  } | null;
   compaction?: string;
   compaction_size?: number;
   schema_version: 1;
@@ -1064,6 +1105,7 @@ export interface Records {
   consolidate: ConsolidateRecord;
   refill: RefillRecord;
   turn: TurnRecord;
+  calls: CallsRecord;
   compact: CompactRecord;
   instructions: InstructionsRecord;
   capture: CaptureRecord;

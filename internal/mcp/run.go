@@ -122,6 +122,8 @@ type runItem struct {
 	Kind    knowledge.Kind     `json:"kind"`
 	Content string             `json:"content"`
 	Scope   knowledge.RunScope `json:"scope"`
+	// The tool call the item comes before where a host delivers it there
+	Cue *knowledge.Cue `json:"cue,omitempty"`
 }
 
 type knowledgeForAnswer struct {
@@ -157,7 +159,7 @@ func (s *Server) knowledgeFor(
 	out := make([]runItem, 0, len(items))
 	chars := 0
 	for _, k := range items {
-		out = append(out, runItem{ID: k.ID, Version: k.Version, Kind: k.Kind, Content: k.Content, Scope: *k.Run})
+		out = append(out, runItem{ID: k.ID, Version: k.Version, Kind: k.Kind, Content: k.Content, Scope: *k.Run, Cue: k.Cue})
 		chars += utf8.RuneCountInString(k.Text())
 	}
 	return nil, knowledgeForAnswer{

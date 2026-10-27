@@ -1063,3 +1063,45 @@ func TestServerRunChars(t *testing.T) {
 		})
 	}
 }
+
+// A cued judgment goes in through propose and out through knowledge_for with its cue
+// One beside a veto is refused
+func TestServerProposeCue(t *testing.T) {
+	st := testkit.Open(t)
+	c := connect(t, st)
+	runID := recordRun(t, c, "nodloop")
+	require.NoError(t, c.Run(t, "feedback", map[string]any{
+		"trace_id": runID, "verdict": "reject", "reason_code": "form", "reason": "one line titles",
+	}))
+	var proposed struct {
+		ID      string `json:"id"`
+		Version int    `json:"version"`
+	}
+	cue := map[string]any{"tool": "Bash", "command": "git commit"}
+	require.NoError(t, c.Call(t, "propose", map[string]any{
+		"id": "title", "kind": "judgment", "content": "Keep a commit title to one line", "from": runID, "cue": cue,
+	}, &proposed))
+	require.NoError(t, c.Run(t, "approve", map[string]any{
+		"id": proposed.ID, "version": proposed.Version, "approver": "ann",
+	}))
+	var got struct {
+		Items []struct {
+			ID  string         `json:"id"`
+			Cue map[string]any `json:"cue"`
+		} `json:"items"`
+	}
+	require.NoError(t, c.Call(t, "knowledge_for", map[string]any{
+		"producer": "session", "labels": map[string]any{"repo": []any{"nodloop"}},
+	}, &got))
+	require.Len(t, got.Items, 1)
+	assert.Equal(t, cue, got.Items[0].Cue)
+	refused := c.Run(t, "propose", map[string]any{
+		"kind": "judgment", "content": "x", "from": runID, "cue": cue,
+		"veto": map[string]any{
+			"tool":    "Bash",
+			"when":    []any{map[string]any{"field": "commands", "match": `(?m)^sed -i`}},
+			"example": map[string]any{"command": "sed -i s/a/b/ f"},
+		},
+	})
+	assert.ErrorContains(t, refused, knowledge.ErrCueVeto.Error())
+}

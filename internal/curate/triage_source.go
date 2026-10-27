@@ -35,6 +35,7 @@ type triageAttempt struct {
 		Content  string         `json:"content"`
 		Kind     knowledge.Kind `json:"kind"`
 		Relation string         `json:"relation"`
+		Cue      *knowledge.Cue `json:"cue"`
 	} `json:"draft"`
 }
 
@@ -43,8 +44,9 @@ func (e triageExtraction) names(id string, version int) bool {
 		e.Conclusion == "proposed" && len(e.Attempts) > 0
 }
 
-func (a triageAttempt) matches(content string, kind knowledge.Kind, classifier string) bool {
-	return a.Draft.Content == content && a.Draft.Kind == kind && a.Draft.Relation == "add" &&
+// A draft of another cue proposed another candidate so its triage never stands for this one
+func (a triageAttempt) matches(content string, kind knowledge.Kind, cue *knowledge.Cue, classifier string) bool {
+	return a.Draft.Content == content && a.Draft.Kind == kind && sameCue(a.Draft.Cue, cue) && a.Draft.Relation == "add" &&
 		(classifier == "" || a.Classify == classifier) && a.Critique != nil &&
 		a.Critique.States && a.Critique.Holds && a.Critique.Fits && a.Refusal == "" && a.Error == ""
 }
@@ -71,7 +73,7 @@ func (p *pass) triaged(ctx context.Context, k knowledge.Knowledge, place AnchorP
 		return t, nil
 	}
 	last := out.Attempts[len(out.Attempts)-1]
-	if !last.matches(k.Content, k.Kind, out.Triage.Classify) {
+	if !last.matches(k.Content, k.Kind, k.Cue, out.Triage.Classify) {
 		return t, nil
 	}
 	t = out.Triage

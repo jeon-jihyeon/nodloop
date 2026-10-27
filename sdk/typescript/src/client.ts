@@ -19,6 +19,8 @@ export interface Item {
   kind: string;
   content: string;
   scope?: Record<string, unknown>;
+  /** The tool call the item comes before. A producer with no tool call hook adds it with the prompt like any other */
+  cue?: { tool: string; command?: string; file?: string };
 }
 
 /** One knowledge version as a run names it */
@@ -371,6 +373,8 @@ export class Client {
     validUntil?: string;
     id?: string;
     veto?: { tool: string; when: { field: string; match: string; unless?: string }[]; example: Record<string, unknown> };
+    /** The tool call the judgment comes before, never beside a veto */
+    cue?: { tool: string; command?: string; file?: string };
   }): Promise<Candidate> {
     const { newLabels, validFrom, validUntil, ...rest } = proposal;
     return this.call("propose", {
