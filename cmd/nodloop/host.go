@@ -26,34 +26,44 @@ const hostHint = "Use claude-code, codex, cursor or copilot"
 // The hooks each host runs
 // 1. the prompt hook of Cursor carries no context and Copilot drops the output of its prompt hook
 // The session start of both adds the items instead
-// 2. only Claude Code reports the rules files it loads
+// 2. only Claude Code reports the rules files it loads and asks before each tool call
 var hostActions = map[host][]string{
-	hostClaudeCode: {"start", "prompt", "stop", "subagent", "instructions"},
+	hostClaudeCode: {"start", "prompt", "stop", "subagent", "instructions", "tool"},
 	hostCodex:      {"start", "prompt", "stop", "subagent"},
 	hostCursor:     {"start", "stop"},
 	hostCopilot:    {"start", "stop"},
 }
 
-// The action and the host of a hook command line
+// What a hook command line asks for
+type hookCall struct {
+	action string
+	host   host
+	// The plugin also runs hook tool so cued items reach the session at their calls instead of with the prompt
+	// The hooks of an earlier plugin pass none so a newer binary keeps adding them with the prompt
+	cues bool
+}
+
+// The action, the host and whether the plugin runs the tool hook
 // The host is claude-code without --host so the hooks of earlier plugin versions keep working
-func hookArgs(args []string, stderr io.Writer) (string, host, error) {
+func hookArgs(args []string, stderr io.Writer) (hookCall, error) {
 	if len(args) == 0 {
-		return "", "", errNoAction
+		return hookCall{}, errNoAction
 	}
 	fs := newFlagSet("hook "+args[0], stderr)
 	name := fs.String("host", string(hostClaudeCode), "the agent the hook runs under: claude-code, codex, cursor or copilot")
+	cues := fs.Bool("cues", false, "the plugin runs hook tool, so cued items come before their calls instead of with the prompt")
 	if err := fs.Parse(args[1:]); err != nil {
-		return "", "", err
+		return hookCall{}, err
 	}
 	h := host(*name)
 	actions, ok := hostActions[h]
 	switch {
 	case !ok:
-		return "", "", fmt.Errorf("%w %q. %s", errHostUnknown, *name, hostHint)
+		return hookCall{}, fmt.Errorf("%w %q. %s", errHostUnknown, *name, hostHint)
 	case !slices.Contains(actions, args[0]):
-		return "", "", fmt.Errorf("%w: %s runs no hook %s", errUnknownAction, h, args[0])
+		return hookCall{}, fmt.Errorf("%w: %s runs no hook %s", errUnknownAction, h, args[0])
 	}
-	return args[0], h, nil
+	return hookCall{action: args[0], host: h, cues: *cues}, nil
 }
 
 // The labels of the place with the host
@@ -155,6 +165,14 @@ func (h host) context(w io.Writer, event, text string) error {
 		return h.write(w, map[string]string{"additionalContext": text})
 	}
 	return h.write(w, map[string]any{"hookSpecificOutput": map[string]any{"hookEventName": event, "additionalContext": text}})
+}
+
+// The refusal of a tool call with the reason the model reads before it calls again
+// Only Claude Code runs the tool hook
+func (h host) deny(w io.Writer, reason string) error {
+	return h.write(w, map[string]any{"hookSpecificOutput": map[string]any{
+		"hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": reason,
+	}})
 }
 
 // Whether its stop shows the person a question or a notice

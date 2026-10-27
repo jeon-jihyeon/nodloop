@@ -76,7 +76,7 @@ func (c recordsCommand) plan(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(c.out, "would roll up %d closed cycles and prune %d runs, %d classify traces and %d turn, calls, instructions and capture traces older than %s, "+
+	fmt.Fprintf(c.out, "would roll up %d closed cycles and prune %d runs, %d classify traces and %d turn, cue, calls, instructions and capture traces older than %s, "+
 		"kept %d judged, cited or first or last to use an item\n",
 		len(plan.Rollups), len(plan.Runs), len(plan.Classify), len(plan.Session)+len(plan.Calls), plan.Cutoff.Format(time.RFC3339), plan.Kept)
 	return nil

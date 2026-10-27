@@ -49,7 +49,8 @@ const (
 // 1. every failure goes to stderr and the exit code is 0 because a hook that fails must never block a prompt or a stop
 // 2. stdin is the hook input JSON of the host --host names
 func runHook(args []string, getenv func(string) string, start starter, now func() time.Time, stdin io.Reader, stdout, stderr io.Writer) int {
-	action, h, err := hookArgs(args, stderr)
+	hc, err := hookArgs(args, stderr)
+	action, h := hc.action, hc.host
 	if err != nil {
 		fmt.Fprintln(stderr, "nodloop hook:", err)
 		return 0
@@ -77,7 +78,7 @@ func runHook(args []string, getenv func(string) string, start starter, now func(
 		fmt.Fprintln(stderr, "nodloop hook:", markErr)
 	}
 	cmd := hookCommand{
-		app: a, detach: start, out: stdout, mode: mode, host: h,
+		app: a, detach: start, out: stdout, mode: mode, host: h, cues: hc.cues,
 		plugin: cmp.Or(getenv(envPluginVersion), buildVersion()), holdout: a.cfg.holdout, hold: mark.Knobs.Hold(), mark: mark, marked: markErr == nil,
 		rules: newRulesFiles(a.cfg.recordDir, a.cfg.home, getenv(envClaudeConfigDir), cmp.Or(getenv(envProjectDir), in.Cwd)),
 	}
@@ -108,6 +109,8 @@ func (c hookCommand) run(ctx context.Context, action string, in hookInput, label
 	case "subagent":
 		_, err := c.addItems(ctx, "SubagentStart", in.SessionID, labels)
 		return err
+	case "tool":
+		return c.tool(ctx, in, labels)
 	}
 	return c.instructions(ctx, in)
 }
@@ -132,6 +135,11 @@ type hookInput struct {
 	LoadReason string `json:"load_reason"`
 	// The instructions file whose @path imports the file when the load reason is include
 	ParentFilePath string `json:"parent_file_path"`
+	// The call the tool hook shapes and never stores
+	ToolName  string         `json:"tool_name"`
+	ToolInput map[string]any `json:"tool_input"`
+	// The subagent a tool call runs in and empty for the conversation
+	AgentID string `json:"agent_id"`
 }
 
 type hookCommand struct {
@@ -140,6 +148,8 @@ type hookCommand struct {
 	out    io.Writer
 	mode   sessionMode
 	host   host
+	// Cued items come before their calls through hook tool instead of with the prompt
+	cues bool
 	// The version the launcher ran this binary for and else the build version
 	plugin  string
 	holdout knowledge.Holdout
@@ -177,7 +187,7 @@ func (c hookCommand) prompt(ctx context.Context, sessionID, message string, labe
 	started := c.app.now()
 	all, allErr := c.all(ctx)
 	applicable := all.ForAt(sessionProducer, labels, started)
-	items := hookItems(applicable)
+	items := c.prompted(applicable)
 	if c.holdout.WithholdsRun(sessionProducer, sessionID) {
 		items = nil
 	}
@@ -185,9 +195,9 @@ func (c hookCommand) prompt(ctx context.Context, sessionID, message string, labe
 	if allErr != nil && !errors.Is(allErr, knowledgefile.ErrCorrupt) {
 		return errors.Join(allErr, c.recordTurn(ctx, sessionID, turnInput{}, started))
 	}
-	recent, runsErr := c.recent(ctx, sessionID, trace.NameRefill, trace.NameTurn)
-	refill := recent.newest(trace.NameRefill, time.Time{})
-	prior := promptRefs(recent.contextRefs(all, refill))
+	recent, runsErr := c.recent(ctx, sessionID, trace.NameRefill, trace.NameTurn, trace.NameCue)
+	state := recent.contextRefs(all, recent.newest(trace.NameRefill, time.Time{}))
+	prior := promptRefs(state.delivered)
 	retired := prior.retired(all)
 	active := applicable.Refs()
 	for _, ref := range prior {
@@ -196,7 +206,9 @@ func (c hookCommand) prompt(ctx context.Context, sessionID, message string, labe
 		}
 	}
 	refs := prior.continued(retired, items.fitting().Without(held).Refs())
-	turnErr := c.recordTurn(ctx, sessionID, turnInput{Context: &refs}, started)
+	eligible := slices.DeleteFunc(slices.Clone(state.eligible), func(e knowledge.Eligible) bool { return !slices.Contains(active, e.Ref) })
+	kept := slices.DeleteFunc(slices.Clone(state.held), func(r knowledge.Ref) bool { return !slices.Contains(active, r) })
+	turnErr := c.recordTurn(ctx, sessionID, turnInput{Context: &refs, Eligible: eligible, Held: kept}, started)
 	previous := recent.before(started)
 	if turnErr != nil {
 		previous = trace.Trace{}
@@ -266,7 +278,7 @@ func (c hookCommand) addItems(ctx context.Context, event, sessionID string, labe
 	if err != nil && !errors.Is(err, knowledgefile.ErrCorrupt) {
 		return nil, err
 	}
-	items := hookItems(all.ForAt(sessionProducer, labels, c.app.now()))
+	items := c.prompted(all.ForAt(sessionProducer, labels, c.app.now()))
 	held := c.hold.Held(items.fitting(), sessionProducer, sessionID)
 	text := items.context(nil, held, sessionNote{})
 	if text == "" {
@@ -391,13 +403,9 @@ func (ts sessionTraces) newest(name trace.Name, since time.Time) trace.Trace {
 type sessionTurns trace.Traces
 
 // The runs from the newest answer back and none when every run was continued
-// 1. an answer is a run no stop hook continued and so the answer the person read before they typed
-// 2. an input that does not decode reads as an answer like every run of an earlier release
+// An answer is a run no stop hook continued and so the answer the person read before they typed
 func (ts sessionTurns) answered() sessionTurns {
-	i := slices.IndexFunc(ts, func(run trace.Trace) bool {
-		var in knowledge.RunInput
-		return json.Unmarshal(run.Input, &in) != nil || !in.Continued
-	})
+	i := slices.IndexFunc(ts, knowledge.Answered)
 	if i < 0 {
 		return nil
 	}
@@ -451,7 +459,7 @@ func (c hookCommand) stop(ctx context.Context, sessionID string, labels trace.La
 	if c.host.answers() && strings.TrimSpace(string(answer)) == "" {
 		return nil
 	}
-	recent, runsErr := c.recent(ctx, sessionID, trace.NameTurn)
+	recent, runsErr := c.recent(ctx, sessionID, trace.NameTurn, trace.NameRefill, trace.NameCue)
 	if runsErr != nil && !errors.Is(runsErr, tracefile.ErrCorrupt) {
 		return runsErr
 	}
@@ -464,7 +472,10 @@ func (c hookCommand) stop(ctx context.Context, sessionID string, labels trace.La
 	var failed error
 	var run trace.Trace
 	if c.host.answers() {
-		run, failed = c.record(ctx, sessionID, labels, answer, all, recent.turnStart(previous, continued), continued)
+		// A compaction during the turn empties the context but never what the calls of the turn met
+		start := recent.turnStart(previous, continued)
+		cued := recent.contextRefs(all, recent.newest(trace.NameRefill, time.Time{})).with(recent.cues("", start))
+		run, failed = c.record(ctx, sessionID, labels, answer, all, start, continued, cued)
 	}
 	if c.export != nil && c.host.answers() && failed == nil {
 		failed = c.app.startExport(c.export)
@@ -499,17 +510,21 @@ func (c hookCommand) capture(sessionID string, t transcript, continued bool) err
 // 1. a zero start leaves the duration out and still records the run
 // 2. the run of a turn a stop hook continued is marked so no reader takes it for the answer the person judged
 // 3. the item hold takes the versions it keeps from the session out of applied and records every fitting version with its chance
+// 4. with cues the cued versions the calls of the conversation met join as the calls observed them through cueState into
+// So a version approved or reaffirmed during the turn keeps what its call met and a withheld session counts what its calls fitted
 func (c hookCommand) record(
 	ctx context.Context, sessionID string, labels trace.Labels, answer reply, all knowledge.Set, start time.Time, continued bool,
+	cued cueState,
 ) (trace.Trace, error) {
 	at := start
 	if at.IsZero() {
 		at = c.app.now()
 	}
-	shown := hookItems(all.ForAt(sessionProducer, labels, at)).fitting()
+	shown := c.prompted(all.ForAt(sessionProducer, labels, at)).fitting()
 	applied := shown.Refs()
 	var withheld []knowledge.Ref
-	if c.holdout.WithholdsRun(sessionProducer, sessionID) {
+	drawnOut := c.holdout.WithholdsRun(sessionProducer, sessionID)
+	if drawnOut {
 		applied, withheld = nil, applied
 	}
 	in, err := knowledge.NewRunInput(applied, withheld, c.plugin)
@@ -518,6 +533,12 @@ func (c hookCommand) record(
 	}
 	in.Continued = continued
 	in = c.hold.Drawn(in, shown, sessionProducer, sessionID)
+	switch {
+	case c.cues && drawnOut:
+		in = cued.withheldInto(in)
+	case c.cues:
+		in = cued.into(in)
+	}
 	// Validated fields always encode
 	input, _ := json.Marshal(c.holdout.Drawn(in, sessionProducer, sessionID))
 	tr, err := trace.NewRun(sessionProducer, "", labels, input, []byte(answer.text()), c.app.now())
@@ -568,6 +589,15 @@ func (c hookCommand) all(ctx context.Context) (knowledge.Set, error) {
 
 // The approved items a prompt receives
 type hookItems knowledge.Set
+
+// The items of ForAt a prompt, a start and a stop take
+// With cues the cued items wait for the calls they fit
+func (c hookCommand) prompted(items knowledge.Set) hookItems {
+	if c.cues {
+		return hookItems(items.Uncued())
+	}
+	return hookItems(items)
+}
 
 // The fitting items the context lacks one line each under their lead and the session note after them
 // 1. after versions in the context only the fitting ones not among them come under DeltaLead

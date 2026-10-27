@@ -87,6 +87,8 @@ func fixture(t *testing.T) (testkit.Stores, map[string]string) {
 		"compact":       add(t, st, trace.NameCompact, 40, "", none),
 		"old turn":      add(t, st, trace.NameTurn, 40, "", "{}"),
 		"young turn":    add(t, st, trace.NameTurn, 3, "", "{}"),
+		"old cue":       add(t, st, trace.NameCue, 40, "", "{}"),
+		"young cue":     add(t, st, trace.NameCue, 3, "", "{}"),
 		"old calls":     add(t, st, trace.NameCalls, 40, "", "{}"),
 		"young calls":   add(t, st, trace.NameCalls, 3, "", "{}"),
 		"old rules":     add(t, st, trace.NameInstructions, 40, "", "{}"),
@@ -165,6 +167,8 @@ func TestRetainerPrune(t *testing.T) {
 		{"a compact trace stays", "compact", true},
 		{"an old turn trace goes since its run holds the duration", "old turn", false},
 		{"a young turn trace stays for the stop of its turn", "young turn", true},
+		{"an old cue trace goes since the newer turns carry its refs", "old cue", false},
+		{"a young cue trace stays for the prompts of its session", "young cue", true},
 		{"an old calls trace no run followed goes", "old calls", false},
 		{"a young calls trace stays for an extraction", "young calls", true},
 		{"an old instructions trace goes since an anchor version holds the files it read", "old rules", false},
@@ -186,10 +190,10 @@ func TestRetainerPrune(t *testing.T) {
 	}
 	assert.ElementsMatch(t, []string{ids["unjudged"], ids["earlier use"], ids["failed use"], ids["use appended late"]}, plan.Runs)
 	assert.ElementsMatch(t, []string{ids["classify of a removed run"], ids["young classify of a removed run"]}, plan.Classify)
-	assert.ElementsMatch(t, []string{ids["old turn"], ids["old rules"], ids["old capture"]}, plan.Session)
+	assert.ElementsMatch(t, []string{ids["old turn"], ids["old cue"], ids["old rules"], ids["old capture"]}, plan.Session)
 	assert.Equal(t, []string{ids["old calls"]}, plan.Calls, "a calls trace no run followed goes alone")
 	assert.Equal(t, 8, plan.Kept)
-	assert.Equal(t, 10, removed)
+	assert.Equal(t, 11, removed)
 	assert.Equal(t, retain.Days(30).Cutoff(now), plan.Cutoff, "no knob trace leaves the cutoff as asked")
 	assert.Empty(t, plan.Rollups)
 }

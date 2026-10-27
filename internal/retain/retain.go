@@ -108,8 +108,8 @@ type Plan struct {
 	// A run this plan removes still owns its calls so they go at the next prune once the run is gone
 	// So a verdict that keeps a run at the last moment keeps its calls too and no store needs to tell whom calls belong to
 	Calls []string
-	// Turn, instructions and capture traces older than the cutoff since a later record holds what they held
-	// 1. a run holds the duration of its turn
+	// Turn, cue, instructions and capture traces older than the cutoff since a later record holds what they held
+	// 1. a run holds the duration of its turn and a newer turn carries the refs a cue trace added
 	// 2. an anchor version holds the files it read
 	// 3. only the newest capture of a session holds an offset still read
 	Session []string
@@ -141,7 +141,7 @@ func (p Plan) without(cited map[string]bool) Plan {
 
 // The names a prune reads the heads of
 var planned = []string{
-	string(trace.NameRun), string(trace.NameClassify), string(trace.NameTurn), string(trace.NameCalls),
+	string(trace.NameRun), string(trace.NameClassify), string(trace.NameTurn), string(trace.NameCue), string(trace.NameCalls),
 	string(trace.NameInstructions), string(trace.NameCapture), string(trace.NameKnob), string(trace.NameRollup),
 }
 
@@ -156,7 +156,7 @@ var planned = []string{
 // 7. a classify trace goes with the run it judged and with nothing else
 // 8. a calls trace older than the cutoff goes once its own answered run is gone
 // That is a prune after the one that removed the run
-// 9. a turn, instructions or capture trace older than the cutoff goes since a later record holds what it held
+// 9. a turn, cue, instructions or capture trace older than the cutoff goes since a later record holds what it held
 // 10. a trace of any other name such as check, decide or rollup is never planned
 // 11. any read error fails the plan since a verdict on a corrupt line would leave its run unprotected
 func (r *Retainer) Plan(ctx context.Context, cutoff time.Time) (Plan, error) {
@@ -364,7 +364,7 @@ func (r *Retainer) Prune(ctx context.Context, cutoff time.Time) (int, error) {
 type heads trace.Traces
 
 // The names of session traces a prune removes by age alone
-var sessionNames = []trace.Name{trace.NameTurn, trace.NameInstructions, trace.NameCapture}
+var sessionNames = []trace.Name{trace.NameTurn, trace.NameCue, trace.NameInstructions, trace.NameCapture}
 
 // The session traces older than the cutoff
 func (hs heads) sessionBefore(cutoff time.Time) []string {

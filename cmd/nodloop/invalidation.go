@@ -6,6 +6,7 @@ import (
 	"maps"
 	"slices"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
@@ -15,6 +16,11 @@ import (
 type turnInput struct {
 	// Absent on a turn of an earlier release so an empty context still reads as known
 	Context *[]knowledge.Ref `json:"context,omitempty"`
+	// The cued versions a tool call of the conversation made eligible since the context was last emptied with their chances
+	// Carried from turn to turn like the context so the stop of every later turn still counts them as the calls met them
+	Eligible []knowledge.Eligible `json:"eligible,omitempty"`
+	// The eligible versions the item hold kept back at those calls
+	Held []knowledge.Ref `json:"held,omitempty"`
 }
 
 type promptRefs []knowledge.Ref
@@ -39,11 +45,18 @@ func (refs promptRefs) invalidated(retired map[knowledge.Ref]bool) string {
 	return text
 }
 
-// The item refs the context of the session holds before this prompt
-// 1. a refill newer than the newest turn replaced the context with what it added
+// The item refs the context of the conversation holds and the cued versions its calls made eligible
+// 1. a refill newer than the newest turn replaced the context with what it added and made nothing eligible
 // 2. else the newest turn that recorded its context
 // 3. else the answered runs tell it as before turns recorded their context
-func (ts sessionTraces) contextRefs(all knowledge.Set, refill trace.Trace) []knowledge.Ref {
+// 4. the cue traces of the conversation after that checkpoint add the versions its calls received and made eligible
+func (ts sessionTraces) contextRefs(all knowledge.Set, refill trace.Trace) cueState {
+	base, since := ts.checkpoint(all, refill)
+	return base.with(ts.cues("", since))
+}
+
+// The context the newest checkpoint of the conversation recorded and when
+func (ts sessionTraces) checkpoint(all knowledge.Set, refill trace.Trace) (cueState, time.Time) {
 	for _, t := range ts {
 		if t.Name != trace.NameTurn {
 			continue
@@ -51,16 +64,16 @@ func (ts sessionTraces) contextRefs(all knowledge.Set, refill trace.Trace) []kno
 		if refill.ID != "" && refill.Time.After(t.Time) {
 			var in knowledge.RunInput
 			if json.Unmarshal(refill.Input, &in) == nil {
-				return in.Applied
+				return cueState{delivered: in.Applied}, refill.Time
 			}
-			return nil
+			return cueState{}, refill.Time
 		}
 		var in turnInput
 		if json.Unmarshal(t.Input, &in) == nil && in.Context != nil {
-			return *in.Context
+			return cueState{delivered: *in.Context, eligible: in.Eligible, held: in.Held}, t.Time
 		}
 	}
-	return ts.runs().answered().inContext(all, refill)
+	return cueState{delivered: ts.runs().answered().inContext(all, refill)}, refill.Time
 }
 
 // The refs the context holds after this prompt with one version per id
