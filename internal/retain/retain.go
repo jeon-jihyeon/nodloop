@@ -10,6 +10,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/jeon-jihyeon/nodloop/internal/call"
 	"github.com/jeon-jihyeon/nodloop/internal/feedback"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
 	"github.com/jeon-jihyeon/nodloop/internal/record"
@@ -103,6 +104,10 @@ type Plan struct {
 	Runs []string
 	// Classify traces whose Ref is one of Runs whatever their age
 	Classify []string
+	// Calls traces older than the cutoff whose own answered run is gone from the store
+	// A run this plan removes still owns its calls so they go at the next prune once the run is gone
+	// So a verdict that keeps a run at the last moment keeps its calls too and no store needs to tell whom calls belong to
+	Calls []string
 	// Turn, instructions and capture traces older than the cutoff since a later record holds what they held
 	// 1. a run holds the duration of its turn
 	// 2. an anchor version holds the files it read
@@ -118,7 +123,7 @@ type Plan struct {
 
 // The plan without the runs cited and without the classify traces of those runs
 func (p Plan) without(cited map[string]bool) Plan {
-	out := Plan{Cutoff: p.Cutoff, Kept: p.Kept, Session: p.Session, Rollups: p.Rollups, judged: p.judged}
+	out := Plan{Cutoff: p.Cutoff, Kept: p.Kept, Session: p.Session, Rollups: p.Rollups, judged: p.judged, Calls: p.Calls}
 	for _, id := range p.Runs {
 		if cited[id] {
 			out.Kept++
@@ -136,8 +141,8 @@ func (p Plan) without(cited map[string]bool) Plan {
 
 // The names a prune reads the heads of
 var planned = []string{
-	string(trace.NameRun), string(trace.NameClassify), string(trace.NameTurn), string(trace.NameInstructions), string(trace.NameCapture),
-	string(trace.NameKnob), string(trace.NameRollup),
+	string(trace.NameRun), string(trace.NameClassify), string(trace.NameTurn), string(trace.NameCalls),
+	string(trace.NameInstructions), string(trace.NameCapture), string(trace.NameKnob), string(trace.NameRollup),
 }
 
 // The traces older than the cutoff that nothing keeps
@@ -149,9 +154,11 @@ var planned = []string{
 // 5. the newest run that applied each approved version is kept so the health of the version still sees that use
 // 6. the first run that received each approved version applied or withheld is kept so the queue never takes a later run for the first
 // 7. a classify trace goes with the run it judged and with nothing else
-// 8. a turn, instructions or capture trace older than the cutoff goes since a later record holds what it held
-// 9. a trace of any other name such as check, decide or rollup is never planned
-// 10. any read error fails the plan since a verdict on a corrupt line would leave its run unprotected
+// 8. a calls trace older than the cutoff goes once its own answered run is gone
+// That is a prune after the one that removed the run
+// 9. a turn, instructions or capture trace older than the cutoff goes since a later record holds what it held
+// 10. a trace of any other name such as check, decide or rollup is never planned
+// 11. any read error fails the plan since a verdict on a corrupt line would leave its run unprotected
 func (r *Retainer) Plan(ctx context.Context, cutoff time.Time) (Plan, error) {
 	plan := Plan{Cutoff: cutoff, judged: map[string]string{}}
 	if cutoff.IsZero() {
@@ -196,7 +203,73 @@ func (r *Retainer) Plan(ctx context.Context, cutoff time.Time) (Plan, error) {
 			plan.judged[t.ID] = t.Ref
 		}
 	}
+	plan.Calls = hs.callsBefore(plan.Cutoff)
 	return plan, nil
+}
+
+// The calls traces older than the cutoff whose own answered run is gone
+func (hs heads) callsBefore(cutoff time.Time) []string {
+	answers := map[string]sessionAnswers{}
+	for _, t := range hs {
+		if t.Name == trace.NameRun && t.SessionID != "" && knowledge.Answered(t) {
+			answers[t.SessionID] = append(answers[t.SessionID], t)
+		}
+	}
+	for _, runs := range answers {
+		slices.SortStableFunc(runs, func(a, b trace.Trace) int { return a.Time.Compare(b.Time) })
+	}
+	var out []string
+	for _, t := range hs {
+		if t.Name != trace.NameCalls || !t.Time.Before(cutoff) {
+			continue
+		}
+		var in call.Input
+		if json.Unmarshal(t.Input, &in) != nil || answers[t.SessionID].owner(in).ID == "" {
+			out = append(out, t.ID)
+		}
+	}
+	return out
+}
+
+// The answered runs of one session oldest first
+type sessionAnswers trace.Traces
+
+// The answered run of the turn of the calls and the zero trace when it is gone
+// 1. calls that name their turn belong to the answer of that turn
+// So do the calls a stop hook continuation made after it
+// A turn named after an answer or before the answer before it is never its turn as TurnCalls reads it
+// 2. calls that name none belong to the first answered run at or after them and else the newest before them
+// Calls whose turn no answer carries have no owner
+// The stored records cannot tell a run retention removed from a turn whose prompt left no trace
+// The time join of TurnCalls may give them to either one
+// So they stay while an answer around them stays
+// A later answer of another turn never owns them so they go once their own run is gone
+func (as sessionAnswers) owner(in call.Input) trace.Trace {
+	if in.Turn.IsZero() && len(as) > 0 {
+		if i := slices.IndexFunc(as, func(t trace.Trace) bool { return !t.Time.Before(in.At) }); i >= 0 {
+			return as[i]
+		}
+		return as[len(as)-1]
+	}
+	for i, t := range as {
+		turn := knowledge.TurnOf(t)
+		if turn.IsZero() || !in.InTurn(turn) || in.Turn.After(t.Time) || in.Turn.Before(as.before(i)) {
+			continue
+		}
+		return t
+	}
+	return trace.Trace{}
+}
+
+// The time of the newest answer before the answer at i and zero when none is
+// An answer at the same time is no answer before it
+func (as sessionAnswers) before(i int) time.Time {
+	for j := i - 1; j >= 0; j-- {
+		if as[j].Time.Before(as[i].Time) {
+			return as[j].Time
+		}
+	}
+	return time.Time{}
 }
 
 // The run ids a verdict or an outcome or a version of the items names
@@ -232,7 +305,7 @@ func (r *Retainer) Apply(ctx context.Context, p Plan) (int, error) {
 	if err := r.rollup(ctx, p.Rollups); err != nil {
 		return 0, err
 	}
-	if len(p.Runs) == 0 && len(p.Session) == 0 {
+	if len(p.Runs) == 0 && len(p.Session) == 0 && len(p.Calls) == 0 {
 		return 0, nil
 	}
 	return r.traces.Prune(ctx, func(ctx context.Context) ([]string, error) {
@@ -245,7 +318,7 @@ func (r *Retainer) Apply(ctx context.Context, p Plan) (int, error) {
 			return nil, err
 		}
 		left := p.without(cited)
-		return slices.Concat(left.Runs, left.Classify, left.Session), nil
+		return slices.Concat(left.Runs, left.Classify, left.Calls, left.Session), nil
 	})
 }
 
@@ -290,12 +363,14 @@ func (r *Retainer) Prune(ctx context.Context, cutoff time.Time) (int, error) {
 // The traces newest first as a prune reads them
 type heads trace.Traces
 
-// The turn, instructions and capture traces older than the cutoff
+// The names of session traces a prune removes by age alone
+var sessionNames = []trace.Name{trace.NameTurn, trace.NameInstructions, trace.NameCapture}
+
+// The session traces older than the cutoff
 func (hs heads) sessionBefore(cutoff time.Time) []string {
 	var out []string
 	for _, t := range hs {
-		session := t.Name == trace.NameTurn || t.Name == trace.NameInstructions || t.Name == trace.NameCapture
-		if session && t.Time.Before(cutoff) {
+		if slices.Contains(sessionNames, t.Name) && t.Time.Before(cutoff) {
 			out = append(out, t.ID)
 		}
 	}

@@ -37,7 +37,7 @@ func Run(t *testing.T, store Store) {
 	base := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
 	prune(ctx, t, store, base.Add(-time.Hour))
 	seed := []record.Trace{
-		{Name: "run", SessionID: "session-1", Subject: "task-1", Tags: []string{"feedback:off"}},
+		{Name: "run", SessionID: "session-1", Subject: "task-1", Tags: []string{"feedback:off"}, DurationMS: 1500},
 		{Name: "run", SessionID: "session-1", Subject: "task-1", Tags: []string{"feedback:on"}, Error: "timeout"},
 		{Name: "run", SessionID: "session-1", Subject: "task-2", Ref: "ref-2", Tags: []string{"feedback:on"}},
 		{Name: "check", SessionID: "session-2", Subject: "task-3"},
@@ -127,14 +127,15 @@ func Run(t *testing.T, store Store) {
 		t.Parallel()
 		// The fields every store keeps in a head and the output it leaves out
 		type head struct {
-			id, ref, input, failure, output string
-			name                            string
-			time                            time.Time
+			id, ref, session, input, failure, output string
+			name                                     string
+			time                                     time.Time
+			duration                                 int64
 		}
 		of := func(ts []record.Trace) []head {
 			var out []head
 			for _, tr := range ts {
-				out = append(out, head{tr.ID, tr.Ref, string(tr.Input), tr.Error, string(tr.Output), tr.Name, tr.Time})
+				out = append(out, head{tr.ID, tr.Ref, tr.SessionID, string(tr.Input), tr.Error, string(tr.Output), tr.Name, tr.Time, tr.DurationMS})
 			}
 			return out
 		}

@@ -79,8 +79,10 @@ func (s *TraceStore) After(ctx context.Context, f record.TraceFilter, from strin
 // The traces of the tenant with the names newest first without their output
 // json_to_record parses each row once into the fields a prune reads so no output leaves the database
 func (s *TraceStore) Heads(ctx context.Context, names ...string) ([]record.Trace, error) {
-	rows, err := s.pool.Query(ctx, `SELECT h.id, h.name, h.time, coalesce(h.ref, ''), coalesce(h.error, ''), h.input
-		FROM nodloop_traces t, json_to_record(t.data) AS h(id text, name text, time text, ref text, error text, input json)
+	rows, err := s.pool.Query(ctx, `SELECT h.id, h.name, h.time, coalesce(h.ref, ''), coalesce(h.session_id, ''), coalesce(h.duration_ms, 0),
+		coalesce(h.error, ''), h.input
+		FROM nodloop_traces t,
+		json_to_record(t.data) AS h(id text, name text, time text, ref text, session_id text, duration_ms bigint, error text, input json)
 		WHERE t.tenant = $1 AND t.name = ANY($2) ORDER BY t.seq DESC`, s.tenant, names)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrRead, err)
@@ -91,7 +93,7 @@ func (s *TraceStore) Heads(ctx context.Context, names ...string) ([]record.Trace
 		var t record.Trace
 		var at string
 		var input []byte
-		if err := rows.Scan(&t.ID, &t.Name, &at, &t.Ref, &t.Error, &input); err != nil {
+		if err := rows.Scan(&t.ID, &t.Name, &at, &t.Ref, &t.SessionID, &t.DurationMS, &t.Error, &input); err != nil {
 			return nil, fmt.Errorf("%w: %w", ErrRead, err)
 		}
 		if t.Time, err = time.Parse(time.RFC3339Nano, at); err != nil {

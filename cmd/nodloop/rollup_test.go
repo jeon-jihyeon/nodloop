@@ -177,19 +177,22 @@ func TestRecordsPruneKeepsEffect(t *testing.T) {
 		{
 			"a closed cycle keeps its counts in its rollup",
 			args{"30", knobbed{"2026-08-31", 2}},
-			want{"would roll up 1 closed cycles and prune 3 runs, 0 classify traces and 0 turn, instructions and capture traces older than 2026-09-12T12:00:00Z",
+			want{"would roll up 1 closed cycles and prune 3 runs, 0 classify traces and 0 turn, " +
+				"calls, instructions and capture traces older than 2026-09-12T12:00:00Z",
 				[]int{1, 3, 11, 20, 35, 36, 40, 45}, 1},
 		},
 		{
 			"the open cycle keeps its runs whatever their age",
 			args{"7", knobbed{"2026-09-28", 4}},
-			want{"would roll up 0 closed cycles and prune 4 runs, 0 classify traces and 0 turn, instructions and capture traces older than 2026-09-28T00:00:00Z",
+			want{"would roll up 0 closed cycles and prune 4 runs, 0 classify traces and 0 turn, " +
+				"calls, instructions and capture traces older than 2026-09-28T00:00:00Z",
 				[]int{1, 3, 11, 35, 36, 40, 45}, 0},
 		},
 		{
 			"records without a knob event prune by the retention alone",
 			args{"30", knobbed{}},
-			want{"would roll up 0 closed cycles and prune 3 runs, 0 classify traces and 0 turn, instructions and capture traces older than 2026-09-12T12:00:00Z",
+			want{"would roll up 0 closed cycles and prune 3 runs, 0 classify traces and 0 turn, " +
+				"calls, instructions and capture traces older than 2026-09-12T12:00:00Z",
 				[]int{1, 3, 11, 20, 35, 36, 40, 45}, 0},
 		},
 	}
