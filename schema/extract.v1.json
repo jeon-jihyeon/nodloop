@@ -98,6 +98,27 @@
                   "excerpt": {
                     "type": "string",
                     "description": "the shortest part of the output the correction is about quoted word for word in at most 200 characters"
+                  },
+                  "cue": {
+                    "type": [
+                      "null",
+                      "object"
+                    ],
+                    "properties": {
+                      "tool": {
+                        "type": "string"
+                      },
+                      "command": {
+                        "type": "string"
+                      },
+                      "file": {
+                        "type": "string"
+                      }
+                    },
+                    "description": "the call of the turn a judgment is about, from the calls listed, left out when the lesson holds beyond that call",
+                    "required": [
+                      "tool"
+                    ]
                   }
                 },
                 "required": [

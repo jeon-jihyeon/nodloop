@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 
+	"github.com/jeon-jihyeon/nodloop/internal/call"
 	"github.com/jeon-jihyeon/nodloop/internal/classify"
 	"github.com/jeon-jihyeon/nodloop/internal/classify/classifymock"
 	"github.com/jeon-jihyeon/nodloop/internal/extract"
@@ -307,6 +308,11 @@ func TestReactionString(t *testing.T) {
 		ID: "k1", Version: 2, Kind: knowledge.KindJudgment, Status: knowledge.StatusRetired, Approver: knowledge.ApproverNodloop, Reason: knowledge.ReasonWords,
 		Content: "Quote paths", Run: &knowledge.RunScope{Producer: "session"},
 	}
+	cuedItem := knowledge.Knowledge{
+		ID: "k2", Version: 1, Kind: knowledge.KindJudgment, Status: knowledge.StatusApproved, Approver: "ann",
+		Content: "One line titles", Run: &knowledge.RunScope{Producer: "session"},
+		Cue: &knowledge.Cue{Tool: "Bash", Command: "git commit"},
+	}
 	head := "# Run r1 of session\n\nLabels: runs of session. repo=o/svc\n\n## Output\n\nx\n\n## Verdict\n\n"
 	tcs := []struct {
 		name string
@@ -314,16 +320,30 @@ func TestReactionString(t *testing.T) {
 		want string
 	}{
 		{"a run that reaches nothing says none under each list", extract.Reaction{Run: run, Verdict: feedback.Feedback{Verdict: feedback.VerdictReject}},
-			head + "reject\n\n## Approved items this run reaches\n\nnone\n\n## Waiting candidates this run reaches\n\nnone\n\n" +
-				"## Retired versions this run reaches\n\nnone\n"},
+			head + "reject\n\n## Calls\n\nThe turn recorded no call\n\n## Approved items this run reaches\n\nnone\n\n" +
+				"## Waiting candidates this run reaches\n\nnone\n\n## Retired versions this run reaches\n\nnone\n"},
 		{
 			"a retired version names who retired it and why",
 			extract.Reaction{
 				Run: run, Verdict: feedback.Feedback{Verdict: feedback.VerdictReject, ReasonCode: feedback.ReasonFact, Reason: "wrong"},
 				Retired: knowledge.Set{withdrawn},
 			},
-			head + "reject, fact: wrong\n\n## Approved items this run reaches\n\nnone\n\n## Waiting candidates this run reaches\n\nnone\n\n" +
+			head + "reject, fact: wrong\n\n## Calls\n\nThe turn recorded no call\n\n" +
+				"## Approved items this run reaches\n\nnone\n\n" +
+				"## Waiting candidates this run reaches\n\nnone\n\n" +
 				"## Retired versions this run reaches\n\n[k1 v2 judgment retired by nodloop for words] Quote paths\nScope: runs of session\n",
+		},
+		{
+			"the calls of the turn and the cue of an item are listed",
+			extract.Reaction{
+				Run: run, Verdict: feedback.Feedback{Verdict: feedback.VerdictReject},
+				Calls:   call.Shapes{{Tool: "Bash", Command: "git commit"}, {Tool: "Edit", File: "*_test.go"}},
+				Reached: knowledge.Set{cuedItem},
+			},
+			head + "reject\n\n## Calls\n\nThe calls of the turn: tool Bash command git commit; tool Edit file *_test.go\n\n" +
+				"## Approved items this run reaches\n\n[k2 v1 judgment approved by ann] One line titles\nScope: runs of session\n" +
+				"Cue: before each Bash call running git commit\n\n## Waiting candidates this run reaches\n\nnone\n\n" +
+				"## Retired versions this run reaches\n\nnone\n",
 		},
 	}
 	for _, tc := range tcs {

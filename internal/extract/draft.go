@@ -25,7 +25,8 @@ const Rules = `You read one correction a person made to an AI output and write w
 7. Write the lesson in English. Keep an excerpt in its original language.
 8. excerpt quotes word for word the shortest part of the output the correction is about, at most 200 characters, so a person who reads the lesson later sees what was corrected. Leave it out when no part of the output is.
 9. A text that ends with [cut by nodloop] or [cut] was cut by nodloop when it was stored or shown. The cut is no fault of the output.
-10. Compare the task, audience, purpose and risk conditions before calling two lessons opposite. Keep a temporary exception conditional rather than replacing a standing rule. A changed answer can be a context difference, a lasting change or an overgeneralization. When the evidence cannot distinguish them, state only the correction and leave the change for explicit review. Never invent effective dates or a default lifetime.`
+10. Compare the task, audience, purpose and risk conditions before calling two lessons opposite. Keep a temporary exception conditional rather than replacing a standing rule. A changed answer can be a context difference, a lasting change or an overgeneralization. When the evidence cannot distinguish them, state only the correction and leave the change for explicit review. Never invent effective dates or a default lifetime.
+11. cue names the call of the turn a judgment is about, such as the message of a commit, the body of a pull request or a test file the turn wrote, so the lesson arrives right before that call. Take the tool and the fewest words or the file shape of one listed call that still name it. Leave cue out when the lesson holds beyond that call, when it is a meaning, or when no call is listed.`
 
 const Schema = `{
   "type": "object",
@@ -37,7 +38,17 @@ const Schema = `{
     "kind": {"type": "string", "enum": ["meaning", "judgment"]},
     "content": {"type": "string"},
     "keys": {"type": "array", "items": {"type": "string"}},
-    "excerpt": {"type": "string"}
+    "excerpt": {"type": "string"},
+    "cue": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tool"],
+      "properties": {
+        "tool": {"type": "string"},
+        "command": {"type": "string"},
+        "file": {"type": "string"}
+      }
+    }
   }
 }`
 
@@ -108,6 +119,7 @@ type Draft struct {
 	Content   string         `json:"content" jsonschema:"one sentence of what the correction taught"`
 	Keys      []string       `json:"keys,omitempty" jsonschema:"label keys of the run the lesson needs. Empty reaches every run of the producer"`
 	Excerpt   string         `json:"excerpt,omitempty" jsonschema:"the shortest part of the output the correction is about quoted word for word in at most 200 characters"`
+	Cue       *knowledge.Cue `json:"cue,omitempty" jsonschema:"the call of the turn a judgment is about, from the calls listed, left out when the lesson holds beyond that call"`
 }
 
 // The critic answer

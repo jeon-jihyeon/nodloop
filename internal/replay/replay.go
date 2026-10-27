@@ -253,23 +253,40 @@ func (r *Replayer) corrected(ctx context.Context, item knowledge.Knowledge, late
 }
 
 // The newest approvedCases runs the item never reached whose verdict approves them
-// The verdict is a person's or one the inferred readers leave
+// 1. the verdict is a person's or one the inferred readers leave
+// 2. a cued item takes only runs whose turn made a call its cue fits
+// A turn that never made the call would pass whatever the lesson says
 func (r *Replayer) approved(ctx context.Context, item knowledge.Knowledge, latest map[string]feedback.Feedback, g *gathered) error {
-	found, err := r.traces.List(ctx, record.TraceFilter{Name: string(trace.NameRun)})
+	names := []string{string(trace.NameRun)}
+	if item.Cue != nil {
+		names = append(names, string(trace.NameTurn), string(trace.NameCalls))
+	}
+	found, err := r.traces.List(ctx, record.TraceFilter{Names: names})
 	if err != nil {
 		return err
 	}
-	runs := trace.RestoreAll(found)
+	traces := trace.RestoreAll(found)
+	sessions := map[string]trace.Traces{}
+	for _, t := range traces {
+		if t.SessionID != "" {
+			sessions[t.SessionID] = append(sessions[t.SessionID], t)
+		}
+	}
 	reach := reach{since: item.ReachedSince(), cited: item.Evidence.FeedbackTraceIDs, scope: *item.Run}
 	kept := 0
-	for _, run := range runs {
+	for _, run := range traces {
 		if kept == approvedCases {
 			break
 		}
-		if v, ok := latest[run.ID]; ok && v.Verdict == feedback.VerdictApprove && reach.unseen(run.ID, run.Time, run.Producer, run.Labels) {
-			g.add(run, ExpectKeeps)
-			kept++
+		v, ok := latest[run.ID]
+		if run.Name != trace.NameRun || !ok || v.Verdict != feedback.VerdictApprove || !reach.unseen(run.ID, run.Time, run.Producer, run.Labels) {
+			continue
 		}
+		if item.Cue != nil && !item.Cue.Fits(knowledge.TurnCalls(run, sessions[run.SessionID])) {
+			continue
+		}
+		g.add(run, ExpectKeeps)
+		kept++
 	}
 	return nil
 }
@@ -368,7 +385,11 @@ func (j judgment) result(item knowledge.Knowledge, cases []Case) (Result, error)
 // The lesson and every output under its run id
 func (g gathered) prompt(item knowledge.Knowledge) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "## Lesson\n\n[%s v%d %s] %s\nScope: %s\n\n## Outputs\n", item.ID, item.Version, item.Kind, item.Content, item.Run)
+	fmt.Fprintf(&b, "## Lesson\n\n[%s v%d %s] %s\nScope: %s\n", item.ID, item.Version, item.Kind, item.Content, item.Run)
+	if item.Cue != nil {
+		fmt.Fprintf(&b, "Cue: %s\n", item.Cue)
+	}
+	b.WriteString("\n## Outputs\n")
 	for _, c := range g.cases {
 		fmt.Fprintf(&b, "\n### run %s\n\n%s\n", c.Run, g.outputs[c.Run])
 	}
