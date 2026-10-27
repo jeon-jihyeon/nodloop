@@ -406,3 +406,64 @@ func TestResultOutcome(t *testing.T) {
 		})
 	}
 }
+
+// A cued lesson is judged against approved runs whose turn made a call its cue fits and the judge reads the cue
+func TestReplayerReplayCue(t *testing.T) {
+	st := testkit.Open(t)
+	ctx := context.Background()
+	inSession := func(id string, call string) {
+		found, err := st.Traces.Get(ctx, id)
+		require.NoError(t, err)
+		run := trace.Restore(found)
+		input, err := json.Marshal(map[string]any{
+			"at":    run.Time.Add(-time.Millisecond),
+			"calls": []map[string]string{{"tool": "Bash", "command": call}},
+		})
+		require.NoError(t, err)
+		calls := trace.Trace{
+			ID: trace.NewID(run.Time), Name: trace.NameCalls, SessionID: "s-" + id, Time: run.Time, Input: input,
+		}
+		require.NoError(t, st.Traces.Append(ctx, calls.Record()))
+	}
+	corrected := recordRun(t, st, "plant", "Committed with a long title", feedback.VerdictReject)
+	committed := recordRun(t, st, "plant", "Committed with a short title", feedback.VerdictApprove)
+	pushed := recordRun(t, st, "plant", "Pushed the branch", feedback.VerdictApprove)
+	for id, call := range map[string]string{committed: "git commit", pushed: "git push"} {
+		withSession(t, st, id)
+		inSession(id, call)
+	}
+	_, _, err := st.Ledger.Propose(ctx, knowledge.Knowledge{
+		ID: "title", Kind: knowledge.KindJudgment, Content: "Keep a commit title to one line", Author: "author",
+		Run:      &knowledge.RunScope{Producer: "session", Labels: trace.Labels{"repo": {"plant"}}},
+		Evidence: knowledge.Evidence{FeedbackTraceIDs: []string{corrected}},
+		Cue:      &knowledge.Cue{Tool: "Bash", Command: "git commit"},
+	})
+	require.NoError(t, err)
+	client := llmmock.NewMockClient(gomock.NewController(t))
+	var prompt string
+	complete := func(ctx context.Context, req llm.Request) (llm.Response, error) {
+		prompt = req.Prompt
+		return answerAll(ctx, req)
+	}
+	client.EXPECT().Complete(gomock.Any(), gomock.Any()).DoAndReturn(complete)
+	got, err := replay.New(st.Ledger, st.Traces, st.Feedback, client, "", st.Clock.Now).Replay(ctx, "title", 0)
+	require.NoError(t, err)
+	runs := []string{}
+	for _, c := range got.Cases {
+		runs = append(runs, c.Run)
+	}
+	assert.ElementsMatch(t, []string{corrected, committed}, runs, "a run whose turn never committed is no case")
+	assert.Contains(t, prompt, "Cue: before each Bash call running git commit")
+}
+
+// Rewrites the run with a session of its own so its calls join it
+func withSession(t *testing.T, st testkit.Stores, id string) {
+	t.Helper()
+	ctx := context.Background()
+	found, err := st.Traces.Get(ctx, id)
+	require.NoError(t, err)
+	_, err = st.Traces.Prune(ctx, func(context.Context) ([]string, error) { return []string{id}, nil })
+	require.NoError(t, err)
+	found.SessionID = "s-" + id
+	require.NoError(t, st.Traces.Append(ctx, found))
+}

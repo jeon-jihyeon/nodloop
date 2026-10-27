@@ -170,6 +170,11 @@ export interface ExtractRecord {
         content: string;
         keys?: string[] | null;
         excerpt?: string;
+        cue?: {
+          tool: string;
+          command?: string;
+          file?: string;
+        } | null;
       };
       critique?: {
         states: boolean;

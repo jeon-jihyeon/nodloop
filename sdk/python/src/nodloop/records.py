@@ -235,6 +235,15 @@ class ExtractRecordInput(_ExtractRecordInputRequired, total=False):
     verdict_id: str
 
 
+class _ExtractRecordOutputAttemptsDraftCueRequired(TypedDict):
+    tool: str
+
+
+class ExtractRecordOutputAttemptsDraftCue(_ExtractRecordOutputAttemptsDraftCueRequired, total=False):
+    command: str
+    file: str
+
+
 class _ExtractRecordOutputAttemptsDraftRequired(TypedDict):
     relation: str
     kind: str
@@ -245,6 +254,7 @@ class ExtractRecordOutputAttemptsDraft(_ExtractRecordOutputAttemptsDraftRequired
     relates_to: str
     keys: list[str] | None
     excerpt: str
+    cue: ExtractRecordOutputAttemptsDraftCue | None
 
 
 class ExtractRecordOutputAttemptsCritique(TypedDict):

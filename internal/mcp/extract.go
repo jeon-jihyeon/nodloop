@@ -7,6 +7,7 @@ import (
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/jeon-jihyeon/nodloop/internal/call"
 	"github.com/jeon-jihyeon/nodloop/internal/extract"
 	"github.com/jeon-jihyeon/nodloop/internal/feedback"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
@@ -26,12 +27,14 @@ type extractionAnswer struct {
 	ReasonCode feedback.ReasonCode `json:"reason_code"`
 	Reason     string              `json:"reason"`
 	Edited     json.RawMessage     `json:"edited,omitempty"`
-	Items      []itemAnswer        `json:"items"`
-	Candidates []itemAnswer        `json:"candidates"`
-	Retired    []retiredAnswer     `json:"retired"`
-	Rules      string              `json:"rules"`
-	Schema     json.RawMessage     `json:"schema"`
-	Critic     string              `json:"critic"`
+	// The shapes of the tool calls of the turn a cue may name
+	Calls      call.Shapes     `json:"calls"`
+	Items      []itemAnswer    `json:"items"`
+	Candidates []itemAnswer    `json:"candidates"`
+	Retired    []retiredAnswer `json:"retired"`
+	Rules      string          `json:"rules"`
+	Schema     json.RawMessage `json:"schema"`
+	Critic     string          `json:"critic"`
 }
 
 // A retired version with who retired it and why so a duplicate of it can name it
@@ -58,7 +61,7 @@ func (s *Server) extraction(ctx context.Context, _ *sdk.CallToolRequest, in extr
 	return nil, extractionAnswer{
 		Run: r.Run.ID, Producer: r.Run.Producer, Labels: r.Run.Labels, Output: r.Run.Output,
 		Verdict: r.Verdict.Verdict, ReasonCode: r.Verdict.ReasonCode, Reason: r.Verdict.Reason, Edited: r.Verdict.Edited,
-		Items: newItemAnswers(r.Reached), Candidates: newItemAnswers(r.Waiting), Retired: newRetiredAnswers(r.Retired),
+		Calls: append(call.Shapes{}, r.Calls...), Items: newItemAnswers(r.Reached), Candidates: newItemAnswers(r.Waiting), Retired: newRetiredAnswers(r.Retired),
 		Rules: extract.Rules, Schema: json.RawMessage(extract.Schema), Critic: extract.CriticRules,
 	}, nil
 }
@@ -71,6 +74,7 @@ type proposeExtractionInput struct {
 	Content   string           `json:"content" jsonschema:"one sentence of what the correction taught. For an update the whole new text of the item"`
 	Keys      []string         `json:"keys,omitempty" jsonschema:"label keys of the run the lesson needs. Empty reaches every run of the producer such as a way the user wants answers written"`
 	Excerpt   string           `json:"excerpt,omitempty" jsonschema:"the shortest part of the output the correction is about quoted word for word in at most 200 characters"`
+	Cue       *knowledge.Cue   `json:"cue,omitempty" jsonschema:"the call of the turn a judgment is about, taken from calls, so it arrives right before that call. Left out when the lesson holds beyond that call"`
 	Critique  extract.Critique `json:"critique" jsonschema:"your answers to the critic questions read as a second reader of the draft"`
 	Author    string           `json:"author,omitempty" jsonschema:"who drafted. claude by default because the conversation drafts"`
 }
@@ -84,7 +88,7 @@ func (s *Server) proposeExtraction(
 		return nil, proposeExtractionAnswer{}, err
 	}
 	res, err := s.extractor.Propose(ctx, r, extract.Draft{
-		Relation: in.Relation, RelatesTo: in.RelatesTo, Kind: in.Kind, Content: in.Content, Keys: in.Keys, Excerpt: in.Excerpt,
+		Relation: in.Relation, RelatesTo: in.RelatesTo, Kind: in.Kind, Content: in.Content, Keys: in.Keys, Excerpt: in.Excerpt, Cue: in.Cue,
 	}, in.Critique, cmp.Or(in.Author, defaultAuthor))
 	if err != nil {
 		return nil, proposeExtractionAnswer{}, err
@@ -95,7 +99,7 @@ func (s *Server) proposeExtraction(
 	}
 	if res.Candidate != nil {
 		k := res.Candidate
-		answer.Candidate = &candidateAnswer{ID: k.ID, Version: k.Version, Status: k.Status, Kind: k.Kind, Scope: k.Run}
+		answer.Candidate = &candidateAnswer{ID: k.ID, Version: k.Version, Status: k.Status, Kind: k.Kind, Scope: k.Run, Cue: k.Cue}
 		answer.Overlaps = newItemAnswers(res.Overlaps)
 	}
 	switch {
@@ -125,6 +129,7 @@ type candidateAnswer struct {
 	Status  knowledge.Status    `json:"status"`
 	Kind    knowledge.Kind      `json:"kind"`
 	Scope   *knowledge.RunScope `json:"scope"`
+	Cue     *knowledge.Cue      `json:"cue,omitempty"`
 }
 
 // What happens after a duplicate of a waiting candidate

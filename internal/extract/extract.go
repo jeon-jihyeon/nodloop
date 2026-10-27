@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jeon-jihyeon/nodloop/internal/call"
 	"github.com/jeon-jihyeon/nodloop/internal/classify"
 	"github.com/jeon-jihyeon/nodloop/internal/feedback"
 	"github.com/jeon-jihyeon/nodloop/internal/knowledge"
@@ -25,8 +26,13 @@ const defaultAuthor = "claude"
 
 type TraceStore interface {
 	Get(ctx context.Context, id string) (record.Trace, error)
+	List(ctx context.Context, f record.TraceFilter) ([]record.Trace, error)
 	Append(ctx context.Context, tr record.Trace) error
 }
+
+// How far before a corrected run its turn is looked for
+// A turn longer than this joins only the calls since
+const turnWindow = 24 * time.Hour
 
 // Newest first
 type FeedbackStore interface {
@@ -56,6 +62,9 @@ type Reaction struct {
 	Run trace.Trace
 	// The latest correction on the run
 	Verdict feedback.Feedback
+	// The shapes of the tool calls of the turn the run ended
+	// Empty when the host recorded none
+	Calls call.Shapes
 	// The approved items the producer and labels of the run reach now
 	Reached knowledge.Set
 	// The candidates the run reaches in the order they wait
@@ -115,14 +124,30 @@ func (e *Extractor) Reaction(ctx context.Context, runID string) (Reaction, error
 	if len(latest) == 0 || !latest[0].Corrects() {
 		return Reaction{}, fmt.Errorf("%w: %s", ErrNotCorrected, runID)
 	}
+	calls := e.calls(ctx, run)
 	all, err := e.ledger.All(ctx)
 	if err != nil {
 		return Reaction{}, err
 	}
 	return Reaction{
-		Run: run, Verdict: latest[0], Reached: all.ForAt(run.Producer, run.Labels, e.now()), Waiting: all.Waiting(run.Producer, run.Labels),
+		Run: run, Verdict: latest[0], Calls: calls, Reached: all.ForAt(run.Producer, run.Labels, e.now()), Waiting: all.Waiting(run.Producer, run.Labels),
 		Retired: all.Retired(run.Producer, run.Labels),
 	}, nil
+}
+
+// The shapes of the calls of the turn the run ended
+// A turn longer than turnWindow joins only the calls since
+// A failed read leaves the calls it read so once the run was found a corrupt line older than it never stops the extraction
+// A call it missed only makes a draft cue refused as unseen
+func (e *Extractor) calls(ctx context.Context, run trace.Trace) call.Shapes {
+	if run.SessionID == "" {
+		return nil
+	}
+	found, _ := e.traces.List(ctx, record.TraceFilter{
+		Names: []string{string(trace.NameRun), string(trace.NameTurn), string(trace.NameCalls)}, SessionID: run.SessionID, Since: run.Time.Add(-turnWindow),
+		WithoutOutput: true,
+	})
+	return knowledge.TurnCalls(run, trace.RestoreAll(found))
 }
 
 // The waiting candidate of id or else its approved item or else its retired version that the run reaches
@@ -187,7 +212,7 @@ func (e *Extractor) extract(ctx context.Context, r Reaction, drafter ClaudeDraft
 // Refusals the drafter can fix by writing another draft
 type refusals []error
 
-var fixable = refusals{ErrRelationInvalid, ErrNotLesson, ErrCaseList, ErrKeyUnknown, ErrCriticRefused}
+var fixable = refusals{ErrRelationInvalid, ErrNotLesson, ErrCaseList, ErrKeyUnknown, ErrCueUnseen, ErrCriticRefused}
 
 func (rs refusals) has(err error) bool {
 	return slices.ContainsFunc(rs, func(r error) bool { return errors.Is(err, r) })
@@ -312,24 +337,26 @@ func (e *Extractor) propose(ctx context.Context, r Reaction, d Draft, x extracti
 // 2. an update preserves the scope restrictions and accumulated evidence while changing the lesson
 // 3. a duplicate of a retired version keeps all of it with its text and joins the run so a lesson dropped earlier comes back as it was
 // 4. a conflict keeps the contradicted scope and kind and veto with only the corrected run as evidence
+// 5. a cue is kept from the related version and a draft cue is taken only by an add or an update of a version with none
 func (r Reaction) candidate(d Draft, related *knowledge.Knowledge) knowledge.Knowledge {
 	corrected := (knowledge.Evidence{}).Join(r.Run.ID, r.Run.EvidenceUnit())
 	switch {
 	case related == nil:
 		scope := d.scope(r.Run)
-		return knowledge.Knowledge{Kind: d.Kind, Content: d.Content, Run: &scope, Drafted: true, Evidence: corrected}
+		return knowledge.Knowledge{Kind: d.Kind, Content: d.Content, Run: &scope, Cue: d.Cue, Drafted: true, Evidence: corrected}
 	case d.Relation == RelationConflict:
 		return knowledge.Knowledge{
-			ID: related.ID, Kind: related.Kind, Content: d.Content, Run: related.Run, Veto: related.Veto, Drafted: true, Evidence: corrected,
+			ID: related.ID, Kind: related.Kind, Content: d.Content, Run: related.Run, Veto: related.Veto, Cue: related.Cue, Drafted: true,
+			Evidence: corrected,
 		}
 	}
 	evidence := related.Evidence.Join(r.Run.ID, r.Run.EvidenceUnit())
-	content, drafted := d.Content, true
+	content, drafted, cue := d.Content, true, cmp.Or(related.Cue, d.Cue)
 	if d.Relation == RelationDuplicate {
-		content, drafted = related.Content, related.Drafted
+		content, drafted, cue = related.Content, related.Drafted, related.Cue
 	}
 	return knowledge.Knowledge{
-		ID: related.ID, Kind: related.Kind, Content: content, Run: related.Run, Veto: related.Veto, Basis: related.Basis,
+		ID: related.ID, Kind: related.Kind, Content: content, Run: related.Run, Veto: related.Veto, Cue: cue, Basis: related.Basis,
 		Drafted: drafted, Evidence: evidence,
 	}
 }
@@ -339,6 +366,7 @@ func (r Reaction) candidate(d Draft, related *knowledge.Knowledge) knowledge.Kno
 // 2. the content is a one sentence lesson that copies no long line of the output or the edit
 // 3. an update adds no case to the item it updates
 // 4. every key is one the run carries
+// 5. a cue is a judgment's and names a call the turn made
 func (r Reaction) check(d Draft) error {
 	item, err := r.checkRelation(d)
 	if err != nil {
@@ -357,7 +385,55 @@ func (r Reaction) check(d Draft) error {
 			return fmt.Errorf("%w: %s, and keys lists only %s or nothing", ErrKeyUnknown, key, strings.Join(slices.Sorted(maps.Keys(r.Run.Labels)), " or "))
 		}
 	}
+	return r.checkCue(d, item)
+}
+
+// The redraft reads the error as the calls a cue may name or that it leaves the cue out
+// 1. a draft that names a version keeps its kind and veto and scope
+// Only an add or an update of an uncued version takes a draft cue
+// So a cue a conflict, a duplicate or an update of a cued version drops is never refused
+// 2. a cue never sits beside a meaning, a veto or an effective time
+func (r Reaction) checkCue(d Draft, related knowledge.Knowledge) error {
+	kind, veto, timed := d.Kind, false, false
+	if d.Relation != RelationAdd {
+		kind, veto, timed = related.Kind, related.Veto != nil, related.Run != nil && related.Run.Timed()
+	}
+	switch {
+	case d.Cue == nil, d.Relation == RelationConflict, d.Relation == RelationDuplicate, d.Relation == RelationUpdate && related.Cue != nil:
+		return nil
+	case len(r.Calls) == 0:
+		return fmt.Errorf("%w: the turn recorded no call, so leave cue out", ErrCueUnseen)
+	case kind != knowledge.KindJudgment:
+		return fmt.Errorf("%w: only a judgment carries a cue, so leave it out of a meaning", ErrCueUnseen)
+	case veto || timed:
+		return fmt.Errorf("%w: the version it names has a veto or an effective time, which a cue never sits beside, so leave cue out", ErrCueUnseen)
+	}
+	if err := d.Cue.Check(); err != nil {
+		return fmt.Errorf("%w: %w. %s", ErrCueUnseen, err, r.callsText())
+	}
+	if !d.Cue.Fits(r.Calls) {
+		return fmt.Errorf("%w: %s fits no call of the turn. %s", ErrCueUnseen, d.Cue, r.callsText())
+	}
 	return nil
+}
+
+// The calls of the turn as a redraft or the drafter reads them
+func (r Reaction) callsText() string {
+	if len(r.Calls) == 0 {
+		return "The turn recorded no call"
+	}
+	lines := make([]string, 0, len(r.Calls))
+	for _, s := range r.Calls {
+		line := "tool " + s.Tool
+		if s.Command != "" {
+			line += " command " + s.Command
+		}
+		if s.File != "" {
+			line += " file " + s.File
+		}
+		lines = append(lines, line)
+	}
+	return "The calls of the turn: " + strings.Join(lines, "; ")
 }
 
 // The version the relation of a draft names
@@ -416,6 +492,7 @@ func (r Reaction) String() string {
 	if len(r.Verdict.Edited) > 0 {
 		fmt.Fprintf(&b, "\n\n## Edited output\n\n%s", text(r.Verdict.Edited))
 	}
+	fmt.Fprintf(&b, "\n\n## Calls\n\n%s", r.callsText())
 	// Approved items first then the candidates and then the retired versions with their retire reason
 	// Each line names its status and who decided it so the drafter and the critic tell them apart
 	for _, part := range []struct {
@@ -438,6 +515,9 @@ func (r Reaction) String() string {
 				status += " for " + string(k.Reason)
 			}
 			fmt.Fprintf(&b, "\n[%s v%d %s %s] %s\nScope: %s", k.ID, k.Version, k.Kind, status, k.Content, k.Run)
+			if k.Cue != nil {
+				fmt.Fprintf(&b, "\nCue: %s", k.Cue)
+			}
 		}
 	}
 	b.WriteString("\n")

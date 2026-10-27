@@ -15,6 +15,8 @@ var (
 	ErrCaseList = errors.New("extract: the update lists cases instead of restating the rule")
 	// A key the run does not carry
 	ErrKeyUnknown = errors.New("extract: the run carries no such label key")
+	// A cue outside the grammar or on a meaning or naming no call the turn made
+	ErrCueUnseen = errors.New("extract: the cue names no call of the turn")
 	// The critic answered false to one of its questions
 	ErrCriticRefused = errors.New("extract: the critic refused the draft")
 )
