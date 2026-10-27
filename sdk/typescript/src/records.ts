@@ -383,6 +383,57 @@ export interface TurnRecord {
       id: string;
       version: number;
     }[] | null;
+    eligible?: {
+      id: string;
+      version: number;
+      p_include: number;
+    }[] | null;
+    held?: {
+      id: string;
+      version: number;
+    }[] | null;
+  };
+  error?: string;
+  usage: {
+    input_tokens: number;
+    output_tokens: number;
+    thinking_tokens?: number;
+    cache_read: number;
+    cache_create: number;
+    cost_usd: number;
+  };
+  duration_ms: number;
+  tags?: string[] | null;
+  producer?: string;
+  labels?: Record<string, string[] | null>;
+  schema_version: 1;
+}
+
+/** The cued items one tool call made eligible and those it received */
+export interface CueRecord {
+  record_kind: "cue";
+  record_id: string;
+  id: string;
+  name: "cue";
+  session_id?: string;
+  subject?: string;
+  ref?: string;
+  time: string;
+  model?: string;
+  input: {
+    context: {
+      id: string;
+      version: number;
+    }[] | null;
+    eligible: {
+      id: string;
+      version: number;
+      p_include: number;
+    }[] | null;
+    held?: {
+      id: string;
+      version: number;
+    }[] | null;
   };
   error?: string;
   usage: {
@@ -1110,6 +1161,7 @@ export interface Records {
   consolidate: ConsolidateRecord;
   refill: RefillRecord;
   turn: TurnRecord;
+  cue: CueRecord;
   calls: CallsRecord;
   compact: CompactRecord;
   instructions: InstructionsRecord;

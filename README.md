@@ -154,6 +154,8 @@ Bash vetoes match each simple command a shell parser finds, including ones insid
 
 A correction can become a veto too. Propose a judgment with a veto, and once someone approves it, the guard enforces it. Retire the item and the veto goes with it. Other agents can check a call with `nodloop guard call`, the MCP tool `check_call`, or `CheckCall` in Go.
 
+A judgment can name the call it's about instead, such as `git commit` or an edit of a `*_test.go` file. In Claude Code the plugin keeps that lesson out of the prompt and refuses the first call it fits once, with the lesson as the reason, so the model reads it right before it acts. The same call goes through after that. Other hosts get the lesson with the prompt.
+
 <details>
 <summary>Install details and where veto files are found</summary>
 

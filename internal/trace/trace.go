@@ -62,6 +62,7 @@ const (
 	NameConsolidate  Name = "consolidate"  // groups of waiting candidates of one producer that may say the same lesson
 	NameRefill       Name = "refill"       // the items a session start added again after the context of the session was emptied
 	NameTurn         Name = "turn"         // the start of a turn of a session that the stop reads for the duration of its run
+	NameCue          Name = "cue"          // the cued items a tool call made eligible and those it received or held back
 	NameCalls        Name = "calls"        // the shapes of the tool calls no stop of a run, start of a turn or typed message falls between with no argument text
 	NameCompact      Name = "compact"      // one drafting of a compaction through a model
 	NameInstructions Name = "instructions" // rules file content kept as HMAC
@@ -78,7 +79,7 @@ const (
 // Every name in a fixed order for messages
 func Names() []Name {
 	return []Name{
-		NameRun, NameCheck, NameClassify, NameExtract, NameReplay, NameConsolidate, NameRefill, NameTurn, NameCalls,
+		NameRun, NameCheck, NameClassify, NameExtract, NameReplay, NameConsolidate, NameRefill, NameTurn, NameCue, NameCalls,
 		NameCompact, NameInstructions, NameCapture, NameDecide, NameKnob, NameAnchor, NameExpose, NameAnswer, NameIntervention, NameRollup,
 	}
 }

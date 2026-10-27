@@ -560,8 +560,21 @@ class TurnRecordInputContext(TypedDict):
     version: int
 
 
+class TurnRecordInputEligible(TypedDict):
+    id: str
+    version: int
+    p_include: float
+
+
+class TurnRecordInputHeld(TypedDict):
+    id: str
+    version: int
+
+
 class TurnRecordInput(TypedDict, total=False):
     context: list[TurnRecordInputContext] | None
+    eligible: list[TurnRecordInputEligible] | None
+    held: list[TurnRecordInputHeld] | None
 
 
 class _TurnRecordUsageRequired(TypedDict):
@@ -590,6 +603,68 @@ class _TurnRecordRequired(TypedDict):
 
 class TurnRecord(_TurnRecordRequired, total=False):
     """The start of a turn of a session with its context item references"""
+
+    session_id: str
+    subject: str
+    ref: str
+    model: str
+    error: str
+    tags: list[str] | None
+    producer: str
+    labels: dict[str, list[str] | None]
+
+
+class CueRecordInputContext(TypedDict):
+    id: str
+    version: int
+
+
+class CueRecordInputEligible(TypedDict):
+    id: str
+    version: int
+    p_include: float
+
+
+class CueRecordInputHeld(TypedDict):
+    id: str
+    version: int
+
+
+class _CueRecordInputRequired(TypedDict):
+    context: list[CueRecordInputContext] | None
+    eligible: list[CueRecordInputEligible] | None
+
+
+class CueRecordInput(_CueRecordInputRequired, total=False):
+    held: list[CueRecordInputHeld] | None
+
+
+class _CueRecordUsageRequired(TypedDict):
+    input_tokens: int
+    output_tokens: int
+    cache_read: int
+    cache_create: int
+    cost_usd: float
+
+
+class CueRecordUsage(_CueRecordUsageRequired, total=False):
+    thinking_tokens: int
+
+
+class _CueRecordRequired(TypedDict):
+    record_kind: Literal["cue"]
+    record_id: str
+    id: str
+    name: Literal["cue"]
+    time: str
+    input: CueRecordInput
+    usage: CueRecordUsage
+    duration_ms: int
+    schema_version: Literal[1]
+
+
+class CueRecord(_CueRecordRequired, total=False):
+    """The cued items one tool call made eligible and those it received"""
 
     session_id: str
     subject: str
@@ -1649,6 +1724,7 @@ RecordKind = Literal[
     "consolidate",
     "refill",
     "turn",
+    "cue",
     "calls",
     "compact",
     "instructions",
@@ -1676,6 +1752,7 @@ AnyRecord = (
     | ConsolidateRecord
     | RefillRecord
     | TurnRecord
+    | CueRecord
     | CallsRecord
     | CompactRecord
     | InstructionsRecord

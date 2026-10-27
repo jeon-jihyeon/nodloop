@@ -2,6 +2,19 @@
 
 Every release tag publishes the plugin, the darwin and linux binaries of `nodloop` and, from 0.7.0, `nodloop-server`, and both SDKs under one version. Versions before 0.6.0 reviewed incident data, which left this repository in 0.6.0.
 
+## 0.10.3 - 2026-10-27
+
+### Added
+- A judgment can carry a `cue` that names the tool call it's about: a tool, the first words of a command of a listed program such as `git commit`, or a file shape such as `*_test.go`. `knowledge propose --cue-tool --cue-command --cue-file`, MCP `propose`, Go `Proposal.Cue` and both SDKs take it, and `knowledge_for`, Go `Item.Cue` and both SDKs return it
+- The Claude Code plugin registers `hook tool` on PreToolUse. A call that a cued item fits and whose context lacks it is refused once with the item as the reason, and the same call passes after. Other hosts and older plugins get cued items with the prompt as before
+- The capture records the shapes of each turn's tool calls as a `calls` trace with no argument text, and `extraction` lists them so a drafted judgment can name its call. A drafted cue must name a call of the turn
+- Published kinds `cue` and `calls`, and `eligible` and `held` on `turn`
+
+### Changed
+- Replay tests a cued item only against approved runs whose turn made a call it fits
+- Curate reads the same text with another cue as another lesson. A new version keeps the cue of the approved one, and a cued item is never compacted
+- Retention prunes `cue` traces by age and a `calls` trace once its own answered run is gone
+
 ## 0.10.2 - 2026-10-25
 
 ### Added

@@ -67,3 +67,31 @@ func appendRuns(b *testing.B, records, repo string, n int) {
 		require.NoError(b, enc.Encode(run))
 	}
 }
+
+// The tool hook over records of many sessions
+// 1. a call no cue fits reads the ledger and stops
+// That is the cost of every other tool call
+// 2. a fitting call of a session with no context reads its traces, takes the lock and records a cue trace
+// A new session id on every iteration keeps it the slowest case
+func BenchmarkToolHook(b *testing.B) {
+	for _, runs := range []int{1_000, 50_000} {
+		for _, command := range []string{"ls", "git commit"} {
+			b.Run(fmt.Sprintf("%d/%s", runs, command), func(b *testing.B) {
+				bench := newCueBench(b)
+				appendRuns(b, bench.records, bench.repo, runs)
+				iteration := 0
+				for b.Loop() {
+					iteration++
+					stdin := fmt.Sprintf(
+						`{"session_id":"s-new-%d","cwd":%q,"tool_name":"Bash","tool_input":{"command":%q}}`,
+						iteration, bench.repo, command,
+					)
+					require.Equal(b, 0, runHook(
+						[]string{"tool", "--cues"}, bench.getenv, noStart, time.Now,
+						strings.NewReader(stdin), io.Discard, io.Discard,
+					))
+				}
+			})
+		}
+	}
+}

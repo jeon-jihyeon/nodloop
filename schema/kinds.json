@@ -147,7 +147,27 @@
       "description": "The start of a turn of a session with its context item references",
       "links": [
         "session_id",
-        "input.context"
+        "input.context",
+        "input.eligible",
+        "input.held"
+      ],
+      "text": []
+    },
+    {
+      "kind": "cue",
+      "version": 1,
+      "versions": [
+        1
+      ],
+      "store": "traces.jsonl",
+      "schema": "https://github.com/jeon-jihyeon/nodloop/schema/cue.v1.json",
+      "description": "The cued items one tool call made eligible and those it received",
+      "links": [
+        "session_id",
+        "subject",
+        "input.context",
+        "input.eligible",
+        "input.held"
       ],
       "text": []
     },

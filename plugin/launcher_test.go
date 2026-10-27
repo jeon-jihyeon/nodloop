@@ -294,6 +294,8 @@ func TestLauncherStableLink(t *testing.T) {
 // 3. Codex reads the same events with its host named and no instructions hook since it never runs one
 // Codex moves none of the context nodloop adds into a file since contextRunes already bounds it
 // 4. a rules file Claude Code loads is recorded with no matcher so every load reason reaches the anchor
+// 5. every tool call reaches hook tool with a short timeout
+// Only these hooks pass cues since only this plugin runs it
 func TestHooksJSON(t *testing.T) {
 	type hook struct {
 		Type         string `json:"type"`
@@ -305,7 +307,8 @@ func TestHooksJSON(t *testing.T) {
 	}
 	// The hooks of one matcher group of an event
 	type group struct {
-		Hooks []hook `json:"hooks"`
+		Matcher string `json:"matcher"`
+		Hooks   []hook `json:"hooks"`
 	}
 	launcher := `"${CLAUDE_PLUGIN_ROOT}/bin/nodloop" hook `
 	spill := 0
@@ -315,18 +318,31 @@ func TestHooksJSON(t *testing.T) {
 		args string
 		want map[string][]group
 	}{
-		{"the Claude Code hooks run start, prompt, stop, subagent and instructions", "hooks.json", map[string][]group{
-			"SessionStart":       {{[]hook{{Type: "command", Command: launcher + "start"}}}},
-			"UserPromptSubmit":   {{[]hook{{Type: "command", Command: launcher + "prompt"}}}},
-			"Stop":               {{[]hook{{Type: "command", Command: launcher + "stop"}}}},
-			"SubagentStart":      {{[]hook{{Type: "command", Command: launcher + "subagent"}}}},
-			"InstructionsLoaded": {{[]hook{{Type: "command", Command: launcher + "instructions"}}}},
-		}},
+		{
+			"the Claude Code hooks run start, prompt, stop, subagent, instructions and tool with cues",
+			"hooks.json",
+			map[string][]group{
+				"SessionStart":       {{Hooks: []hook{{Type: "command", Command: launcher + "start --cues"}}}},
+				"UserPromptSubmit":   {{Hooks: []hook{{Type: "command", Command: launcher + "prompt --cues"}}}},
+				"Stop":               {{Hooks: []hook{{Type: "command", Command: launcher + "stop --cues"}}}},
+				"SubagentStart":      {{Hooks: []hook{{Type: "command", Command: launcher + "subagent --cues"}}}},
+				"InstructionsLoaded": {{Hooks: []hook{{Type: "command", Command: launcher + "instructions"}}}},
+				"PreToolUse": {{Matcher: "*", Hooks: []hook{{
+					Type: "command", Command: launcher + "tool --cues", Timeout: 30,
+				}}}},
+			},
+		},
 		{"the Codex hooks name the host", "codex.json", map[string][]group{
-			"SessionStart":     {{[]hook{{Type: "command", Command: launcher + "start --host codex", ContextLimit: &spill}}}},
-			"UserPromptSubmit": {{[]hook{{Type: "command", Command: launcher + "prompt --host codex", ContextLimit: &spill}}}},
-			"Stop":             {{[]hook{{Type: "command", Command: launcher + "stop --host codex"}}}},
-			"SubagentStart":    {{[]hook{{Type: "command", Command: launcher + "subagent --host codex", ContextLimit: &spill}}}},
+			"SessionStart": {{Hooks: []hook{{
+				Type: "command", Command: launcher + "start --host codex", ContextLimit: &spill,
+			}}}},
+			"UserPromptSubmit": {{Hooks: []hook{{
+				Type: "command", Command: launcher + "prompt --host codex", ContextLimit: &spill,
+			}}}},
+			"Stop": {{Hooks: []hook{{Type: "command", Command: launcher + "stop --host codex"}}}},
+			"SubagentStart": {{Hooks: []hook{{
+				Type: "command", Command: launcher + "subagent --host codex", ContextLimit: &spill,
+			}}}},
 		}},
 	}
 	for _, tc := range tcs {

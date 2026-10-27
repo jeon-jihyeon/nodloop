@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/nodloop\" hook start"
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/nodloop\" hook start --cues"
           }
         ]
       }
@@ -15,7 +15,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/nodloop\" hook prompt"
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/nodloop\" hook prompt --cues"
           }
         ]
       }
@@ -25,7 +25,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/nodloop\" hook stop"
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/nodloop\" hook stop --cues"
           }
         ]
       }
@@ -35,7 +35,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/nodloop\" hook subagent"
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/nodloop\" hook subagent --cues"
           }
         ]
       }
@@ -46,6 +46,18 @@
           {
             "type": "command",
             "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/nodloop\" hook instructions"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/nodloop\" hook tool --cues",
+            "timeout": 30
           }
         ]
       }

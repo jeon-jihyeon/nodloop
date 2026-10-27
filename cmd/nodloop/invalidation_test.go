@@ -72,6 +72,19 @@ func TestPromptContextRefs(t *testing.T) {
 	bad := refill
 	bad.Input = json.RawMessage(`{"applied":7}`)
 	legacy := trace.Trace{Name: trace.NameRun, Time: at, Input: json.RawMessage(`{"applied":[{"id":"k2","version":1}]}`)}
+	cue := func(after time.Duration, agent, input string) trace.Trace {
+		return trace.Trace{Name: trace.NameCue, Subject: agent, Time: at.Add(after), Input: json.RawMessage(input)}
+	}
+	delivered := cue(2*time.Second, "",
+		`{"context":[{"id":"k3","version":1}],"eligible":[{"id":"k3","version":1},{"id":"k4","version":1}]}`)
+	newer := cue(3*time.Second, "", `{"context":[{"id":"k1","version":2}],"eligible":[{"id":"k1","version":2}]}`)
+	before := cue(-time.Second, "", `{"context":[{"id":"k5","version":1}],"eligible":[{"id":"k5","version":1}]}`)
+	subagent := cue(2*time.Second, "a1", `{"context":[{"id":"k6","version":1}],"eligible":[{"id":"k6","version":1}]}`)
+	carried := trace.Trace{
+		Name:  trace.NameTurn,
+		Time:  at,
+		Input: json.RawMessage(`{"context":[{"id":"k1","version":1}],"eligible":[{"id":"k7","version":1}]}`),
+	}
 	type args struct {
 		traces sessionTraces
 		refill trace.Trace
@@ -81,6 +94,17 @@ func TestPromptContextRefs(t *testing.T) {
 		args args
 		want []knowledge.Ref
 	}{
+		{"a call after the turn adds what it received", args{traces: sessionTraces{delivered, turn}},
+			[]knowledge.Ref{{ID: "k1", Version: 1}, {ID: "k3", Version: 1}}},
+		{"a later version a call received replaces the earlier", args{traces: sessionTraces{newer, delivered, turn}},
+			[]knowledge.Ref{{ID: "k1", Version: 2}, {ID: "k3", Version: 1}}},
+		{"a call before the turn counts through the turn alone", args{traces: sessionTraces{turn, before}},
+			[]knowledge.Ref{{ID: "k1", Version: 1}}},
+		{"a call of a subagent never counts for the conversation", args{traces: sessionTraces{subagent, turn}},
+			[]knowledge.Ref{{ID: "k1", Version: 1}}},
+		{"a refill after a call empties the context", args{sessionTraces{turn, delivered}, trace.Trace{
+			ID: "f2", Name: trace.NameRefill, Time: at.Add(4 * time.Second), Input: json.RawMessage(`{"applied":[]}`),
+		}}, []knowledge.Ref{}},
 		{"a saved prompt keeps its references", args{traces: sessionTraces{turn}}, []knowledge.Ref{{ID: "k1", Version: 1}}},
 		{"an empty refill resets the context", args{sessionTraces{turn}, refill}, []knowledge.Ref{}},
 		{"an older refill cannot replace a prompt", args{sessionTraces{turn}, old}, []knowledge.Ref{{ID: "k1", Version: 1}}},
@@ -92,9 +116,17 @@ func TestPromptContextRefs(t *testing.T) {
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			assert.Equal(t, tc.want, tc.args.traces.contextRefs(nil, tc.args.refill))
+			assert.Equal(t, tc.want, tc.args.traces.contextRefs(nil, tc.args.refill).delivered)
 		})
 	}
+	t.Run("the eligible versions of the turn and of later calls of the conversation join", func(t *testing.T) {
+		t.Parallel()
+		got := sessionTraces{subagent, delivered, carried}.contextRefs(nil, trace.Trace{})
+		assert.Equal(t, []knowledge.Ref{{ID: "k3", Version: 1}, {ID: "k4", Version: 1}, {ID: "k7", Version: 1}},
+			eligibleRefs(got.eligible))
+		assert.Equal(t, []knowledge.Ref{{ID: "k6", Version: 1}},
+			sessionTraces{subagent, delivered, carried}.cues("a1", time.Time{}).delivered)
+	})
 }
 
 func TestPromptContextInvalidation(t *testing.T) {

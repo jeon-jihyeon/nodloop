@@ -147,7 +147,7 @@ func TestRunTrace(t *testing.T) {
 			"list by an unknown name fails",
 			args{[]string{"list", "--name", "diagnosis"}, withDir},
 			want{1, "", `^nodloop trace: unknown trace name "diagnosis". Use one of run, check, classify, extract, ` +
-				`replay, consolidate, refill, turn, calls, compact, instructions, capture, ` +
+				`replay, consolidate, refill, turn, cue, calls, compact, instructions, capture, ` +
 				`decide, knob, anchor, expose, answer, intervention, rollup\n\n`},
 		},
 		{"list limit keeps the newest", args{[]string{"list", "--limit", "1"}, withDir}, want{0, newerLine, `^$`}},

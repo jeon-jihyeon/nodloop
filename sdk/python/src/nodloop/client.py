@@ -33,7 +33,7 @@ __all__ = [
 ]
 
 # The binary release the client fetches when no nodloop is installed
-VERSION = "0.10.2"
+VERSION = "0.10.3"
 
 
 # The reports report reads
