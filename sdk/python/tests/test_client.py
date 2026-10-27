@@ -36,7 +36,8 @@ async def test_propose_keeps_its_cue(binary: str, records: str, approve: Approve
     async with Client(records, binary) as c:
         run = await c.record("acme", "acme", labels={"repo": ["acme"]})
         await c.judge(run, "reject", reviewer="ann", reason="Keep the title to one line")
-        proposed = await c.propose("judgment", "Keep a commit title to one line", from_run=run, cue={"tool": "Bash", "command": "git commit"})
+        cue = {"tool": "Bash", "command": "git commit"}
+        proposed = await c.propose("judgment", "Keep a commit title to one line", from_run=run, cue=cue)
         page = await c.records("knowledge")
         approve(proposed.id, proposed.version)
         got = await c.knowledge("acme", {"repo": ["acme"]})
