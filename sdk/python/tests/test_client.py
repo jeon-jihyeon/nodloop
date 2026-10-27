@@ -32,6 +32,26 @@ async def test_propose_keeps_explicit_validity(binary: str, records: str, end: s
     assert page.records[0]["conditional_run"]["valid_until"] == end
 
 
+async def test_propose_keeps_its_cue(binary: str, records: str, approve: Approve) -> None:
+    async with Client(records, binary) as c:
+        run = await c.record("acme", "acme", labels={"repo": ["acme"]})
+        await c.judge(run, "reject", reviewer="ann", reason="Keep the title to one line")
+        proposed = await c.propose("judgment", "Keep a commit title to one line", from_run=run, cue={"tool": "Bash", "command": "git commit"})
+        page = await c.records("knowledge")
+        approve(proposed.id, proposed.version)
+        got = await c.knowledge("acme", {"repo": ["acme"]})
+    assert page.records[0]["cue"] == {"tool": "Bash", "command": "git commit"}
+    assert got.items[0].cue == {"tool": "Bash", "command": "git commit"}
+
+
+async def test_propose_refuses_an_empty_cue(binary: str, records: str) -> None:
+    async with Client(records, binary) as c:
+        run = await c.record("acme", "acme", labels={"repo": ["acme"]})
+        await c.judge(run, "reject", reviewer="ann", reason="Keep the title to one line")
+        with pytest.raises(ToolError, match="tool"):
+            await c.propose("judgment", "Keep a commit title to one line", from_run=run, cue={})
+
+
 ACME = {"tenant": ["acme"], "task": ["refund"]}
 NO_RM = {
     "tool": "Bash",

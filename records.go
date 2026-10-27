@@ -29,6 +29,9 @@ type VetoRule = knowledge.Veto
 // One condition of a veto rule on a field of the tool input
 type VetoCondition = knowledge.VetoCondition
 
+// The tool call a judgment comes before where a host delivers it there instead of with the prompt
+type Cue = knowledge.Cue
+
 type (
 	Verdict    = feedback.Verdict
 	ReasonCode = feedback.ReasonCode
@@ -308,6 +311,9 @@ type Item struct {
 	Except     Labels
 	ValidFrom  time.Time
 	ValidUntil time.Time
+	// The tool call it comes before and nil for an item that comes with the prompt
+	// A producer with no tool call hook adds it with the prompt like any other
+	Cue *Cue
 }
 
 // The version to pass in Applied for a run that received the item
@@ -331,7 +337,7 @@ func (items Items) Refs() []Ref {
 func newItems(set knowledge.Set) Items {
 	out := make(Items, 0, len(set))
 	for _, k := range set {
-		item := Item{ID: k.ID, Version: k.Version, Kind: k.Kind, Content: k.Content, Status: k.Status}
+		item := Item{ID: k.ID, Version: k.Version, Kind: k.Kind, Content: k.Content, Status: k.Status, Cue: k.Cue}
 		if k.Run != nil {
 			item.Producer, item.Labels = k.Run.Producer, k.Run.Labels
 			item.Except, item.ValidFrom, item.ValidUntil = k.Run.Except, k.Run.ValidFrom, k.Run.ValidUntil
@@ -416,6 +422,8 @@ type Proposal struct {
 	// A tool call the judgment forbids
 	// Once approved CheckCall blocks a call it matches
 	Veto *VetoRule
+	// The tool call the judgment comes before and never beside a veto
+	Cue *Cue
 	// Empty for a generated id
 	ID string
 	// Who proposed and author when empty
@@ -430,7 +438,7 @@ type Proposal struct {
 // 2. every label value must be one a recorded run of the producer carries unless NewLabels allows new ones
 func (c *Client) Propose(ctx context.Context, p Proposal) (Item, error) {
 	draft := knowledge.Knowledge{
-		ID: p.ID, Kind: p.Kind, Content: p.Content, Author: cmp.Or(p.Author, knowledge.DefaultAuthor), NewLabels: p.NewLabels, Veto: p.Veto,
+		ID: p.ID, Kind: p.Kind, Content: p.Content, Author: cmp.Or(p.Author, knowledge.DefaultAuthor), NewLabels: p.NewLabels, Veto: p.Veto, Cue: p.Cue,
 		Run: &knowledge.RunScope{Producer: p.Producer, Labels: p.Labels, Except: p.Except,
 			ValidFrom: p.ValidFrom, ValidUntil: p.ValidUntil},
 		Evidence: knowledge.Evidence{FeedbackTraceIDs: p.Runs},

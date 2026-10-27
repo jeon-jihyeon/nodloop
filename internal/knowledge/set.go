@@ -389,12 +389,16 @@ func (s Set) approval(id string, version int, approver string, now time.Time) ([
 	return records, nil
 }
 
-// A new version that replaces the approved one keeps its veto and reaches no run the old one never reached
-// Only a retire by a named person lifts a veto or widens the scope
+// A new version that replaces the approved one keeps its veto and cue and reaches no run the old one never reached
+// Only a retire by a named person lifts a veto, drops a cue or widens the scope
 func (k Knowledge) replaces(old Knowledge) error {
 	if old.Veto != nil && !k.keepsVeto(*old.Veto) {
 		return fmt.Errorf("%w: %s v%d does not block what v%d blocks. Restate the veto or retire v%d first",
 			ErrVetoLifted, k.ID, k.Version, old.Version, old.Version)
+	}
+	if !k.keepsCue(old.Cue) {
+		return fmt.Errorf("%w: %s v%d must arrive %s as v%d does. Keep the cue or retire v%d first",
+			ErrCueChanged, k.ID, k.Version, old.Cue, old.Version, old.Version)
 	}
 	if k.Run == nil || old.Run == nil || k.Run.widens(*old.Run) {
 		return fmt.Errorf("%w: %s v%d reaches runs that v%d never reached. "+

@@ -116,6 +116,8 @@ type Knowledge struct {
 	// A tool call the judgment forbids
 	// Approval exports it as a guard veto whose id is the knowledge id and whose reason is the content
 	Veto *Veto `json:"veto,omitempty"`
+	// The tool call a judgment arrives beside on a host with a tool call hook instead of with the prompt
+	Cue *Cue `json:"cue,omitempty"`
 	// The compaction that appended this record
 	Compaction string `json:"compaction,omitempty"`
 	// Drafts of the compaction proposal on each of its candidates
@@ -131,7 +133,11 @@ const RunChars = 9_000
 
 // Folders are measured with the text a run receives so the budget and the run cap count the same characters
 func (k Knowledge) Text() string {
-	return fmt.Sprintf("\n[%s v%d %s] %s\nScope: %s\n", k.ID, k.Version, k.Kind, k.Content, k.reachText())
+	text := fmt.Sprintf("\n[%s v%d %s] %s\nScope: %s\n", k.ID, k.Version, k.Kind, k.Content, k.reachText())
+	if k.Cue != nil {
+		text += "Cue: " + k.Cue.String() + "\n"
+	}
+	return text
 }
 
 // Tool call rule of a judgment
@@ -202,7 +208,10 @@ func (k Knowledge) validate() error {
 	if err := k.checkScope(); err != nil {
 		return err
 	}
-	return k.checkVeto()
+	if err := k.checkVeto(); err != nil {
+		return err
+	}
+	return k.checkCue()
 }
 
 func (k Knowledge) checkVeto() error {

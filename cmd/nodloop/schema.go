@@ -17,6 +17,7 @@ import (
 
 	"github.com/google/jsonschema-go/jsonschema"
 
+	"github.com/jeon-jihyeon/nodloop/internal/call"
 	"github.com/jeon-jihyeon/nodloop/internal/classify"
 	"github.com/jeon-jihyeon/nodloop/internal/consolidate"
 	"github.com/jeon-jihyeon/nodloop/internal/curate"
@@ -107,6 +108,8 @@ var publishedKinds = kindTable{
 		reflect.TypeFor[knowledge.RunInput](), nil, []string{"session_id", "input.applied"}, []string{}),
 	traceKind(trace.NameTurn, "The start of a turn of a session with its context item references",
 		reflect.TypeFor[turnInput](), nil, []string{"session_id", "input.context"}, []string{}),
+	traceKind(trace.NameCalls, "The shapes of tool calls no stop of a run, start of a turn or typed message falls between, with no argument text",
+		reflect.TypeFor[call.Input](), nil, []string{"session_id"}, []string{}),
 	traceKind(trace.NameCompact, "One drafting of a compaction through a model",
 		reflect.TypeFor[struct{}](), nil, []string{"session_id", "subject"}, []string{"error"}),
 	traceKind(trace.NameInstructions, "A rules file a session loaded with the HMAC of its content",

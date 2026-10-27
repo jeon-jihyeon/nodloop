@@ -23,13 +23,15 @@ func (f Folder) Full() bool {
 }
 
 // The item a compaction that makes room in the folder starts from
-// 1. the first carried item in the For order since a run reads it first
-// 2. empty when the folder carries no other item
+// 1. the first carried item without a cue in the For order since a run reads it first
+// A cued item is never compacted so it never anchors one
+// 2. empty when the folder carries no other such item
 func (f Folder) Anchor() string {
-	if len(f.Carried) == 0 {
+	uncued := f.Carried.Uncued()
+	if len(uncued) == 0 {
 		return ""
 	}
-	return slices.MinFunc(f.Carried, Knowledge.rank).ID
+	return slices.MinFunc(uncued, Knowledge.rank).ID
 }
 
 // The cap the folder is held to for the person who picks the way out

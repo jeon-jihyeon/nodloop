@@ -27,6 +27,7 @@ type Knowledge struct {
 	Drafted        bool      `json:"drafted,omitempty"`
 	NewLabels      bool      `json:"new_labels,omitempty"`
 	Veto           *Veto     `json:"veto,omitempty"`
+	Cue            *Cue      `json:"cue,omitempty"`
 	Compaction     string    `json:"compaction,omitempty"`
 	CompactionSize int       `json:"compaction_size,omitempty"`
 	// The version of the published schema knowledge
@@ -59,6 +60,13 @@ type Veto struct {
 	Tool    string          `json:"tool"`
 	When    []VetoCondition `json:"when"`
 	Example map[string]any  `json:"example"`
+}
+
+// The tool call a judgment arrives beside instead of the prompt
+type Cue struct {
+	Tool    string `json:"tool"`
+	Command string `json:"command,omitempty"`
+	File    string `json:"file,omitempty"`
 }
 
 type VetoCondition struct {

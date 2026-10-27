@@ -408,7 +408,7 @@ const DeltaLead = "nodloop: more corrections for work in this place that a perso
 
 // One item as the line a prompt carries it
 func (k Knowledge) PromptLine() string {
-	if k.Run != nil && (k.Run.Timed() || len(k.Run.Labels) > 1 || len(k.Run.Except) > 0) {
+	if k.Cue != nil || k.Run != nil && (k.Run.Timed() || len(k.Run.Labels) > 1 || len(k.Run.Except) > 0) {
 		return k.Text()
 	}
 	return fmt.Sprintf("- [%s v%d %s] %s\n", k.ID, k.Version, k.Kind, k.Content)

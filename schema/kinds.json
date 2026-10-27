@@ -152,6 +152,20 @@
       "text": []
     },
     {
+      "kind": "calls",
+      "version": 1,
+      "versions": [
+        1
+      ],
+      "store": "traces.jsonl",
+      "schema": "https://github.com/jeon-jihyeon/nodloop/schema/calls.v1.json",
+      "description": "The shapes of tool calls no stop of a run, start of a turn or typed message falls between, with no argument text",
+      "links": [
+        "session_id"
+      ],
+      "text": []
+    },
+    {
       "kind": "compact",
       "version": 1,
       "versions": [

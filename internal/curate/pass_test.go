@@ -161,6 +161,8 @@ func TestCuratorPassTiers(t *testing.T) {
 	newer := lesson("k-newer", 1, "Name the failing test first", acme("acme"), candidate, "")
 	newer.Time = written.Add(time.Hour)
 	big := strings.Repeat("a long lesson ", 320)
+	cued := lesson("k-cued", 1, "run  the TESTS before a commit.", acme("acme"), candidate, "")
+	cued.Kind, cued.Cue = knowledge.KindJudgment, &knowledge.Cue{Tool: "Bash", Command: "git commit"}
 	type args struct {
 		lessons  []knowledge.Knowledge
 		verdicts map[string][]feedback.Verdict
@@ -179,6 +181,11 @@ func TestCuratorPassTiers(t *testing.T) {
 			"an exact duplicate of a lesson a person approved is dropped",
 			args{lessons: []knowledge.Knowledge{lesson("k-dup", 1, "run  the TESTS before a commit.", acme("acme"), candidate, "")}},
 			want{[]string{"drop k-dup v1 drop same_as_item 0"}, []string{"k-dup v1 retired nodloop duplicate"}},
+		},
+		{
+			"the same text arriving before a call is another lesson and no duplicate",
+			args{lessons: []knowledge.Knowledge{cued}, answer: conform},
+			want{[]string{"add k-cued v1 shadow  1"}, []string{"k-cued v1 candidate"}},
 		},
 		{
 			"a newer candidate that says what an older one says joins its evidence to it and the older one waits in shadow",

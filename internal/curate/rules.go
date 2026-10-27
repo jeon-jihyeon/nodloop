@@ -39,6 +39,12 @@ func (ts TempDirs) holds(dir string) bool {
 	})
 }
 
+// Whether two versions arrive with the same call or both with the prompt
+// The same text before another call is another lesson so no text match drops or joins it
+func sameCue(a, b *knowledge.Cue) bool {
+	return a == nil && b == nil || a != nil && b != nil && *a == *b
+}
+
 // The text of a lesson as the tier 0 rules compare it: lower case, one space between words and no trailing period
 func normalized(content string) string {
 	return strings.TrimSuffix(strings.Join(strings.Fields(strings.ToLower(content)), " "), ".")
@@ -48,7 +54,7 @@ func normalized(content string) string {
 // The rules run in a fixed order so a candidate meets the first that holds and a pass over the same records decides alike
 func (p *pass) settled(ctx context.Context, k knowledge.Knowledge) (Decision, *knowledge.Ref, bool, error) {
 	text := normalized(k.Content)
-	same := func(o knowledge.Knowledge) bool { return normalized(o.Content) == text }
+	same := func(o knowledge.Knowledge) bool { return normalized(o.Content) == text && sameCue(o.Cue, k.Cue) }
 	if slices.ContainsFunc(p.all.Approved().Reaching(*k.Run), same) {
 		d := Decision{RuleCode: RuleSameAsItem, Action: ActionDrop, Reason: knowledge.ReasonDuplicate, Failure: FailureHard, Reopen: ReopenPersonOnly}
 		return d, nil, true, nil

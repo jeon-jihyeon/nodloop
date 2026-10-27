@@ -463,6 +463,7 @@ type proposeInput struct {
 	From       string              `json:"from,omitempty" jsonschema:"the trace id of a run the user corrected with edit or reject. Code fills producer, labels and evidence and the content is yours"`
 	Author     string              `json:"author,omitempty" jsonschema:"who proposed. claude by default because the conversation proposes"`
 	Veto       *vetoInput          `json:"veto,omitempty" jsonschema:"a tool call this judgment forbids. Approval makes it a guard veto that blocks the call. Only for kind judgment"`
+	Cue        *knowledge.Cue      `json:"cue,omitempty" jsonschema:"the tool call this judgment comes before, such as tool Bash with command git commit or tool Edit with file *_test.go. Only for kind judgment and never with a veto"`
 	// Lets a service name a tenant or another label value before its first run
 	NewLabels bool `json:"new_labels,omitempty" jsonschema:"true to allow label values no recorded run carries yet such as a new tenant"`
 }
@@ -518,6 +519,7 @@ func (in proposeInput) draft() knowledge.Knowledge {
 		Evidence: knowledge.Evidence{FeedbackTraceIDs: in.TraceIDs},
 		Author:   cmp.Or(in.Author, defaultAuthor),
 		Veto:     in.Veto.veto(),
+		Cue:      in.Cue,
 		Drafted:  true,
 	}
 }
@@ -687,13 +689,14 @@ type itemAnswer struct {
 	Content string              `json:"content"`
 	Scope   *knowledge.RunScope `json:"scope"`
 	Veto    *knowledge.Veto     `json:"veto,omitempty"`
+	Cue     *knowledge.Cue      `json:"cue,omitempty"`
 }
 
 func newItemAnswers(set knowledge.Set) []itemAnswer {
 	out := make([]itemAnswer, 0, len(set))
 	for _, k := range set {
 		out = append(out, itemAnswer{
-			ID: k.ID, Version: k.Version, Kind: k.Kind, Content: k.Content, Scope: k.Run, Veto: k.Veto,
+			ID: k.ID, Version: k.Version, Kind: k.Kind, Content: k.Content, Scope: k.Run, Veto: k.Veto, Cue: k.Cue,
 		})
 	}
 	return out

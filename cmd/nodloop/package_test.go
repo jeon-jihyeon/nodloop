@@ -216,7 +216,7 @@ func TestExportPackage(t *testing.T) {
 	for _, res := range d.Resources {
 		got = append(got, res.Name)
 	}
-	assert.Equal(t, "exported 7 records of 22 kinds to "+folder+"\n", stdout)
+	assert.Equal(t, "exported 7 records of 23 kinds to "+folder+"\n", stdout)
 	assert.Equal(t, datapackage.Profile, d.Schema)
 	assert.Equal(t, "nodloop-20261002t120100z", d.Name)
 	assert.Equal(t, packageMeta{Version: buildVersion(), Complete: true, Cursors: n.Nodloop.Cursors}, n.Nodloop)

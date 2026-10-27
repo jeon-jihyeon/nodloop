@@ -28,6 +28,22 @@ for (const validUntil of ["2030-10-02T02:00:00Z", "2030-10-02T02:00:00.5Z"]) {
   });
 }
 
+test("a proposal keeps its cue", async () => {
+  const c = await open();
+  try {
+    const run = await c.record({ producer: "acme", output: "acme", labels: { repo: ["acme"] } });
+    await c.judge(run, "reject", { reviewer: "ann", reason: "Keep the title to one line" });
+    const p = await c.propose({ kind: "judgment", content: "Keep a commit title to one line", from: run, cue: { tool: "Bash", command: "git commit" } });
+    const page = await c.records("knowledge");
+    assert.deepEqual(page.records[0].cue, { tool: "Bash", command: "git commit" });
+    approve(c.recordDir, p.id, p.version);
+    const got = await c.knowledge("acme", { repo: ["acme"] });
+    assert.deepEqual(got.items[0].cue, { tool: "Bash", command: "git commit" });
+  } finally {
+    await c.close();
+  }
+});
+
 test("a corrected run teaches an item the same tenant receives once the person approved it and another tenant never does", async () => {
   const c = await open();
   try {
