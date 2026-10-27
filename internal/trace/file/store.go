@@ -38,12 +38,16 @@ func (*skipped) UnmarshalJSON([]byte) error { return nil }
 
 // The fields of a trace a prune reads
 type head struct {
-	ID    string          `json:"id"`
-	Name  string          `json:"name"`
-	Ref   string          `json:"ref,omitempty"`
-	Time  time.Time       `json:"time"`
-	Input json.RawMessage `json:"input"`
-	Error string          `json:"error,omitempty"`
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	Ref  string `json:"ref,omitempty"`
+	// The session a calls trace and a run share and the duration that dates the turn of a run
+	// So retention keeps the calls of the turn of a kept run
+	SessionID  string          `json:"session_id,omitempty"`
+	DurationMS int64           `json:"duration_ms"`
+	Time       time.Time       `json:"time"`
+	Input      json.RawMessage `json:"input"`
+	Error      string          `json:"error,omitempty"`
 }
 
 // The one field of a trace a removal reads
@@ -130,7 +134,9 @@ func (s *Store) Heads(_ context.Context, names ...string) ([]record.Trace, error
 	found, err := s.heads.Newest(func(h head) bool { return slices.Contains(names, h.Name) }, nil, 0)
 	out := make([]record.Trace, 0, len(found))
 	for _, h := range found {
-		out = append(out, record.Trace{ID: h.ID, Name: h.Name, Ref: h.Ref, Time: h.Time, Input: h.Input, Error: h.Error})
+		out = append(out, record.Trace{
+			ID: h.ID, Name: h.Name, Ref: h.Ref, SessionID: h.SessionID, DurationMS: h.DurationMS, Time: h.Time, Input: h.Input, Error: h.Error,
+		})
 	}
 	if err != nil {
 		return out, readFailed(err)

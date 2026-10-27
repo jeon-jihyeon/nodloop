@@ -87,6 +87,8 @@ func fixture(t *testing.T) (testkit.Stores, map[string]string) {
 		"compact":       add(t, st, trace.NameCompact, 40, "", none),
 		"old turn":      add(t, st, trace.NameTurn, 40, "", "{}"),
 		"young turn":    add(t, st, trace.NameTurn, 3, "", "{}"),
+		"old calls":     add(t, st, trace.NameCalls, 40, "", "{}"),
+		"young calls":   add(t, st, trace.NameCalls, 3, "", "{}"),
 		"old rules":     add(t, st, trace.NameInstructions, 40, "", "{}"),
 		"young rules":   add(t, st, trace.NameInstructions, 3, "", "{}"),
 		"old capture":   add(t, st, trace.NameCapture, 40, "", "{}"),
@@ -163,6 +165,8 @@ func TestRetainerPrune(t *testing.T) {
 		{"a compact trace stays", "compact", true},
 		{"an old turn trace goes since its run holds the duration", "old turn", false},
 		{"a young turn trace stays for the stop of its turn", "young turn", true},
+		{"an old calls trace no run followed goes", "old calls", false},
+		{"a young calls trace stays for an extraction", "young calls", true},
 		{"an old instructions trace goes since an anchor version holds the files it read", "old rules", false},
 		{"a young instructions trace stays", "young rules", true},
 		{"an old capture trace goes since only the newest capture holds an offset still read", "old capture", false},
@@ -183,8 +187,9 @@ func TestRetainerPrune(t *testing.T) {
 	assert.ElementsMatch(t, []string{ids["unjudged"], ids["earlier use"], ids["failed use"], ids["use appended late"]}, plan.Runs)
 	assert.ElementsMatch(t, []string{ids["classify of a removed run"], ids["young classify of a removed run"]}, plan.Classify)
 	assert.ElementsMatch(t, []string{ids["old turn"], ids["old rules"], ids["old capture"]}, plan.Session)
+	assert.Equal(t, []string{ids["old calls"]}, plan.Calls, "a calls trace no run followed goes alone")
 	assert.Equal(t, 8, plan.Kept)
-	assert.Equal(t, 9, removed)
+	assert.Equal(t, 10, removed)
 	assert.Equal(t, retain.Days(30).Cutoff(now), plan.Cutoff, "no knob trace leaves the cutoff as asked")
 	assert.Empty(t, plan.Rollups)
 }
@@ -668,6 +673,218 @@ func TestDaysWindow(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			assert.Equal(t, tc.want, tc.args.days.Window(now, tc.args.last))
+		})
+	}
+}
+
+// A calls trace stays while an answered run of its session follows it
+// so an extraction or a replay of a kept run still reads its calls
+// and goes at the prune after the one that removed its run
+// So a verdict recorded at the last moment keeps both
+func TestRetainerPruneCalls(t *testing.T) {
+	ctx := context.Background()
+	st := testkit.Open(t)
+	ago := func(hours int) time.Time { return now.Add(-time.Duration(hours) * time.Hour) }
+	// A trace of session s1 at hours ago
+	// A run is dated from its turn as the hook dates it
+	session := func(name trace.Name, hours, turn int, input string) string {
+		tr := trace.Trace{
+			ID: trace.NewID(ago(hours)), Name: name, Producer: "bot", SessionID: "s1", Time: ago(hours), Input: []byte(input),
+		}
+		if name == trace.NameRun {
+			tr.DurationMS = ago(hours).Sub(ago(turn)).Milliseconds()
+		}
+		require.NoError(t, st.Traces.Append(ctx, tr.Record()))
+		return tr.ID
+	}
+	callsAt := func(hours, turn int) string {
+		return session(trace.NameCalls, hours, turn, fmt.Sprintf(`{"at":%q,"turn":%q,"calls":[{"tool":"Bash"}]}`,
+			ago(hours).Format(time.RFC3339), ago(turn).Format(time.RFC3339)))
+	}
+	ids := map[string]string{
+		"of a kept run":                  callsAt(41*24, 42*24),
+		"kept run":                       session(trace.NameRun, 40*24, 42*24, `{"applied":[]}`),
+		"of a removed run":               callsAt(36*24, 37*24),
+		"removed run":                    session(trace.NameRun, 35*24, 37*24, `{"applied":[]}`),
+		"before a continued run":         callsAt(34*24, 34*24+1),
+		"continued run":                  session(trace.NameRun, 33*24, 34*24, `{"applied":[],"continued":true}`),
+		"answer after the continued run": session(trace.NameRun, 32*24, 34*24+1, `{"applied":[]}`),
+		"no run followed":                callsAt(31*24, 31*24+1),
+		"young":                          callsAt(2*24, 2*24+1),
+	}
+	judge(t, st, ids["kept run"], feedback.VerdictApprove, "ann")
+	judge(t, st, ids["answer after the continued run"], feedback.VerdictApprove, "ann")
+	retainer := retain.New(st.Traces, st.Feedback, st.Outcomes, st.Ledger, count, clock)
+	left := func() []string {
+		list, err := st.Traces.List(ctx, record.TraceFilter{Name: string(trace.NameCalls)})
+		require.NoError(t, err)
+		out := []string{}
+		for _, tr := range list {
+			out = append(out, tr.ID)
+		}
+		return out
+	}
+	plan, err := retainer.Plan(ctx, retain.Days(30).Cutoff(now))
+	require.NoError(t, err)
+	assert.Equal(t, []string{ids["no run followed"]}, plan.Calls,
+		"the calls of a run the plan removes wait for the next prune")
+	assert.Contains(t, plan.Runs, ids["removed run"])
+	_, err = retainer.Prune(ctx, retain.Days(30).Cutoff(now))
+	require.NoError(t, err)
+	_, err = retainer.Prune(ctx, retain.Days(30).Cutoff(now))
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{ids["of a kept run"], ids["before a continued run"], ids["young"]}, left(),
+		"a span ends at the answer a continued run led to, and the calls of a removed run go at the next prune")
+}
+
+// Calls whose turn no answer carries go at the first prune past the cutoff even while the answer after them stays
+// The stored records cannot tell a removed run from a turn whose prompt left no trace
+func TestRetainerPruneCallsOfAnUntracedTurn(t *testing.T) {
+	ctx := context.Background()
+	st := testkit.Open(t)
+	ago := func(hours int) time.Time { return now.Add(-time.Duration(hours) * time.Hour) }
+	input, err := json.Marshal(map[string]any{
+		"at":    ago(40 * 24).Format(time.RFC3339),
+		"turn":  ago(40*24 + 1).Format(time.RFC3339),
+		"calls": []map[string]string{{"tool": "Bash"}},
+	})
+	require.NoError(t, err)
+	calls := trace.Trace{
+		ID: trace.NewID(ago(40 * 24)), Name: trace.NameCalls, Producer: "bot",
+		SessionID: "s1", Time: ago(40 * 24), Input: input,
+	}
+	require.NoError(t, st.Traces.Append(ctx, calls.Record()))
+	answer := trace.Trace{
+		ID: trace.NewID(ago(39 * 24)), Name: trace.NameRun, Producer: "bot",
+		SessionID: "s1", Time: ago(39 * 24), Input: []byte(`{"applied":[]}`),
+	}
+	require.NoError(t, st.Traces.Append(ctx, answer.Record()))
+	judge(t, st, answer.ID, feedback.VerdictApprove, "ann")
+	retainer := retain.New(st.Traces, st.Feedback, st.Outcomes, st.Ledger, count, clock)
+	for range 2 {
+		_, err := retainer.Prune(ctx, retain.Days(30).Cutoff(now))
+		require.NoError(t, err)
+	}
+	left, err := st.Traces.List(ctx, record.TraceFilter{Name: string(trace.NameCalls)})
+	require.NoError(t, err)
+	assert.Empty(t, left)
+}
+
+// Calls named just past an answer of a short turn are never that answer's even while it stays
+func TestRetainerPruneCallsNamedPastAnAnswer(t *testing.T) {
+	ctx := context.Background()
+	st := testkit.Open(t)
+	at := now.Add(-40 * 24 * time.Hour)
+	answer := trace.Trace{
+		ID: trace.NewID(at), Name: trace.NameRun, Producer: "bot",
+		SessionID: "s1", Time: at, DurationMS: 1, Input: []byte(`{"applied":[]}`),
+	}
+	require.NoError(t, st.Traces.Append(ctx, answer.Record()))
+	judge(t, st, answer.ID, feedback.VerdictApprove, "ann")
+	input, err := json.Marshal(map[string]any{
+		"at":    at.Add(time.Millisecond).Format(time.RFC3339Nano),
+		"turn":  at.Add(time.Nanosecond).Format(time.RFC3339Nano),
+		"calls": []map[string]string{{"tool": "Bash"}},
+	})
+	require.NoError(t, err)
+	calls := trace.Trace{
+		ID: trace.NewID(at.Add(time.Millisecond)), Name: trace.NameCalls, Producer: "bot",
+		SessionID: "s1", Time: at.Add(time.Millisecond), Input: input,
+	}
+	require.NoError(t, st.Traces.Append(ctx, calls.Record()))
+	retainer := retain.New(st.Traces, st.Feedback, st.Outcomes, st.Ledger, count, clock)
+	for range 2 {
+		_, err := retainer.Prune(ctx, retain.Days(30).Cutoff(now))
+		require.NoError(t, err)
+	}
+	left, err := st.Traces.List(ctx, record.TraceFilter{Name: string(trace.NameCalls)})
+	require.NoError(t, err)
+	assert.Empty(t, left)
+	runs, err := st.Traces.List(ctx, record.TraceFilter{Name: string(trace.NameRun)})
+	require.NoError(t, err)
+	assert.Len(t, runs, 1, "the cited answer stays")
+}
+
+// Calls named past an answer go with the answer after it
+// and never pass to a later answer while the answer between stays
+func TestRetainerPruneCallsNamedBeforeTheAnswerBefore(t *testing.T) {
+	ctx := context.Background()
+	st := testkit.Open(t)
+	at := now.Add(-40 * 24 * time.Hour)
+	run := func(after time.Duration, duration int64) trace.Trace {
+		return trace.Trace{
+			ID: trace.NewID(at.Add(after)), Name: trace.NameRun, Producer: "bot", SessionID: "s1",
+			Time: at.Add(after), DurationMS: duration, Input: []byte(`{"applied":[]}`),
+		}
+	}
+	first, untraced, next := run(time.Millisecond, 1), run(1050*time.Microsecond, 0), run(2100*time.Microsecond, 1)
+	for _, r := range []trace.Trace{first, untraced, next} {
+		require.NoError(t, st.Traces.Append(ctx, r.Record()))
+	}
+	judge(t, st, first.ID, feedback.VerdictApprove, "ann")
+	judge(t, st, next.ID, feedback.VerdictApprove, "ann")
+	input, err := json.Marshal(map[string]any{
+		"at":    at.Add(1025 * time.Microsecond).Format(time.RFC3339Nano),
+		"turn":  first.Time.Add(time.Nanosecond).Format(time.RFC3339Nano),
+		"calls": []map[string]string{{"tool": "Bash"}},
+	})
+	require.NoError(t, err)
+	calls := trace.Trace{
+		ID: trace.NewID(at.Add(1025 * time.Microsecond)), Name: trace.NameCalls, Producer: "bot",
+		SessionID: "s1", Time: at.Add(1025 * time.Microsecond), Input: input,
+	}
+	require.NoError(t, st.Traces.Append(ctx, calls.Record()))
+	retainer := retain.New(st.Traces, st.Feedback, st.Outcomes, st.Ledger, count, clock)
+	_, err = retainer.Prune(ctx, retain.Days(30).Cutoff(now))
+	require.NoError(t, err)
+	left, err := st.Traces.List(ctx, record.TraceFilter{Name: string(trace.NameCalls)})
+	require.NoError(t, err)
+	assert.Empty(t, left)
+}
+
+// An answer at the same time as another keeps its calls whichever was appended first
+func TestRetainerPruneCallsOfAnAnswerAtTheTimeOfAnother(t *testing.T) {
+	at := now.Add(-40 * 24 * time.Hour)
+	run := func(id string, duration int64) trace.Trace {
+		return trace.Trace{
+			ID: id, Name: trace.NameRun, Producer: "bot", SessionID: "s1",
+			Time: at.Add(10 * time.Second), DurationMS: duration, Input: []byte(`{"applied":[]}`),
+		}
+	}
+	answer, other := run(trace.NewID(at.Add(10*time.Second)), 5000), run(trace.NewID(at.Add(10*time.Second)), 0)
+	tcs := []struct {
+		name string
+		args []trace.Trace
+	}{
+		{"the answer first", []trace.Trace{answer, other}},
+		{"the other first", []trace.Trace{other, answer}},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ctx := context.Background()
+			st := testkit.Open(t)
+			for _, r := range tc.args {
+				require.NoError(t, st.Traces.Append(ctx, r.Record()))
+			}
+			judge(t, st, answer.ID, feedback.VerdictApprove, "ann")
+			input, err := json.Marshal(map[string]any{
+				"at":    at.Add(6 * time.Second).Format(time.RFC3339Nano),
+				"turn":  at.Add(5 * time.Second).Format(time.RFC3339Nano),
+				"calls": []map[string]string{{"tool": "Bash"}},
+			})
+			require.NoError(t, err)
+			calls := trace.Trace{
+				ID: trace.NewID(at.Add(6 * time.Second)), Name: trace.NameCalls, Producer: "bot",
+				SessionID: "s1", Time: at.Add(6 * time.Second), Input: input,
+			}
+			require.NoError(t, st.Traces.Append(ctx, calls.Record()))
+			retainer := retain.New(st.Traces, st.Feedback, st.Outcomes, st.Ledger, count, clock)
+			_, err = retainer.Prune(ctx, retain.Days(30).Cutoff(now))
+			require.NoError(t, err)
+			left, err := st.Traces.List(ctx, record.TraceFilter{Name: string(trace.NameCalls)})
+			require.NoError(t, err)
+			assert.Len(t, left, 1)
 		})
 	}
 }
